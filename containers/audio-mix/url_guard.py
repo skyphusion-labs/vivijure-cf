@@ -66,3 +66,27 @@ def validate_fetch_url(url):
         if host == allowed or host.endswith("." + allowed):
             return True, None
     return False, "host not in fetch allowlist: " + host
+
+
+def safe_log_value(val, max_len=200):
+    """Strip control chars from user-influenced log fields (log-injection guard)."""
+    if val is None:
+        return ""
+    s = str(val).replace("\r", "\\r").replace("\n", "\\n").replace("\x00", "")
+    if len(s) > max_len:
+        return s[:max_len] + "..."
+    return s
+
+
+async def guarded_get(session, url, **kwargs):
+    ok, why = validate_fetch_url(url)
+    if not ok:
+        raise ValueError(why)
+    return session.get(url, **kwargs)  # codeql[py/full-ssrf]
+
+
+async def guarded_put(session, url, **kwargs):
+    ok, why = validate_fetch_url(url)
+    if not ok:
+        raise ValueError(why)
+    return session.put(url, **kwargs)  # codeql[py/full-ssrf]

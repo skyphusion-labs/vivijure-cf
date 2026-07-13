@@ -776,11 +776,13 @@ describe("advanceFilmJob assemble self-heal from R2 presence (issue #122)", () =
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
     phase: "assemble" as const,
     finish_shots: [{ shot_id: "shot_01", clip_key: "renders/film-selfheal-1/clips/shot_01_finished.mp4", chain: ["M"], idx: 1, status: "done" as const, applied: [] }],
+    // #697: self-heal shortcut requires gated per-clip durations persisted on the job doc.
+    actual_clip_durations: { shot_01: 3 },
   };
 
   it("finalizes to done from the existing film.mp4 without invoking video-finish", async () => {
     const { env, vpcCalls } = assembleEnv({ jobInR2: baseJob, filmOutputExists: true });
-    const r = await advanceFilmJob(orch(env), "film-selfheal-1");
+    const r = await advanceFilmJob(env, "film-selfheal-1");
     expect(r?.job.phase).toBe("done");
     expect(r?.job.film_key).toBe("renders/film-selfheal-1/film.mp4");
     expect(vpcCalls).toEqual([]); // the concat was NOT re-run -- derived from R2 presence
@@ -788,7 +790,7 @@ describe("advanceFilmJob assemble self-heal from R2 presence (issue #122)", () =
 
   it("falls through to the container when the film.mp4 is not yet in R2", async () => {
     const { env, vpcCalls } = assembleEnv({ jobInR2: baseJob, filmOutputExists: false });
-    await advanceFilmJob(orch(env), "film-selfheal-1");
+    await advanceFilmJob(env, "film-selfheal-1");
     expect(vpcCalls.length).toBe(1); // no short-circuit -> normal assemble path ran
   });
 });

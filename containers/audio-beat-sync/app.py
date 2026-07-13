@@ -15,7 +15,7 @@ import librosa
 import numpy as np
 from aiohttp import ClientSession, ClientTimeout, web
 
-from url_guard import validate_fetch_url
+from url_guard import guarded_get, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 30
@@ -57,7 +57,7 @@ async def analyze(req):
     os.close(fd)
     try:
         async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
-            async with s.get(audio_url, allow_redirects=False) as r:  # a redirect could sidestep the allowlist; R2 never redirects
+            async with guarded_get(s, audio_url, allow_redirects=False) as r:  # a redirect could sidestep the allowlist; R2 never redirects
                 if r.status != 200:
                     return web.json_response(
                         {"ok": False, "error": f"audio fetch {r.status}"}, status=502

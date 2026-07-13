@@ -493,7 +493,7 @@ export async function runTool(
   }
 
   // Non-JSON. Summarize binary; return bounded text for anything textual (e.g. CSV markers).
-  if (/^(video|image|audio)\/|application\/(octet-stream|x-tar|zip)/i.test(ct)) {
+  if (/^(?:(?:video|image|audio)\/|application\/(?:octet-stream|x-tar|zip))/i.test(ct)) {
     const len = res.headers.get("content-length") ?? "unknown";
     return {
       content: [

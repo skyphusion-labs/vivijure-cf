@@ -25,7 +25,7 @@ import uuid
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from url_guard import validate_fetch_url
+from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -110,7 +110,7 @@ async def async_submit(req):
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "pending", "at": now}
     asyncio.create_task(_run_job(job_id, work(body)))
-    log.info("/async/%s accepted job=%s", route, job_id)
+    log.info("/async/%s accepted job=%s", safe_log_value(route), job_id)
     return web.json_response({"ok": True, "jobId": job_id, "status": "pending"}, status=202)
 
 
@@ -136,20 +136,20 @@ async def health(_req):
 
 
 async def _download(session, url, path, cap):
-    ok, why = validate_fetch_url(url)
-    if not ok:
-        return False, f"blocked: {why}"
-    async with session.get(url, allow_redirects=False) as r:  # a redirect could sidestep the allowlist; R2 never redirects
-        if r.status != 200:
-            return False, f"fetch {r.status}"
-        total = 0
-        with open(path, "wb") as out:
-            async for chunk in r.content.iter_chunked(256 * 1024):
-                total += len(chunk)
-                if total > cap:
-                    return False, "too large"
-                out.write(chunk)
-    return True, total
+    try:
+        async with guarded_get(session, url, allow_redirects=False) as r:  # a redirect could sidestep the allowlist; R2 never redirects
+            if r.status != 200:
+                return False, f"fetch {r.status}"
+            total = 0
+            with open(path, "wb") as out:
+                async for chunk in r.content.iter_chunked(256 * 1024):
+                    total += len(chunk)
+                    if total > cap:
+                        return False, "too large"
+                    out.write(chunk)
+            return True, total
+    except ValueError as e:
+        return False, f"blocked: {e}"
 
 
 async def finish(req):
@@ -253,7 +253,7 @@ async def finish(req):
             out_bytes = f.read()
 
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with s.put(output_url, allow_redirects=False, data=out_bytes,
+            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
                              headers={"content-type": "video/mp4"}) as r:
                 if r.status not in (200, 201, 204):
                     return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
@@ -581,7 +581,7 @@ async def overlay(req):
         try:
             await loop.run_in_executor(None, _draw_overlay, src_path, dst_path, vf_filter)
         except subprocess.CalledProcessError as e:
-            log.exception("ffmpeg drawtext failed for key=%s", spec.get("output_key", "?"))
+            log.exception("ffmpeg drawtext failed for key=%s", safe_log_value(spec.get("output_key", "?")))
             return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)
         except Exception as e:  # noqa: BLE001
             log.exception("overlay failed")
@@ -590,7 +590,7 @@ async def overlay(req):
         with open(dst_path, "rb") as f:
             out_bytes = f.read()
 
-        log.info("overlay ok key=%s in=%d out=%d", spec.get("output_key", "?"), len(clip_bytes), len(out_bytes))
+        log.info("overlay ok key=%s in=%d out=%d", safe_log_value(spec.get("output_key", "?")), len(clip_bytes), len(out_bytes))
         return web.Response(body=out_bytes, content_type="video/mp4")
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -824,12 +824,12 @@ async def _film_titles_work(body):
             out_bytes = f.read()
 
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with s.put(output_url, allow_redirects=False, data=out_bytes,
+            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
                              headers={"content-type": "video/mp4"}) as r:
                 if r.status not in (200, 201, 204):
                     raise _JobError(502, f"output put {r.status}")
 
-        log.info("/film-titles ok key=%s bytes=%d dur=%.3f", output_key, len(out_bytes), secs)
+        log.info("/film-titles ok key=%s bytes=%d dur=%.3f", safe_log_value(output_key), len(out_bytes), secs)
         return {
             "ok": True,
             "key": output_key,
@@ -1008,7 +1008,7 @@ async def _subtitle_work(body):
         sidecar_done = False
         if want_sidecar:
             async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-                async with s.put(sidecar_url, allow_redirects=False, data=srt_text.encode("utf-8"),
+                async with guarded_put(s, sidecar_url, allow_redirects=False, data=srt_text.encode("utf-8"),
                                  headers={"content-type": "application/x-subrip"}) as r:
                     if r.status not in (200, 201, 204):
                         raise _JobError(502, f"sidecar put {r.status}")
@@ -1030,7 +1030,7 @@ async def _subtitle_work(body):
             try:
                 await loop.run_in_executor(None, _burn_subtitles, film_path, out_path, vf, crf, preset)
             except subprocess.CalledProcessError as e:
-                log.exception("ffmpeg subtitles burn failed key=%s", output_key)
+                log.exception("ffmpeg subtitles burn failed key=%s", safe_log_value(output_key))
                 raise _JobError(500, f"ffmpeg failed: {e}")
             except Exception as e:  # noqa: BLE001
                 log.exception("/subtitle burn failed")
@@ -1039,7 +1039,7 @@ async def _subtitle_work(body):
             with open(out_path, "rb") as f:
                 out_bytes = f.read()
             async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-                async with s.put(output_url, allow_redirects=False, data=out_bytes,
+                async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
                                  headers={"content-type": "video/mp4"}) as r:
                     if r.status not in (200, 201, 204):
                         raise _JobError(502, f"output put {r.status}")
@@ -1047,7 +1047,7 @@ async def _subtitle_work(body):
             out_secs = _probe_duration(out_path)
 
         log.info("/subtitle ok key=%s burned=%s sidecar=%s dur=%.3f",
-                 output_key, burned, sidecar_done, out_secs)
+                 safe_log_value(output_key), burned, sidecar_done, out_secs)
         return {
             "ok": True,
             "key": output_key if burned else "",

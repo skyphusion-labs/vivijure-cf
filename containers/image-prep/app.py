@@ -15,7 +15,7 @@ from io import BytesIO
 from aiohttp import ClientSession, ClientTimeout, web
 from PIL import Image
 
-from url_guard import validate_fetch_url
+from url_guard import guarded_get, guarded_put, validate_fetch_url
 
 # rembg is intentionally NOT imported at module load. `import rembg` pulls in
 # pymatting, which JIT-compiles numba kernels on import (~46s on a cold cache,
@@ -72,14 +72,11 @@ async def prep(req):
     background = body.get("background", "alpha")
     if not input_url or not output_url or background not in ("alpha", "black"):
         return web.json_response({"ok": False, "error": "bad input"}, status=400)
-    for label, u in (("inputUrl", input_url), ("outputUrl", output_url)):
-        ok, why = validate_fetch_url(u)
-        if not ok:
-            return web.json_response({"ok": False, "error": f"{label} blocked: {why}"}, status=400)
 
     # Fetch the source portrait.
-    async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
-        async with s.get(input_url) as r:
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+            async with guarded_get(s, input_url) as r:
             if r.status != 200:
                 return web.json_response({"ok": False, "error": f"input fetch {r.status}"}, status=502)
             data = b""
@@ -87,6 +84,8 @@ async def prep(req):
                 data += chunk
                 if len(data) > MAX_INPUT_BYTES:
                     return web.json_response({"ok": False, "error": "input too large"}, status=413)
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
 
     try:
         loop = asyncio.get_running_loop()
@@ -96,10 +95,13 @@ async def prep(req):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     # PUT the cleaned PNG to the presigned output URL.
-    async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-        async with s.put(output_url, data=out_bytes, headers={"content-type": "image/png"}) as r:
-            if r.status not in (200, 201, 204):
-                return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+            async with guarded_put(s, output_url, data=out_bytes, headers={"content-type": "image/png"}) as r:
+                if r.status not in (200, 201, 204):
+                    return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
 
     return web.json_response({
         "ok": True,
