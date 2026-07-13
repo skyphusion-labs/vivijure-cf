@@ -48,9 +48,10 @@ jobs:
       - name: Install dependencies
         working-directory: vivijure-cf
         run: |
-          cd ../vivijure-core && npm ci && npm run build
-          npm pkg set dependencies.@skyphusion-labs/vivijure-core=file:../vivijure-core
           npm ci
+          cd ../vivijure-core && npm ci && npm run build
+          cd ../vivijure-cf
+          npm install file:../vivijure-core
 
       - name: Run tests with coverage
         working-directory: vivijure-cf

@@ -41,9 +41,10 @@ jobs:
       - name: Install dependencies
         working-directory: vivijure-cf
         run: |
-          cd ../vivijure-core && npm ci && npm run build
-          npm pkg set dependencies.@skyphusion-labs/vivijure-core=file:../vivijure-core
           npm ci --no-audit --no-fund
+          cd ../vivijure-core && npm ci && npm run build
+          cd ../vivijure-cf
+          npm install file:../vivijure-core --no-audit --no-fund
 
       - name: Typecheck
         working-directory: vivijure-cf
