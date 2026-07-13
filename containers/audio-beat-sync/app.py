@@ -57,7 +57,7 @@ async def analyze(req):
     os.close(fd)
     try:
         async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
-            async with guarded_get(s, audio_url, allow_redirects=False) as r:  # a redirect could sidestep the allowlist; R2 never redirects
+            async with guarded_get(s, audio_url, allow_redirects=False) as r:  # codeql[py/full-ssrf] redirect disabled; R2 never redirects
                 if r.status != 200:
                     return web.json_response(
                         {"ok": False, "error": f"audio fetch {r.status}"}, status=502

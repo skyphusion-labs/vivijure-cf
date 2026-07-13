@@ -42,7 +42,7 @@ async def health(_req):
 
 async def _download(session, url, path, cap):
     try:
-        async with guarded_get(session, url, allow_redirects=False) as r:  # a redirect could sidestep the allowlist; R2 never redirects
+        async with guarded_get(session, url, allow_redirects=False) as r:  # codeql[py/full-ssrf]
             if r.status != 200:
                 return False, f"fetch {r.status}"
             total = 0
@@ -127,7 +127,7 @@ async def master(req):
         content_type = "audio/mpeg" if fmt == "mp3" else "audio/wav"
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
             async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": content_type}) as r:
+                             headers={"content-type": content_type}) as r:  # codeql[py/full-ssrf]
                 if r.status not in (200, 201, 204):
                     return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
 
@@ -135,7 +135,7 @@ async def master(req):
         # `applied`), so the module composes an HONEST `applied` from the container's structured facts
         # rather than trusting the request flag.
         upscaled = any(a.startswith("music-upscale") for a in result["applied"])
-        log.info("/master ok key=%s bytes=%d dur=%.3f lufs=%.2f upscaled=%s",
+        log.info("/master ok key=%s bytes=%d dur=%.3f lufs=%.2f upscaled=%s",  # codeql[py/log-injection]
                  safe_log_value(output_key), len(out_bytes), result["durationSeconds"], result["lufs"], upscaled)
         return web.json_response({
             "ok": True,

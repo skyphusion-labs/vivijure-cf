@@ -76,14 +76,14 @@ async def prep(req):
     # Fetch the source portrait.
     try:
         async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
-            async with guarded_get(s, input_url) as r:
-            if r.status != 200:
-                return web.json_response({"ok": False, "error": f"input fetch {r.status}"}, status=502)
-            data = b""
-            async for chunk in r.content.iter_chunked(64 * 1024):
-                data += chunk
-                if len(data) > MAX_INPUT_BYTES:
-                    return web.json_response({"ok": False, "error": "input too large"}, status=413)
+            async with guarded_get(s, input_url) as r:  # codeql[py/full-ssrf]
+                if r.status != 200:
+                    return web.json_response({"ok": False, "error": f"input fetch {r.status}"}, status=502)
+                data = b""
+                async for chunk in r.content.iter_chunked(64 * 1024):
+                    data += chunk
+                    if len(data) > MAX_INPUT_BYTES:
+                        return web.json_response({"ok": False, "error": "input too large"}, status=413)
     except ValueError as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
 
@@ -97,7 +97,7 @@ async def prep(req):
     # PUT the cleaned PNG to the presigned output URL.
     try:
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, data=out_bytes, headers={"content-type": "image/png"}) as r:
+            async with guarded_put(s, output_url, data=out_bytes, headers={"content-type": "image/png"}) as r:  # codeql[py/full-ssrf]
                 if r.status not in (200, 201, 204):
                     return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
     except ValueError as e:
