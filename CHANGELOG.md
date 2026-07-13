@@ -3,7 +3,25 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## v0.21.3 -- 2026-07-13
+
+**Bump `@skyphusion-labs/vivijure-core` to `^0.9.5`: the #29 advance-lease idempotency fix.** PATCH.
+
+- **#29 (film-advance lease is now idempotent under retry).** The core lease (migration 0007) stored only
+  `advance_lease`, the winner's expiry (unix ms) -- NOT a unique leaseholder identity. On Cloudflare
+  `Date.now()` is coarsened + frozen per-invocation, so two drivers racing in the same millisecond compute
+  the identical expiry; that made `claimFilmAdvance` non-idempotent under `withD1Retry`: a committed-but-lost
+  UPDATE response, when retried, no longer matched the `advance_lease < now` predicate (the lease is now
+  future), so the true holder wrongly read `{ won: false }` and wedged the film up to a full TTL (300s).
+  Core `^0.9.5` writes a per-claim UUID into a new `advance_lease_token` column (generated ONCE, so every
+  retry re-binds the same token) and adds `OR advance_lease_token = ?` to the claim predicate: a
+  lost-response retry matches its own committed token (a real win, no stall), a same-ms loser carries a
+  different token (correctly loses), and release clears by token (a stale release can never free another
+  driver's live lease).
+- **Migration 0011 (`0011_advance_lease_token.sql`).** Additive-only (`ALTER TABLE renders ADD COLUMN
+  advance_lease_token TEXT`) -> rides the normal auto-apply, applied before the core deploy so the column
+  exists when the `^0.9.5` code references it. Backward compatible: NULL = unleased / a legacy row; a fresh
+  UUID never equals NULL.
 
 **Retire the `text-overlay` finish module (dead code; superseded by `subtitle` + `film-titles`).** PATCH.
 
