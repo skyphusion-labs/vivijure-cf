@@ -373,9 +373,9 @@ jobs:
             exit 1
           fi
 
-      # Opt-in Studio MCP Worker deploy (docs/mcp.md). A SEPARATE Worker from the core (src/mcp.ts,
-      # its own host); it lets agents drive the Studio API through MCP tools. Gated exactly like the
-      # WfP / analytics / purge opt-ins: a community self-host sets neither var, so this is a clean
+      # Opt-in Studio MCP Worker deploy (docs/mcp.md). Separate Worker from the studio core
+      # (@skyphusion-labs/vivijure-core/mcp, its own host); agents drive the Studio API through MCP
+      # tools. Gated exactly like the WfP / analytics / purge opt-ins: a community self-host sets
       # no-op. Only when BOTH MCP_HOST (the MCP hostname) and MCP_STUDIO_URL (the studio base URL the
       # MCP proxies to) are set do we render wrangler.mcp.toml and deploy. Its two secrets
       # (STUDIO_API_TOKEN, MCP_TOKEN) are seeded ONCE out-of-band (see docs/mcp.md), never in CI --
