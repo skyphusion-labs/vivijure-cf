@@ -27,40 +27,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          path: vivijure-cf
-
-      - name: Checkout vivijure-core
-        uses: actions/checkout@v7
-        with:
-          repository: skyphusion-labs/vivijure-core
-          path: vivijure-core
 
       - name: Setup Node.js environment
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: "22"
           cache: npm
-          cache-dependency-path: |
-            vivijure-cf/package-lock.json
-            vivijure-core/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: vivijure-cf
-        run: |
-          npm ci
-          cd ../vivijure-core && npm ci && npm run build
-          cd ../vivijure-cf
-          npm install file:../vivijure-core
+        run: npm ci
 
       - name: Run tests with coverage
-        working-directory: vivijure-cf
         run: npx vitest run --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=cobertura --coverage.reporter=text
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
-          path: vivijure-cf/coverage/
+          path: coverage/
           if-no-files-found: warn
           retention-days: 14

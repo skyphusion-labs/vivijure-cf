@@ -10,5 +10,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    server: {
+      deps: {
+        // npm-installed core uses internal relative imports; inline so vi.mock on
+        // @skyphusion-labs/vivijure-core/* applies inside scatter-orchestrator etc.
+        inline: ["@skyphusion-labs/vivijure-core"],
+      },
+    },
   },
 });

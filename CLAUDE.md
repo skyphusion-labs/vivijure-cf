@@ -40,7 +40,7 @@ of these areas, update the matching doc.
 - `docs/module-api.md` -- the typed hook contract (`vivijure-module/2`; `/1` is closed); read FIRST. A module builds to this.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
 - `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
-- `docs/mcp.md` -- the Studio MCP Worker (`src/mcp.ts`): drive the studio API from an agent; opt-in, deploys separately.
+- `docs/mcp.md` -- MCP deploy pointer; canon in **vivijure-core** `docs/mcp.md`.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/demo-studio.md` -- the public, read-only, zero-spend demo studio (`demo.vivijure.com`, `AUTH_MODE=demo`): the binding-absence rule, D1 seed procedure, and live-verify list.
