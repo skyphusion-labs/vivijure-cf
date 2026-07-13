@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { emitTar } from "../src/tar-emit";
-import { checkManifest, checkHookOutput, allPass, failures } from "../src/modules/conformance";
+import { emitTar } from "@skyphusion-labs/vivijure-core/tar";
+import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { MANIFEST } from "../modules/cloud-keyframe/src/index";
 import {
   MODELS,

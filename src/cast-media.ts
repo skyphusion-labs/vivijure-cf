@@ -8,9 +8,9 @@ import {
   removeRef,
   addSource,
   removeSource,
-} from "./cast-db";
-import type { CastMember } from "./cast-db";
-import { toPublicCast } from "./cast-db";
+} from "@skyphusion-labs/vivijure-core/cast-db";
+import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "@skyphusion-labs/vivijure-core/cast-db";
 import { extFromMime } from "./utils";
 
 export const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;

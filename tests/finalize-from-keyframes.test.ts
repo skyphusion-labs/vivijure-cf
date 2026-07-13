@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { parseStoryboardScenes } from "../src/planner-yaml";
+import { parseStoryboardScenes } from "@skyphusion-labs/vivijure-core/planner-yaml";
 import {
   selectPreviewKeyframes,
   validatePreviewParent,
   clipAnimateProgress,
 } from "../src/finalize-from-keyframes";
-import type { RenderRow } from "../src/renders-db";
-import type { ClipJob } from "../src/render-orchestrator";
+import type { RenderRow } from "@skyphusion-labs/vivijure-core/renders-db";
+import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 
 const yaml = `title: "demo"
 scenes:

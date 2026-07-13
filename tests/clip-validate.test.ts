@@ -3,9 +3,9 @@ import {
   parseMoov, judgeClip, validateClipArtifact,
   CLIP_MIN_BYTES, CLIP_MIN_DURATION_S, CLIP_MAX_DURATION_S, CLIP_MAX_DIMENSION,
   type ClipValidateChecks,
-} from "../src/clip-validate";
-import { validateDoneClips } from "../src/render-orchestrator";
-import type { ClipJob } from "../src/render-orchestrator";
+} from "@skyphusion-labs/vivijure-core/clip-validate";
+import { validateDoneClips } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { Env } from "../src/env";
 
 // --- Minimal synthetic-mp4 builder (big-endian ISO-BMFF boxes). Only the fields the structural gate

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
-import { checkCastBindingsReady, checkDurationGrid, checkStoryboardShape, resolveCastBindings, summarize } from "../src/preflight";
-import { MODULE_API } from "../src/modules/types";
-import { _resetModuleDiscoveryCache } from "../src/modules/registry";
+import { checkCastBindingsReady, checkDurationGrid, checkStoryboardShape, resolveCastBindings, summarize } from "@skyphusion-labs/vivijure-core/preflight";
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
+import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
 
 // Regression coverage for #242: /api/storyboard/preflight used to validate the
 // whole request body (so it read `.title`/`.scenes` off the { storyboard,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { cancelModule } from "../src/modules/registry";
-import { cancelInFlightKeyframe, cancelFilmJob, filmJobDocKey, type FilmJob } from "../src/film-orchestrator";
+import { cancelModule } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { cancelInFlightKeyframe, cancelFilmJob, filmJobDocKey, type FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
 import kfWorker, { MANIFEST } from "../modules/keyframe/src/index";
 import { encodePoll } from "../modules/keyframe/src/keyframe";

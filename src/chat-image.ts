@@ -2,7 +2,7 @@
 
 import type { Env } from "./env";
 import { aiRun, aiLogId } from "./ai-binding";
-import { detectProviderFailure, extractProxiedImageUrl } from "./output-extract";
+import { detectProviderFailure, extractProxiedImageUrl } from "@skyphusion-labs/vivijure-core/output-extract";
 import { buildProxiedImageParams } from "./proxied-image-params";
 import { findModel, type ModelEntry } from "./models";
 import { base64ToBytes, parseDataUrl } from "./utils";

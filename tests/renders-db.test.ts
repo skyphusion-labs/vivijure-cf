@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { updateRenderFromView, getRenderByIdForUser } from "../src/renders-db";
+import { updateRenderFromView, getRenderByIdForUser } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
-import type { RunpodJobView } from "../src/runpod-submit";
+import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-submit";
 
 // Issue #15: on a terminal poll, the best-effort per-render log write must run via
 // ctx.waitUntil (off the poll hot path) when an ExecutionContext is supplied, and

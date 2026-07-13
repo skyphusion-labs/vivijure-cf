@@ -13,7 +13,7 @@ import {
 } from "../modules/film-titles/src/film-titles";
 import type { FilmFinishInput } from "../modules/film-titles/src/contract";
 import worker from "../modules/film-titles/src/index";
-import { checkHookOutput } from "../src/modules/conformance";
+import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 const baseInput = (over: Partial<FilmFinishInput> = {}): FilmFinishInput => ({
   film_key: "renders/film-x/film.mp4",

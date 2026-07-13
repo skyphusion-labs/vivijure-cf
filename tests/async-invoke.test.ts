@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awaitInvoke, pollModule } from "../src/modules/registry";
+import { awaitInvoke, pollModule } from "@skyphusion-labs/vivijure-core/modules/registry";
 
 // A fake module fetcher: /invoke returns `invoke`; /poll returns the next item from `pollSeq`.
 function fakeFetcher(invoke: unknown, pollSeq: unknown[]) {

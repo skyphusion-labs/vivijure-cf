@@ -5,8 +5,8 @@ import {
   renderConfigProjection,
   QUALITY_TIERS,
   DEFAULT_QUALITY_TIER,
-} from "../src/render-module-config";
-import type { RegisteredModule } from "../src/modules/types";
+} from "@skyphusion-labs/vivijure-core/render-module-config";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 
 const keyframeMod = {
   name: "keyframe",

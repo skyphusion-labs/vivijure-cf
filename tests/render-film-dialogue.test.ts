@@ -9,8 +9,8 @@ import { describe, it, expect, vi } from "vitest";
 type CapturedArgs = { dialogue_lines?: unknown; scenes?: unknown; pretrained_loras?: unknown; quality_tier?: unknown };
 const h = vi.hoisted(() => ({ captured: null as CapturedArgs | null, bundleScenes: [] as Array<{ shot_id: string; prompt: string; seconds: number; dialogue?: { slot: string; text: string } }> }));
 
-vi.mock("../src/film-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("../src/film-orchestrator")>();
+vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
     ...actual,
     startFilmJob: vi.fn(async (_env: unknown, args: CapturedArgs) => {
@@ -20,8 +20,8 @@ vi.mock("../src/film-orchestrator", async (orig) => {
   };
 });
 
-vi.mock("../src/renders-db", async (orig) => {
-  const actual = await orig<typeof import("../src/renders-db")>();
+vi.mock("@skyphusion-labs/vivijure-core/renders-db", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/renders-db")>();
   return { ...actual, insertRender: vi.fn(async () => {}) };
 });
 
@@ -30,15 +30,15 @@ vi.mock("../src/film-render-bridge", async (orig) => {
   return { ...actual, filmRowFromJob: vi.fn(() => ({})) };
 });
 
-vi.mock("../src/bundle-storyboard", async (orig) => {
-  const actual = await orig<typeof import("../src/bundle-storyboard")>();
+vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
   return { ...actual, readBundleScenes: vi.fn(async () => h.bundleScenes) };
 });
 
 // #582: stub the cast resolve so a cast_loras arg yields voices without a D1 cast table. Wren's
 // shape: slot A -> a cast member whose voice is asteria.
-vi.mock("../src/cast-loras", async (orig) => {
-  const actual = await orig<typeof import("../src/cast-loras")>();
+vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/cast-loras")>();
   return {
     ...actual,
     resolveCastLoras: vi.fn(async (_env: unknown, castLoras: Record<string, unknown> | undefined) =>
@@ -50,9 +50,9 @@ vi.mock("../src/cast-loras", async (orig) => {
 });
 
 import worker from "../src/index";
-import { startFilmJob } from "../src/film-orchestrator";
-import { resolveCastLoras } from "../src/cast-loras";
-import { MODULE_API } from "../src/modules/types";
+import { startFilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;

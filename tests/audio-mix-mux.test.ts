@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { callAudioMix, shouldMultiTrackMix, type FilmJob } from "../src/film-orchestrator";
+import { callAudioMix, shouldMultiTrackMix, type FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
 
 // Issue #231: wire the audio-mix container (/mix: multi-track duck + loudnorm) into the mux phase.

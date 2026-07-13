@@ -11,9 +11,9 @@ import {
   resolveFetcher,
   servingForHook,
   validateConfig,
-} from "./modules/registry";
-import type { PlanEnhanceStoryboard, RegisteredModule, ScoreInput, ScoreOutput } from "./modules/types";
-import { hookOutputViolation } from "./modules/conformance";
+} from "@skyphusion-labs/vivijure-core/modules/registry";
+import type { PlanEnhanceStoryboard, RegisteredModule, ScoreInput, ScoreOutput } from "@skyphusion-labs/vivijure-core/modules/types";
+import { hookOutputViolation } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 interface FetcherLike {
   fetch(input: Request | string, init?: RequestInit): Promise<Response>;

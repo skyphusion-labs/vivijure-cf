@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bundleKeyFor } from "../src/bundle-assembler";
+import { bundleKeyFor } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { isSafeBundleKey } from "../src/shared";
 
 // #759: the bundle key was `bundles/<projectName>.tar.gz`, derived from the

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { resolveCastLoras } from "../src/cast-loras";
-import { filmPhaseToShardStatus } from "../src/film-orchestrator";
-import { scatterJobToPollView } from "../src/scatter-orchestrator";
-import { scatterShards } from "../src/scatter";
+import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
+import { filmPhaseToShardStatus } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { scatterJobToPollView } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { scatterShards } from "@skyphusion-labs/vivijure-core/scatter";
 
 describe("resolveCastLoras", () => {
   it("returns empty when castLoras is missing", async () => {

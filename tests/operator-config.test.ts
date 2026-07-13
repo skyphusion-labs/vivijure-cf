@@ -4,8 +4,8 @@ import {
   hasInstallConfig,
   installFieldKeys,
   clampInstallPatch,
-} from "../src/operator-config";
-import type { ConfigSchema } from "../src/modules/types";
+} from "@skyphusion-labs/vivijure-core/operator-config";
+import type { ConfigSchema } from "@skyphusion-labs/vivijure-core/modules/types";
 
 // A schema with one install-scope field and one render-scope field -- the exact mix the store must
 // separate (notify_email is install; quality_tier-style knobs are render).

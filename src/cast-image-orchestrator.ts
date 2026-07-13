@@ -10,11 +10,11 @@
 // cast.image is `pick_one`: one installed module answers (the module owns the model + prompt set).
 
 import type { Env } from "./env";
-import { discoverModules, invokeModule, pollModule, resolveFetcher, resolvePickOne, validateConfig } from "./modules/registry";
-import type { CastImageInput, CastImageOutput } from "./modules/types";
-import { hookOutputViolation } from "./modules/conformance";
+import { discoverModules, invokeModule, pollModule, resolveFetcher, resolvePickOne, validateConfig } from "@skyphusion-labs/vivijure-core/modules/registry";
+import type { CastImageInput, CastImageOutput } from "@skyphusion-labs/vivijure-core/modules/types";
+import { hookOutputViolation } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { presignR2Get } from "./r2-presign";
-import { getCastById, addRefs, type CastRefImage } from "./cast-db";
+import { getCastById, addRefs, type CastRefImage } from "@skyphusion-labs/vivijure-core/cast-db";
 
 /** A cast-refs generation job. The module keeps its OWN run state (an R2 doc) + poll token; this job
  *  doc only tracks the orchestrator's view: which module answers, the module's poll token, and the

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { resolveCastLoras, untrainedCastMessage, type SkippedCast } from "../src/cast-loras";
+import { resolveCastLoras, untrainedCastMessage, type SkippedCast } from "@skyphusion-labs/vivijure-core/cast-loras";
 import type { Env } from "../src/env";
 
 // resolveCastLoras is the gate the render path FAILS HARD on: any bound character whose cast LoRA is

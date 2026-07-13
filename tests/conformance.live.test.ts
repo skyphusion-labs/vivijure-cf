@@ -2,7 +2,7 @@
 // lets anyone point the harness at a deployed module worker:
 //   MODULE_URL=https://my-module.example.workers.dev npx vitest run tests/conformance.live.test.ts
 import { describe, it, expect } from "vitest";
-import { checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 // Node global, not in the project tsconfig types (workers-types only); declare it locally.
 declare const process: { env: Record<string, string | undefined> };

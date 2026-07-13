@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { invokeModule, pollModule, cancelModule } from "../src/modules/registry";
+import { invokeModule, pollModule, cancelModule } from "@skyphusion-labs/vivijure-core/modules/registry";
 
 const ctx = { project: "p", job_id: "j" } as never;
 

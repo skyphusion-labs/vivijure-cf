@@ -15,10 +15,10 @@
 // versa) turns this red. This is the control-plane analogue of the backend's config->engine mapping
 // meta-test (#20).
 import { describe, it, expect } from "vitest";
-import { QUALITY_TIERS } from "../src/render-module-config";
+import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { MANIFEST as KEYFRAME_MANIFEST } from "../modules/keyframe/src/index";
 import { MANIFEST as OWN_GPU_MANIFEST } from "../modules/own-gpu/src/index";
-import type { ConfigField, ModuleManifest } from "../src/modules/types";
+import type { ConfigField, ModuleManifest } from "@skyphusion-labs/vivijure-core/modules/types";
 
 const CORE_TIERS = QUALITY_TIERS.map((t) => t.value).slice().sort();
 

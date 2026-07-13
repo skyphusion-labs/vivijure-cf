@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { callVideoFinishInspect, contentValidateDoneClips, type ContentVerdict } from "../src/clip-content-validate";
-import type { ClipJob, ClipShot } from "../src/render-orchestrator";
+import { callVideoFinishInspect, contentValidateDoneClips, type ContentVerdict } from "@skyphusion-labs/vivijure-core/clip-content-validate";
+import type { ClipJob, ClipShot } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { Env } from "../src/env";
 
 function jr(body: unknown, status = 200): Response {

@@ -2,7 +2,7 @@
 // them in R2 for the film orchestrator (startFilmFromKeyframes presigns by R2 key).
 
 import type { Env } from "./env";
-import { extractTarBytes, listTarNames } from "./bundle-storyboard";
+import { extractTarBytes, listTarNames } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 
 const KF_PATH = /^clips\/(.+)_keyframe\.png$/;
 

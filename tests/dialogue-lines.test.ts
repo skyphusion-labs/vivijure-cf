@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDialogueLines } from "../src/dialogue-lines";
+import { buildDialogueLines } from "@skyphusion-labs/vivijure-core/dialogue-lines";
 
 const voices = { A: "orion", B: "hera" };
 

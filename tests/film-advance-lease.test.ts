@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { claimFilmAdvance, releaseFilmAdvance, FILM_ADVANCE_LEASE_TTL_SECONDS } from "../src/renders-db";
-import { advanceFilmJob, filmJobDocKey, type FilmJob, type FinishShot } from "../src/film-orchestrator";
+import { claimFilmAdvance, releaseFilmAdvance, FILM_ADVANCE_LEASE_TTL_SECONDS } from "@skyphusion-labs/vivijure-core/renders-db";
+import { advanceFilmJob, filmJobDocKey, type FilmJob, type FinishShot } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
 
 // S4: the film-advance lease. advanceFilmJob is driven concurrently by the 1-minute cron sweep

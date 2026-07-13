@@ -11,7 +11,7 @@ import {
 } from "../modules/subtitle/src/subtitle";
 import type { FilmFinishInput, CaptionCue } from "../modules/subtitle/src/contract";
 import worker from "../modules/subtitle/src/index";
-import { checkHookOutput } from "../src/modules/conformance";
+import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 const cues: CaptionCue[] = [
   { start: 0, end: 3, text: "Hello there" },

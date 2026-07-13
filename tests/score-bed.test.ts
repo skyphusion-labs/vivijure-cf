@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { audioKeyFromApplied, musicScoreModules, narrationScoreModules, scoreModuleLabel } from "../src/score-bed";
-import type { RegisteredModule } from "../src/modules/types";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 
 describe("score-bed helpers", () => {
   it("audioKeyFromApplied reads audio: tags and infers mime", () => {

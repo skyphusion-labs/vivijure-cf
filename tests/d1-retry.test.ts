@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { isTransientD1Error, withD1Retry } from "../src/d1-retry";
-import { updateRenderFromView } from "../src/renders-db";
+import { isTransientD1Error, withD1Retry } from "@skyphusion-labs/vivijure-core/d1-retry";
+import { updateRenderFromView } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
-import type { RunpodJobView } from "../src/runpod-submit";
+import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-submit";
 
 const noSleep = () => Promise.resolve();
 

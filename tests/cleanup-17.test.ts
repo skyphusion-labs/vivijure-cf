@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildRenderLogText } from "../src/render-log";
-import { readManifest } from "../src/modules/registry";
-import type { RunpodJobView } from "../src/runpod-submit";
+import { buildRenderLogText } from "@skyphusion-labs/vivijure-core/render-log";
+import { readManifest } from "@skyphusion-labs/vivijure-core/modules/registry";
+import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-submit";
 
 // Issue #17 cleanup batch: render-log truncation + the readManifest discovery timeout, exercised
 // through the exported pure surface. (The render-email esc/encode/clamp locks moved out with the

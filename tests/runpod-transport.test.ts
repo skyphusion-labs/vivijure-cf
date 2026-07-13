@@ -4,7 +4,7 @@ import {
   submitRenderJob,
   pollRenderJob,
   type RunpodTransportOpts,
-} from "../src/runpod-submit";
+} from "@skyphusion-labs/vivijure-core/runpod-submit";
 import type { Env } from "../src/env";
 
 // Issue #13: the shared RunPod transport (retry + timeout). These tests drive a

@@ -21,7 +21,7 @@ import type { Env } from "../env";
 import type { ModelEntry } from "../models";
 import type { ProviderStreamEvent } from "../parsers/types";
 import { parseDataUrl } from "../utils";
-import { secretValue } from "../secret-store";
+import { secretValue } from "@skyphusion-labs/vivijure-core/secret-store";
 import { extractSSEDataPayloads } from "../parsers/sse-framer";
 import { interpretAnthropicSSEFrame } from "../parsers/anthropic-sse";
 

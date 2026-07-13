@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { discoverModules, _resetModuleDiscoveryCache } from "../src/modules/registry";
-import { MODULE_API } from "../src/modules/types";
+import { discoverModules, _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 
 // Issue #17 follow-up: /api/modules caches discovery for 60s per isolate (opt-in via cacheTtlMs) so a
 // refresh storm stops re-fetching every module manifest each request. nowMs is injected for determinism.

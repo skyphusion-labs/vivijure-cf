@@ -12,7 +12,7 @@
 
 import type { Env } from "./env";
 import { isPresignSafeKey } from "./shared";
-import { secretValue } from "./secret-store";
+import { secretValue } from "@skyphusion-labs/vivijure-core/secret-store";
 
 const ENC = new TextEncoder();
 

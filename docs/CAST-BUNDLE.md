@@ -164,7 +164,7 @@ A bundle is a contract, so bad input fails loud BEFORE any D1/R2 write -- there 
 
 | Concern | File |
 | --- | --- |
-| Tar container (writer/reader) | `src/tar.ts` |
+| Tar container (writer/reader) | `@skyphusion-labs/vivijure-core/tar` |
 | Manifest types, validate, export, import | `src/cast-bundle.ts` |
 | Route wiring + handlers | `src/index.ts` (`hExportCast`, `hImportCast`) |
 | Tests | `tests/tar.test.ts`, `tests/cast-bundle.test.ts` |

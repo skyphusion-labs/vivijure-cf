@@ -1,37 +1,37 @@
 // Vivijure studio core: module host, render API router, planner/cast UI server.
 
-import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, motionBackendPreflightError, motionConfigPreflightError, invokeModule, pollModule, resolveFetcher } from "./modules/registry";
+import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, motionBackendPreflightError, motionConfigPreflightError, invokeModule, pollModule, resolveFetcher } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
-import { runLiveConformance, allPass, failures } from "./modules/conformance";
+import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
-import { resolveRenderPipeline, type RenderPipelineSelection } from "./modules/render-pipeline";
-import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "./render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, summarizeFilm, type FilmScene, type FilmSummary } from "./film-orchestrator";
+import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
+import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, summarizeFilm, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds,
 } from "./film-render-bridge";
-import { resolveClipDurationFloor } from "./film-model";
+import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
-import { resolveCastLoras, untrainedCastMessage } from "./cast-loras";
-import { normalizeHybridBackends } from "./storyboard-validate";
+import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
+import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
-import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "./modules/types";
+import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
-import { isPublicId } from "./public-id";
+import { isPublicId } from "@skyphusion-labs/vivijure-core/public-id";
 
 import {
   listProjects, getProjectById, createProject, updateProjectMeta, setLastStoryboard, deleteProject,
   getProjectIdByPublicId, toPublicProject,
-} from "./storyboard-projects-db";
+} from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import {
   listCast, getCastById, createCast, updateCast, deleteCast,
   clearPortrait, getCastIdByPublicId, toPublicCast,
-} from "./cast-db";
-import { handleCastLoraStatus, handleCastTrainLora } from "./cast-lora-train";
-import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "./voices";
-import { handleAdoptRender } from "./render-adopt";
+} from "@skyphusion-labs/vivijure-core/cast-db";
+import { handleCastLoraStatus, handleCastTrainLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
+import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
+import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
 import {
   handleCastPortraitUpload,
   handleCastRefAdd,
@@ -43,7 +43,7 @@ import {
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
-import type { MotionBackendInput, MotionBackendOutput } from "./modules/types";
+import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { aiRun } from "./ai-binding";
 import {
   submitDemoRender, pollDemoRender, listRenderables, DEFAULT_DEMO_RENDER_CAPS,
@@ -61,41 +61,41 @@ import {
   normalizeLockedShots, normalizeFolderPath, normalizeTags,
   setCloudAnimateProgress, setHybridProgress, getRenderIdByPublicId, toPublicRenderRow,
   type NewRenderRow,
-} from "./renders-db";
+} from "@skyphusion-labs/vivijure-core/renders-db";
 import { stageBundleInjectedKeyframes } from "./bundle-keyframes";
-import { readBundleScenes } from "./bundle-storyboard";
-import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "./dialogue-lines";
+import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
+import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
 import { readKeyframeDone } from "./render-progress";
-import type { DialogueLine } from "./modules/types";
+import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import {
   startScatterRender,
   advanceScatterJob,
   cancelScatterJob,
   scatterJobToPollView,
   isScatterJobId,
-} from "./scatter-orchestrator";
-import { sweepUnresolvedJobs } from "./render-sweep";
-import { renderConfigProjection, parseModuleRenderOverrides } from "./render-module-config";
+} from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
+import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
   coerceQualityTier, deriveProjectFromBundleKey,
   type AudioAnalyzeRequest,
-} from "./runpod-submit";
-import { validateStoryboard } from "./storyboard-validate";
-import { checkStoryboardShape, checkCastBindingsReady, checkDurationGrid, resolveCastBindings, summarize, type PreflightIssue } from "./preflight";
+} from "@skyphusion-labs/vivijure-core/runpod-submit";
+import { validateStoryboard } from "@skyphusion-labs/vivijure-core/storyboard-validate";
+import { checkStoryboardShape, checkCastBindingsReady, checkDurationGrid, resolveCastBindings, summarize, type PreflightIssue } from "@skyphusion-labs/vivijure-core/preflight";
 import {
   planStoryboard, refineStoryboard, chatComplete,
   type PlanStoryboardArgs, type RefineStoryboardArgs, type ChatCompleteArgs,
 } from "./planner";
 import { PLANNING_MODELS } from "./planner-catalog";
-import { serializeStoryboardYaml } from "./planner-yaml";
+import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-yaml";
 import { emitMarkers, type MarkersFormat } from "./markers";
-import { assembleBundle, type AssembleBundleArgs } from "./bundle-assembler";
+import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { getUserPrefs, setUserPrefs } from "./user-prefs";
-import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "./operator-config";
-import { analyzeAudioBeats } from "./beat-analyze";
+import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "@skyphusion-labs/vivijure-core/operator-config";
+import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
 import { startScoreBedGenerate, pollScoreBedGenerate } from "./score-bed";
-import { muxAudioOntoRender } from "./render-mux";
+import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
 
 // Container DOs -- exported so the runtime registers them (bound in wrangler.toml).
 

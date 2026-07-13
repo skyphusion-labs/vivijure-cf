@@ -3,7 +3,7 @@
 // staging must check R2_RENDERS first and use it as-is; only the legacy chat-side out/ key (in env.R2)
 // gets cross-copied. Before the fix, a score-bed key threw "audio source not found" -> film kick 500.
 import { describe, it, expect } from "vitest";
-import { stageAudioKeyForRenders, resolveStagedAudioKey } from "../src/audio-stage";
+import { stageAudioKeyForRenders, resolveStagedAudioKey } from "@skyphusion-labs/vivijure-core/audio-stage";
 import type { Env } from "../src/env";
 
 function fakeEnv(opts: { rendersHas?: string[]; r2Has?: Record<string, string> }) {

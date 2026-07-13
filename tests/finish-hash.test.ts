@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { finishStepInputHash, canonicalJson } from "../src/finish-hash";
+import { finishStepInputHash, canonicalJson } from "@skyphusion-labs/vivijure-core/finish-hash";
 
 // The golden vectors pinned in docs/CONTRACT.md 3.3.1. finishStepInputHash is the SINGLE function used
 // by BOTH the invoke-time stamp and the future adoption gate, so this one test protects both call sites

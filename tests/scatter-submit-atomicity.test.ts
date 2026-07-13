@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { finalizeScatterSubmit, ensureScatterRenderRow } from "../src/scatter-orchestrator";
-import type { ScatterJob } from "../src/scatter-orchestrator-types";
+import { finalizeScatterSubmit, ensureScatterRenderRow } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import type { ScatterJob } from "@skyphusion-labs/vivijure-core/scatter-orchestrator-types";
 import type { Env } from "../src/env";
 
 // A minimal env recording the ORDER of store ops. prepare() tags each op by SQL verb

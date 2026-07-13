@@ -7,9 +7,9 @@
 // produced by THIS render config; a mismatched-backend clip is never adopted, the shot re-renders.
 
 import { describe, it, expect } from "vitest";
-import { reclaimClipsFromR2 } from "../src/render-orchestrator";
-import type { ClipJob } from "../src/render-orchestrator";
-import { clipProvenanceHash, provKey } from "../src/clip-provenance";
+import { reclaimClipsFromR2 } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import { clipProvenanceHash, provKey } from "@skyphusion-labs/vivijure-core/clip-provenance";
 import type { Env } from "../src/env";
 
 const NOW = 5_000_000;

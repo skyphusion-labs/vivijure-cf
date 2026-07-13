@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { plannerAiMockEnabled, mockPlannerRaw } from "../src/planner-ai-mock";
-import { extractOutput } from "../src/output-extract";
-import { stripJsonFences } from "../src/planner-prompt";
-import { validateStoryboard } from "../src/storyboard-validate";
+import { extractOutput } from "@skyphusion-labs/vivijure-core/output-extract";
+import { stripJsonFences } from "@skyphusion-labs/vivijure-core/planner-prompt";
+import { validateStoryboard } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 
 // The dev-only planner AI mock (#411). These assert the gate + that each canned branch drives the
 // REAL extract/parse/validate pipeline to the intended outcome (pass / validation-fail / bad-JSON),

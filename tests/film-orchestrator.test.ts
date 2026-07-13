@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "../src/film-orchestrator";
-import type { ConfigSchema } from "../src/modules/types";
+import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import type { ConfigSchema } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
 import { filmJobToPollView } from "../src/film-render-bridge";
-import { _resetModuleDiscoveryCache } from "../src/modules/registry";
-import { finishStepInputHash } from "../src/finish-hash";
+import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { finishStepInputHash } from "@skyphusion-labs/vivijure-core/finish-hash";
 
 const finishShot = (over: Partial<FinishShot> = {}): FinishShot => ({
   shot_id: "shot_01", clip_key: "clips/shot_01.mp4", chain: ["MODULE_FINISH_RIFE"], idx: 0,

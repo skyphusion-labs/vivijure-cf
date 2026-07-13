@@ -3,7 +3,7 @@ import {
   coerceConfig, encodePoll, decodePoll, passthroughOutput, softDegradeInFailedEnvelope, buildRunPodBody,
 } from "../modules/finish-lipsync/src/lipsync";
 import { MANIFEST } from "../modules/finish-lipsync/src/index";
-import { checkManifest, checkInvokeResponse, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkInvokeResponse, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { FinishInput } from "../modules/finish-lipsync/src/contract";
 
 const SAMPLE_INPUT: FinishInput = {
