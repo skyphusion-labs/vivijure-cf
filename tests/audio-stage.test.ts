@@ -31,7 +31,7 @@ function fakeEnv(opts: { rendersHas?: string[]; r2Has?: Record<string, string> }
 
 describe("stageAudioKeyForRenders bucket routing", () => {
   it("returns an audio/ key as-is (BYO upload already in R2_RENDERS, no copy)", async () => {
-    const { env, puts, r2Gets } = fakeEnv({});
+    const { env, puts, r2Gets } = fakeEnv({ rendersHas: ["audio/abc.mp3"] });
     const out = await stageAudioKeyForRenders(env, "audio/abc.mp3");
     expect(out).toBe("audio/abc.mp3");
     expect(puts).toEqual([]);

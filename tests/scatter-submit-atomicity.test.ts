@@ -26,6 +26,19 @@ function fakeEnv(opts: { rowExists?: boolean; failD1?: boolean } = {}): { env: E
             events.push(verb);
             return opts.rowExists ? { id: 7 } : null;
           },
+          async all() {
+            events.push(verb);
+            // #33 shard backfill: when the parent row exists, reconcile child shard rows.
+            if (opts.rowExists && String(sql).includes("parent_id")) {
+              return {
+                results: [
+                  { job_id: "film-a", status: "IN_QUEUE" },
+                  { job_id: "film-b", status: "IN_QUEUE" },
+                ],
+              };
+            }
+            return { results: [] };
+          },
         };
         return stmt;
       },
@@ -100,9 +113,9 @@ describe("ensureScatterRenderRow -- self-heal a missing UI-list row (#289)", () 
     try {
       const { env, events } = fakeEnv({ rowExists: true });
       await ensureScatterRenderRow(env, jobFixture());
-      expect(events).toEqual(["SELECT"]); // existence read only -- no INSERT/UPDATE
+      expect(events).toEqual(["SELECT", "SELECT"]); // parent id lookup + shard children read
       const lines = spy.mock.calls.map((c) => String(c[0]));
-      expect(lines.some((l) => l.includes("scatter.selfheal.row"))).toBe(false);
+      expect(lines.some((l) => l.includes('"ev":"scatter.selfheal.row"'))).toBe(false);
     } finally {
       spy.mockRestore();
     }

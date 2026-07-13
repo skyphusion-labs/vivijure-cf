@@ -75,7 +75,8 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
     expect(changed).toBe(false);
     expect(j.shots.every((s) => s.status === "done")).toBe(true);
     expect(j.shots[0].content_validated).toBe("ok");
-    expect(j.shots[1].content_validated).toBe("skip");
+    // #30: "skip" is not persisted so a later tick can re-inspect after a transient outage.
+    expect(j.shots[1].content_validated).toBeUndefined();
   });
 
   it("is idempotent + emits one clip.content_validate event per shot", async () => {
