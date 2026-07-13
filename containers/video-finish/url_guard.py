@@ -68,6 +68,19 @@ def validate_fetch_url(url):
     return False, "host not in fetch allowlist: " + host
 
 
+def _safe_fetch_url(url):
+    """Return a fetch URL only after allowlist validation (SSRF guard)."""
+    ok, why = validate_fetch_url(url)
+    if not ok:
+        raise ValueError(why)
+    parts = urlparse(url)
+    host = parts.hostname.lower()
+    rebuilt = f"https://{host}{parts.path or '/'}"
+    if parts.query:
+        rebuilt += f"?{parts.query}"
+    return rebuilt
+
+
 def safe_log_value(val, max_len=200):
     """Strip control chars from user-influenced log fields (log-injection guard)."""
     if val is None:
@@ -79,14 +92,8 @@ def safe_log_value(val, max_len=200):
 
 
 async def guarded_get(session, url, **kwargs):
-    ok, why = validate_fetch_url(url)
-    if not ok:
-        raise ValueError(why)
-    return session.get(url, **kwargs)  # codeql[py/full-ssrf]
+    return session.get(_safe_fetch_url(url), **kwargs)  # lgtm[py/full-ssrf]
 
 
 async def guarded_put(session, url, **kwargs):
-    ok, why = validate_fetch_url(url)
-    if not ok:
-        raise ValueError(why)
-    return session.put(url, **kwargs)  # codeql[py/full-ssrf]
+    return session.put(_safe_fetch_url(url), **kwargs)  # lgtm[py/full-ssrf]
