@@ -23,6 +23,14 @@ for new features). Newest first.
   exists when the `^0.9.5` code references it. Backward compatible: NULL = unleased / a legacy row; a fresh
   UUID never equals NULL.
 
+- **Core-only deploy switch (`CORE_ONLY_DEPLOY`).** vivijure-cf is the stripped host on the PUBLISHED
+  core: it owns the core worker + registry wiring, and the module workers are deployed and managed
+  independently (they stay live and are bound by service name). The tag-deploy module step now honours a
+  `CORE_ONLY_DEPLOY=1` repo variable: when set it deploys the core worker only (+ applies D1 migrations),
+  skipping the module fleet with an explicit log (and a loud drift warning if module configs are present
+  anyway). Unset preserves the full monolith-style co-deploy. This lets a core-only change (like this #29
+  bump) ship without redeploying 25 live module workers.
+
 **Retire the `text-overlay` finish module (dead code; superseded by `subtitle` + `film-titles`).** PATCH.
 
 - **`text-overlay` retired, not fixed.** The module read its content from `req.config.overlays` (an
