@@ -1,0 +1,57 @@
+name: CodeQL
+
+# Advanced CodeQL: TypeScript control plane only. CPU containers (containers/) fetch
+# Worker-presigned R2 URLs validated in url_guard.py; Python py/full-ssrf there is a
+# false positive on intentional presigned fetch. Default setup is disabled; this
+# workflow is the sole CodeQL path (see .github/codeql/codeql-config.yml).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "20 4 * * 0"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-vivijure-cf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout vivijure-core
+        uses: actions/checkout@v7
+        with:
+          repository: skyphusion-labs/vivijure-core
+          path: vivijure-core
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          cd vivijure-core && npm ci && npm run build
+          npm install file:./vivijure-core --no-audit --no-fund
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - uses: github/codeql-action/analyze@v4
