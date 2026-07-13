@@ -11,8 +11,8 @@ import { describe, it, expect, vi } from "vitest";
 
 // ---- handler-wiring stubs (same pattern as motion-backend-preflight.test.ts) ---------------------
 const h = vi.hoisted(() => ({ started: 0, scatterStarted: 0 }));
-vi.mock("../src/film-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("../src/film-orchestrator")>();
+vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
     ...actual,
     startFilmJob: vi.fn(async (_env: unknown, args: { scenes?: unknown }) => {
@@ -21,16 +21,16 @@ vi.mock("../src/film-orchestrator", async (orig) => {
     }),
   };
 });
-vi.mock("../src/renders-db", async (orig) => {
-  const actual = await orig<typeof import("../src/renders-db")>();
+vi.mock("@skyphusion-labs/vivijure-core/renders-db", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/renders-db")>();
   return { ...actual, insertRender: vi.fn(async () => {}) };
 });
-vi.mock("../src/bundle-storyboard", async (orig) => {
-  const actual = await orig<typeof import("../src/bundle-storyboard")>();
+vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
   return { ...actual, readBundleScenes: vi.fn(async () => []) };
 });
-vi.mock("../src/scatter-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("../src/scatter-orchestrator")>();
+vi.mock("@skyphusion-labs/vivijure-core/scatter-orchestrator", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/scatter-orchestrator")>();
   return {
     ...actual,
     startScatterRender: vi.fn(async () => {
@@ -41,8 +41,8 @@ vi.mock("../src/scatter-orchestrator", async (orig) => {
 });
 
 import worker from "../src/index";
-import { configPreflightViolations, motionConfigPreflightError } from "../src/modules/registry";
-import { MODULE_API, type ConfigSchema, type RegisteredModule } from "../src/modules/types";
+import { configPreflightViolations, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { MODULE_API, type ConfigSchema, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
 // ---- pure helpers --------------------------------------------------------------------------------

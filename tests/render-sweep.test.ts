@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sweepUnresolvedJobs } from "../src/render-sweep";
-import { filmJobDocKey } from "../src/film-orchestrator";
+import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
+import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
 
 // The cron sweep must self-heal a film job that rendered all its clips but stalled

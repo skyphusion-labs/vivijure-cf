@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveLoraDestKey, extractTrainedLoraKey } from "../src/lora-bundle";
+import { deriveLoraDestKey, extractTrainedLoraKey } from "@skyphusion-labs/vivijure-core/lora-bundle";
 
 describe("deriveLoraDestKey", () => {
   it("builds the per-cast timestamped key", () => {

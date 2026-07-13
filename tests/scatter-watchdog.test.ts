@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 
-import { shardStatusForOutcome } from "../src/scatter-orchestrator";
-import { gatherDecision, type ShardStatus } from "../src/scatter";
-import type { FilmJob } from "../src/film-orchestrator";
+import { shardStatusForOutcome } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { gatherDecision, type ShardStatus } from "@skyphusion-labs/vivijure-core/scatter";
+import type { FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 
 // The watchdog refinement (#5, defense-in-depth on top of #229's withD1Retry): a shard whose advance
 // merely ERRORS this tick is UNDETERMINED, not dead -- it must not be declared "owning shard dead".

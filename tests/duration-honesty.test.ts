@@ -13,8 +13,8 @@ import {
   findClipDurationShortfalls,
   captionDurations,
   DEFAULT_CLIP_DURATION_FLOOR,
-} from "../src/film-model";
-import { buildCaptionCues } from "../src/captions";
+} from "@skyphusion-labs/vivijure-core/film-model";
+import { buildCaptionCues } from "@skyphusion-labs/vivijure-core/captions";
 
 describe("resolveClipDurationFloor (#697 knob)", () => {
   it("defaults to 0.5 when unset / empty / non-numeric", () => {

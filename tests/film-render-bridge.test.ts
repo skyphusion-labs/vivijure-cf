@@ -9,10 +9,10 @@ import {
   filmRowFromJob,
   stallSignal,
 } from "../src/film-render-bridge";
-import type { FilmJob } from "../src/film-orchestrator";
-import { KEYFRAME_STALL_SECONDS, orderFinalClips } from "../src/film-orchestrator";
-import { buildCaptionCues } from "../src/captions";
-import type { RegisteredModule } from "../src/modules/types";
+import type { FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { KEYFRAME_STALL_SECONDS, orderFinalClips } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { buildCaptionCues } from "@skyphusion-labs/vivijure-core/captions";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 
 describe("isFilmJobId", () => {
   it("recognizes film orchestrator job ids", () => {

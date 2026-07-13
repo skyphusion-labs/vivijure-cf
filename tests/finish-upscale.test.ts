@@ -3,7 +3,7 @@ import {
   coerceConfig, buildRunPodBody, upscaledKey, encodePoll, decodePoll, parseBackendOutput,
   passthroughOutput, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS,
 } from "../modules/finish-upscale/src/finish";
-import { checkManifest, checkInvokeResponse, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkInvokeResponse, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { FinishInput } from "../modules/finish-upscale/src/contract";
 
 const SAMPLE_INPUT: FinishInput = {

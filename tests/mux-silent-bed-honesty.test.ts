@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { advanceFilmJob, filmJobDocKey, type FilmJob } from "../src/film-orchestrator";
+import { advanceFilmJob, filmJobDocKey, type FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
 

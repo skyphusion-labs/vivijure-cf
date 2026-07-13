@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildCaptionCues, type CaptionScene, type CaptionLine } from "../src/captions";
+import { buildCaptionCues, type CaptionScene, type CaptionLine } from "@skyphusion-labs/vivijure-core/captions";
 
 const scenes = (xs: [string, number][]): CaptionScene[] => xs.map(([shot_id, seconds]) => ({ shot_id, seconds }));
 const lines = (xs: [string, string][]): CaptionLine[] => xs.map(([shot_id, text]) => ({ shot_id, text }));

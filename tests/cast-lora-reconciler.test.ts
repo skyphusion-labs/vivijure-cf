@@ -19,8 +19,8 @@ import {
   sqliteUtcToMs,
   LORA_TRAIN_404_GRACE_SECONDS,
   LORA_TRAIN_MAX_AGE_SECONDS,
-} from "../src/cast-lora-train";
-import type { CastMember } from "../src/cast-db";
+} from "@skyphusion-labs/vivijure-core/cast-lora-train";
+import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
 

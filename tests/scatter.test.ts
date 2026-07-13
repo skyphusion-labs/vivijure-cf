@@ -6,7 +6,7 @@ import {
   splitShots,
   type ScatterArgs,
   type ShardStatus,
-} from "../src/scatter";
+} from "@skyphusion-labs/vivijure-core/scatter";
 
 // ----------------------------------------------------------------- splitShots
 

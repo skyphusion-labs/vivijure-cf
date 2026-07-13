@@ -12,8 +12,8 @@ import { describe, it, expect, vi } from "vitest";
 // never reach these: the 400 fires at the parse point.
 const h = vi.hoisted(() => ({ started: 0 }));
 
-vi.mock("../src/film-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("../src/film-orchestrator")>();
+vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
     ...actual,
     startFilmJob: vi.fn(async (_env: unknown, args: { scenes?: unknown }) => {
@@ -22,22 +22,22 @@ vi.mock("../src/film-orchestrator", async (orig) => {
     }),
   };
 });
-vi.mock("../src/renders-db", async (orig) => {
-  const actual = await orig<typeof import("../src/renders-db")>();
+vi.mock("@skyphusion-labs/vivijure-core/renders-db", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/renders-db")>();
   return { ...actual, insertRender: vi.fn(async () => {}) };
 });
 vi.mock("../src/film-render-bridge", async (orig) => {
   const actual = await orig<typeof import("../src/film-render-bridge")>();
   return { ...actual, filmRowFromJob: vi.fn(() => ({})) };
 });
-vi.mock("../src/bundle-storyboard", async (orig) => {
-  const actual = await orig<typeof import("../src/bundle-storyboard")>();
+vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
   return { ...actual, readBundleScenes: vi.fn(async () => []) };
 });
 
 import worker from "../src/index";
 import { isSafeBundleKey, BUNDLE_KEY_PREFIX } from "../src/shared";
-import { MODULE_API } from "../src/modules/types";
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;

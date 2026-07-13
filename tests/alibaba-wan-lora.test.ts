@@ -14,7 +14,7 @@ import {
   ALLOWED_DURATIONS,
 } from "../modules/alibaba-wan-lora/src/wan-lora";
 import { MANIFEST } from "../modules/alibaba-wan-lora/src/index";
-import { checkManifest, checkHookOutput, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 describe("alibaba-wan-lora pure logic", () => {
   it("clampDuration snaps to the endpoint allowed set {5,8} (<=6 -> 5, else 8); never an arbitrary value (#279)", () => {

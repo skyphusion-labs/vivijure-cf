@@ -4,7 +4,7 @@ import {
   buildFinalizePayload,
   normalizeRenderOverrides,
   deriveProjectFromBundleKey,
-} from "../src/runpod-submit";
+} from "@skyphusion-labs/vivijure-core/runpod-submit";
 
 // Issue #9 (lead suite): the snake_case WIRE CONTRACT the clean-room vivijure-backend reads off the
 // job input. This is exactly the recurring backend-mismatch bug class (a control-plane field the pod

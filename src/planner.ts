@@ -20,11 +20,11 @@ import { callGemini } from "./providers/google";
 import { callXai } from "./providers/xai";
 import { aiRun, aiLogId } from "./ai-binding";
 import { plannerAiMockEnabled, mockPlannerRaw } from "./planner-ai-mock";
-import { extractOutput, detectProviderFailure } from "./output-extract";
+import { extractOutput, detectProviderFailure } from "@skyphusion-labs/vivijure-core/output-extract";
 import {
   validateStoryboard,
   type StoryboardValidated,
-} from "./storyboard-validate";
+} from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import {
   type PlanningProvider,
   findPlanningModel,
@@ -37,7 +37,7 @@ import {
   buildRefinementSystemPrompt,
   buildRefinementUserMessage,
   stripJsonFences,
-} from "./planner-prompt";
+} from "@skyphusion-labs/vivijure-core/planner-prompt";
 
 export type { PlannerCharacter, PlanningProvider };
 

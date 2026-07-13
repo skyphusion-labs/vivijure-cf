@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { addRef, addRefs, removeRef, listCast } from "../src/cast-db";
-import { listProjects } from "../src/storyboard-projects-db";
-import { listUserTags } from "../src/renders-db";
+import { addRef, addRefs, removeRef, listCast } from "@skyphusion-labs/vivijure-core/cast-db";
+import { listProjects } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
+import { listUserTags } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
 
 // Issue #12: addRef/removeRef/addSource/removeSource were read-modify-write on a JSON-array column,

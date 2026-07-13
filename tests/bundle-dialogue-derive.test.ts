@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { serializeStoryboardYaml, parseStoryboardScenes } from "../src/planner-yaml";
-import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "../src/dialogue-lines";
-import type { StoryboardValidated, StoryboardScene } from "../src/storyboard-validate";
+import { serializeStoryboardYaml, parseStoryboardScenes } from "@skyphusion-labs/vivijure-core/planner-yaml";
+import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
+import type { StoryboardValidated, StoryboardScene } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 
 // Issue #313: a bundle-only render must be able to derive dialogue_lines from the dialogue the bundle
 // storyboard.yaml carries (round-tripped by #307). Two pieces: parseStoryboardScenes reads the dialogue

@@ -21,7 +21,7 @@ const store = vi.hoisted(() => {
   };
 });
 
-vi.mock("../src/cast-db", () => {
+vi.mock("@skyphusion-labs/vivijure-core/cast-db", () => {
   const clone = (c: any) => JSON.parse(JSON.stringify(c));
   return {
     async getCastById(_e: any, id: number) {
@@ -94,7 +94,7 @@ import {
   CAST_BUNDLE_FORMAT,
   CAST_BUNDLE_SCHEMA_VERSION,
 } from "../src/cast-bundle";
-import { buildTar } from "../src/tar";
+import { emitTar } from "@skyphusion-labs/vivijure-core/tar";
 
 const enc = new TextEncoder();
 
@@ -278,7 +278,7 @@ describe("cast bundle import -> malformed bundles fail loud", () => {
   });
 
   it("rejects a tar with no manifest.json", async () => {
-    const tar = buildTar([{ name: "assets/portrait.png", data: PORTRAIT }]);
+    const tar = emitTar([{ name: "assets/portrait.png", content: PORTRAIT }]);
     const res = await importCastBundle(makeEnv(), tar);
     expect(res.status).toBe(400);
     expect(((await res.json()) as any).error).toMatch(/manifest/);
@@ -291,7 +291,7 @@ describe("cast bundle import -> malformed bundles fail loud", () => {
       cast: { name: "Ghost", bible: null, voice_id: null, lora_status: "idle", lora_trained_at: null },
       assets: { portrait: { path: "assets/portrait.png", mime: "image/png" }, refs: [], sources: [], lora: null },
     };
-    const tar = buildTar([{ name: "manifest.json", data: enc.encode(JSON.stringify(manifest)) }]);
+    const tar = emitTar([{ name: "manifest.json", content: enc.encode(JSON.stringify(manifest)) }]);
     const res = await importCastBundle(makeEnv(), tar);
     expect(res.status).toBe(400);
     expect(((await res.json()) as any).error).toMatch(/no such entry/);

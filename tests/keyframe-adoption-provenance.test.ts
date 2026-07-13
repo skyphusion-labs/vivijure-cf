@@ -4,9 +4,9 @@
 // (the R2-presence reclaim source) the same way the clip sidecar gates reclaimClipsFromR2.
 
 import { describe, it, expect } from "vitest";
-import { listProjectKeyframes } from "../src/film-orchestrator";
-import type { FilmScene } from "../src/film-model";
-import { keyframeProvenanceHash, provKey } from "../src/clip-provenance";
+import { listProjectKeyframes } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import type { FilmScene } from "@skyphusion-labs/vivijure-core/film-model";
+import { keyframeProvenanceHash, provKey } from "@skyphusion-labs/vivijure-core/clip-provenance";
 import type { Env } from "../src/env";
 
 const NOW = 5_000_000;

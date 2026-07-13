@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { finishChainForShot } from "../src/film-orchestrator";
-import { finishStepInputHash } from "../src/finish-hash";
-import { MODULE_API, type RegisteredModule } from "../src/modules/types";
+import { finishChainForShot } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { finishStepInputHash } from "@skyphusion-labs/vivijure-core/finish-hash";
+import { MODULE_API, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 
 // #584: for a DIALOGUE shot the finish chain must run the audio-consuming module (lip-sync) FIRST, on
 // the native-fps clip, before interpolation; a NON-dialogue shot keeps the plain ui.order. The reorder

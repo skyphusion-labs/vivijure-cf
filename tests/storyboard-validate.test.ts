@@ -5,7 +5,7 @@ import {
   normalizeProjectName,
   SCENE_MAX_SECONDS,
   STORYBOARD_MAX_SECONDS,
-} from "../src/storyboard-validate";
+} from "@skyphusion-labs/vivijure-core/storyboard-validate";
 
 const sb = (over: Record<string, unknown> = {}) => ({
   title: "t",

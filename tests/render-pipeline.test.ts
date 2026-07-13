@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveRenderPipeline } from "../src/modules/render-pipeline";
-import type { RegisteredModule } from "../src/modules/types";
+import { resolveRenderPipeline } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 
 const mod = (over: Partial<RegisteredModule>): RegisteredModule => ({
   name: "m",

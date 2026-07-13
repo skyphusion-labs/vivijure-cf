@@ -31,8 +31,8 @@ vi.mock("@skyphusion-labs/vivijure-core/renders-db", async (orig) => {
 });
 
 import worker from "../src/index";
-import { startScatterRender } from "../src/scatter-orchestrator";
-import { MODULE_API } from "../src/modules/types";
+import { startScatterRender } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
 

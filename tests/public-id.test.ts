@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import worker from "../src/index";
-import { isPublicId, newPublicId } from "../src/public-id";
-import { getCastIdByPublicId } from "../src/cast-db";
-import { getProjectIdByPublicId } from "../src/storyboard-projects-db";
-import { getRenderIdByPublicId } from "../src/renders-db";
+import { isPublicId, newPublicId } from "@skyphusion-labs/vivijure-core/public-id";
+import { getCastIdByPublicId } from "@skyphusion-labs/vivijure-core/cast-db";
+import { getProjectIdByPublicId } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
+import { getRenderIdByPublicId } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
 
 // S9 (F13): the externally-addressable resources (cast / projects / renders) expose an opaque

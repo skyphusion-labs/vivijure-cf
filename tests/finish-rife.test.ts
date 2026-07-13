@@ -3,7 +3,7 @@ import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
   runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS,
 } from "../modules/finish-rife/src/finish";
-import { checkManifest, checkInvokeResponse, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkInvokeResponse, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { FinishInput } from "../modules/finish-rife/src/contract";
 
 const SAMPLE_INPUT: FinishInput = {

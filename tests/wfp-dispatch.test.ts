@@ -17,15 +17,15 @@ import {
   modulesResponse,
   dispatchPickOne,
   _resetModuleDiscoveryCache,
-} from "../src/modules/registry";
-import { runLiveConformance, allPass, failures } from "../src/modules/conformance";
+} from "@skyphusion-labs/vivijure-core/modules/registry";
+import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import {
   installModuleRow,
   uninstallModuleRow,
   setModuleEnabled,
   listInstalledModules,
 } from "../src/installed-modules";
-import { MODULE_API, type ModuleManifest, type RegisteredModule } from "../src/modules/types";
+import { MODULE_API, type ModuleManifest, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
 // --------------------------------------------------------------------------- fakes

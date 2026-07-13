@@ -21,7 +21,7 @@ remains unchanged; new host work lands here.
 | `public/` | Studio UI (Workers Assets) |
 | `migrations/` | D1 schema |
 
-Host `src/` files that duplicate core are thin re-exports (see `scripts/gen-core-reexports.sh`).
+Host `src/` imports orchestration directly from `@skyphusion-labs/vivijure-core/*` (same pattern as `vivijure-local`).
 
 ## Local dev
 

@@ -5,7 +5,7 @@ import {
   deleteRenderRow,
   classifyMissingJob,
   PHANTOM_GRACE_SECONDS,
-} from "../src/renders-db";
+} from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
 
 // Issue #9: render row access by id (studio-wide visibility) and the phantom-job

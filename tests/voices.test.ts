@@ -8,7 +8,7 @@ import {
   isValidVoiceId,
   coerceVoiceId,
   voiceLabel,
-} from "../src/voices";
+} from "@skyphusion-labs/vivijure-core/voices";
 
 describe("voice catalog (aura-1 speakers)", () => {
   it("pins the model id", () => {

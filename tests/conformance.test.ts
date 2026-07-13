@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkManifest, checkInvokeResponse, checkCancelResponse, checkHookOutput, hookOutputViolation, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkInvokeResponse, checkCancelResponse, checkHookOutput, hookOutputViolation, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 const goodManifest = {
   name: "demo",

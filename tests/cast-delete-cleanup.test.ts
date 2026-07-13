@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import worker from "../src/index";
 import { deleteCastArtifacts } from "../src/cast-media";
 import type { Env } from "../src/env";
-import type { CastMember } from "../src/cast-db";
+import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 
 // Issue #298: DELETE /api/cast/:id used to drop the D1 row but leak every R2 artifact (portrait,
 // the ref set / LoRA training images, the raw source uploads, and the trained lora_key) -- a cost

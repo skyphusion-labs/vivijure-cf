@@ -6,7 +6,7 @@ import {
 } from "../modules/speech-upscale/src/speech";
 import {
   checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures,
-} from "../src/modules/conformance";
+} from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { SpeechInput } from "../modules/speech-upscale/src/contract";
 
 const SAMPLE_INPUT: SpeechInput = {

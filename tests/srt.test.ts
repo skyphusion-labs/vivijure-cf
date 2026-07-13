@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { retimeSrt, parseTimestamp, formatTimestamp } from "../src/srt";
+import { retimeSrt, parseTimestamp, formatTimestamp } from "@skyphusion-labs/vivijure-core/srt";
 
 // #663: the subtitle module writes its .srt against the pre-card 0-based timeline; film-titles then
 // prepends a title card, so the core re-times the sidecar by the prepend to match the FINAL film.

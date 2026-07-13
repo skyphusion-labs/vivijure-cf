@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { serializeStoryboardYaml } from "../src/planner-yaml";
-import type { StoryboardValidated, StoryboardScene } from "../src/storyboard-validate";
+import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-yaml";
+import type { StoryboardValidated, StoryboardScene } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 
 // Issue #307: emitScene dropped per-shot dialogue, so serializeStoryboardYaml (and therefore the
 // bundle storyboard.yaml assembleBundle writes from it) serialized a SILENT board even when the

@@ -15,7 +15,7 @@
 // log ID for that specific call.
 
 import type { Env } from "./env";
-import { secretValue } from "./secret-store";
+import { secretValue } from "@skyphusion-labs/vivijure-core/secret-store";
 
 type RunOpts = { gateway: { id: string }; returnRawResponse?: boolean };
 type RunFn = (model: string, params: unknown, opts?: RunOpts) => Promise<unknown>;

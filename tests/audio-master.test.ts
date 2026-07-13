@@ -3,7 +3,7 @@ import {
   coerceConfig, defaultConfig, buildMasterBody, parseContainerResult, masterOutputFromResult,
   passthroughOutput,
 } from "../modules/audio-master/src/master";
-import { checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures } from "../src/modules/conformance";
+import { checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { MasterInput } from "../modules/audio-master/src/contract";
 
 const SAMPLE_INPUT: MasterInput = {

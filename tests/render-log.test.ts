@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { writeCloudAnimateLog, type CloudAnimateLogInput } from "../src/render-log";
+import { writeCloudAnimateLog, type CloudAnimateLogInput } from "@skyphusion-labs/vivijure-core/render-log";
 import type { Env } from "../src/env";
 
 // Issue #15: writeCloudAnimateLog must enrich a LOCAL copy (never mutate the caller's

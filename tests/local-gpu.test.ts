@@ -17,9 +17,9 @@ import {
   readDurationGrid,
 } from "../modules/local-gpu/src/i2v";
 import { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
-import { checkHookOutput } from "../src/modules/conformance";
-import { QUALITY_TIERS } from "../src/render-module-config";
-import type { ConfigField } from "../src/modules/types";
+import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
+import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
+import type { ConfigField } from "@skyphusion-labs/vivijure-core/modules/types";
 
 describe("local-gpu i2v pure logic", () => {
   it("framesFor derives a frame count from shot seconds * fps", () => {

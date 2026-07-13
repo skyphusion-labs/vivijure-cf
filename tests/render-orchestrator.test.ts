@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { summarizeJob, describeClipFailures, applyPoll, classifyTransientFailure, clipFileMatchesShot, finishedClipFileMatchesShot, listClipsByShotId, reclaimClipsFromR2, advanceClipJob, startClipJob, cancelInFlightClips } from "../src/render-orchestrator";
-import type { ClipJob, ClipShot } from "../src/render-orchestrator";
-import type { RegisteredModule } from "../src/modules/types";
+import { summarizeJob, describeClipFailures, applyPoll, classifyTransientFailure, clipFileMatchesShot, finishedClipFileMatchesShot, listClipsByShotId, reclaimClipsFromR2, advanceClipJob, startClipJob, cancelInFlightClips } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import type { ClipJob, ClipShot } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
 const job = (statuses: ClipShot["status"][]): ClipJob => ({
