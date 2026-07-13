@@ -9,8 +9,8 @@ import { describe, it, expect, vi } from "vitest";
 const h = vi.hoisted(() => ({ scatterStarted: 0 }));
 
 // Control cast resolution: {A:"untrained"} -> a skipped (not-ready) binding; anything else -> empty.
-vi.mock("../src/cast-loras", async (orig) => {
-  const actual = await orig<typeof import("../src/cast-loras")>();
+vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/cast-loras")>();
   return {
     ...actual, // keep the REAL untrainedCastMessage so the assertions see the real text
     resolveCastLoras: vi.fn(async (_env: unknown, castLoras: Record<string, unknown> | undefined) =>
@@ -21,12 +21,12 @@ vi.mock("../src/cast-loras", async (orig) => {
 });
 // Distinctive throw so the orchestrator test can prove it got PAST the cast guard (to readBundleScenes)
 // on the fix, vs stopping at the guard on main.
-vi.mock("../src/bundle-storyboard", async (orig) => {
-  const actual = await orig<typeof import("../src/bundle-storyboard")>();
+vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
   return { ...actual, readBundleScenes: vi.fn(async () => { throw new Error("BUNDLE_STUB_REACHED"); }) };
 });
-vi.mock("../src/renders-db", async (orig) => {
-  const actual = await orig<typeof import("../src/renders-db")>();
+vi.mock("@skyphusion-labs/vivijure-core/renders-db", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/renders-db")>();
   return { ...actual, insertRender: vi.fn(async () => {}) };
 });
 
@@ -34,19 +34,26 @@ import worker from "../src/index";
 import { startScatterRender } from "../src/scatter-orchestrator";
 import { MODULE_API } from "../src/modules/types";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 function fakeModule(manifest: unknown) {
   return { fetch: async () => new Response(JSON.stringify(manifest), { status: 200, headers: { "content-type": "application/json" } }) };
 }
 function env(): Env {
-  return {
+  return orch({
     ALLOW_UNAUTHENTICATED: "true",
     ASSETS: { fetch: async () => new Response("ASSET") },
     SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
+    R2_RENDERS: {
+      get: async () => null,
+      head: async () => null,
+      put: async () => {},
+    },
     MODULE_KEYFRAME: fakeModule({ name: "cloud-keyframe", version: "0.1.0", api: MODULE_API, hooks: ["keyframe"] }),
     MODULE_ALIBABA_WAN: fakeModule({ name: "alibaba-wan", version: "0.1.0", api: MODULE_API, hooks: ["motion.backend"], ui: { order: 10, locality: "cloud" } }),
-  } as unknown as Env;
+  } as unknown as Env);
 }
 function postScatter(body: unknown): Request {
   return new Request("https://studio.example/api/storyboard/render/scatter", {

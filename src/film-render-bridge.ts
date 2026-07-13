@@ -7,6 +7,7 @@ export {
   orderScenesByShotIds,
   filmJobToPollView,
   filmRenderRowSeedFromJob,
+  stallSignal,
   KEYFRAME_STALL_SECONDS,
 } from "@skyphusion-labs/vivijure-core/film-render-bridge";
 import type { FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";

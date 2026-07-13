@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { advanceFilmJob, filmJobDocKey, type FilmJob } from "../src/film-orchestrator";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // F2: audio-master (or any long/ballooned bed) can push the mux bed over the video-finish container audio
 // cap, so the container "finishes silent" -- it returns ok:true but writes a track-less MP4 and reports
@@ -24,7 +25,7 @@ function muxEnv(job: object, containerBody: unknown) {
     R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
     R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
   };
-  return { env: env as unknown as Env, read: () => JSON.parse(stored) as FilmJob };
+  return { env: orch(env as Env), read: () => JSON.parse(stored) as FilmJob };
 }
 
 const SILENT = "renders/film-mux-honesty/film-silent.mp4";

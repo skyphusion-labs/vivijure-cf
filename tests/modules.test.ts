@@ -14,8 +14,8 @@ import {
   readManifest,
   resolvePickOne,
   validateConfig,
-  validateManifest,
 } from "../src/modules/registry";
+import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { MODULE_API, type ConfigSchema, type RegisteredModule } from "../src/modules/types";
 
 // ----------------------------------------------------------------- helpers

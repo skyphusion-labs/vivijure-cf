@@ -28,6 +28,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Checkout vivijure-core
+        uses: actions/checkout@v7
+        with:
+          repository: skyphusion-labs/vivijure-core
+          path: vivijure-core
+
       - name: Setup Node.js environment
         uses: actions/setup-node@v6
         with:
@@ -35,7 +41,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          cd vivijure-core && npm ci && npm run build
+          npm pkg set dependencies.@skyphusion-labs/vivijure-core=file:./vivijure-core
+          npm ci
 
       - name: Run tests with coverage
         run: npx vitest run --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=cobertura --coverage.reporter=text

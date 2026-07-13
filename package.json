@@ -18,7 +18,7 @@
   "type": "module",
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
-    "@skyphusion-labs/vivijure-core": "file:../vivijure-core"
+    "@skyphusion-labs/vivijure-core": "^0.9.3"
   },
   "scripts": {
     "dev": "wrangler dev",

@@ -1,8 +1,9 @@
-import { orchestratorEnv } from "../src/orchestrator-env.js";
+import { attachPresigner } from "../src/orchestrator-env.js";
 import type { Env } from "../src/env.js";
-import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 
-/** Wrap a test Env with Platform ICD fields (PRESIGNER, wrapped R2). */
-export function orch(env: Env): OrchestratorEnv {
-  return orchestratorEnv(env);
+/** Attach mock PRESIGNER for orchestration calls in unit tests. */
+export function orch<T extends Env>(env: T): T {
+  return attachPresigner(env);
 }
+
+export { attachPresigner };

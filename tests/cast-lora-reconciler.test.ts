@@ -6,12 +6,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // reconciler force-fails such a row (HONEST degrade, clear lora_error) once a 404 is past the grace
 // window, or the row is past the max-age ceiling.
 
-vi.mock("../src/runpod-submit", async (orig) => {
-  const actual = await orig<typeof import("../src/runpod-submit")>();
+vi.mock("@skyphusion-labs/vivijure-core/runpod-submit", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/runpod-submit")>();
   return { ...actual, pollRenderJob: vi.fn() };
 });
 
-import { pollRenderJob } from "../src/runpod-submit";
+import { pollRenderJob } from "@skyphusion-labs/vivijure-core/runpod-submit";
 import {
   refreshTrainingLora,
   decideStuckTraining,
@@ -22,6 +22,7 @@ import {
 } from "../src/cast-lora-train";
 import type { CastMember } from "../src/cast-db";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 const polled = vi.mocked(pollRenderJob);
 
@@ -49,7 +50,7 @@ function fakeEnv(row: Record<string, unknown>) {
       },
     },
   } as unknown as Env;
-  return { env, state };
+  return { env: orch(env), state };
 }
 
 function trainingRow(updated_at: string): Record<string, unknown> {

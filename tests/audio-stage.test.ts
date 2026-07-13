@@ -17,6 +17,7 @@ function fakeEnv(opts: { rendersHas?: string[]; r2Has?: Record<string, string> }
       put: async (k: string) => { puts.push(k); },
     },
     R2: {
+      head: async () => null,
       get: async (k: string) => {
         r2Gets += 1;
         return k in r2Has
