@@ -1,6 +1,6 @@
 {
   "name": "vivijure-cf",
-  "version": "0.1.0",
+  "version": "0.21.3",
   "description": "Vivijure Studio Cloudflare host: Workers control plane on @skyphusion-labs/vivijure-core.",
   "license": "AGPL-3.0-only",
   "homepage": "https://vivijure.com",
