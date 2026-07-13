@@ -1,0 +1,18 @@
+# Homelab MCP driver for vivijure-local on flatliners (operator-specific; not CI-deployed).
+name = "vivijure-studio-mcp-flatliners"
+main = "src/mcp.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+preview_urls = false
+workers_dev = false
+
+[observability]
+enabled = true
+
+[vars]
+STUDIO_URL = "https://vivijure-local.skyphusion.org"
+
+[[routes]]
+pattern = "studio-mcp-flatliners.skyphusion.org"
+custom_domain = true

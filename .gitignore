@@ -1,0 +1,45 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+*.log
+worker-configuration.d.ts
+.DS_Store
+__pycache__/
+*.pyc
+
+# vivijure-deploy local state (resource ids; never secrets)
+.vivijure-deploy.json
+
+# The REAL core wrangler.toml is RENDERED at deploy from wrangler.toml.example (account-specific
+# values injected from CI secrets via envsubst). Committing it would put the account AUD / resource
+# IDs in the public repo. Edit wrangler.toml.example; render locally to work. See docs/deploy-config-injection.md.
+/wrangler.toml
+
+# The MCP Worker's wrangler config is likewise RENDERED from wrangler.mcp.toml.example (host +
+# studio URL injected). Edit the example; render locally to work. See docs/mcp.md.
+/wrangler.mcp.toml
+
+# Real deploy.env holds the operator keys (rendered from deploy.env.example); never commit it.
+/deploy.env
+
+# Module-bound local dev (docs/dev-modbound.md): only the launcher script is tracked; everything it
+# generates (rendered configs, logs, seeds) is disposable local state.
+/.dev-modbound/*
+!/.dev-modbound/dev-modbound.sh
+
+# Playwright MCP debug artifacts
+.playwright-mcp/
+
+# Node diagnostic reports (--report-on-fatalerror): embed the full process env, never committable
+report.[0-9]*.json
+
+# Media-stack connector token (0600), written by deploy.sh -> scripts/setup-media-vpc.py; NEVER commit.
+/containers/tunnel.env
+
+# The public demo studio config is likewise RENDERED from wrangler.demo.toml.example (demo D1 id
+# injected). Edit the example; render locally to deploy. See docs/demo-studio.md.
+/wrangler.demo.toml
+
+# Rendered demo-scoped local-gpu worker config (#631); rendered from its .example, holds no secrets.
+/modules/local-gpu/wrangler.demo.toml

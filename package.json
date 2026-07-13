@@ -1,0 +1,42 @@
+{
+  "name": "vivijure-cf",
+  "version": "0.1.0",
+  "description": "Vivijure Studio Cloudflare host: Workers control plane on @skyphusion-labs/vivijure-core.",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://vivijure.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skyphusion-labs/vivijure-cf.git"
+  },
+  "keywords": [
+    "ai-video",
+    "filmmaking",
+    "cloudflare-workers",
+    "vivijure",
+    "agpl"
+  ],
+  "type": "module",
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "@skyphusion-labs/vivijure-core": "^0.9.3"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:mcp": "wrangler dev -c wrangler.mcp.toml",
+    "deploy": "wrangler deploy",
+    "deploy:mcp": "wrangler deploy -c wrangler.mcp.toml",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260711.1",
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.9",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.110.0"
+  }
+}
