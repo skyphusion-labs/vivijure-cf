@@ -97,8 +97,26 @@ jobs:
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}
           VPC_AUDIO_BEAT_SYNC_ID: ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}
+          # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
+          # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
+          # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name
+          # from the core [[services]] list). Set CORE_ONLY_DEPLOY=1 (repo variable) so this tag deploy
+          # ships the core only and does not touch the live module fleet. Unset (or "0") = full monolith
+          # co-deploy behaviour below (deploy every modules/*/wrangler.toml first).
+          CORE_ONLY_DEPLOY: ${{ vars.CORE_ONLY_DEPLOY }}
         run: |
           set -eu
+          # CORE-ONLY host: skip module deploy entirely (modules are deployed independently and are
+          # already live; the core deploy below binds them by service name). Explicit + logged, never a
+          # silent skip: if module configs ARE present under CORE_ONLY_DEPLOY they are a drift signal, so
+          # warn loudly rather than quietly ignore them.
+          if [ "${CORE_ONLY_DEPLOY:-0}" = "1" ]; then
+            echo "CORE_ONLY_DEPLOY=1: deploying the core worker only; module workers are managed independently and bound by service name. Skipping module deploy."
+            present=0
+            for toml in modules/*/wrangler.toml; do [ -f "$toml" ] && present=$((present + 1)); done
+            [ "$present" -gt 0 ] && echo "::warning::CORE_ONLY_DEPLOY=1 but ${present} module wrangler.toml present under modules/ -- they will NOT be deployed by this run"
+            exit 0
+          fi
           # The committed module tomls ship store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID" (no
           # real store id in the public repo, #398). Fill it from SECRETS_STORE_ID before each
           # wrangler deploy, mirroring how the core render injects its placeholders. Fail closed: a
