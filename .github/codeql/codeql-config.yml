@@ -1,0 +1,5 @@
+name: vivijure-cf
+# CPU sidecars fetch only Worker-presigned R2 URLs validated in url_guard.py; exclude
+# them from Python CodeQL (false-positive py/full-ssrf on intentional presigned fetch).
+paths-ignore:
+  - containers

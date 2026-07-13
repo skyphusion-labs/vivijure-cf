@@ -1,0 +1,16 @@
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["url_guard", "Member[_safe_fetch_url].ReturnValue", "full-ssrf"]
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierGuardModel
+    data:
+      - [
+          "url_guard",
+          "Member[validate_fetch_url].ReturnValue.TupleElement[0]",
+          "true",
+          "full-ssrf",
+        ]
