@@ -1,16 +1,15 @@
 # Vivijure Studio MCP (deploy)
 
-The Studio MCP server lives in **`@skyphusion-labs/vivijure-core`** (`docs/mcp.md` in that repo).
-It is host-agnostic: the same package serves `vivijure-cf` and `vivijure-local`. This repo only
-ships **deploy wiring** for the optional separate Worker.
+The Studio MCP server is **`@skyphusion-labs/vivijure-mcp`** on npm.
+Full operator doc: [vivijure-mcp `docs/mcp.md`](https://github.com/skyphusion-labs/vivijure-mcp/blob/main/docs/mcp.md).
 
 ## Quick pointer
 
 | What | Where |
 |------|--------|
-| Tool catalog, security model, agent setup | [vivijure-core `docs/mcp.md`](https://github.com/skyphusion-labs/vivijure-core/blob/main/docs/mcp.md) |
-| Wrangler config | `wrangler.mcp.toml.example` (render to `wrangler.mcp.toml`) |
-| Worker entry | `node_modules/@skyphusion-labs/vivijure-core/dist/mcp.js` |
+| Package | `@skyphusion-labs/vivijure-mcp` |
+| Wrangler config | `wrangler.mcp.toml.example` |
+| Worker entry | `node_modules/@skyphusion-labs/vivijure-mcp/dist/mcp.js` |
 | Local dev | `npm run dev:mcp` |
 
 ## Deploy (CF host)

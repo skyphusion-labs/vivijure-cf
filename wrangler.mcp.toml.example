@@ -1,6 +1,6 @@
 # Vivijure Studio MCP Worker -- wrangler config (separate deploy from the studio core).
 #
-# This ships a bearer-gated MCP server (@skyphusion-labs/vivijure-core/mcp) that lets AI agents drive the Studio API through
+# This ships a bearer-gated MCP server (@skyphusion-labs/vivijure-mcp) that lets AI agents drive the Studio API through
 # structured tools. It is OPT-IN and OPERATOR-SPECIFIC: it is NOT deployed by a default self-host.
 # The real wrangler.mcp.toml is gitignored and rendered from this example (like the core), or copy it
 # by hand and fill the two ${...} placeholders for a local `wrangler deploy -c wrangler.mcp.toml`.
@@ -15,7 +15,7 @@
 # unset -> every /mcp request 401s).
 
 name = "vivijure-studio-mcp"
-main = "node_modules/@skyphusion-labs/vivijure-core/dist/mcp.js"
+main = "node_modules/@skyphusion-labs/vivijure-mcp/dist/mcp.js"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
