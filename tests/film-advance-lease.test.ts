@@ -13,8 +13,8 @@ import type { Env } from "../src/env";
 // A fake D1 implementing the lease SQL semantics atomically (each run() has no internal await, so
 // it is atomic under JS concurrency exactly as a single D1 UPDATE is under SQLite's writer lock).
 function leaseDb(jobIds: string[]) {
-  const rows = new Map<string, { advance_lease: number | null }>(
-    jobIds.map((id) => [id, { advance_lease: null }]),
+  const rows = new Map<string, { advance_lease: number | null; advance_lease_token: string | null }>(
+    jobIds.map((id) => [id, { advance_lease: null, advance_lease_token: null }]),
   );
   const DB = {
     prepare(sql: string) {
@@ -22,20 +22,35 @@ function leaseDb(jobIds: string[]) {
         bind(...args: unknown[]) {
           return {
             run: async () => {
+              // Release: `SET advance_lease = NULL, advance_lease_token = NULL WHERE job_id=? AND
+              // advance_lease_token=?` -- keyed on the TOKEN, so a stale token clears nothing. (Checked
+              // first: the release SQL also contains "SET advance_lease".)
               if (sql.includes("advance_lease = NULL")) {
-                const [jobId, lease] = args as [string, number];
+                const [jobId, token] = args as [string, string];
                 const r = rows.get(jobId);
-                if (r && r.advance_lease === lease) {
+                if (r && r.advance_lease_token !== null && r.advance_lease_token === token) {
                   r.advance_lease = null;
+                  r.advance_lease_token = null;
                   return { meta: { changes: 1 } };
                 }
                 return { meta: { changes: 0 } };
               }
+              // Claim: `SET advance_lease=?, advance_lease_token=? WHERE job_id=? AND (advance_lease IS
+              // NULL OR advance_lease < ? OR advance_lease_token = ?)`. The token appears twice (SET +
+              // the idempotency predicate); both binds are the SAME value.
               if (sql.includes("SET advance_lease")) {
-                const [lease, jobId, now] = args as [number, string, number];
+                const [lease, token, jobId, now, tokenPred] = args as [number, string, string, number, string];
                 const r = rows.get(jobId);
-                if (r && (r.advance_lease === null || r.advance_lease < now)) {
+                // Honor the SQL as written: the #29 idempotency clause is only in effect if the claim
+                // SQL actually contains it (so a pre-fix predicate can be simulated by dropping it).
+                const tokenClause =
+                  sql.includes("OR advance_lease_token = ?") &&
+                  r != null &&
+                  r.advance_lease_token !== null &&
+                  r.advance_lease_token === tokenPred;
+                if (r && (r.advance_lease === null || r.advance_lease < now || tokenClause)) {
                   r.advance_lease = lease;
+                  r.advance_lease_token = token;
                   return { meta: { changes: 1 } };
                 }
                 return { meta: { changes: 0 } };
@@ -60,21 +75,60 @@ describe("claimFilmAdvance / releaseFilmAdvance (win / lose / reset)", () => {
     const a = await claimFilmAdvance(env, id, 1000);
     expect(a.won).toBe(true);
     expect(a.lease).toBe(1000 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000);
+    expect(typeof a.token).toBe("string"); // #29: a unique per-claim leaseholder identity
     const b = await claimFilmAdvance(env, id, 1001);
     expect(b.won).toBe(false);
     expect(b.lease).toBeUndefined();
+    expect(b.token).toBeUndefined();
   });
 
   it("release (by token) makes the lease re-grantable; a stale token releases nothing", async () => {
     const { DB, rows } = leaseDb([id]);
     const env = { DB } as unknown as Env;
     const a = await claimFilmAdvance(env, id, 1000);
-    await releaseFilmAdvance(env, id, (a.lease as number) - 1); // stale token: no-op
+    await releaseFilmAdvance(env, id, "not-my-token"); // stale token: no-op
     expect(rows.get(id)?.advance_lease).toBe(a.lease);
-    await releaseFilmAdvance(env, id, a.lease as number);
+    await releaseFilmAdvance(env, id, a.token as string);
     expect(rows.get(id)?.advance_lease).toBeNull();
     const b = await claimFilmAdvance(env, id, 2000);
     expect(b.won).toBe(true); // genuine retry after a released tick is never deadlocked
+  });
+
+  it("#29: a LOST response after the claim commits still returns a win on retry (no stall)", async () => {
+    const { rows } = leaseDb([id]);
+    let claimRuns = 0;
+    const DB = {
+      prepare(sql: string) {
+        return {
+          bind(...args: unknown[]) {
+            return {
+              run: async () => {
+                if (sql.includes("SET advance_lease") && !sql.includes("advance_lease = NULL")) {
+                  const [lease, token, jobId, now, tokenPred] = args as [number, string, string, number, string];
+                  const r = rows.get(jobId)!;
+                  const tokenClause = sql.includes("OR advance_lease_token = ?") && r.advance_lease_token === tokenPred;
+                  const matched = r.advance_lease === null || r.advance_lease < now || tokenClause;
+                  if (matched) {
+                    r.advance_lease = lease;
+                    r.advance_lease_token = token;
+                  }
+                  claimRuns += 1;
+                  if (claimRuns === 1) throw new Error("network connection lost");
+                  return { meta: { changes: matched ? 1 : 0 } };
+                }
+                return { meta: { changes: 0 } };
+              },
+              first: async () => (rows.has(args[0] as string) ? { one: 1 } : null),
+            };
+          },
+        };
+      },
+    };
+    const env = { DB } as unknown as Env;
+    const a = await claimFilmAdvance(env, id, 1000);
+    expect(claimRuns).toBe(2);
+    expect(a.won).toBe(true);
+    expect(a.token).toBe(rows.get(id)?.advance_lease_token);
   });
 
   it("an EXPIRED lease is re-grantable (a crashed winner never wedges the job)", async () => {
@@ -83,28 +137,22 @@ describe("claimFilmAdvance / releaseFilmAdvance (win / lose / reset)", () => {
     const t0 = 1000;
     const a = await claimFilmAdvance(env, id, t0);
     expect(a.won).toBe(true);
-    // ... the winner crashes; no release. Before expiry: still held.
     const before = await claimFilmAdvance(env, id, t0 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000 - 1);
     expect(before.won).toBe(false);
-    // Past expiry: the next driver wins it fresh.
     const after = await claimFilmAdvance(env, id, t0 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000 + 1);
     expect(after.won).toBe(true);
   });
 
   it("no renders row at all: wins UNGUARDED (no token) -- a legacy/untracked film must not deadlock", async () => {
-    const { DB } = leaseDb([]); // no row for this film
+    const { DB } = leaseDb([]);
     const env = { DB } as unknown as Env;
     const a = await claimFilmAdvance(env, "film-no-row", 1000);
     expect(a.won).toBe(true);
-    expect(a.lease).toBeUndefined(); // nothing to release
+    expect(a.lease).toBeUndefined();
+    expect(a.token).toBeUndefined();
   });
 });
 
-// The concurrency proof: two advanceFilmJob invocations racing on the SAME finish-phase job.
-// The finish leg SUBMITS the shot's current module (invokeModule) whenever the shot has no poll
-// token -- both racers read the doc pre-submit, so without the lease BOTH would invoke (double
-// GPU lip-sync spend). With the lease, exactly one submission happens; the loser reports the doc
-// read-only and writes nothing.
 describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission", () => {
   const filmId = "film-lease-race";
 
@@ -136,13 +184,10 @@ describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission
       MODULE_FINISH_LIPSYNC: {
         fetch: async (url: string) => {
           if (String(url).includes("/module.json")) {
-            // Manifest discovery (adoptFinishStepFromR2 reads finish_artifacts): NOT a poll; answer
-            // like a real module and keep it out of the counters.
             return new Response(JSON.stringify({ name: "finish-lipsync", version: "0.1.0", api: "vivijure-module/2", hooks: ["finish"] }), { status: 200, headers: { "content-type": "application/json" } });
           }
           if (String(url).includes("/invoke")) {
             calls.invoke += 1;
-            // Async-accept: the module parks the GPU job and hands back a poll token.
             return new Response(JSON.stringify({ ok: true, pending: true, poll: "tok-1" }), { status: 200, headers: { "content-type": "application/json" } });
           }
           calls.poll += 1;
@@ -156,19 +201,19 @@ describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission
   it("two CONCURRENT advances submit the lip-sync job exactly once; the loser still reports the job", async () => {
     const { env, calls, rows, read } = raceEnv(finishFilm());
     const [a, b] = await Promise.all([advanceFilmJob(env, filmId), advanceFilmJob(env, filmId)]);
-    expect(calls.invoke).toBe(1); // THE assertion: one racer submits, the other skips quietly
+    expect(calls.invoke).toBe(1);
     expect(a).not.toBeNull();
-    expect(b).not.toBeNull(); // the loser returns the doc read-only (a poll response, not a 500)
-    expect(read().finish_shots?.[0].poll).toBe("tok-1"); // the winner's poll token survives (no lost update)
-    expect(rows.get(filmId)?.advance_lease).toBeNull(); // the winner released its lease after the tick
+    expect(b).not.toBeNull();
+    expect(read().finish_shots?.[0].poll).toBe("tok-1");
+    expect(rows.get(filmId)?.advance_lease).toBeNull();
   });
 
   it("the released lease lets the NEXT tick advance (poll the parked job) -- no deadlock after a win", async () => {
     const { env, calls } = raceEnv(finishFilm());
     await Promise.all([advanceFilmJob(env, filmId), advanceFilmJob(env, filmId)]);
-    await advanceFilmJob(env, filmId); // a later poll tick
-    expect(calls.invoke).toBe(1); // still exactly one submission
-    expect(calls.poll).toBe(1);   // the next tick polled the in-flight job (progress continues)
+    await advanceFilmJob(env, filmId);
+    expect(calls.invoke).toBe(1);
+    expect(calls.poll).toBe(1);
   });
 
   it("the LOSER writes nothing (its stale doc state can never clobber the winner's)", async () => {
@@ -176,11 +221,9 @@ describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission
     const before = putCount();
     const results = await Promise.all([advanceFilmJob(env, filmId), advanceFilmJob(env, filmId)]);
     expect(results.every((r) => r !== null)).toBe(true);
-    // Only the winner's tick persisted (submit-park + progress stamps); a lost-update from the
-    // loser would show as extra writes carrying pre-submit state.
     const winnerWrites = putCount() - before;
     const { env: soloEnv, putCount: soloPuts } = raceEnv(finishFilm());
     await advanceFilmJob(soloEnv, filmId);
-    expect(winnerWrites).toBe(soloPuts()); // racing writers wrote exactly what one writer writes
+    expect(winnerWrites).toBe(soloPuts());
   });
 });
