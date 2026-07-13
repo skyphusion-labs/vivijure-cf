@@ -29,6 +29,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: vivijure-cf
 
       - name: Checkout vivijure-core
         uses: actions/checkout@v7
@@ -37,15 +39,18 @@ jobs:
           path: vivijure-core
 
       - name: Install dependencies
+        working-directory: vivijure-cf
         run: |
-          cd vivijure-core && npm ci && npm run build
-          npm pkg set dependencies.@skyphusion-labs/vivijure-core=file:./vivijure-core
+          cd ../vivijure-core && npm ci && npm run build
+          npm pkg set dependencies.@skyphusion-labs/vivijure-core=file:../vivijure-core
           npm ci --no-audit --no-fund
 
       - name: Typecheck
+        working-directory: vivijure-cf
         run: npm run typecheck
 
       - name: Test
+        working-directory: vivijure-cf
         run: npm test
 
   deploy:
