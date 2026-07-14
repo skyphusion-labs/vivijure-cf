@@ -1,14 +1,17 @@
 # vivijure-cf
 
-Cloudflare Workers host for [Vivijure Studio](https://vivijure.com).
+**Cloudflare Workers control panel for [Vivijure Studio](https://vivijure.com).** Run the
+self-hosted AGPL AI film studio on the Workers free tier: storyboard, cast, module registry,
+render orchestration, and the studio UI.
 
 Orchestration (film pipeline, module registry, bundle assembly, D1 helpers) lives in
-[`@skyphusion-labs/vivijure-core`](https://github.com/skyphusion-labs/vivijure-core).
-This repo is the **CF-native control plane**: Worker entry, wrangler bindings, D1/R2,
-service-bound module workers, planner AI, auth, presign, and the studio UI (`public/`).
+[`@skyphusion-labs/vivijure-core`](https://github.com/skyphusion-labs/vivijure-core). This repo
+is the **CF-native host**: Worker entry, wrangler bindings, D1/R2, service-bound module workers,
+planner AI, auth, presign, and `public/`. Prefer a home PC or any cloud VM instead? Use
+[`vivijure-local`](https://github.com/skyphusion-labs/vivijure-local). Drive either host from an
+agent with [`vivijure-mcp`](https://github.com/skyphusion-labs/vivijure-mcp).
 
-The upstream monolith [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure)
-remains unchanged; new host work lands here.
+The constellation map is [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure).
 
 ## Layout
 
