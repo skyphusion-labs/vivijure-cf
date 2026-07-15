@@ -1,4 +1,4 @@
-librosa==0.10.2
+librosa==0.11.0
 numpy==2.5.1
-soundfile==0.12.1
+soundfile==0.14.0
 aiohttp==3.14.1
