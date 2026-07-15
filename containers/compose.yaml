@@ -26,7 +26,7 @@ services:
   video-finish:
     <<: *common
     build: ./video-finish
-    image: vj-video-finish:local
+    image: vivijure-cf-video-finish:local
     ports:
       - "127.0.0.1:8780:8000"
     healthcheck:
@@ -39,7 +39,7 @@ services:
   image-prep:
     <<: *common
     build: ./image-prep
-    image: vj-image-prep:local
+    image: vivijure-cf-image-prep:local
     ports:
       - "127.0.0.1:8781:8000"
     healthcheck:
@@ -52,7 +52,7 @@ services:
   audio-beat-sync:
     <<: *common
     build: ./audio-beat-sync
-    image: vj-audio-beat-sync:local
+    image: vivijure-cf-audio-beat-sync:local
     ports:
       - "127.0.0.1:8782:8000"
     healthcheck:
@@ -68,7 +68,7 @@ services:
   audio-mix:
     <<: *common
     build: ./audio-mix
-    image: vj-audio-mix:local
+    image: vivijure-cf-audio-mix:local
     ports:
       - "127.0.0.1:8783:8000"
     healthcheck:
@@ -86,7 +86,7 @@ services:
   audio-master:
     <<: *common
     build: ./audio-master
-    image: vj-audio-master:local
+    image: vivijure-cf-audio-master:local
     ports:
       - "127.0.0.1:8784:8000"
     healthcheck:
