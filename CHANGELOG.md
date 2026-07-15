@@ -3,13 +3,21 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## v0.21.4 -- 2026-07-15
 
+- **Restore the module fleet to IaC: re-vendor all 25 `modules/*/wrangler.toml` and turn
+  `CORE_ONLY_DEPLOY` off.** The #774 studio move carried module SOURCE into this repo but not the
+  deploy configs, so the fleet was orphaned from CI and last shipped by hand (2026-07-13). The
+  authoritative tomls are restored from the pre-split history (placeholder store/service ids, injected
+  in CI from repo vars/secrets exactly like the core), so a tag now deploys the whole fleet + core
+  from source with no manual `wrangler deploy`. `CORE_ONLY_DEPLOY` is kept as an opt-in core-only
+  safety valve but defaults off. Nothing is hand-deployed unless it genuinely cannot be IaC'd.
 - **`local-gpu` v0.1.2 honors the active door's declared duration grid at submit time.** A fixed-grid
   door now supplies both `fps` and the selected tier's frame count instead of inheriting
   `seconds * fps` from the shared module defaults. This prevents CogVideoX-5B-I2V from accepting
   off-grid 25/41-frame jobs that report success but decode as latent tile noise. Flexible LTX doors
-  omit `duration_grid` and retain the existing duration-derived behavior.
+  omit `duration_grid` and retain the existing duration-derived behavior. This release is what ships
+  it live (the module worker deploys via the restored fleet pipeline above).
 
 ## v0.21.3 -- 2026-07-13
 
