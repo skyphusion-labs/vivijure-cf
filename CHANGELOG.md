@@ -3,6 +3,14 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+- **`local-gpu` v0.1.2 honors the active door's declared duration grid at submit time.** A fixed-grid
+  door now supplies both `fps` and the selected tier's frame count instead of inheriting
+  `seconds * fps` from the shared module defaults. This prevents CogVideoX-5B-I2V from accepting
+  off-grid 25/41-frame jobs that report success but decode as latent tile noise. Flexible LTX doors
+  omit `duration_grid` and retain the existing duration-derived behavior.
+
 ## v0.21.3 -- 2026-07-13
 
 **Bump `@skyphusion-labs/vivijure-core` to `^0.9.5`: the #29 advance-lease idempotency fix.** PATCH.

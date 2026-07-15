@@ -200,17 +200,19 @@ the chain folds purely in `ui.order`.
 ### Fixed duration grid (`duration_grid`, optional + additive)
 
 A `motion.backend` module whose engine renders on a FIXED duration grid (a pinned output fps plus
-per-quality-tier frame ceilings, e.g. CogVideoX: 8fps, `draft` capped at 25 frames) MAY declare the
+per-quality-tier frame ceilings, e.g. CogVideoX: 8fps, every tier fixed at 49 frames) MAY declare the
 grid so the core can warn AT STORYBOARD TIME that a shot's planned seconds will be clamped, instead
 of the clamp staying silent until the clip lands short (vivijure #707). A tier's maximum deliverable
 seconds is `max_frames / fps`. Tier keys match the render quality tiers the module accepts.
+The `local-gpu` module also uses the active tier's declared `fps` and `max_frames` when it submits to
+that fixed-grid door; it does not derive an unsupported intermediate shape from `seconds * fps`.
 
 ```jsonc
 {
   "hooks": ["motion.backend"],
   "duration_grid": {
     "fps": 8,
-    "tiers": { "draft": { "max_frames": 25 }, "standard": { "max_frames": 49 }, "final": { "max_frames": 49 } }
+    "tiers": { "draft": { "max_frames": 49 }, "standard": { "max_frames": 49 }, "final": { "max_frames": 49 } }
   }
 }
 ```

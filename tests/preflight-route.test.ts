@@ -194,8 +194,8 @@ describe("POST /api/storyboard/preflight duration-grid wiring (#707)", () => {
   beforeEach(() => _resetModuleDiscoveryCache());
 
   const LOCAL_GPU_MANIFEST = {
-    name: "local-gpu", version: "0.1.1", api: MODULE_API, hooks: ["motion.backend"],
-    duration_grid: { fps: 8, tiers: { draft: { max_frames: 25 }, standard: { max_frames: 49 }, final: { max_frames: 49 } } },
+    name: "local-gpu", version: "0.1.2", api: MODULE_API, hooks: ["motion.backend"],
+    duration_grid: { fps: 8, tiers: { draft: { max_frames: 49 }, standard: { max_frames: 49 }, final: { max_frames: 49 } } },
   };
   const NO_GRID_MANIFEST = { name: "own-gpu", version: "1.0.0", api: MODULE_API, hooks: ["motion.backend"] };
 
@@ -210,14 +210,14 @@ describe("POST /api/storyboard/preflight duration-grid wiring (#707)", () => {
     } as unknown as Env;
   }
 
-  const fiveSecondBoard = {
+  const sevenSecondBoard = {
     title: "grid_check",
-    scenes: [{ id: "shot_01", prompt: "a wide neon alley in the rain at night", target_seconds: 5 }],
+    scenes: [{ id: "shot_01", prompt: "a wide neon alley in the rain at night", target_seconds: 7 }],
   };
 
   it("warns per shot when the named backend declares a grid the plan exceeds", async () => {
     const res = await worker.fetch(
-      post({ storyboard: fiveSecondBoard, motionBackend: "local-gpu", quality: "draft" }),
+      post({ storyboard: sevenSecondBoard, motionBackend: "local-gpu", quality: "draft" }),
       moduleEnv(), ctx,
     );
     expect(res.status).toBe(200);
@@ -230,12 +230,12 @@ describe("POST /api/storyboard/preflight duration-grid wiring (#707)", () => {
 
   it("no warning when the backend declares no grid, or when no backend is named (older client)", async () => {
     const noGrid = await worker.fetch(
-      post({ storyboard: fiveSecondBoard, motionBackend: "own-gpu", quality: "draft" }),
+      post({ storyboard: sevenSecondBoard, motionBackend: "own-gpu", quality: "draft" }),
       moduleEnv(), ctx,
     );
     expect(((await noGrid.json()) as PreflightResp).issues.filter((i) => /clamped/.test(i.message))).toEqual([]);
 
-    const legacy = await worker.fetch(post({ storyboard: fiveSecondBoard }), moduleEnv(), ctx);
+    const legacy = await worker.fetch(post({ storyboard: sevenSecondBoard }), moduleEnv(), ctx);
     expect(((await legacy.json()) as PreflightResp).issues.filter((i) => /clamped/.test(i.message))).toEqual([]);
   });
 });

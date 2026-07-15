@@ -58,7 +58,7 @@ interface Env {
 // the Wan datacenter backend maps the tiers to its steps.
 export const MANIFEST: ModuleManifest = {
   name: "local-gpu",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-local-gpu", label: "Local GPU (image-to-video on your own card)" }],
@@ -153,10 +153,11 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
   const { baseUrl, token } = await backendCfg(env);
   if (!baseUrl) return { ok: false, error: "local-gpu: LOCAL_BACKEND_URL not configured" };
   try {
+    const grid = await doorDurationGrid(env);
     const r = await fetch(baseUrl + "/run", {
       method: "POST",
       headers: { ...authHeaders(token), "content-type": "application/json" },
-      body: JSON.stringify(buildI2vBody(input, req.config, req.context.project)),
+      body: JSON.stringify(buildI2vBody(input, req.config, req.context.project, grid)),
     });
     if (!r.ok) return { ok: false, error: "local-gpu /run -> " + r.status };
     const jobId = ((await r.json()) as { id?: string }).id;
