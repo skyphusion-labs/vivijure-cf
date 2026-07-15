@@ -1,11 +1,113 @@
 version: 2
+
+# skyphusion-labs Dependabot standard — see fleet-chezmoi/docs/runbooks/dependabot-standard.md
+# PRs only (never auto-merge). Group minor/patch; majors stay separate. Peer families bump together.
 updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-  - package-ecosystem: github-actions
-    directory: /
+    commit-message:
+      prefix: deps
+    groups:
+      cloudflare-toolchain:
+        patterns:
+          - "wrangler"
+          - "@cloudflare/workers-types"
+      vitest-toolchain:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      vivijure-contract:
+        patterns:
+          - "@skyphusion-labs/vivijure-core"
+          - "@skyphusion-labs/vivijure-mcp"
+      npm-minor-patch:
+        patterns: ["*"]
+        exclude-patterns:
+          - "wrangler"
+          - "@cloudflare/workers-types"
+          - "vitest"
+          - "@vitest/*"
+          - "@skyphusion-labs/vivijure-core"
+          - "@skyphusion-labs/vivijure-mcp"
+        update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: "/containers/audio-beat-sync"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: "/containers/audio-master"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: "/containers/audio-mix"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: "/containers/image-prep"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: pip
+    directory: "/containers/video-finish"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      pip-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: docker
+    directories:
+      - "/containers/audio-beat-sync"
+      - "/containers/audio-master"
+      - "/containers/audio-mix"
+      - "/containers/image-prep"
+      - "/containers/video-finish"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    groups:
+      docker-images:
+        patterns: ["*"]
