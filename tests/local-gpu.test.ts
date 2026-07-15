@@ -63,6 +63,20 @@ describe("local-gpu i2v pure logic", () => {
     expect(cfg).toMatchObject({ quality: "standard", num_frames: 120, fps: 24 }); // tier + cadence defaults
   });
 
+  it("buildI2vBody honors a door-declared fixed grid instead of deriving corrupt off-grid frames", () => {
+    const grid = {
+      fps: 8,
+      tiers: { draft: { max_frames: 49 }, standard: { max_frames: 49 }, final: { max_frames: 49 } },
+    };
+    const body = buildI2vBody(
+      { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
+      { quality: "standard", fps: 24 },
+      "proj",
+      grid,
+    );
+    expect(body.input.config).toMatchObject({ quality: "standard", num_frames: 49, fps: 8 });
+  });
+
   it("readOutput maps the backend's i2v_clip output into MotionBackendOutput", () => {
     expect(
       readOutput("shot_02", { clip_key: "renders/f/clips/shot_02_i2v.mp4", shot_id: "shot_02", fps: 24, num_frames: 121, seconds: 5.04, distilled: true }),
@@ -126,7 +140,7 @@ describe("local-gpu job-gone detection + grace (#141)", () => {
 // #707: the door declares its fixed duration grid on /health; the module relays it in the manifest
 // (best-effort, cached) so core preflight can warn about duration clamping at storyboard time.
 describe("local-gpu duration-grid relay (#707)", () => {
-  const GRID = { fps: 8, tiers: { draft: { max_frames: 25 }, standard: { max_frames: 49 }, final: { max_frames: 49 } } };
+  const GRID = { fps: 8, tiers: { draft: { max_frames: 49 }, standard: { max_frames: 49 }, final: { max_frames: 49 } } };
 
   it("readDurationGrid accepts a well-formed grid and drops malformed tiers", () => {
     expect(readDurationGrid(GRID)).toEqual(GRID);
