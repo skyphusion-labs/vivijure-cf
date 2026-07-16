@@ -13,6 +13,8 @@ agent with [`vivijure-mcp`](https://github.com/skyphusion-labs/vivijure-mcp).
 
 The constellation map is [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure).
 
+**Vivijure Studio:** https://vivijure.com · **Live demo:** https://demo.vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+
 ## Layout
 
 | Path | Role |
