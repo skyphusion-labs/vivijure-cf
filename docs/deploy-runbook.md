@@ -43,12 +43,14 @@ Style: no em-dashes or en-dashes (double hyphen `--` only).
   dangling binding; only a real deploy does. Modules therefore MUST exist before the core deploys.
   This is the commented-binding pattern: keep the core binding commented out until the module worker is live, then uncomment it
   in the SAME change.
-- **The 3 CPU containers are NOT deployed by `wrangler`.** `video-finish`, `image-prep`, and
-  `audio-beat-sync` run always-on on the operator's container host as Docker services via
-  `containers/compose.yaml`, reached over Workers VPC bindings (`VIDEO_FINISH_VPC` etc.). They are
-  deployed OUT OF BAND. **This cut changes `video-finish` (new `/subtitle` route), so the container
-  must be rebuilt + redeployed on the fleet BEFORE the subtitle module goes live** (see section 1.0
-  and section 4).
+- **The 5 CPU containers are NOT deployed by `wrangler`.** `video-finish`, `image-prep`,
+  `audio-beat-sync`, `audio-mix`, and `audio-master` run always-on on the operator's container host
+  as Docker services via `containers/compose.yaml`, reached over Workers VPC bindings
+  (`VIDEO_FINISH_VPC` etc.). They are deployed OUT OF BAND. Self-hosts: `docker compose` build.
+  Skyphusion fleet: GHCR packages `ghcr.io/skyphusion-labs/vivijure-cf-<svc>` published by
+  `.github/workflows/build-media-images.yml` (see [containers/README.md](../containers/README.md)).
+  **This cut changes `video-finish` (new `/subtitle` route), so the container must be rebuilt +
+  redeployed on the fleet BEFORE the subtitle module goes live** (see section 1.0 and section 4).
 - **Fresh-create workers start with NO secrets.** `wrangler deploy` preserves secrets on an EXISTING
   worker, but a brand-new module worker (cloud-keyframe, alibaba-wan-lora) is created empty. Its
   secrets must be seeded once, by hand, AFTER its first deploy and BEFORE it is relied on. (The
