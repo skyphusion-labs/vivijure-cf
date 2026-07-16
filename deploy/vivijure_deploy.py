@@ -705,7 +705,7 @@ GPU_TYPE_IDS: list = []  # REQUIRED -- endpoint GPU type id(s) (GET /gputypes)
 # rule); each is an override knob defaulting to that repo current released tag. Bump the default when a
 # satellite ships a new tag, or edit a knob to pin a specific tag for a run.
 BACKEND_IMAGE_TAG = "1.0.2"        # ghcr.io/skyphusion-labs/vivijure-backend
-UPSCALE_IMAGE_TAG = "1.0.0"        # ghcr.io/skyphusion-labs/vivijure-upscale
+UPSCALE_IMAGE_TAG = "1.0.1"        # ghcr.io/skyphusion-labs/vivijure-upscale
 MUSETALK_IMAGE_TAG = "1.0.0"       # ghcr.io/skyphusion-labs/vivijure-musetalk
 AUDIO_UPSCALE_IMAGE_TAG = "1.0.0"  # ghcr.io/skyphusion-labs/vivijure-audio-upscale
 
