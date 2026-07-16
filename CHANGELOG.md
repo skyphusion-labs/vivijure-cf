@@ -5,6 +5,8 @@ for new features). Newest first.
 
 ## Unreleased
 
+- **Installer default:** `UPSCALE_IMAGE_TAG` `1.0.0` → `1.0.1` (matches vivijure-upscale v1.0.1 GHCR). Live RunPod endpoint retag remains operator-opt-in / spend-gated.
+
 - **deploy:** bump installer `*_IMAGE_TAG` defaults to the current promoted constellation line
   (`BACKEND_IMAGE_TAG` `1.0.2`; upscale / musetalk / audio-upscale `1.0.0`). Live RunPod retag
   remains operator-opt-in (no spend from this bump). Closes #41.
