@@ -3,6 +3,12 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+- **deploy:** bump installer `*_IMAGE_TAG` defaults to the current promoted constellation line
+  (`BACKEND_IMAGE_TAG` `1.0.2`; upscale / musetalk / audio-upscale `1.0.0`). Live RunPod retag
+  remains operator-opt-in (no spend from this bump). Closes #41.
+
 ## v1.0.0 -- 2026-07-16
 
 **Vivijure Cloudflare host leaves pre-1.0.** Aligns the CF control panel with the constellation

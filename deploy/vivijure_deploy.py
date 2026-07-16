@@ -704,10 +704,10 @@ GPU_TYPE_IDS: list = []  # REQUIRED -- endpoint GPU type id(s) (GET /gputypes)
 # never the backend image. Tags are BARE semver GHCR tags (never a git :sha -- the endpoint-image pin
 # rule); each is an override knob defaulting to that repo current released tag. Bump the default when a
 # satellite ships a new tag, or edit a knob to pin a specific tag for a run.
-BACKEND_IMAGE_TAG = "0.4.9"        # ghcr.io/skyphusion-labs/vivijure-backend
-UPSCALE_IMAGE_TAG = "0.2.9"        # ghcr.io/skyphusion-labs/vivijure-upscale
-MUSETALK_IMAGE_TAG = "0.1.4"       # ghcr.io/skyphusion-labs/vivijure-musetalk
-AUDIO_UPSCALE_IMAGE_TAG = "0.1.0"  # ghcr.io/skyphusion-labs/vivijure-audio-upscale
+BACKEND_IMAGE_TAG = "1.0.2"        # ghcr.io/skyphusion-labs/vivijure-backend
+UPSCALE_IMAGE_TAG = "1.0.0"        # ghcr.io/skyphusion-labs/vivijure-upscale
+MUSETALK_IMAGE_TAG = "1.0.0"       # ghcr.io/skyphusion-labs/vivijure-musetalk
+AUDIO_UPSCALE_IMAGE_TAG = "1.0.0"  # ghcr.io/skyphusion-labs/vivijure-audio-upscale
 
 
 def runpod_images() -> dict:
@@ -792,7 +792,7 @@ def provision_runpod(repo: Path, s: Secrets, st: State, cf_derived: dict) -> dic
         if not img:
             die(f"no image mapping for RunPod endpoint {ep!r} (see runpod_images())")
         if not tag or tag == "latest":
-            die(f'set an explicit released tag for {ep} (bare semver, e.g. "0.4.9") -- never empty or "latest"')
+            die(f'set an explicit released tag for {ep} (bare semver, e.g. "1.0.2") -- never empty or "latest"')
     if not GPU_TYPE_IDS:
         die("set GPU_TYPE_IDS to the endpoint GPU type id(s) (GET /gputypes)")
 
