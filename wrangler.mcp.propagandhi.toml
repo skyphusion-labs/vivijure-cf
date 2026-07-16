@@ -1,0 +1,23 @@
+# Homelab MCP driver for vivijure-local on propagandhi (operator-specific; not CI-deployed).
+#
+# Cloudflare Worker *script* name remains `vivijure-studio-mcp-flatliners` (historical).
+# Renaming the script would create a second Worker; skip until a deliberate migration.
+# Custom domain `studio-mcp-flatliners.skyphusion.org` was dropped 2026-07-16.
+# Live domain: studio-mcp-propagandhi.skyphusion.org
+name = "vivijure-studio-mcp-flatliners"
+main = "node_modules/@skyphusion-labs/vivijure-mcp/dist/mcp.js"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+preview_urls = false
+workers_dev = false
+
+[observability]
+enabled = true
+
+[vars]
+STUDIO_URL = "https://vivijure-local.skyphusion.org"
+
+[[routes]]
+pattern = "studio-mcp-propagandhi.skyphusion.org"
+custom_domain = true
