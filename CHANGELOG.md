@@ -3,12 +3,16 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## v1.0.0 -- 2026-07-16
+
+**Vivijure Cloudflare host leaves pre-1.0.** Aligns the CF control panel with the constellation
+stable line (vivijure / doors / finish modules at v1.0.0).
 
 - **Homelab MCP wrangler:** `wrangler.mcp.flatliners.toml` -> `wrangler.mcp.propagandhi.toml`.
   Custom domain is `studio-mcp-propagandhi.skyphusion.org` (`studio-mcp-flatliners` dropped).
   Cloudflare Worker *script* name stays `vivijure-studio-mcp-flatliners` until a deliberate rename
   migration (non-destructive).
+- Includes all v0.21.x fleet restore and media-container fixes shipped on main since the last tag.
 
 ## v0.21.4 -- 2026-07-15
 
