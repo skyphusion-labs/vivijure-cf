@@ -3,6 +3,13 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+- **Homelab MCP wrangler:** `wrangler.mcp.flatliners.toml` -> `wrangler.mcp.propagandhi.toml`.
+  Custom domain is `studio-mcp-propagandhi.skyphusion.org` (`studio-mcp-flatliners` dropped).
+  Cloudflare Worker *script* name stays `vivijure-studio-mcp-flatliners` until a deliberate rename
+  migration (non-destructive).
+
 ## v0.21.4 -- 2026-07-15
 
 - **Restore the module fleet to IaC: re-vendor all 25 `modules/*/wrangler.toml` and turn
