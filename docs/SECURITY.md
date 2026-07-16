@@ -489,3 +489,4 @@ them (the release-purge flow that flushes the old `/welcome` page and `/` depend
 - #416 -- byte-range media serving on `/api/artifact` + worker-authoritative `Cache-Control` (section 8; the zone cache-bypass rule is optional hardening).
 - #423 -- built-in token auth mode (section 1b); Cloudflare Access becomes optional hardening, not a deploy prerequisite.
 - [DEPLOYMENT.md](DEPLOYMENT.md) -- per-function key issuance and scopes.
+- [S8 adversarial security audit (2026-07-03)](audits/2026-07-03-s8-adversarial-audit.md) -- independent adversarial read of this control plane, published verbatim once patched; F1/F4 fixed, F2/F3/F5 documented here, F7 default flipped, and the one still-open item (F6 backend half, vivijure-backend#281) named rather than dropped.
