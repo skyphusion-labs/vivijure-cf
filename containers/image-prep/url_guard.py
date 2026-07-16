@@ -91,9 +91,12 @@ def safe_log_value(val, max_len=200):
     return s
 
 
-async def guarded_get(session, url, **kwargs):
+# Sync factories on purpose: aiohttp's session.get/put return an async context
+# manager. `async def` here would return a coroutine, and `async with guarded_get(...)`
+# would then blow up with TypeError (never awaited) -- the 2026-07-15 assemble 500.
+def guarded_get(session, url, **kwargs):
     return session.get(_safe_fetch_url(url), **kwargs)  # lgtm[py/full-ssrf]
 
 
-async def guarded_put(session, url, **kwargs):
+def guarded_put(session, url, **kwargs):
     return session.put(_safe_fetch_url(url), **kwargs)  # lgtm[py/full-ssrf]

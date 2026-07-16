@@ -8,8 +8,10 @@ fetch. Vendored byte-for-byte into each container dir alongside url_guard.py.
 Run:  python3 test_url_guard.py
 Exits non-zero on any failed assertion.
 """
+import inspect
 import os
 import sys
+from unittest.mock import MagicMock
 
 import url_guard
 from url_guard import validate_fetch_url
@@ -60,6 +62,26 @@ def main():
             print("[PASS] ALLOW/BLOCK respects ALLOWED_FETCH_HOSTS override")
     finally:
         del os.environ["ALLOWED_FETCH_HOSTS"]
+
+    # Regression: guarded_get/put must be sync factories that return aiohttp's
+    # async context manager. async def + `async with guarded_get(...)` yields
+    # TypeError ("coroutine object does not support the asynchronous context
+    # manager protocol") and a 500 on every /finish /inspect call.
+    if inspect.iscoroutinefunction(url_guard.guarded_get) or inspect.iscoroutinefunction(url_guard.guarded_put):
+        failures.append("guarded_get/put must be sync (not async def)")
+    else:
+        session = MagicMock()
+        cm = MagicMock()
+        session.get.return_value = cm
+        session.put.return_value = cm
+        got = url_guard.guarded_get(session, "https://abc.r2.cloudflarestorage.com/x")
+        put = url_guard.guarded_put(session, "https://abc.r2.cloudflarestorage.com/x")
+        if inspect.iscoroutine(got) or inspect.iscoroutine(put):
+            failures.append("guarded_get/put must not return a coroutine")
+        elif got is not cm or put is not cm:
+            failures.append("guarded_get/put must return session.get/put result")
+        else:
+            print("[PASS] guarded_get/put are sync async-context-manager factories")
 
     if failures:
         print("\nFAILED:")
