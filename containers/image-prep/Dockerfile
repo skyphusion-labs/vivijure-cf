@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim-bookworm
+# Pinned to 3.11: rembg -> pymatting -> numba supports only >=3.10,<3.14, and the
+# numba-cache warm step below hardcodes the python3.11 site-packages path. Do NOT bump past 3.13.
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
