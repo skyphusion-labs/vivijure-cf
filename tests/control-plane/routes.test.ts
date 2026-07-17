@@ -454,7 +454,10 @@ describe("POST /api/tenant/:id/invoke-key", () => {
   });
 
   it("installs a correctly scoped key and promotes the tenant to live", async () => {
-    const { cookie } = await tenantReady('["ep1"]');
+    // Real stored shape: the provisioner writes CreatedEndpoint[] objects, not a string[] of ids.
+    const { cookie } = await tenantReady(
+      JSON.stringify([{ key: "backend", label: "Render", id: "ep1", name: "vivijure-hero-backend" }]),
+    );
     deps.fetch = vi.fn(async (input: RequestInfo | URL) =>
       String(input).includes("graphql")
         ? new Response("no", { status: 401 })
