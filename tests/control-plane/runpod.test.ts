@@ -13,6 +13,7 @@ import {
   RunPodClient,
   templateEnv,
   tenantEndpointName,
+  invokeKeyRecipe,
 } from "../../src/control-plane/runpod";
 
 const R2 = { endpoint: "https://acct.r2.cloudflarestorage.com", accessKeyId: "ak", secretAccessKey: "sk", bucket: "vivijure-tenant-hero" };
@@ -175,5 +176,29 @@ describe("quotaGuidance", () => {
     expect(msg).toContain("on us");
     expect(msg).toContain("Nothing was created");
     expect(msg).not.toMatch(/fund|raise the quota|support/i);
+  });
+});
+
+describe("invokeKeyRecipe", () => {
+  const made = [
+    { key: "backend", label: "Render", id: "ep1", name: "vivijure-hero-backend" },
+    { key: "upscale", label: "Video upscale", id: "ep2", name: "vivijure-hero-upscale" },
+  ];
+
+  it("names the tenant's REAL endpoints, so nobody retypes a guess into a console", () => {
+    const r = invokeKeyRecipe(made);
+    expect(r.steps.join("\n")).toContain("vivijure-hero-backend");
+    expect(r.steps.join("\n")).toContain("vivijure-hero-upscale");
+    expect(r.endpoints.map((e) => e.id)).toEqual(["ep1", "ep2"]);
+  });
+
+  it("tells them to set graphql to None, and says WHY we refuse a powerful key", () => {
+    const text = invokeKeyRecipe(made).steps.join("\n");
+    expect(text).toContain("api.runpod.io/graphql to None");
+    expect(text).toMatch(/will not store|refuse/i);
+  });
+
+  it("tells them to delete the setup key afterwards (we never kept it)", () => {
+    expect(invokeKeyRecipe(made).steps.join("\n")).toMatch(/delete or rotate the FIRST key/i);
   });
 });

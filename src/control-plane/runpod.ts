@@ -416,3 +416,41 @@ export async function createTenantEndpoints(
 
   return created;
 }
+
+/**
+ * The key-B console recipe for one tenant.
+ *
+ * WHY THIS IS CODE AND NOT UI COPY: the endpoint names and ids are DATA the provisioner just
+ * created, and a human retyping them into a console is exactly where a wrong scope gets picked. The
+ * recipe is generated from the tenant's actual endpoints so what someone is told to tick is what
+ * was really built. Joan's phase-2 screen renders this; a human can also read it straight.
+ *
+ * This step exists because RunPod has no key-creation API and a key cannot be scoped to endpoints
+ * that do not exist yet, which is what forces two-phase onboarding. It is the one irreducibly manual
+ * step in the whole flow, so it had better be exact.
+ */
+export function invokeKeyRecipe(endpoints: CreatedEndpoint[]): {
+  summary: string;
+  steps: string[];
+  endpoints: { key: string; label: string; id: string; name: string }[];
+} {
+  return {
+    summary:
+      "Create a second RunPod key that can ONLY run jobs on the 4 endpoints we just made for you. " +
+      "This is the key your studio keeps.",
+    steps: [
+      "In the RunPod console, open Settings -> API Keys -> Create API Key.",
+      "Set the key type to Restricted.",
+      "Set api.runpod.io/graphql to None. (We will refuse a key that has GraphQL access: it can " +
+        "create and delete anything on your whole account, and we will not store that.)",
+      "Set api.runpod.ai to Restricted, then give Read/Write to EXACTLY these 4 endpoints and " +
+        "nothing else:",
+      ...endpoints.map((e) => `    - ${e.name}   (${e.label})`),
+      "Create the key, copy it once, and paste it back here. We verify it against those 4 endpoints " +
+        "before we store it; if it is wrong or too powerful, we reject it and tell you why.",
+      "Then delete or rotate the FIRST key (the setup one) in the console. It has done its job and " +
+        "we never kept it.",
+    ],
+    endpoints: endpoints.map((e) => ({ key: e.key, label: e.label, id: e.id, name: e.name })),
+  };
+}
