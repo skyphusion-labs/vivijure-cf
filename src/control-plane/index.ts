@@ -14,7 +14,7 @@
 // steps) lands in #53/#54. A tenant created today therefore parks at status "pending" with a
 // "queued" job until that runner ships. Nothing here claims otherwise to the caller.
 
-import { acceptAup, hasAcceptedCurrent, isAupExempt } from "./aup";
+import { acceptAup, fetchAupSha256, hasAcceptedCurrent, isAupExempt } from "./aup";
 import {
   clearedSessionCookie,
   endSession,
@@ -90,7 +90,13 @@ export async function handle(
     }
 
     if (request.method === "GET" && path === "/api/aup/current") {
-      return json({ version: env.AUP_VERSION, url: env.AUP_URL });
+      // sha256 of the served bytes travels with the label so the front door can show, and later
+      // prove, exactly what it put in front of someone.
+      return json({
+        version: env.AUP_VERSION,
+        url: env.AUP_URL,
+        sha256: await fetchAupSha256(env.AUP_URL, deps.fetch),
+      });
     }
 
     // ---- auth ----
@@ -139,8 +145,15 @@ export async function handle(
           String(body?.version ?? ""),
           env.AUP_VERSION,
           request,
+          await fetchAupSha256(env.AUP_URL, deps.fetch),
         );
-        if (!result.ok) return err(result.error, 409, { current: result.current });
+        if (!result.ok) {
+          // 409 for a stale version (reload and re-read); 503 when WE cannot pin the text, because
+          // that is our failure, not the tenant's, and it must be loud rather than silently absent.
+          return result.error === "aup_unverifiable"
+            ? err(result.error, 503, { message: "we could not verify the policy text; nothing was recorded" })
+            : err(result.error, 409, { current: result.current });
+        }
         return new Response(null, { status: 204 });
       }
 

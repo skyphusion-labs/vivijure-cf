@@ -124,6 +124,8 @@ export interface ControlPlaneStore {
   recordAupAcceptance(
     accountId: string,
     version: string,
+    /** SHA-256 of the served AUP bytes: the label says what we called it, this says what it said. */
+    aupSha256: string,
     ipHash: string | null,
     userAgent: string | null,
   ): Promise<void>;

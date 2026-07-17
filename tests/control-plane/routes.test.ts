@@ -11,12 +11,14 @@ import { handle } from "../../src/control-plane/index";
 import type { ControlPlaneDeps } from "../../src/control-plane/deps";
 import type { ControlPlaneEnv } from "../../src/control-plane/env";
 import { SESSION_COOKIE, startSession } from "../../src/control-plane/auth";
+import { sha256Hex } from "../../src/control-plane/crypto";
 import { MemoryStore } from "./memory-store";
 
 const ROOT_HOST = "studio.vivijure.com";
 const ORIGIN = `https://${ROOT_HOST}`;
 const AUP = "2026-07-17";
 const ADMIN_TOKEN = "a".repeat(64);
+const AUP_TEXT = "No CSAM. Ever. This is the acceptable use policy text.";
 
 let store: MemoryStore;
 let sent: { to: string; subject: string; text: string }[];
@@ -55,7 +57,8 @@ beforeEach(() => {
   deps = {
     store,
     mailer: { send: async (to, subject, text) => void sent.push({ to, subject, text }) },
-    fetch: vi.fn() as unknown as typeof fetch,
+    // The AUP gate now fetches and hashes the SERVED bytes, so the fake serves them.
+    fetch: vi.fn(async () => new Response(AUP_TEXT)) as unknown as typeof fetch,
     now: () => 1_750_000_000_000,
   };
 });
@@ -223,6 +226,44 @@ describe("the AUP gate", () => {
     const res = await handle(jsonReq("/api/aup/accept", { version: "2020-01-01" }, { headers: { cookie } }), env(), ctx, deps);
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: "aup_version_stale", current: AUP });
+  });
+
+  it("records the SHA-256 of the SERVED AUP BYTES, not just the version label", async () => {
+    // The label proves what we CALLED the text; the hash proves what it SAID. If the bytes behind
+    // AUP_URL ever change without a version bump, every acceptance row would otherwise attest to
+    // text nobody agreed to, with no way after the fact to tell which. (Ernst's first-serve
+    // immutability rule, #40.)
+    const { cookie } = await signedIn();
+    await handle(jsonReq("/api/aup/accept", { version: AUP }, { headers: { cookie } }), env(), ctx, deps);
+    const expected = await sha256Hex(AUP_TEXT);
+    expect(store.aup[0].aup_sha256).toBe(expected);
+  });
+
+  it("serves the hash alongside the label so the front door can prove what it displayed", async () => {
+    const res = await handle(req("/api/aup/current"), env(), ctx, deps);
+    expect(await res.json()).toMatchObject({ version: AUP, sha256: await sha256Hex(AUP_TEXT) });
+  });
+
+  it("REFUSES an acceptance it cannot hash, and records NOTHING (fail closed)", async () => {
+    // An acceptance whose text we cannot pin is not evidence: it records that someone clicked a
+    // button next to bytes we can no longer identify. 503, because that is OUR failure.
+    const { cookie } = await signedIn();
+    deps.fetch = vi.fn(async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    const res = await handle(jsonReq("/api/aup/accept", { version: AUP }, { headers: { cookie } }), env(), ctx, deps);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "aup_unverifiable" });
+    expect(store.aup).toHaveLength(0);
+    // and the gate still refuses, so an unverifiable AUP cannot become a way past it
+    const gated = await handle(req("/api/tenant/slug-available?slug=hero", { headers: { cookie } }), env(), ctx, deps);
+    expect(gated.status).toBe(403);
+  });
+
+  it("REFUSES when the AUP fetch throws outright (network, not just a bad status)", async () => {
+    const { cookie } = await signedIn();
+    deps.fetch = vi.fn(async () => { throw new Error("network"); }) as unknown as typeof fetch;
+    const res = await handle(jsonReq("/api/aup/accept", { version: AUP }, { headers: { cookie } }), env(), ctx, deps);
+    expect(res.status).toBe(503);
+    expect(store.aup).toHaveLength(0);
   });
 
   it("hashes the acceptance IP rather than storing it raw", async () => {

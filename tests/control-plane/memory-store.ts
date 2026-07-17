@@ -102,13 +102,13 @@ export class MemoryStore implements ControlPlaneStore {
     return { ...row };
   }
 
-  aup: { account_id: string; aup_version: string; ip_hash: string | null }[] = [];
+  aup: { account_id: string; aup_version: string; aup_sha256: string; ip_hash: string | null }[] = [];
   async hasAcceptedAup(account_id: string, version: string) {
     return this.aup.some((r) => r.account_id === account_id && r.aup_version === version);
   }
-  async recordAupAcceptance(account_id: string, aup_version: string, ip_hash: string | null) {
+  async recordAupAcceptance(account_id: string, aup_version: string, aup_sha256: string, ip_hash: string | null) {
     if (!(await this.hasAcceptedAup(account_id, aup_version))) {
-      this.aup.push({ account_id, aup_version, ip_hash });
+      this.aup.push({ account_id, aup_version, aup_sha256, ip_hash });
     }
   }
 

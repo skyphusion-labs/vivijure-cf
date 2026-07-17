@@ -157,15 +157,16 @@ export class D1Store implements ControlPlaneStore {
   async recordAupAcceptance(
     accountId: string,
     version: string,
+    aupSha256: string,
     ipHash: string | null,
     userAgent: string | null,
   ): Promise<void> {
     await this.db
       .prepare(
-        "INSERT OR IGNORE INTO aup_acceptances (account_id, aup_version, ip_hash, user_agent) " +
-          "VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR IGNORE INTO aup_acceptances (account_id, aup_version, aup_sha256, ip_hash, user_agent) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5)",
       )
-      .bind(accountId, version, ipHash, userAgent)
+      .bind(accountId, version, aupSha256, ipHash, userAgent)
       .run();
   }
 

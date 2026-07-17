@@ -12,6 +12,22 @@
 import { sha256Hex } from "./crypto";
 import type { ControlPlaneStore } from "./store";
 
+/**
+ * Fetch the served AUP bytes and hash them.
+ *
+ * Hashing what we SERVE rather than trusting a client-sent digest: a hash the client chooses proves
+ * only that the client can compute a hash.
+ */
+export async function fetchAupSha256(url: string, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  try {
+    const res = await fetchImpl(url);
+    if (!res.ok) return null;
+    return await sha256Hex(await res.text());
+  } catch {
+    return null;
+  }
+}
+
 /** Routes reachable by an authenticated account that has NOT yet accepted the current AUP. */
 const AUP_EXEMPT = new Set(["/api/me", "/api/aup/current", "/api/aup/accept", "/api/auth/logout"]);
 
@@ -37,15 +53,25 @@ export async function acceptAup(
   submittedVersion: string,
   currentVersion: string,
   request: Request,
-): Promise<{ ok: true } | { ok: false; error: "aup_version_stale"; current: string }> {
+  aupSha256: string | null,
+): Promise<
+  | { ok: true }
+  | { ok: false; error: "aup_version_stale"; current: string }
+  | { ok: false; error: "aup_unverifiable" }
+> {
   if (submittedVersion !== currentVersion) {
     return { ok: false, error: "aup_version_stale", current: currentVersion };
   }
+  // FAIL CLOSED on an unhashable AUP. An acceptance whose text we cannot pin is not evidence of
+  // anything: it records that someone clicked a button next to bytes we can no longer identify.
+  // Refusing is honest and visible; recording an unprovable consent is neither, and the whole point
+  // of this gate is that it holds up later.
+  if (!aupSha256) return { ok: false, error: "aup_unverifiable" };
   // The IP is HASHED, never stored raw: the record must prove who accepted what and when, which a
   // hash does, without turning the acceptance log into a location dataset.
   const ip = request.headers.get("cf-connecting-ip");
   const ipHash = ip ? await sha256Hex(ip) : null;
   const ua = request.headers.get("user-agent");
-  await store.recordAupAcceptance(accountId, currentVersion, ipHash, ua ? ua.slice(0, 256) : null);
+  await store.recordAupAcceptance(accountId, currentVersion, aupSha256, ipHash, ua ? ua.slice(0, 256) : null);
   return { ok: true };
 }
