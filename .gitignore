@@ -20,6 +20,11 @@ __pycache__/
 # studio URL injected). Edit the example; render locally to work. See docs/mcp.md.
 /wrangler.mcp.toml
 
+# The platform control plane's wrangler config is likewise RENDERED from
+# wrangler.control-plane.toml.example (account-specific D1 id + origins); the rendered file stays
+# out of the public repo. Edit the .example; render locally to work. (#52)
+/wrangler.control-plane.toml
+
 # Real deploy.env holds the operator keys (rendered from deploy.env.example); never commit it.
 /deploy.env
 

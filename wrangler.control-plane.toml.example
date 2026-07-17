@@ -1,0 +1,68 @@
+# Vivijure PLATFORM CONTROL PLANE (#52, epic #40) -- wrangler config.
+#
+# A SEPARATE Worker from the studio, deployed independently (the MCP Worker precedent):
+#   npm run deploy:control-plane
+#
+# account_id is NOT hardcoded; it is read from CLOUDFLARE_ACCOUNT_ID (.dev.vars locally, injected
+# in CI). Mirror every binding change in src/control-plane/env.ts (the hand-authored Env).
+#
+# NAMING: "control-plane", never "platform". src/platform/ is already the host-neutral Platform ICD
+# (cf-platform.ts, cf-r2-store.ts, ...), and colliding with it would be a trap for the next reader.
+#
+# PARITY: this control plane is AGPL in this public repo like everything else it provisions. It
+# deploys the PUBLISHED studio release unmodified, so there is no hosted fork to drift from
+# self-host. Anyone may run a competing hosted vivijure from exactly this source.
+
+name = "vivijure-control-plane"
+main = "src/control-plane/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# No preview URLs, and no workers.dev: the front door is studio.vivijure.com. A *.workers.dev
+# hostname would be a second, unrouted way into signup and the admin surface.
+preview_urls = false
+workers_dev = false
+
+# The front-door UI (Joan, #58). Deliberately a SEPARATE bundle from public/ (the studio frontend
+# that ships to every self-hoster): the hosted door is ours, the studio is everyone's.
+assets = { directory = "./hosted/public", binding = "ASSETS" }
+
+# Control-plane D1. PLATFORM data only (accounts, tenants, aup_acceptances, provision_jobs).
+# Tenant studio data lives in each tenant's OWN D1 and never here; the schema-guard test enforces it.
+[[d1_databases]]
+binding = "CP_DB"
+database_name = "vivijure-control-plane"
+database_id = "${CONTROL_PLANE_D1_ID}"
+migrations_dir = "migrations-control-plane"
+
+[vars]
+# Bumping AUP_VERSION re-gates every account on their next request, by construction.
+AUP_VERSION = "${AUP_VERSION}"
+AUP_URL = "${AUP_URL}"
+PUBLIC_ORIGIN = "${PUBLIC_ORIGIN}"
+TENANT_DOMAIN_SUFFIX = "${TENANT_DOMAIN_SUFFIX}"
+# postern's send door (POST /api/send). A URL, not a secret.
+POSTERN_SEND_URL = "${POSTERN_SEND_URL}"
+# SSO client identifiers are public; their secrets are wrangler secrets (below). A provider is
+# OFFERED only when both halves are present, so an unconfigured provider is absent, not broken.
+GOOGLE_OAUTH_CLIENT_ID = "${GOOGLE_OAUTH_CLIENT_ID}"
+GITHUB_OAUTH_CLIENT_ID = "${GITHUB_OAUTH_CLIENT_ID}"
+# Apple seam: PARKED until Conrad stages Team ID + Services ID + .p8. Empty = Apple is not offered.
+APPLE_TEAM_ID = "${APPLE_TEAM_ID}"
+APPLE_SERVICES_ID = "${APPLE_SERVICES_ID}"
+
+# Throttles the outbound-email amplifier (/api/auth/email/start).
+[[unsafe.bindings]]
+name = "CP_RATE_LIMIT"
+type = "ratelimit"
+namespace_id = "2001"
+simple = { limit = 5, period = 60 }
+
+# SECRETS (wrangler secret put, never in this file):
+#   POSTERN_SEND_TOKEN          -- bearer for postern's send door; the sender identity is BOUND to
+#                                  this token by postern's registry, so we never pass a From.
+#   GOOGLE_OAUTH_CLIENT_SECRET
+#   GITHUB_OAUTH_CLIENT_SECRET
+#   APPLE_PRIVATE_KEY           -- the .p8; parked with the rest of the Apple seam.
+#   CONTROL_PLANE_ADMIN_TOKEN   -- the admin gate. Unset = no admin surface (fails closed).
+#   CF_PROVISIONER_TOKEN        -- mints tenant D1 + R2 + scoped creds. Consumed by #53, not #52.

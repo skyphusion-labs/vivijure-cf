@@ -1,0 +1,149 @@
+// The control plane's data seam (#52).
+//
+// WHY AN INTERFACE: the repo has no SQL-fidelity test harness and adding one would mean a new dep.
+// So data access gets exactly ONE un-stubbable seam: D1Store (store-d1.ts) is what production wires
+// and what the live wrangler dev verify exercises against a REAL D1; MemoryStore (tests/) backs the
+// logic tests. The rule that keeps this honest: a stubbed store proves a DECISION PATH, never the
+// shipped artifact. Anything that must be true of the SQL itself gets verified live, not here.
+
+/**
+ * The tenant LIFECYCLE. Note what is NOT in here: "suspended".
+ *
+ * Suspension is an ORTHOGONAL axis (suspended_at), not a lifecycle state, and that separation is
+ * load-bearing rather than stylistic. Storing suspension in this column destroys the lifecycle
+ * state it overwrites, so resume has to GUESS where to go back to; guessing "live" silently
+ * promoted a never-provisioned tenant to live, complete with a URL to a studio that did not exist
+ * (caught on the real box, #52 live verify, not by the unit suite). Two independent facts need two
+ * independent columns.
+ */
+export type TenantLifecycle =
+  | "pending"
+  | "provisioning"
+  | "awaiting_invoke_key"
+  | "live"
+  | "failed"
+  | "deleting"
+  | "deleted";
+
+/** What the API projects. "suspended" is computed from suspended_at, never stored in `status`. */
+export type TenantStatus = TenantLifecycle | "suspended";
+
+export type AuthProvider = "email" | "google" | "github" | "apple";
+
+export interface Account {
+  id: string;
+  email: string;
+  created_at: string;
+  suspended_at: string | null;
+  suspended_reason: string | null;
+  deleted_at: string | null;
+}
+
+export interface Tenant {
+  id: string;
+  slug: string;
+  account_id: string;
+  status: TenantLifecycle;
+  script_name: string | null;
+  d1_database_id: string | null;
+  r2_bucket_name: string | null;
+  endpoints_json: string | null;
+  studio_release: string | null;
+  created_at: string;
+  live_at: string | null;
+  suspended_at: string | null;
+  suspended_reason: string | null;
+  deleted_at: string | null;
+}
+
+export interface ProvisionJob {
+  id: string;
+  tenant_id: string;
+  kind: "provision" | "deprovision";
+  status: "queued" | "running" | "succeeded" | "failed";
+  step: string | null;
+  steps_done: string;
+  error_step: string | null;
+  error_message: string | null;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+}
+
+export interface LoginToken {
+  token_hash: string;
+  email: string;
+  expires_at: string;
+  consumed_at: string | null;
+}
+
+export interface Session {
+  token_hash: string;
+  account_id: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
+export interface OAuthState {
+  state: string;
+  provider: string;
+  verifier: string | null;
+  redirect_to: string | null;
+  expires_at: string;
+  consumed_at: string | null;
+}
+
+export interface ControlPlaneStore {
+  // accounts + identities
+  getAccountById(id: string): Promise<Account | null>;
+  getAccountByEmail(email: string): Promise<Account | null>;
+  createAccount(id: string, email: string): Promise<Account>;
+  getAccountIdByIdentity(provider: AuthProvider, subject: string): Promise<string | null>;
+  linkIdentity(provider: AuthProvider, subject: string, accountId: string): Promise<void>;
+  touchIdentityLogin(provider: AuthProvider, subject: string): Promise<void>;
+
+  // magic-link tokens (hash only)
+  createLoginToken(tokenHash: string, email: string, expiresAt: string): Promise<void>;
+  /** Single-use redemption: returns the row ONLY if it consumes it in the same step. */
+  consumeLoginToken(tokenHash: string, now: string): Promise<LoginToken | null>;
+
+  // sessions (hash only)
+  createSession(tokenHash: string, accountId: string, expiresAt: string): Promise<void>;
+  getSession(tokenHash: string, now: string): Promise<Session | null>;
+  revokeSession(tokenHash: string, now: string): Promise<void>;
+
+  // oauth round-trip state
+  createOAuthState(row: Omit<OAuthState, "consumed_at">): Promise<void>;
+  consumeOAuthState(state: string, now: string): Promise<OAuthState | null>;
+
+  // AUP
+  hasAcceptedAup(accountId: string, version: string): Promise<boolean>;
+  recordAupAcceptance(
+    accountId: string,
+    version: string,
+    ipHash: string | null,
+    userAgent: string | null,
+  ): Promise<void>;
+
+  // tenants
+  getTenantById(id: string): Promise<Tenant | null>;
+  getTenantBySlug(slug: string): Promise<Tenant | null>;
+  getTenantForAccount(accountId: string): Promise<Tenant | null>;
+  createTenant(id: string, slug: string, accountId: string, status: TenantLifecycle): Promise<Tenant>;
+  /** Moves the LIFECYCLE only. Never touches suspension. */
+  setTenantStatus(id: string, status: TenantLifecycle): Promise<void>;
+  /** The kill switch: orthogonal to lifecycle, so resume restores the real state by itself. */
+  suspendTenant(id: string, reason: string): Promise<void>;
+  resumeTenant(id: string): Promise<void>;
+  listTenants(filter: { status?: string; q?: string }): Promise<Tenant[]>;
+
+  // provision jobs
+  createProvisionJob(id: string, tenantId: string, kind: "provision" | "deprovision"): Promise<ProvisionJob>;
+  getLatestJobForTenant(tenantId: string): Promise<ProvisionJob | null>;
+
+  // settings + audit
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string, updatedBy: string): Promise<void>;
+  recordAdminAction(actor: string, action: string, target: string | null, detail: string | null): Promise<void>;
+}
