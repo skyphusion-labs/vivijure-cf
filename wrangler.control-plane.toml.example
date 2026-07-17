@@ -69,6 +69,22 @@ migrations_dir = "migrations-control-plane"
 binding = "TENANT_DISPATCH"
 namespace = "${TENANT_DISPATCH_NAMESPACE}"
 
+# Studio migrations ride the bundle as Text modules (src/control-plane/studio-migrations.ts): the
+# provisioner applies them to each fresh tenant D1 and a Worker cannot read a directory at runtime.
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
+
+# The studio release artifact mirror studio-release.yml publishes (studio-releases/<tag>/...).
+# The provisioner reads the pinned release from here; see src/control-plane/bundle-r2.ts.
+# PREREQ, same class as the dangling-namespace hazard above: the bucket must EXIST and the pinned
+# tag's artifact must have been published INTO it (run the studio-release workflow) before a
+# provision can succeed. An empty mirror fails a provision honestly at wfp_upload, not silently.
+[[r2_buckets]]
+binding = "STUDIO_RELEASES"
+bucket_name = "${STUDIO_RELEASES_BUCKET}"
+
 [vars]
 # Bumping AUP_VERSION re-gates every account on their next request, by construction.
 AUP_VERSION = "${AUP_VERSION}"
@@ -96,6 +112,17 @@ GITHUB_OAUTH_CLIENT_ID = "${GITHUB_OAUTH_CLIENT_ID}"
 # Apple seam: PARKED until Conrad stages Team ID + Services ID + .p8. Empty = Apple is not offered.
 APPLE_TEAM_ID = "${APPLE_TEAM_ID}"
 APPLE_SERVICES_ID = "${APPLE_SERVICES_ID}"
+# Provisioner wiring (src/control-plane/deps.ts provisionerWiring). ALL of CF_ACCOUNT_ID,
+# DISPATCH_NAMESPACE, STUDIO_RELEASE (+ the STUDIO_RELEASES binding + the CF_PROVISIONER_TOKEN
+# secret) must be present or provisioning refuses with 503 provisioner_unconfigured.
+# CF_ACCOUNT_ID is the same account fact wrangler itself deploys with; it is a var here because the
+# Worker needs it at runtime (CfApi paths + the tenant R2 S3 endpoint) and a Worker cannot read its
+# own account id. DISPATCH_NAMESPACE is the same namespace TENANT_DISPATCH binds; the binding
+# serves dispatch, the NAME serves the upload API, and they must agree.
+CF_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
+DISPATCH_NAMESPACE = "${TENANT_DISPATCH_NAMESPACE}"
+# The pinned studio release every new tenant gets (the golden-checkpoint pin; see the Q4 ruling).
+STUDIO_RELEASE = "${STUDIO_RELEASE}"
 
 # Throttles the outbound-email amplifier (/api/auth/email/start).
 [[unsafe.bindings]]

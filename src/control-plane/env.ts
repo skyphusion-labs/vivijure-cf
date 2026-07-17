@@ -68,8 +68,25 @@ export interface ControlPlaneEnv {
   /** Admin gate. Bearer, compared constant-time; mirrors the studio's proven token gate. */
   CONTROL_PLANE_ADMIN_TOKEN?: string;
 
-  /** Mints tenant D1 + R2 + scoped creds. Consumed by the provisioner (#53), not by #52. */
+  /**
+   * Mints tenant D1 + R2 + WfP uploads AND the per-tenant bucket tokens. Must be the
+   * DASHBOARD-created credential (an API-created token is refused token-management rights, so it
+   * cannot mint; see token-minter.ts). Provisioning is refused (503) while this is unset.
+   */
   CF_PROVISIONER_TOKEN?: string;
+
+  // ---- provisioner wiring (#53). ALL of these must be present for provisioning to be offered;
+  // a partially configured provisioner refuses (503 provisioner_unconfigured) rather than parking
+  // tenants on jobs nothing will ever run. ----
+
+  /** Account id (public identifier, not a secret); CfApi + the tenant R2 S3 endpoint need it. */
+  CF_ACCOUNT_ID?: string;
+  /** The WfP dispatch namespace NAME for uploads (TENANT_DISPATCH binds it for dispatch only). */
+  DISPATCH_NAMESPACE?: string;
+  /** The pinned studio release tag the provisioner ships to every new tenant. */
+  STUDIO_RELEASE?: string;
+  /** The release-artifact mirror written by studio-release.yml (studio-releases/<tag>/...). */
+  STUDIO_RELEASES?: R2Bucket;
 
   // ---- optional ----
 

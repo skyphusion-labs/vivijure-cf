@@ -15,6 +15,7 @@ import {
 import { CfApiError } from "../../src/control-plane/cf-api";
 import type { CfApi } from "../../src/control-plane/cf-api";
 import type { Tenant } from "../../src/control-plane/store";
+import { sha256Hex } from "../../src/control-plane/crypto";
 import { MemoryStore, recordingStore } from "./memory-store";
 
 const MIGRATIONS = "CREATE TABLE IF NOT EXISTS projects (id TEXT);";
@@ -68,6 +69,7 @@ function deps(over: Partial<ProvisionDeps> = {}): ProvisionDeps {
         compatibilityDate: "2026-06-01",
       })),
     },
+    r2Endpoint: "https://acct.r2.cloudflarestorage.com",
     namespace: "vivijure-tenants",
     release: "v1.0.0",
     tenantScriptName: (slug: string) => `tenant-${slug}-studio`,
@@ -98,6 +100,38 @@ describe("runProvisionJob", () => {
     expect(store.tenants.get(t.id)?.status).toBe("awaiting_invoke_key");
     expect(store.jobs.get("job_1")?.status).toBe("succeeded");
     expect(JSON.parse(store.jobs.get("job_1")!.steps_done)).toEqual([...PROVISION_STEPS]);
+  });
+
+  it("threads the REAL minted R2 credential into the RunPod templates (never a placeholder)", async () => {
+    // The satellite templates carry this credential and a render reads it; the live e2e once
+    // provisioned endpoints with placeholder creds, which would have failed at the tenant's first
+    // render. The seam now takes the credential, so prove it is the mint, S3-derived.
+    const t = await tenant();
+    const d = deps();
+    const job = await store.createProvisionJob("job_1", t.id, "provision");
+    const res = await runProvisionJob(d, job.id, t, "rpa_keyA", MIGRATIONS);
+    expect(res.ok).toBe(true);
+
+    const createEndpoints = d.runpod.createEndpoints as ReturnType<typeof vi.fn>;
+    expect(createEndpoints).toHaveBeenCalledTimes(1);
+    const [key, slug, r2] = createEndpoints.mock.calls[0] as [
+      string,
+      string,
+      { endpoint: string; accessKeyId: string; secretAccessKey: string; bucket: string },
+    ];
+    expect(key).toBe("rpa_keyA");
+    expect(slug).toBe("hero");
+    expect(r2.endpoint).toBe("https://acct.r2.cloudflarestorage.com");
+    expect(r2.accessKeyId).toBe("tok-1");
+    // R2 S3 semantics: the secret access key is the SHA-256 hex of the token value.
+    expect(r2.secretAccessKey).toBe(await sha256Hex("TOKEN_VALUE_SECRET"));
+    expect(r2.bucket).toBe("vivijure-tenant-hero");
+    // And the worker secret is the SAME derivation -- template and worker cannot disagree.
+    const upload = (d.cf.uploadUserWorker as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      bindings: { name: string; text?: string }[];
+    };
+    const secret = upload.bindings.find((b) => b.name === "R2_S3_SECRET_ACCESS_KEY");
+    expect(secret?.text).toBe(r2.secretAccessKey);
   });
 
   it("NEVER PASSES the transient key A to the store at all, and never logs it", async () => {

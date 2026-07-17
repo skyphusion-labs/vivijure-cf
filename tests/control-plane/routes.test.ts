@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { handle } from "../../src/control-plane/index";
-import type { ControlPlaneDeps } from "../../src/control-plane/deps";
+import type { ControlPlaneDeps, ProvisionerWiring } from "../../src/control-plane/deps";
 import type { ControlPlaneEnv } from "../../src/control-plane/env";
 import { SESSION_COOKIE, startSession } from "../../src/control-plane/auth";
 import { sha256Hex } from "../../src/control-plane/crypto";
@@ -23,6 +23,7 @@ const AUP_TEXT = "No CSAM. Ever. This is the acceptable use policy text.";
 let store: MemoryStore;
 let sent: { to: string; subject: string; text: string }[];
 let deps: ControlPlaneDeps;
+let wiring: { start: ReturnType<typeof vi.fn>; installInvokeKey: ReturnType<typeof vi.fn> };
 
 const env = (over: Partial<ControlPlaneEnv> = {}): ControlPlaneEnv =>
   ({
@@ -54,12 +55,17 @@ beforeEach(() => {
   store = new MemoryStore();
   sent = [];
   pending = [];
+  // The wiring STUB records the handoff; it never executes a job. What the routes prove is that
+  // the runner is LAUNCHED with the right job/tenant/key; the step machine itself is
+  // provisioner.test.ts + the live e2e.
+  wiring = { start: vi.fn(async () => {}), installInvokeKey: vi.fn(async () => {}) };
   deps = {
     store,
     mailer: { send: async (to, subject, text) => void sent.push({ to, subject, text }) },
     // The AUP gate now fetches and hashes the SERVED bytes, so the fake serves them.
     fetch: vi.fn(async () => new Response(AUP_TEXT)) as unknown as typeof fetch,
     now: () => 1_750_000_000_000,
+    provisioner: wiring as unknown as ProvisionerWiring,
   };
 });
 
@@ -326,7 +332,7 @@ describe("POST /api/tenant/provision", () => {
     return s;
   }
 
-  it("creates a tenant and a queued job", async () => {
+  it("creates a tenant and a queued job, and LAUNCHES the runner with the transient key", async () => {
     const { cookie } = await ready();
     const res = await handle(
       jsonReq("/api/tenant/provision", { slug: "hero", runpod_api_key: "rpa_x" }, { headers: { cookie } }),
@@ -336,6 +342,38 @@ describe("POST /api/tenant/provision", () => {
     const body = (await res.json()) as { tenant_id: string; job_id: string };
     expect(store.tenants.get(body.tenant_id)?.status).toBe("pending");
     expect(store.jobs.get(body.job_id)?.status).toBe("queued");
+    // The wiring handoff: job id, THE created tenant, and the key -- the one place it may travel.
+    expect(wiring.start).toHaveBeenCalledTimes(1);
+    const [jobId, tenant, key] = wiring.start.mock.calls[0] as [string, { id: string }, string];
+    expect(jobId).toBe(body.job_id);
+    expect(tenant.id).toBe(body.tenant_id);
+    expect(key).toBe("rpa_x");
+  });
+
+  it("REFUSES (503) when the provisioner wiring is absent, creating NOTHING", async () => {
+    const { cookie } = await ready();
+    const res = await handle(
+      jsonReq("/api/tenant/provision", { slug: "hero", runpod_api_key: "rpa_x" }, { headers: { cookie } }),
+      env(), ctx, { ...deps, provisioner: undefined },
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "provisioner_unconfigured" });
+    // No parked tenant, no job nothing will run: refusal must leave zero rows behind.
+    expect(store.tenants.size).toBe(0);
+    expect(store.jobs.size).toBe(0);
+  });
+
+  it("RULING: signups OFF never strands an existing AUP-accepted account (provision still 202)", async () => {
+    // The toggle aims at the front DOOR (new accounts; refusal pinned in the callback suite), not
+    // at people already inside it. Both halves together are the product ruling, 2026-07-17.
+    const { cookie } = await ready();
+    store.settings.set("signups_enabled", "false");
+    const res = await handle(
+      jsonReq("/api/tenant/provision", { slug: "hero", runpod_api_key: "rpa_x" }, { headers: { cookie } }),
+      env(), ctx, deps,
+    );
+    expect(res.status).toBe(202);
+    expect(wiring.start).toHaveBeenCalledTimes(1);
   });
 
   it("NEVER stores the transient provisioning key anywhere", async () => {
@@ -380,11 +418,12 @@ describe("POST /api/tenant/provision", () => {
 });
 
 describe("POST /api/tenant/:id/invoke-key", () => {
-  async function tenantReady(endpoints: string | null) {
+  async function tenantReady(endpoints: string | null, script: string | null = "tenant-hero-studio") {
     const s = await signedIn();
     await handle(jsonReq("/api/aup/accept", { version: AUP }, { headers: { cookie: s.cookie } }), env(), ctx, deps);
     const t = await store.createTenant("ten_abc123", "hero", s.account.id, "awaiting_invoke_key");
     t.endpoints_json = endpoints;
+    t.script_name = script;
     return s;
   }
 
@@ -414,7 +453,7 @@ describe("POST /api/tenant/:id/invoke-key", () => {
     expect(JSON.stringify([...store.tenants.values()])).not.toContain("rpa_toopowerful");
   });
 
-  it("accepts a correctly scoped key and reports the install as NOT YET IMPLEMENTED (#53), not as done", async () => {
+  it("installs a correctly scoped key and promotes the tenant to live", async () => {
     const { cookie } = await tenantReady('["ep1"]');
     deps.fetch = vi.fn(async (input: RequestInfo | URL) =>
       String(input).includes("graphql")
@@ -425,9 +464,55 @@ describe("POST /api/tenant/:id/invoke-key", () => {
       jsonReq("/api/tenant/ten_abc123/invoke-key", { runpod_invoke_key: "rpa_good" }, { headers: { cookie } }),
       env(), ctx, deps,
     );
-    // Honest: the key verified, but #52 does not own the secrets PUT, so it must not claim success.
-    expect(res.status).toBe(501);
-    expect(await res.json()).toMatchObject({ error: "not_implemented", verified_endpoints: 1 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: "live", verified_endpoints: 1 });
+    // The install handoff carries the tenant and the key; the key is stored NOWHERE else.
+    expect(wiring.installInvokeKey).toHaveBeenCalledTimes(1);
+    const [tenant, key] = wiring.installInvokeKey.mock.calls[0] as [{ id: string }, string];
+    expect(tenant.id).toBe("ten_abc123");
+    expect(key).toBe("rpa_good");
+    expect(store.tenants.get("ten_abc123")?.status).toBe("live");
+    expect(JSON.stringify([...store.tenants.values()])).not.toContain("rpa_good");
+  });
+
+  it("REFUSES (409 not_provisioned) when endpoints exist but the studio upload never completed", async () => {
+    const { cookie } = await tenantReady('["ep1"]', null);
+    const res = await handle(
+      jsonReq("/api/tenant/ten_abc123/invoke-key", { runpod_invoke_key: "rpa_good" }, { headers: { cookie } }),
+      env(), ctx, deps,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "not_provisioned" });
+    expect(wiring.installInvokeKey).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES (503) when the provisioner wiring is absent, without probing or storing", async () => {
+    const { cookie } = await tenantReady('["ep1"]');
+    const probes = vi.fn(async () => new Response("{}", { status: 200 }));
+    const res = await handle(
+      jsonReq("/api/tenant/ten_abc123/invoke-key", { runpod_invoke_key: "rpa_good" }, { headers: { cookie } }),
+      env(), ctx, { ...deps, fetch: probes as unknown as typeof fetch, provisioner: undefined },
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "provisioner_unconfigured" });
+    expect(probes).not.toHaveBeenCalled();
+    expect(store.tenants.get("ten_abc123")?.status).toBe("awaiting_invoke_key");
+  });
+
+  it("a failed install stays HONEST: 500, and the tenant is NOT promoted to live", async () => {
+    const { cookie } = await tenantReady('["ep1"]');
+    wiring.installInvokeKey.mockRejectedValueOnce(new Error("secrets PUT exploded"));
+    deps.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("graphql")
+        ? new Response("no", { status: 401 })
+        : new Response(JSON.stringify({ workers: {} }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const res = await handle(
+      jsonReq("/api/tenant/ten_abc123/invoke-key", { runpod_invoke_key: "rpa_good" }, { headers: { cookie } }),
+      env(), ctx, deps,
+    );
+    expect(res.status).toBe(500);
+    expect(store.tenants.get("ten_abc123")?.status).toBe("awaiting_invoke_key");
   });
 });
 
