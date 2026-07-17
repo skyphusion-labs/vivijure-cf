@@ -13,7 +13,8 @@ import type { ControlPlaneEnv } from "../../src/control-plane/env";
 import { SESSION_COOKIE, startSession } from "../../src/control-plane/auth";
 import { MemoryStore } from "./memory-store";
 
-const ORIGIN = "https://studio.vivijure.com";
+const ROOT_HOST = "studio.vivijure.com";
+const ORIGIN = `https://${ROOT_HOST}`;
 const AUP = "2026-07-17";
 const ADMIN_TOKEN = "a".repeat(64);
 
@@ -27,8 +28,7 @@ const env = (over: Partial<ControlPlaneEnv> = {}): ControlPlaneEnv =>
     CP_DB: {} as D1Database,
     AUP_VERSION: AUP,
     AUP_URL: `${ORIGIN}/aup`,
-    PUBLIC_ORIGIN: ORIGIN,
-    TENANT_DOMAIN_SUFFIX: ".studio.vivijure.com",
+    CONTROL_PLANE_HOST: ROOT_HOST,
     CONTROL_PLANE_ADMIN_TOKEN: ADMIN_TOKEN,
     POSTERN_SEND_URL: "https://mail.example/api/send",
     POSTERN_SEND_TOKEN: "t",

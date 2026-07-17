@@ -32,6 +32,7 @@ import { bearerFrom, newId } from "./crypto";
 import type { ControlPlaneDeps } from "./deps";
 import { productionDeps } from "./deps";
 import type { ControlPlaneEnv } from "./env";
+import { publicOrigin, tenantDomainSuffix } from "./env";
 import { authorizeUrl, configuredProviders, exchangeCode, isSsoProvider } from "./oauth";
 import { routeTenantRequest } from "./routing";
 import { verifyInvokeKeyScope } from "./runpod-invoke-key";
@@ -74,7 +75,7 @@ export async function handle(
   // are GETs (not state-changing in this sense) and carry their own single-use state/token guard.
   if (request.method !== "GET" && request.method !== "HEAD" && path.startsWith("/api/")) {
     const origin = request.headers.get("origin");
-    if (origin && origin !== env.PUBLIC_ORIGIN) return err("bad_origin", 403);
+    if (origin && origin !== publicOrigin(env)) return err("bad_origin", 403);
   }
 
   try {
@@ -195,7 +196,7 @@ async function emailStart(
   // Fire-and-forget so the response timing does not vary with whether an account exists (another
   // enumeration side channel), and so a slow postern cannot hang the request.
   ctx.waitUntil(
-    sendMagicLink(deps.store, deps.mailer, env.PUBLIC_ORIGIN, email, deps.now()).catch((e: unknown) => {
+    sendMagicLink(deps.store, deps.mailer, publicOrigin(env), email, deps.now()).catch((e: unknown) => {
       console.error("magic-link send failed", { error: String(e) });
     }),
   );
@@ -278,7 +279,7 @@ async function me(env: ControlPlaneEnv, deps: ControlPlaneDeps, account: Account
       required_version: env.AUP_VERSION,
       accepted: await hasAcceptedCurrent(deps.store, account.id, env.AUP_VERSION),
     },
-    tenant: tenant ? tenantView(tenant, env.TENANT_DOMAIN_SUFFIX) : null,
+    tenant: tenant ? tenantView(tenant, tenantDomainSuffix(env)) : null,
   });
 }
 
@@ -417,7 +418,7 @@ async function adminRoutes(
       status: url.searchParams.get("status") ?? undefined,
       q: url.searchParams.get("q") ?? undefined,
     });
-    return json({ tenants: tenants.map((t) => tenantView(t, env.TENANT_DOMAIN_SUFFIX)) });
+    return json({ tenants: tenants.map((t) => tenantView(t, tenantDomainSuffix(env))) });
   }
 
   if (request.method === "GET" && path === "/api/admin/settings") {
@@ -469,5 +470,5 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 function redirectTo(env: ControlPlaneEnv, path: string, headers: Record<string, string> = {}): Response {
-  return new Response(null, { status: 302, headers: { location: `${env.PUBLIC_ORIGIN}${path}`, ...headers } });
+  return new Response(null, { status: 302, headers: { location: `${publicOrigin(env)}${path}`, ...headers } });
 }
