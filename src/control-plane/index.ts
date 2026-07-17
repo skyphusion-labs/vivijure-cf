@@ -36,7 +36,7 @@ import { publicOrigin, tenantDomainSuffix } from "./env";
 import { authorizeUrl, configuredProviders, exchangeCode, isSsoProvider } from "./oauth";
 import { routeTenantRequest } from "./routing";
 import { verifyInvokeKeyScope } from "./runpod-invoke-key";
-import type { Account } from "./store";
+import type { Account, Tenant } from "./store";
 import { slugRejectionMessage, tenantEndpointIds, tenantView, validateSlug } from "./tenants";
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
@@ -314,7 +314,7 @@ async function tenantRoutes(
   }
 
   if (request.method === "POST" && path === "/api/tenant/provision") {
-    return await provision(request, env, deps, account);
+    return await provision(request, ctx, deps, account);
   }
 
   const scoped = /^\/api\/tenant\/(ten_[a-f0-9]+)(?:\/([a-z-]+))?$/.exec(path);
@@ -340,7 +340,7 @@ async function tenantRoutes(
     }
 
     if (request.method === "POST" && action === "invoke-key") {
-      return await installInvokeKey(request, deps, tenant.id, tenant.endpoints_json, env);
+      return await installInvokeKey(request, deps, tenant);
     }
   }
 
@@ -349,7 +349,7 @@ async function tenantRoutes(
 
 async function provision(
   request: Request,
-  env: ControlPlaneEnv,
+  ctx: ExecutionContext,
   deps: ControlPlaneDeps,
   account: Account,
 ): Promise<Response> {
@@ -359,43 +359,56 @@ async function provision(
   const valid = validateSlug(slug);
   if (!valid.ok) return err("invalid_slug", 400, { message: slugRejectionMessage(valid.reason) });
 
-  if ((await deps.store.getSetting("signups_enabled")) === "false") {
-    // No tenant cap by ruling; this switch is the only global gate and doubles as the waitlist.
-    if (!(await deps.store.getTenantForAccount(account.id))) return err("signups_closed", 403);
-  }
+  // PRODUCT RULING (2026-07-17): signups_enabled means "can NEW accounts be created", full stop.
+  // The toggle aims at the front door, not at people already inside it: an existing, AUP-accepted
+  // account mid-onboarding is never stranded by the admin closing signups. Provisioning therefore
+  // gates on session + accepted AUP ONLY (both enforced upstream of this route).
   if (await deps.store.getTenantBySlug(slug)) return err("slug_taken", 409);
   if (await deps.store.getTenantForAccount(account.id)) return err("tenant_exists", 409);
 
   // The provisioning key is transient by ruling: it exists in this request and nowhere else. It is
-  // never written to D1, never logged, and never held past the job. #53's runner consumes it from
+  // never written to D1, never logged, and never held past the job. The runner consumes it from
   // the request that carries it; a failure IN the RunPod steps therefore cannot self-resume, and
-  // /retry answers 409 runpod_key_required so the tenant re-pastes. That is the honest cost of
-  // never storing it.
+  // the tenant re-pastes. That is the honest cost of never storing it.
   if (!body?.runpod_api_key) return err("runpod_key_required", 400);
+
+  // Refuse BEFORE creating rows: a tenant parked on a job nothing will ever run is a lie with a
+  // status page. Absence of the wiring is a deploy-config fact, and 503 is its honest shape.
+  if (!deps.provisioner) return err("provisioner_unconfigured", 503);
 
   const tenant = await deps.store.createTenant(newId("ten"), slug, account.id, "pending");
   const job = await deps.store.createProvisionJob(newId("job"), tenant.id, "provision");
-  // #53 lands the runner that picks this job up. Until then the job honestly stays "queued".
+  // The runner records every outcome on the job row (honest failures, real step errors); waitUntil
+  // keeps it going after this 202 returns. The key rides the call and dies with it.
+  ctx.waitUntil(deps.provisioner.start(job.id, tenant, body.runpod_api_key));
   return json({ tenant_id: tenant.id, job_id: job.id }, 202);
 }
 
 async function installInvokeKey(
   request: Request,
   deps: ControlPlaneDeps,
-  tenantId: string,
-  endpointsJson: string | null,
-  env: ControlPlaneEnv,
+  tenant: Tenant,
 ): Promise<Response> {
   const body = (await readJson(request)) as { runpod_invoke_key?: string } | null;
   const key = String(body?.runpod_invoke_key ?? "");
   if (!key) return err("invoke_key_required", 400);
 
-  const endpoints = tenantEndpointIds({ endpoints_json: endpointsJson } as never);
+  const endpoints = tenantEndpointIds(tenant);
   if (endpoints.length === 0) {
     return err("no_endpoints", 409, {
       message: "your endpoints have not been created yet; there is nothing to scope a key to",
     });
   }
+  if (!tenant.script_name) {
+    // Endpoints exist but the studio upload never completed: a failed provision. Installing a key
+    // on a worker that is not there cannot succeed, and pretending otherwise strands the tenant.
+    return err("not_provisioned", 409, {
+      message: "your studio was not fully provisioned; retry provisioning before installing a key",
+    });
+  }
+
+  // Same refusal as the provision route: absence of the wiring is a deploy-config fact.
+  if (!deps.provisioner) return err("provisioner_unconfigured", 503);
 
   // Verify BEFORE storing. A wrong key is rejected with the real reason and never written; the most
   // dangerous wrong key is the powerful graphql one, which is exactly what this catches.
@@ -404,13 +417,11 @@ async function installInvokeKey(
     return err("invoke_key_rejected", 400, { reason: verdict.reason, message: verdict.detail });
   }
 
-  // Installing the verified key as the tenant studio's secret is the per-script secrets PUT
-  // (spike-proven: rotates in place, no re-upload). That call belongs to the provisioner in #53,
-  // which owns the WfP client; #52 owns the gate that decides a key is fit to store.
-  return err("not_implemented", 501, {
-    message: "key verified; secret installation lands with the provisioner (#53)",
-    verified_endpoints: verdict.inScope.length,
-  });
+  // The per-script secrets PUT (spike-proven: rotates in place, no re-upload). The key goes from
+  // this request straight into the tenant worker secret; on any failure it is stored nowhere.
+  await deps.provisioner.installInvokeKey(tenant, key);
+  await deps.store.setTenantStatus(tenant.id, "live");
+  return json({ ok: true, status: "live", verified_endpoints: verdict.inScope.length });
 }
 
 async function adminRoutes(

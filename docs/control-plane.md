@@ -134,12 +134,33 @@ a reason is refused, because the kill switch must stay attributable.
 - Global `signups_enabled`: DB-backed, not a var, so it flips **without a deploy**. There is no
   tenant cap by ruling (R2 spend is the governing meter); this switch doubles as the waitlist gate.
   It closes the door to NEW accounts only and never locks out people who already have one.
+  **Provisioning is exempt by product ruling (2026-07-17): the toggle aims at the front door, not at
+  people already inside it.** An existing, AUP-accepted account mid-onboarding provisions normally
+  with signups off; provisioning gates on session + accepted AUP only. Pinned in
+  `tests/control-plane/routes.test.ts` (both halves: new signup refused, existing account served).
 
 ## Config
 
 Bindings live in `wrangler.control-plane.toml.example` and are mirrored by hand in
 `src/control-plane/env.ts` (the standing rule). `account_id` is never hardcoded. The rendered
 `wrangler.control-plane.toml` is gitignored, like every other rendered config in this repo.
+
+**Provisioner wiring** (`src/control-plane/deps.ts` `provisionerWiring()`): the provision and
+invoke-key routes are OFFERED only when every piece below is configured, and refuse with
+`503 provisioner_unconfigured` otherwise -- the same absence-fails-closed rule as the admin gate,
+because a tenant parked on a job nothing will ever run is a lie with a status page.
+
+| Piece | What it is |
+|---|---|
+| `CF_PROVISIONER_TOKEN` (secret) | The DASHBOARD-created credential: mints tenant D1/R2/WfP uploads AND the per-tenant bucket tokens (an API-created token cannot mint; `token-minter.ts`) |
+| `CF_ACCOUNT_ID` (var) | Account id for `CfApi` paths and the tenant R2 S3 endpoint |
+| `DISPATCH_NAMESPACE` (var) | The WfP namespace NAME for uploads; must agree with the `TENANT_DISPATCH` binding |
+| `STUDIO_RELEASE` (var) | The pinned release tag every new tenant gets (the golden-checkpoint pin) |
+| `STUDIO_RELEASES` (R2 binding) | The release-artifact mirror `studio-release.yml` publishes |
+
+Deploy prereqs, same class as the dangling-namespace hazard: the mirror bucket must exist and the
+pinned tag's artifact must have been PUBLISHED into it (run the studio-release workflow) before a
+provision can succeed. An unpublished pin fails a provision honestly at `wfp_upload`.
 
 Naming: **"control-plane", never "platform"**. `src/platform/` is already the host-neutral Platform
 ICD, and colliding with it would be a trap for the next reader.
@@ -158,10 +179,20 @@ agree with a bug in it. `store-d1.ts` is the one un-stubbable seam and is verifi
 D1** via `wrangler dev`. Both halves are required; the live pass is what caught the suspend defect
 above.
 
-## Scope: what is NOT here yet
+## Scope
 
-#52 is the skeleton. The provision routes create real tenant and job rows and enforce the real
-gates, but the **job runner** (D1 create/migrate, R2 bucket + scoped creds, WfP upload, RunPod
-endpoints) lands in #53/#54. A tenant created today parks at `pending` with a `queued` job until
-that runner ships, and nothing claims otherwise to the caller. Routing/domains are #55, quotas #56,
-AUP text #57, onboarding UX #58.
+The provision route now LAUNCHES the #53/#54 runner in-Worker (`ctx.waitUntil`): a 202 means the
+job is genuinely running, progress lands on the job row (`GET /api/tenant/:id/job`), and the
+tenant parks at `awaiting_invoke_key` or fails with the real step error. The invoke-key route
+verifies key B and INSTALLS it as the tenant studio's secret (the per-script secrets PUT), then
+promotes the tenant to `live`. The transient key A rides the request into the runner call and is
+held nowhere else; an isolate eviction mid-job leaves an honest `running`/`failed` job row, never a
+fake success, and re-provisioning is idempotent-by-name.
+
+(Historical note, kept because it burned us: until 2026-07-17 the runner existed but was wired to
+NOTHING in the deployed Worker -- provision parked every tenant on a forever-`queued` job, and the
+invoke-key route answered an honest 501. The in-process live e2e proved the step machine while the
+shipped surface could not run it; the first over-HTTP run caught it, which is exactly what that
+run exists for.)
+
+Still elsewhere: routing/domains #55, quotas #56, AUP text #57, onboarding UX #58.

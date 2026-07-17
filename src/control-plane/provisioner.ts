@@ -16,6 +16,7 @@
 
 import type { CfApi } from "./cf-api";
 import { CfApiError } from "./cf-api";
+import type { TenantR2Creds } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
 import type { TokenMinter } from "./token-minter";
 
@@ -44,7 +45,13 @@ export interface TenantEndpoint {
  * different trust domain: this is the only part that touches the tenant's transient key.
  */
 export interface RunPodProvisioner {
-  createEndpoints(runpodApiKey: string, slug: string): Promise<TenantEndpoint[]>;
+  /**
+   * r2 is the REAL minted bucket credential (S3-derived), because the satellite templates carry it
+   * and a render reads it. The live e2e once passed placeholders here, which provisioned endpoints
+   * whose first render would have failed on R2 auth; the seam takes the credential so the shipping
+   * wiring cannot repeat that.
+   */
+  createEndpoints(runpodApiKey: string, slug: string, r2: TenantR2Creds): Promise<TenantEndpoint[]>;
 }
 
 /**
@@ -89,6 +96,8 @@ export interface ProvisionDeps {
    * a dashboard-created cred while every other leg is live-verified.
    */
   tokenMinter: TokenMinter;
+  /** The account S3 endpoint (https://<account>.r2.cloudflarestorage.com) the satellites use. */
+  r2Endpoint: string;
   namespace: string;
   release: string;
   tenantScriptName(slug: string): string;
@@ -163,6 +172,10 @@ export async function runProvisionJob(
       }
     }
     const token = await deps.tokenMinter.mintBucketToken(tenantR2TokenName(tenant.slug), bucket);
+    // R2 S3 semantics: access key id = token id, secret = SHA-256 hex of the token value. Derived
+    // ONCE here and used for both the satellite templates and the worker secret, so they cannot
+    // disagree.
+    const s3Secret = await sha256Hex(token.value);
     await deps.store.setTenantR2Token(tenant.id, token.id);
     await mark("r2_token");
 
@@ -171,7 +184,12 @@ export async function runProvisionJob(
     if (!runpodApiKey) {
       return { ok: false, step: "runpod_endpoints", message: "runpod_key_required" };
     }
-    const endpoints = await deps.runpod.createEndpoints(runpodApiKey, tenant.slug);
+    const endpoints = await deps.runpod.createEndpoints(runpodApiKey, tenant.slug, {
+      endpoint: deps.r2Endpoint,
+      accessKeyId: token.id,
+      secretAccessKey: s3Secret,
+      bucket,
+    });
     await deps.store.setTenantEndpoints(tenant.id, JSON.stringify(endpoints));
     await mark("runpod_endpoints");
 
@@ -201,7 +219,7 @@ export async function runProvisionJob(
         // The credential goes straight from the mint into a worker secret. It is never persisted
         // on our side and never returned to any caller.
         { type: "secret_text", name: "R2_S3_ACCESS_KEY_ID", text: token.id },
-        { type: "secret_text", name: "R2_S3_SECRET_ACCESS_KEY", text: await sha256Hex(token.value) },
+        { type: "secret_text", name: "R2_S3_SECRET_ACCESS_KEY", text: s3Secret },
       ],
     });
     await deps.store.setTenantScript(tenant.id, deps.tenantScriptName(tenant.slug), deps.release);

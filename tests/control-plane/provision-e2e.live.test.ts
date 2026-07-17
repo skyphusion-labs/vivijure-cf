@@ -63,26 +63,16 @@ beforeAll(async () => {
   deps = {
     store,
     cf,
-    runpod: { createEndpoints: (key, s) => createTenantEndpoints(key, s, r2ForTenant(s)) },
+    runpod: { createEndpoints: (key, s, r2) => createTenantEndpoints(key, s, r2) },
     bundle: localStudioBundleSource(DIR!),
     tokenMinter: new CfTokenMinter(cf),
+    r2Endpoint: `https://${ACCOUNT}.r2.cloudflarestorage.com`,
     namespace: NAMESPACE,
     release: tag,
     tenantScriptName: (s: string) => `tenant-${s}-studio`,
     log: (event, fields) => console.log(`  [${event}]`, JSON.stringify(fields).slice(0, 200)),
   };
 });
-
-// The provisioner mints the R2 cred internally; the RunPod seam needs it too. In the shipping wiring
-// these are the same mint. Here the seam takes what the tenant bucket will be.
-function r2ForTenant(s: string) {
-  return {
-    endpoint: `https://${ACCOUNT}.r2.cloudflarestorage.com`,
-    accessKeyId: "provisioned-at-runtime",
-    secretAccessKey: "provisioned-at-runtime",
-    bucket: `vivijure-tenant-${s}`,
-  };
-}
 
 // 5 minutes, NOT vitest's 10s default. This hook deletes real resources across TWO cloud accounts,
 // and it timed out mid-teardown on the first run, stranding an endpoint (found and cleaned by hand).
