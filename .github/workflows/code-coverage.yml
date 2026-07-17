@@ -11,8 +11,11 @@ name: coverage
 on:
   push:
     branches: [main, master]
+  # NO branches filter, deliberately. With a branches filter a STACKED pr (base = another
+  # branch, e.g. #64 onto #67) matches nothing and runs ZERO checks -- and GitHub reports
+  # "no checks reported", which reads as fine rather than as unverified. Every PR runs
+  # coverage, whatever its base.
   pull_request:
-    branches: [main, master]
 
 permissions:
   contents: read

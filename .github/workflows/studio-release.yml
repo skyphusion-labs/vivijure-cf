@@ -1,0 +1,152 @@
+name: Studio release artifact
+
+# Builds the tenant-studio artifact the hosted provisioner fetches by tag (#59 <-> #53, epic #40).
+#
+# WHY: "upload the published studio release" had no artifact to upload. The core ships dist/ as
+# multi-file compiled TS; a WfP user-Worker upload takes ONE module part; the control plane is a
+# Worker and cannot bundle at provision time. This closes that gap, per tag, once.
+#
+# PUBLIC SOURCE OF TRUTH (parity ruling): the GitHub release asset is authoritative; our R2 is a
+# cache/mirror only. An artifact that lives only in our private R2 would leave the AGPL hosted door
+# open source but structurally unrunnable by anyone else -- the same "hosted glue that cannot exist
+# in self-host" tripwire in a different hat. So the fetch origin is public, and a self-hoster's
+# StudioBundleSource config is the same shape as ours.
+#
+# SECRET-FREE BUILD: the bundle is code; bindings are upload metadata, not baked into the JS. So the
+# config is rendered with DUMMY values and the artifact is byte-identical regardless of account.
+# Anyone can reproduce it from a clean checkout -- that is the parity property, not a convenience.
+#
+# vivijure is PUBLIC, so this runs on GitHub-hosted ubuntu-latest (fork-safe), per the runner rule.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build the artifact for (must already exist)"
+        required: true
+
+permissions:
+  contents: write # uploads the release asset; nothing else
+
+concurrency:
+  group: studio-release-${{ github.ref }}
+  cancel-in-progress: false # never cancel a half-published release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Render with DUMMY values on purpose. The bundle is code-only, so none of these reach it; a
+      # secret-free render is what makes the artifact reproducible by a third party. The rendered
+      # wrangler.toml is gitignored and never leaves the runner.
+      - name: Render wrangler.toml (dummy values -- bundle is code-only)
+        env:
+          AUTH_MODE: token
+          ACCESS_TEAM_DOMAIN: ""
+          ACCESS_AUD: ""
+          D1_DATABASE_ID: "00000000-0000-0000-0000-000000000000"
+          VPC_VIDEO_FINISH_ID: "00000000-0000-0000-0000-000000000000"
+          VPC_IMAGE_PREP_ID: "00000000-0000-0000-0000-000000000000"
+          VPC_AUDIO_BEAT_SYNC_ID: "00000000-0000-0000-0000-000000000000"
+          VPC_AUDIO_MIX_ID: "00000000-0000-0000-0000-000000000000"
+          SPEND_RATE_LIMITER_NS_ID: "1001"
+          SECRETS_STORE_ID: "00000000-0000-0000-0000-000000000000"
+          CLOUDFLARE_ACCOUNT_ID: "0000"
+          R2_S3_BUCKET: "vivijure"
+          R2_S3_ENDPOINT: "https://x.r2.cloudflarestorage.com"
+        run: |
+          set -euo pipefail
+          envsubst < wrangler.toml.example > wrangler.toml
+          sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/00000000-0000-0000-0000-000000000000/g" wrangler.toml
+          # The tenant studio gets its bindings from the provisioner's upload, not from this file, and
+          # a tail_consumers reference to OUR vivijure-tail worker has no meaning in a tenant's
+          # namespace. It does not affect the bundled JS either way; stripped so the rendered config
+          # cannot mislead anyone reading it as "what a tenant runs".
+          sed -i "/^tail_consumers = /d" wrangler.toml
+
+      # The bundle comes from WRANGLER's own bundler against the real config -- not a parallel esbuild
+      # that could silently drift from what actually deploys. The artifact IS the deploy shape.
+      - name: Bundle the studio worker (wrangler --dry-run)
+        run: npx wrangler deploy --dry-run --outdir=bundle-out
+
+      - name: Assemble the release artifact
+        id: build
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          node scripts/build-studio-release.ts \
+            --bundle bundle-out/index.js \
+            --assets public \
+            --config wrangler.toml \
+            --tag "$TAG" \
+            --out dist-release | tee build.log
+          echo "pin=$(cat dist-release/PIN.txt)" >> "$GITHUB_OUTPUT"
+
+      # A release the provisioner cannot verify is a release we cannot trust. Re-derive the manifest
+      # digest from the bytes we are about to publish and fail if it moved.
+      - name: Verify the artifact before publishing
+        run: |
+          set -euo pipefail
+          test -s dist-release/worker.js
+          test -s dist-release/manifest.json
+          node -e "
+            const {createHash}=require('node:crypto');
+            const {readFileSync,statSync,readdirSync}=require('node:fs');
+            const m=JSON.parse(readFileSync('dist-release/manifest.json','utf8'));
+            const w=readFileSync('dist-release/worker.js');
+            if (createHash('sha256').update(w).digest('hex')!==m.worker.sha256) throw new Error('worker sha256 mismatch');
+            if (w.byteLength!==m.worker.size) throw new Error('worker size mismatch');
+            for (const a of m.assets) statSync('dist-release/assets/'+a.hash);
+            const onDisk=readdirSync('dist-release/assets').length;
+            const unique=new Set(m.assets.map(a=>a.hash)).size;
+            if (onDisk!==unique) throw new Error('asset count mismatch: '+onDisk+' files vs '+unique+' unique hashes');
+            console.log('artifact verified:', m.assets.length, 'assets,', unique, 'unique,', w.byteLength, 'bytes of worker');
+          "
+
+      - run: tar -czf studio-release-${{ github.event.inputs.tag || github.ref_name }}.tar.gz -C dist-release .
+
+      # PUBLIC source of truth. Immutability is enforced by the pin ({tag, manifest_sha256}), not
+      # trusted: the manifest carries worker.sha256 + every asset hash, so pinning its digest
+      # transitively pins every byte, and a mutated tag fails loud at provision instead of silently
+      # giving two tenants different code while both report the same release.
+      - name: Publish to the GitHub release (public source of truth)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "Studio release artifact."
+          gh release upload "$TAG" "studio-release-$TAG.tar.gz" "dist-release/manifest.json" --clobber
+          echo "::notice title=Studio release pin::$(cat dist-release/PIN.txt)"
+
+      # R2 is a CACHE/MIRROR only, never the source of truth. Skipped entirely when the account
+      # secrets are absent, so a fork's build still succeeds and still produces the same artifact.
+      - name: Mirror to R2 (cache only; skipped on forks)
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_RELEASES_BUCKET: ${{ vars.R2_RELEASES_BUCKET }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          BUCKET="${R2_RELEASES_BUCKET:-vivijure-studio-releases}"
+          npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/manifest.json" --file dist-release/manifest.json --remote
+          npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/worker.js" --file dist-release/worker.js --remote
+          for f in dist-release/assets/*; do
+            npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/assets/$(basename "$f")" --file "$f" --remote
+          done
