@@ -43,6 +43,49 @@ most likely thing for us to get wrong.
 
 ---
 
+## 1a. The cheaper answer, and the false binary to avoid
+
+**Art 50 is not "accept the risk or do not launch." It has a removal lever, and the lever is cheap.**
+
+Limb 2 of the trigger question above is the soft one. The obligation attaches because we would be
+**placing the system on the Union market**. That is not a fact about the world, it is a consequence
+of a product decision we have not made yet:
+
+| Posture | What it does to the obligation | Cost |
+|---|---|---|
+| **A. Geo-block the EU at launch** | **REMOVES** the limb. No EU placement, no Art 50(2) marking duty on the hosted door. Not risk accepted; risk absent. | Real, and it is a product cost, not a legal one: EU users cannot sign up for the hosted studio. Reversible any time we decide otherwise. |
+| **B. Take the Art 50 posture on** | Accepts the obligation and does the work in this document (two-layer marking, the whole epic). | The engineering in sections 3 through 6, on the clock in section 7. |
+
+**Why this framing matters:** if the Band-B call reaches Conrad as "accept Art 50 exposure or delay
+the launch," that is a **false binary**, and he would be choosing between two options when a third,
+cheaper one exists. The real question is narrower and much easier to answer: **block the EU at
+launch, or take the posture on.** Decide that first. If the answer is block, most of this document
+is moot and the epic may never need to exist.
+
+**Decide it FIRST**, before any of the engineering scoping below, for exactly that reason.
+
+### The honest caveat: the geo-block does NOT remove all of it
+
+**A geo-block on hosted signups removes the HOSTED limb only.** It does not obviously touch the
+other half, and anyone who treats it as a complete answer is making a mistake:
+
+**We also distribute AGPL software to the world, EU included.** Art 2(12)'s free-and-open-source
+exemption **expressly does not cover Article 50 systems** (section 1). So the open question is
+whether *distributing* vivijure to EU users is itself "placing on the market" for Art 50 purposes.
+If it is, **geo-blocking the hosted door does nothing about it**, and the whole thing is a
+constellation-wide question about the software rather than a hosted-tier question about the service.
+
+That limb turns on whether free distribution of open-source software counts as making available "in
+the course of a commercial activity," which is genuinely unsettled as applied to a project like this
+one and is **exactly a counsel question, not an Ernst question** (T1-1).
+
+**So the honest statement of the lever is:** the geo-block is a cheap, reversible, complete answer
+for the **hosted door**, and possibly no answer at all for the **software**. It is still worth doing
+first, because it is cheap and it shrinks the problem to its hard half instead of leaving us to
+solve both at once.
+
+---
+
 ## 2. What Art 50(2) actually requires
 
 > Providers shall ensure the outputs of AI systems generating synthetic audio, image, video or text
@@ -189,8 +232,10 @@ between a panic and a sprint. **It is the first thing to confirm if T1-1 comes b
 Not a plan, a starting shape:
 
 1. **Confirm the clock** (August vs December) against primary text. Everything else is paced by it.
-2. **Decide the EU fork first** (`PRIVACY-DELTA.md` section 6). If we geo-block, most of this
-   evaporates and the epic may not need to exist at all.
+2. **Decide the EU posture first** (section 1a, and `PRIVACY-DELTA.md` section 6): block the EU at
+   launch, or take the posture on. If we block, the hosted limb evaporates and the epic may not need
+   to exist at all. **Remember the caveat:** the block answers the hosted door, not necessarily the
+   AGPL distribution limb.
 3. **Scope the surfaces** (section 4): film certainly; clips, keyframes, audio probably; text and
    models are open questions.
 4. **Resolve metadata-late vs watermark-durable** against our real finish chain (section 5),
