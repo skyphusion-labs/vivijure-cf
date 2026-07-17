@@ -88,4 +88,28 @@ accepted it" and never dressed up as a check this page performed.
   placeholder in the rendered page. Ernst owns that text (#57). Do not write
   policy prose there.
 
+## The resolve guard
+
+`npm run guard:resolve` (a step of the required `ci` job) asserts that every function these pages
+call actually exists. It is here because three identical defects shipped in one night: an edit
+removed a helper and left its call sites behind, and `node --check` (valid syntax), `tsc` (never
+sees these files), and the vitest suite (tests the pure helpers, never loads the DOM path) all
+passed every time. Only driving the page in a browser caught them.
+
+It is a heuristic and says so: it will miss a call to a function defined in a different IIFE, so a
+clean run does not prove a page works. It proves nobody deleted a function out from under its
+callers, which is the bug we actually keep writing.
+
+**Overriding it:** per-identifier, in the file that needs it, with a reason.
+
+```js
+// resolve-guard-allow: someGlobal -- injected by the host page before this script runs
+```
+
+There is deliberately **no way to skip a file or disable the guard**, and an annotation that
+suppresses nothing is itself an error, so overrides cannot rot into blanket permission. The scope
+unit is the PAGE (the union of every script an HTML loads), because these are classic scripts
+sharing one global; per-file analysis would flag every cross-file call in the planner and a guard
+that cries wolf is worse than no guard.
+
 Public docs for the tier: [`docs/hosted-tier.md`](../docs/hosted-tier.md).
