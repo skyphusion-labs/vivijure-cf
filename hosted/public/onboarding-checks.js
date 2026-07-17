@@ -256,6 +256,56 @@
     };
   }
 
+  // Map the control plane's invoke-key rejection REASON codes (#52, as
+  // implemented in src/control-plane/runpod-invoke-key.ts) to copy that tells
+  // the tenant which way their key is wrong. "Rejected" alone is not an honest
+  // error: too-powerful and scoped-to-the-wrong-endpoints are different fixes.
+  //
+  // scopeVerdict (above) reads a probe payload; this reads reason codes. The
+  // shipped control plane returns reasons today, so this is the live path; the
+  // probe path stays for when #53 carries the field.
+  const REJECTION_COPY = {
+    graphql_capable:
+      "That key can do more than run your renders: it still has account access. This is the one " +
+      "thing we will not store, so we have not kept it. Mint a key with api.runpod.io/graphql set " +
+      "to None, and only the invoke surface enabled.",
+    bad_prefix:
+      "That does not look like a current RunPod key. Newer keys start with rpa_. Check you copied " +
+      "the whole thing.",
+    endpoint_out_of_scope:
+      "That key cannot reach all four of your endpoints. Check you gave it Read/Write on exactly " +
+      "the four listed above.",
+    endpoint_unreachable:
+      "We could not reach your endpoints with that key. This may be RunPod having a moment rather " +
+      "than anything you did; try again in a minute.",
+    no_endpoints:
+      "Your endpoints are not there yet, so there is nothing to scope a key to. This is our bug, " +
+      "not yours; please tell us.",
+  };
+
+  function invokeRejectionCopy(reason, detail) {
+    const known = REJECTION_COPY[reason];
+    if (known) return known;
+    // Never swallow an unknown reason: show whatever the server actually said
+    // rather than inventing a friendly lie about a key we refused.
+    return detail || "That key was not accepted, and we have not stored it.";
+  }
+
+  // Copy for a REFUSED acceptance. The stale case is not an error the tenant
+  // caused: the policy changed between the page loading and them ticking the
+  // box, and the honest move is to show the new words and ask again.
+  function aupAcceptFailureCopy(res) {
+    const r = res || {};
+    if (r.stale) {
+      return "The policy changed while this page was open" +
+        (r.current ? " (it is now version " + r.current + ")" : "") +
+        ". We have loaded the new text; please read it and accept again. We will not record you as " +
+        "agreeing to wording you were never shown.";
+    }
+    if (r.error) return "We could not record your acceptance: " + r.error + ". Nothing has been saved; please try again.";
+    return "We could not record your acceptance. Nothing has been saved; please try again.";
+  }
+
   function stepIndex(key) {
     for (let i = 0; i < STEPS.length; i++) {
       if (STEPS[i].key === key) return i;
@@ -287,6 +337,9 @@
     slugHint: slugHint,
     SLUG_RESERVED: SLUG_RESERVED,
     scopeVerdict: scopeVerdict,
+    invokeRejectionCopy: invokeRejectionCopy,
+    aupAcceptFailureCopy: aupAcceptFailureCopy,
+    REJECTION_COPY: REJECTION_COPY,
     planWorkerTotal: planWorkerTotal,
     quotaFit: quotaFit,
     costCeilingUsd: costCeilingUsd,
