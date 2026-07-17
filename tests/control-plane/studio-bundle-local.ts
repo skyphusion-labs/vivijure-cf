@@ -24,6 +24,7 @@ interface ReleaseManifest {
   compatibility_date: string;
   compatibility_flags?: string[];
   worker: { path: string; sha256: string; size: number };
+  assets_config?: Record<string, unknown>;
   assets: { path: string; hash: string; size: number; content_type: string }[];
 }
 
@@ -51,6 +52,9 @@ export function localStudioBundleSource(dir: string): StudioBundleSource {
         moduleText: bytes.toString("utf8"),
         compatibilityDate: manifest.compatibility_date,
         compatibilityFlags: manifest.compatibility_flags,
+        // Verbatim, including {}: an empty object means the release was built with CF defaults and
+        // the tenant should get CF defaults. Never substitute the core's values for it.
+        assetsConfig: manifest.assets_config,
         assets: manifest.assets.map((a) => ({
           path: a.path,
           base64: readFileSync(join(dir, "assets", a.hash)).toString("base64"),
