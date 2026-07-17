@@ -8,6 +8,8 @@ import {
   formatUsd,
   keyShapeHint,
   planWorkerTotal,
+  invokeRejectionCopy,
+  REJECTION_COPY,
   quotaFit,
   scopeVerdict,
   slugHint,
@@ -245,6 +247,31 @@ describe("scopeVerdict (key B, the one we actually keep)", () => {
     const v = scopeVerdict({ graphql_denied: false, health: { ep_backend: false } });
     expect(v.ok).toBe(false);
     expect(v.failures.length).toBe(2);
+  });
+});
+
+describe("invokeRejectionCopy (the control plane's real reason codes)", () => {
+  it("explains every reason code src/control-plane/runpod-invoke-key.ts can return", () => {
+    for (const reason of ["graphql_capable", "bad_prefix", "endpoint_out_of_scope", "endpoint_unreachable", "no_endpoints"]) {
+      expect(REJECTION_COPY[reason]).toBeTruthy();
+      expect(invokeRejectionCopy(reason).length).toBeGreaterThan(30);
+    }
+  });
+
+  it("tells the tenant WHICH way the key is wrong: the fixes are different", () => {
+    expect(invokeRejectionCopy("graphql_capable")).toContain("account access");
+    expect(invokeRejectionCopy("endpoint_out_of_scope")).toContain("four");
+    expect(invokeRejectionCopy("graphql_capable")).not.toBe(invokeRejectionCopy("endpoint_out_of_scope"));
+  });
+
+  it("does not blame the tenant for our bug or RunPod's blip", () => {
+    expect(invokeRejectionCopy("no_endpoints")).toContain("our bug");
+    expect(invokeRejectionCopy("endpoint_unreachable")).toContain("RunPod");
+  });
+
+  it("surfaces the server's own words for an unknown reason rather than inventing copy", () => {
+    expect(invokeRejectionCopy("brand_new_reason", "the server said this")).toBe("the server said this");
+    expect(invokeRejectionCopy(null, null)).toContain("was not accepted");
   });
 });
 

@@ -180,10 +180,11 @@
       });
     },
 
-    // CONTRACT: 204 on success. REQUESTED: a probe body on rejection
-    // ({ graphql_denied, health }), because "your key is wrong" is not an
-    // honest error -- the tenant needs to know WHICH way it is wrong (too
-    // powerful vs scoped to the wrong endpoints) to fix it.
+    // As IMPLEMENTED in src/control-plane/runpod-invoke-key.ts (#52):
+    //   204                        -> verified AND installed
+    //   400 invoke_key_rejected    -> { reason, message } (the honest refusal)
+    //   501 not_implemented        -> verified, but the secret install lands with #53
+    // The probe-payload shape stays supported for when #53 carries it.
     async invokeKey(tenantId, key) {
       if (USE_MOCK) return mock.invokeKey();
       const r = await fetch(API_BASE + "/api/tenant/" + encodeURIComponent(tenantId) + "/invoke-key", {
@@ -191,12 +192,16 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ runpod_invoke_key: key }),
       });
-      if (r.status === 204) return { ok: true, probe: null };
+      if (r.status === 204) return { ok: true, installed: true };
       const body = await r.json().catch(function () { return {}; });
-      if (!r.ok && !body.probe) {
-        throw new Error(body.error || "could not check that key (" + r.status + ")");
-      }
-      return body;
+      return {
+        ok: false,
+        status: r.status,
+        installed: false,
+        probe: body.probe || null,
+        reason: body.reason || body.error || null,
+        detail: body.message || null,
+      };
     },
   };
 
@@ -493,12 +498,16 @@
   async function loadAup() {
     try {
       const aup = await PlatformApi.aup();
-      if (!aup || !aup.summary) return; // seam stays visible; that is correct.
+      // The shipped route returns { version, url }; the design also allowed a
+      // summary. With neither, the placeholder seam stays up, which is correct:
+      // this page never invents policy text.
+      if (!aup || (!aup.summary && !aup.url)) return;
       const el = $("#aup-text");
       if (!el) return;
       el.classList.remove("placeholder-seam");
       el.innerHTML = "";
-      el.appendChild(textP(aup.summary));
+      if (aup.summary) el.appendChild(textP(aup.summary));
+      else el.appendChild(textP("Please read the acceptable-use policy before you continue."));
       if (aup.url) {
         const p = document.createElement("p");
         p.className = "small";
@@ -626,7 +635,11 @@
       const me = await PlatformApi.me();
       const tenant = (me && me.tenant) || null;
       state.createdEndpoints = (tenant && tenant.endpoints) || [];
-      if (tenant && tenant.slug) state.studioUrl = "https://" + tenant.slug + state.tenantDomainSuffix;
+      // tenantView only returns a url once the tenant is live ("a link that
+      // 5xx's is not honest"). Prefer the server's answer; fall back to the
+      // derived address only for the preview.
+      if (tenant && tenant.url) state.studioUrl = tenant.url;
+      else if (tenant && tenant.slug) state.studioUrl = "https://" + tenant.slug + state.tenantDomainSuffix;
 
       if (tenant && tenant.status === "awaiting_invoke_key") {
         renderCreatedEndpoints();
@@ -744,15 +757,23 @@
     let verdict;
     try {
       const res = await PlatformApi.invokeKey(state.tenantId, invokeKey);
-      if (res.probe) {
-        verdict = checks.scopeVerdict(res.probe);
-      } else if (res.ok) {
-        // Contract returns a bare 204: the control plane verified scope
-        // server-side and accepted. We report exactly that, and do not dress it
-        // up as a check this page performed.
+      if (res.installed) {
         verdict = { ok: true, failures: [], message: "That key checks out: your studio accepted it." };
+      } else if (res.probe) {
+        // #53 may carry the probe payload; read it when it is there.
+        verdict = checks.scopeVerdict(res.probe);
+      } else if (res.status === 501) {
+        // Honest about a real, current limitation: the key passed the scope
+        // check, but nothing is installed yet, so the studio is NOT live. Do
+        // not dress a 501 up as success.
+        verdict = {
+          ok: false,
+          failures: ["Your key checks out, but we cannot finish setting up your studio yet: installing it is still being built (#53). Nothing is wrong with your key."],
+          message: "Your key checks out, but your studio is not live yet.",
+        };
       } else {
-        verdict = { ok: false, failures: ["That key was not accepted."], message: "That key was not accepted." };
+        const copy = checks.invokeRejectionCopy(res.reason, res.detail);
+        verdict = { ok: false, failures: [copy], message: copy };
       }
       if (res.studio_url) state.studioUrl = res.studio_url;
     } catch (err) {
@@ -881,7 +902,16 @@
           try { await PlatformApi.acceptAup(version || null); } catch (err) { /* surfaced on the server */ }
         }
 
-        if (from === "invoke") { finishAndShowDone(); return; }
+        if (from === "invoke") {
+          // The tenant only becomes live once the key is installed, so re-read
+          // /api/me rather than assuming the URL we derived earlier is serving.
+          try {
+            const me = await PlatformApi.me();
+            if (me && me.tenant && me.tenant.url) state.studioUrl = me.tenant.url;
+          } catch (err) { /* fall back to the derived address */ }
+          finishAndShowDone();
+          return;
+        }
 
         const idx = checks.stepIndex(from);
         const next = checks.STEPS[idx + 1];
