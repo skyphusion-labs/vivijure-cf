@@ -291,6 +291,21 @@
     return detail || "That key was not accepted, and we have not stored it.";
   }
 
+  // Copy for a REFUSED acceptance. The stale case is not an error the tenant
+  // caused: the policy changed between the page loading and them ticking the
+  // box, and the honest move is to show the new words and ask again.
+  function aupAcceptFailureCopy(res) {
+    const r = res || {};
+    if (r.stale) {
+      return "The policy changed while this page was open" +
+        (r.current ? " (it is now version " + r.current + ")" : "") +
+        ". We have loaded the new text; please read it and accept again. We will not record you as " +
+        "agreeing to wording you were never shown.";
+    }
+    if (r.error) return "We could not record your acceptance: " + r.error + ". Nothing has been saved; please try again.";
+    return "We could not record your acceptance. Nothing has been saved; please try again.";
+  }
+
   function stepIndex(key) {
     for (let i = 0; i < STEPS.length; i++) {
       if (STEPS[i].key === key) return i;
@@ -323,6 +338,7 @@
     SLUG_RESERVED: SLUG_RESERVED,
     scopeVerdict: scopeVerdict,
     invokeRejectionCopy: invokeRejectionCopy,
+    aupAcceptFailureCopy: aupAcceptFailureCopy,
     REJECTION_COPY: REJECTION_COPY,
     planWorkerTotal: planWorkerTotal,
     quotaFit: quotaFit,

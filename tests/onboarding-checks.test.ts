@@ -8,6 +8,7 @@ import {
   formatUsd,
   keyShapeHint,
   planWorkerTotal,
+  aupAcceptFailureCopy,
   invokeRejectionCopy,
   REJECTION_COPY,
   quotaFit,
@@ -272,6 +273,26 @@ describe("invokeRejectionCopy (the control plane's real reason codes)", () => {
   it("surfaces the server's own words for an unknown reason rather than inventing copy", () => {
     expect(invokeRejectionCopy("brand_new_reason", "the server said this")).toBe("the server said this");
     expect(invokeRejectionCopy(null, null)).toContain("was not accepted");
+  });
+});
+
+describe("aupAcceptFailureCopy (a consent gate must not lie about consent)", () => {
+  it("explains a stale version as the policy moving, not as the tenant's mistake", () => {
+    const copy = aupAcceptFailureCopy({ ok: false, stale: true, current: "v4" });
+    expect(copy).toContain("policy changed");
+    expect(copy).toContain("v4");
+    // The load-bearing promise: we do not record consent to unseen wording.
+    expect(copy).toContain("never shown");
+  });
+
+  it("handles a stale version with no current version reported", () => {
+    expect(aupAcceptFailureCopy({ ok: false, stale: true })).toContain("policy changed");
+  });
+
+  it("says nothing was saved on a transport failure", () => {
+    expect(aupAcceptFailureCopy({ ok: false, error: "boom" })).toContain("Nothing has been saved");
+    expect(aupAcceptFailureCopy({})).toContain("Nothing has been saved");
+    expect(aupAcceptFailureCopy(null)).toContain("Nothing has been saved");
   });
 });
 

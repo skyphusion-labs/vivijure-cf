@@ -76,6 +76,15 @@ export function slugHint(raw: string | null | undefined): SlugHint;
 export const SLUG_RESERVED: string[];
 export function scopeVerdict(probe: ScopeProbe | null | undefined): ScopeVerdict;
 export const REJECTION_COPY: Record<string, string>;
+
+export interface AupAcceptFailure {
+  ok?: boolean;
+  stale?: boolean;
+  current?: string | null;
+  error?: string | null;
+  status?: number;
+}
+export function aupAcceptFailureCopy(res: AupAcceptFailure | null | undefined): string;
 export function invokeRejectionCopy(
   reason: string | null | undefined,
   detail?: string | null,

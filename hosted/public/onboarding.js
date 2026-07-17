@@ -113,15 +113,27 @@
       try { return await this.json("/api/aup/current"); } catch (err) { return null; }
     },
 
-    // CONTRACT: 204, or 409 aup_version_stale with the current version.
+    // 204 = recorded. 409 = the version moved under us (aup_version_stale).
+    //
+    // This used to `await fetch(...)` and return {ok:true} unconditionally,
+    // swallowing the 409. That is the worst bug I have written on this surface:
+    // the flow would advance telling someone their consent was recorded when it
+    // was not, and they would only find out at provision time via a 403. A
+    // consent gate that lies about consent is not a gate. It reports honestly
+    // now, and the caller refuses to advance.
     async acceptAup(version) {
       if (USE_MOCK) return { ok: true };
-      await fetch(API_BASE + "/api/aup/accept", {
+      const r = await fetch(API_BASE + "/api/aup/accept", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ version: version }),
       });
-      return { ok: true };
+      if (r.status === 204) return { ok: true };
+      const body = await r.json().catch(function () { return {}; });
+      if (r.status === 409) {
+        return { ok: false, stale: true, current: body.current || null, error: body.error || "aup_version_stale" };
+      }
+      return { ok: false, stale: false, error: body.error || null, status: r.status };
     },
 
     // CONTRACT: { available, reason? }
@@ -495,6 +507,18 @@
   // Contract shape is { version, url, summary } (#52). Rendered as TEXT plus a
   // link, never as innerHTML: policy copy is Ernst's, and it is not this page's
   // job to execute whatever markup arrives in it.
+  function showAupError(res) {
+    const el = $("#aup-error");
+    if (!el) return;
+    el.textContent = checks.aupAcceptFailureCopy(res);
+    el.hidden = false;
+  }
+
+  function hideAupError() {
+    const el = $("#aup-error");
+    if (el) el.hidden = true;
+  }
+
   async function loadAup() {
     try {
       const aup = await PlatformApi.aup();
@@ -898,8 +922,30 @@
         if (from !== "what" && from !== "build" && !checks.canAdvance(from, state)) return;
 
         if (from === "rules") {
-          const version = ($("#aup-text") || {}).dataset ? $("#aup-text").dataset.version : "";
-          try { await PlatformApi.acceptAup(version || null); } catch (err) { /* surfaced on the server */ }
+          const el = $("#aup-text");
+          const version = el && el.dataset ? el.dataset.version : "";
+          let res;
+          try {
+            res = await PlatformApi.acceptAup(version || null);
+          } catch (err) {
+            res = { ok: false, stale: false, error: err.message };
+          }
+          if (!res.ok) {
+            // Never advance on an unrecorded acceptance.
+            showAupError(res);
+            if (res.stale) {
+              // The policy moved: re-fetch it and make them accept the NEW text.
+              // Silently carrying their old tick forward would record consent
+              // to words they never saw.
+              state.rulesAccepted = false;
+              const box = $("#accept-aup");
+              if (box) box.checked = false;
+              refreshGates();
+              await loadAup();
+            }
+            return;
+          }
+          hideAupError();
         }
 
         if (from === "invoke") {

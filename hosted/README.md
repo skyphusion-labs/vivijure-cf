@@ -56,6 +56,16 @@ accepted it" and never dressed up as a check this page performed.
 
 ## Rules this code follows (do not regress them)
 
+- **Verify custody against the WRITE HISTORY, not the final state.** (Crew lesson from Rollins'
+  #53 sabotage pass: his custody test asserted the transient key was absent from the store's FINAL
+  state, and a deliberately sabotaged provisioner still passed, because a later write overwrote the
+  leak before the assertion ran. On real storage that leak happened and was readable in the window.)
+  The analogue here: reading localStorage at the end of the flow cannot see a transient
+  write-then-clear. So the check shims every storage setter (`localStorage.setItem`,
+  `sessionStorage.setItem`, `history.pushState`/`replaceState`, `document.cookie`) BEFORE any page
+  script runs, records every value ever PASSED to them, and asserts no key value appears in that
+  history -- plus a CONTROL that the shim records, or the negative proves nothing. Current result:
+  the flow performs ZERO storage writes of any kind.
 - **Neither key is ever stored by this page.** Both live in closure variables, never in
   localStorage/sessionStorage, never in a URL, never logged. Key A is cleared the moment the
   endpoints exist (before key B is asked for, so the page never holds both); key B is cleared on a
