@@ -46,6 +46,7 @@ of these areas, update the matching doc.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/demo-studio.md` -- the public, read-only, zero-spend demo studio (`demo.vivijure.com`, `AUTH_MODE=demo`): the binding-absence rule, D1 seed procedure, and live-verify list.
 - `docs/dev-modbound.md` -- run the core + every module worker as one local dev so `/api/modules` returns the REAL catalog (no GPU, no prod data). The dev-parity env for driving planner/module flows locally.
+- `docs/hosted-tier.md` -- the hosted BYO-RunPod-key tier: the two-key custody flow, cost honesty, the real-quota rule, the parity commitment, and the data-export/leave story. Front-door assets live in `hosted/`.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and the public-facing legal/AUP framing.
 
 ## Commands
