@@ -131,6 +131,40 @@ function readCompat(configPath: string): { date: string; flags: string[] } {
   return { date, flags };
 }
 
+/**
+ * Asset handling flags, from the SAME config the bundle was built from (#77 follow-up).
+ *
+ * WHY THESE TRAVEL WITH THE ARTIFACT, exactly like compatibility_date: they are properties of the
+ * release that was built and tested, and the tenant studio does not read a wrangler.toml -- the
+ * provisioner hands them to the WfP upload as metadata.assets.config. If the provisioner supplied
+ * them independently they could silently disagree with the studio the bundle expects, and the
+ * failure would land on a tenant rather than on us.
+ *
+ * Both flags are load-bearing on the core and both were paid for in production incidents:
+ *   run_worker_first = true -- else Workers Assets serves pages straight from the edge, bypassing
+ *     the Worker, so pages ship with no security headers (the post-v0.7.4 finding). The control
+ *     plane re-learned this class on 2026-07-17 (#77).
+ *   html_handling = "none" -- else serveStudioAsset's ASSETS.fetch("/planner.html") 307-redirects to
+ *     /planner -> redirect loop -> BLANK PAGE (#374 -> #375). The Worker maps pretty routes itself.
+ * Neither is a Cloudflare default, so a tenant uploaded without them silently gets the broken shape
+ * while a self-hoster running the same release is fine: the parity tripwire, stated exactly.
+ *
+ * ABSENT IS EMITTED AS ABSENT, deliberately. If a config does not set a flag, the self-hoster gets
+ * Cloudflare's default too -- so carrying "nothing" preserves parity, while defaulting here would
+ * invent a value this release was never built with.
+ */
+function readAssetsConfig(configPath: string): { html_handling?: string; run_worker_first?: boolean } {
+  const toml = readFileSync(configPath, "utf8");
+  const block = /^assets\s*=\s*\{([^}]*)\}/m.exec(toml)?.[1];
+  if (!block) throw new Error(`no assets block in ${configPath}`);
+  const config: { html_handling?: string; run_worker_first?: boolean } = {};
+  const html = /html_handling\s*=\s*"([^"]+)"/.exec(block)?.[1];
+  const rwf = /run_worker_first\s*=\s*(true|false)/.exec(block)?.[1];
+  if (html !== undefined) config.html_handling = html;
+  if (rwf !== undefined) config.run_worker_first = rwf === "true";
+  return config;
+}
+
 function main(): void {
   const bundlePath = arg("bundle");
   const assetsDir = arg("assets");
@@ -161,6 +195,7 @@ function main(): void {
   });
 
   const compat = readCompat(configPath);
+  const assetsConfig = readAssetsConfig(configPath);
   const manifest = {
     tag,
     // The module part name the provisioner sends in the WfP upload metadata. It must match the part
@@ -169,6 +204,9 @@ function main(): void {
     compatibility_date: compat.date,
     compatibility_flags: compat.flags,
     worker: { path: "worker.js", sha256: workerSha256, size: workerBytes.byteLength },
+    // Handed to the WfP upload as metadata.assets.config by the provisioner (#53). Never hardcoded
+    // downstream -- that is the drift this manifest exists to prevent.
+    assets_config: assetsConfig,
     assets,
   };
   // Stable key order + trailing newline: the manifest digest is the release pin, so the same inputs
@@ -186,6 +224,7 @@ function main(): void {
   console.log(`worker sha256:   ${workerSha256}`);
   console.log(`assets:          ${assets.length}`);
   console.log(`compat:          ${compat.date} [${compat.flags.join(", ")}]`);
+  console.log(`assets_config:   ${JSON.stringify(assetsConfig)}`);
   console.log(`manifest sha256: ${manifestSha256}`);
   console.log("");
   console.log("PIN THIS (the provisioner config):");
