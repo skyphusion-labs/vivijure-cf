@@ -133,6 +133,7 @@ export class MemoryStore implements ControlPlaneStore {
       d1_database_id: null,
       r2_bucket_name: null,
       endpoints_json: null,
+      r2_token_id: null,
       studio_release: null,
       created_at: new Date().toISOString(),
       live_at: null,
@@ -188,6 +189,57 @@ export class MemoryStore implements ControlPlaneStore {
     this.jobs.set(id, j);
     return j;
   }
+  async setTenantD1(id: string, databaseId: string) {
+    const t = this.tenants.get(id);
+    if (t) t.d1_database_id = databaseId;
+  }
+  async setTenantBucket(id: string, bucket: string) {
+    const t = this.tenants.get(id);
+    if (t) t.r2_bucket_name = bucket;
+  }
+  async setTenantR2Token(id: string, tokenId: string) {
+    const t = this.tenants.get(id);
+    if (t) t.r2_token_id = tokenId;
+  }
+  async setTenantEndpoints(id: string, endpointsJson: string) {
+    const t = this.tenants.get(id);
+    if (t) t.endpoints_json = endpointsJson;
+  }
+  async setTenantScript(id: string, scriptName: string, release: string) {
+    const t = this.tenants.get(id);
+    if (t) {
+      t.script_name = scriptName;
+      t.studio_release = release;
+    }
+  }
+
+  async getJob(id: string) {
+    return this.jobs.get(id) ?? null;
+  }
+  async setJobRunning(id: string) {
+    const j = this.jobs.get(id);
+    if (j) {
+      j.status = "running";
+      j.attempts += 1;
+    }
+  }
+  async updateJobProgress(id: string, step: string, stepsDoneJson: string) {
+    const j = this.jobs.get(id);
+    if (j) {
+      j.step = step;
+      j.steps_done = stepsDoneJson;
+    }
+  }
+  async finishJob(id: string, status: "succeeded" | "failed", errorStep: string | null, errorMessage: string | null) {
+    const j = this.jobs.get(id);
+    if (j) {
+      j.status = status;
+      j.error_step = errorStep;
+      j.error_message = errorMessage;
+      j.finished_at = new Date().toISOString();
+    }
+  }
+
   async getLatestJobForTenant(tenant_id: string) {
     const all = [...this.jobs.values()].filter((j) => j.tenant_id === tenant_id);
     return all.length ? all[all.length - 1] : null;
@@ -202,4 +254,31 @@ export class MemoryStore implements ControlPlaneStore {
   async recordAdminAction(actor: string, action: string, target: string | null, detail: string | null) {
     this.audit.push({ actor, action, target, detail });
   }
+}
+
+/**
+ * A recording proxy over a store: journals EVERY argument passed to EVERY method.
+ *
+ * WHY THIS EXISTS (a real false-confidence bug this suite had): the custody test used to assert
+ * that a secret was absent from the store's FINAL state. A sabotage run that deliberately wrote
+ * key A into the job row still passed, because the very next progress update overwrote the leaked
+ * value before the assertion ran. On a real D1 that write genuinely happened: durable, replicated,
+ * in the WAL, readable at that moment. "It was overwritten afterwards" is not a custody property.
+ *
+ * A credential must never be PASSED to the store at all, so the journal records every call and the
+ * assertion runs against the whole history rather than the surviving state.
+ */
+export function recordingStore<T extends object>(inner: T): { store: T; journal: string[] } {
+  const journal: string[] = [];
+  const store = new Proxy(inner, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        journal.push(`${String(prop)}(${args.map((a) => JSON.stringify(a) ?? String(a)).join(",")})`);
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  }) as T;
+  return { store, journal };
 }

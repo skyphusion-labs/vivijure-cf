@@ -246,6 +246,31 @@ export class D1Store implements ControlPlaneStore {
     return res.results ?? [];
   }
 
+  // ---- tenant provisioning writes (#53) ----
+
+  async setTenantD1(id: string, databaseId: string): Promise<void> {
+    await this.db.prepare("UPDATE tenants SET d1_database_id = ?2 WHERE id = ?1").bind(id, databaseId).run();
+  }
+
+  async setTenantBucket(id: string, bucket: string): Promise<void> {
+    await this.db.prepare("UPDATE tenants SET r2_bucket_name = ?2 WHERE id = ?1").bind(id, bucket).run();
+  }
+
+  async setTenantR2Token(id: string, tokenId: string): Promise<void> {
+    await this.db.prepare("UPDATE tenants SET r2_token_id = ?2 WHERE id = ?1").bind(id, tokenId).run();
+  }
+
+  async setTenantEndpoints(id: string, endpointsJson: string): Promise<void> {
+    await this.db.prepare("UPDATE tenants SET endpoints_json = ?2 WHERE id = ?1").bind(id, endpointsJson).run();
+  }
+
+  async setTenantScript(id: string, scriptName: string, release: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE tenants SET script_name = ?2, studio_release = ?3 WHERE id = ?1")
+      .bind(id, scriptName, release)
+      .run();
+  }
+
   // ---- provision jobs ----
 
   async createProvisionJob(
@@ -268,6 +293,51 @@ export class D1Store implements ControlPlaneStore {
       .prepare("SELECT * FROM provision_jobs WHERE tenant_id = ?1 ORDER BY created_at DESC LIMIT 1")
       .bind(tenantId)
       .first<ProvisionJob>();
+  }
+
+  async getJob(id: string): Promise<ProvisionJob | null> {
+    return await this.db.prepare("SELECT * FROM provision_jobs WHERE id = ?1").bind(id).first<ProvisionJob>();
+  }
+
+  /**
+   * The single-runner guard, mirroring the proven film_advance_lease shape: the UPDATE only lands
+   * if the job is not already running under a live lease, so two concurrent runners cannot both
+   * provision the same tenant (which would double-mint credentials).
+   */
+  async setJobRunning(id: string): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE provision_jobs SET status = 'running', attempts = attempts + 1, " +
+          "lease_until = datetime('now', '+10 minutes'), updated_at = datetime('now') " +
+          "WHERE id = ?1 AND (lease_until IS NULL OR lease_until < datetime('now'))",
+      )
+      .bind(id)
+      .run();
+  }
+
+  async updateJobProgress(id: string, step: string, stepsDoneJson: string): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE provision_jobs SET step = ?2, steps_done = ?3, updated_at = datetime('now'), " +
+          "lease_until = datetime('now', '+10 minutes') WHERE id = ?1",
+      )
+      .bind(id, step, stepsDoneJson)
+      .run();
+  }
+
+  async finishJob(
+    id: string,
+    status: "succeeded" | "failed",
+    errorStep: string | null,
+    errorMessage: string | null,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE provision_jobs SET status = ?2, error_step = ?3, error_message = ?4, " +
+          "finished_at = datetime('now'), updated_at = datetime('now'), lease_until = NULL WHERE id = ?1",
+      )
+      .bind(id, status, errorStep, errorMessage)
+      .run();
   }
 
   // ---- settings + audit ----
