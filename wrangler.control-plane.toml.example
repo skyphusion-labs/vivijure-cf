@@ -25,7 +25,27 @@ workers_dev = false
 
 # The front-door UI (Joan, #58). Deliberately a SEPARATE bundle from public/ (the studio frontend
 # that ships to every self-hoster): the hosted door is ours, the studio is everyone's.
-assets = { directory = "./hosted/public", binding = "ASSETS" }
+#
+# run_worker_first = true is LOAD-BEARING, and not for the reason the core needs it.
+#
+# Without it, Workers Assets serves matching paths STRAIGHT FROM THE EDGE, bypassing the Worker --
+# so on this Worker every tenant hostname served the front-door HTML at `/` and at every asset path,
+# and the #55 tenant routing never ran. Three consequences, all found on the real deploy (2026-07-17)
+# and none catchable by the unit suite, which never sees the asset layer:
+#   1. A SUSPENDED tenant's `/` returned the front door instead of the 403. The kill switch was
+#      bypassed for exactly the paths a human visits.
+#   2. A live tenant's studio root would serve the CONTROL PLANE's front door instead of that
+#      tenant's studio. The hosted product would be broken at its most-used URL.
+#   3. The dark deploy was not dark: signup UI was reachable at any-hostname.studio.vivijure.com/
+#      even with the front-door Custom Domain deliberately unpublished.
+# The core hit the same class and documents it in wrangler.toml.example ("the post-v0.7.4 finding").
+# This is that lesson, re-learned on a second Worker.
+#
+# Safe here because the router already ends in `env.ASSETS.fetch(request)` (src/control-plane/index.ts),
+# which is the same worker-serves-assets pattern the core runs in production. html_handling is left at
+# the default deliberately: the core needs "none" because it maps pretty URLs itself, whereas this
+# Worker wants the default `/` -> index.html behavior.
+assets = { directory = "./hosted/public", binding = "ASSETS", run_worker_first = true }
 
 # Control-plane D1. PLATFORM data only (accounts, tenants, aup_acceptances, provision_jobs).
 # Tenant studio data lives in each tenant's OWN D1 and never here; the schema-guard test enforces it.
