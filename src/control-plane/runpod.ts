@@ -130,6 +130,13 @@ export class RunPodError extends Error {
 }
 
 /** What the account's REAL quota is, read from RunPod itself rather than from the docs. */
+/**
+ * Why a preflight refused. The distinction drives DIFFERENT tenant actions, so collapsing them into
+ * one "cannot provision" would send people to the wrong remedy: an unreadable quota is our problem
+ * to look at, a small quota is theirs to fund or raise.
+ */
+export type QuotaRefusal = "quota_too_small" | "quota_unreadable";
+
 export interface QuotaReading {
   /** The account-wide worker quota, or null when RunPod did not tell us. */
   quota: number | null;
@@ -137,6 +144,8 @@ export interface QuotaReading {
   atMost: number | null;
   /** True when the plan fits. */
   fits: boolean;
+  /** Set only when fits === false. */
+  refusal?: QuotaRefusal;
   /** RunPod's own sentence, for honest surfacing. */
   raw?: string;
 }
@@ -144,17 +153,27 @@ export interface QuotaReading {
 /**
  * Parse RunPod's quota validation error.
  *
- * This is the ONLY reliable source for the account's quota: it is not exposed on any GraphQL field
- * and introspection is disabled (#60). The published balance table is STALE -- a $50-funded account
- * was observed at quota 10, where the table says 5 -- so the table is never trusted. The error text
- * is deterministic and machine-parseable:
+ * This is the ONLY source for the account's real quota: it is not exposed on any GraphQL field and
+ * introspection is disabled (#60). The published balance table is STALE (a $50-funded account was
+ * observed at quota 10, where the table says 5), so the table is never trusted.
  *
- *   "Max workers across all endpoints will exceed your worker quota of 10. Reduce the max workers
- *    for other endpoints or lower the max worker count for this endpoint to at most 9"
+ * "Deterministic and machine-parseable" turned out to be doing a lot of work in that sentence. The
+ * wording ALREADY DRIFTED between #60's probe and this port, live, within the same sprint:
+ *
+ *   #60 recorded: "...will exceed your worker quota of 10 ... to at most 9"
+ *   observed live: "...must not exceed your workers quota (10) ... to at most 9."
+ *
+ * `worker quota of N` -> `workers quota (N)`. A parser pinned to either exact phrasing silently
+ * reads null, and because the preflight fails CLOSED, null means NO TENANT CAN EVER PROVISION. So
+ * this matches both shapes and stays loose about the connective: the number is what we need, and
+ * the sentence around it is not ours to depend on. If RunPod rewords it again, the preflight
+ * refuses honestly (quota_unreadable, "this one is on us") rather than guessing -- which is the
+ * whole reason that refusal is distinguished.
  */
 export function parseQuotaError(message: string): { quota: number | null; atMost: number | null } {
-  const quota = /worker quota of (\d+)/i.exec(message);
-  const atMost = /at most (\d+)/i.exec(message);
+  // "worker quota of 10" | "workers quota (10)" | "workers quota: 10"
+  const quota = /workers?\s+quota\s*(?:of\s+|\(|:\s*)(\d+)/i.exec(message);
+  const atMost = /at most\s+(\d+)/i.exec(message);
   return {
     quota: quota ? Number(quota[1]) : null,
     atMost: atMost ? Number(atMost[1]) : null,
@@ -235,10 +254,21 @@ export class RunPodClient {
     await this.call<unknown>("templates.delete", "DELETE", `/templates/${id}`);
   }
 
-  /** Workers for one endpoint. Teardown verification lists WORKERS, not just endpoints. */
-  async listWorkers(endpointId: string): Promise<unknown[]> {
-    const res = await this.call<unknown>("workers.list", "GET", `/endpoints/${endpointId}/workers`);
-    return Array.isArray(res) ? res : normalizeList(res, "workers");
+  /**
+   * Endpoint detail: the closest thing REST gives us to a worker view.
+   *
+   * There is NO worker-list on the REST API. GET /v1/endpoints/{id}/workers 400s with "that path
+   * ... does not exist in the specification" (verified live), and the detail payload carries only
+   * workersMin/workersMax/workersStandby, not running workers. A real worker list needs the legacy
+   * GraphQL API.
+   *
+   * This matters for teardown verification ("list WORKERS, not just endpoints"): what REST can
+   * honestly tell us is the endpoint's CONFIGURED capacity, which answers "can this thing scale up
+   * and spend?" but not "is something running right now". Stated rather than papered over; the
+   * GraphQL worker list is tracked separately if we need the stronger check.
+   */
+  async getEndpoint(endpointId: string): Promise<{ id: string; workersMin?: number; workersMax?: number; workersStandby?: number }> {
+    return await this.call("endpoints.get", "GET", `/endpoints/${endpointId}`);
   }
 }
 
@@ -286,18 +316,31 @@ export async function preflightQuota(
     const { quota, atMost } = parseQuotaError(raw);
     if (quota === null) {
       // RunPod refused for some OTHER reason (a bad template id will do it). We learned nothing
-      // about the quota, and saying "fits" here would be a guess dressed as a fact.
-      return { quota: null, atMost: null, fits: false, raw };
+      // about the quota, and saying "fits" here would be a guess dressed as a fact. Fail CLOSED:
+      // over-provisioning on the tenant's card, at the tenant's expense, is the one direction we
+      // never fail.
+      return { quota: null, atMost: null, fits: false, refusal: "quota_unreadable", raw };
     }
-    return { quota, atMost, fits: existingSum + needed <= quota, raw };
+    const fits = existingSum + needed <= quota;
+    return { quota, atMost, fits, ...(fits ? {} : { refusal: "quota_too_small" as const }), raw };
   }
 }
 
+/**
+ * The tenant-facing sentence. The two refusals get DIFFERENT text on purpose: they need different
+ * actions from different people. "Too small" is the tenant's to fix (free up workers, fund, or ask
+ * RunPod to raise it). "Unreadable" is OURS to look at, and telling the tenant to go fund their
+ * account for it would be actively wrong advice.
+ */
 export function quotaGuidance(reading: QuotaReading, plan: PlannedEndpoint[] = PROVISION_PLAN): string {
   const needed = planWorkerTotal(plan);
   if (reading.fits) return `Your RunPod account has room for all ${plan.length} endpoints.`;
-  if (reading.quota === null) {
-    return "We could not read your RunPod worker quota, so we will not guess. Nothing was created.";
+  if (reading.refusal === "quota_unreadable") {
+    return (
+      "We could not read your RunPod account's worker quota, so we stopped rather than guess and " +
+      "risk creating endpoints you did not agree to pay for. Nothing was created. This one is on " +
+      "us: please get in touch and we will look at it."
+    );
   }
   return (
     `Your RunPod account's worker quota is ${reading.quota}, and this studio needs ${needed} ` +

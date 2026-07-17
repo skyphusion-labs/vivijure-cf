@@ -82,9 +82,21 @@ describe("templateEnv", () => {
 });
 
 describe("parseQuotaError", () => {
-  it("reads the REAL quota out of RunPod's own sentence (the docs table is stale)", () => {
+  it("reads the quota from #60's recorded sentence", () => {
     expect(parseQuotaError(QUOTA_ERR)).toEqual({ quota: 10, atMost: 9 });
   });
+
+  it("reads the quota from the sentence RunPod ACTUALLY sends today (it drifted mid-sprint)", () => {
+    // Observed live on 2026-07-17, and it is NOT what #60 recorded: "worker quota of 10" became
+    // "workers quota (10)". A parser pinned to either exact phrasing reads null, and because the
+    // preflight fails closed, null means no tenant can EVER provision. Both shapes stay covered.
+    const live =
+      "create endpoint: create endpoint: graphql: Max workers across all endpoints must not exceed " +
+      "your workers quota (10). Reduce the max workers for other endpoints or lower the max worker " +
+      "count for this endpoint to at most 9.";
+    expect(parseQuotaError(live)).toEqual({ quota: 10, atMost: 9 });
+  });
+
   it("returns nulls rather than guessing when RunPod said something else", () => {
     expect(parseQuotaError("some other failure")).toEqual({ quota: null, atMost: null });
   });
@@ -104,10 +116,17 @@ describe("preflightQuota", () => {
     expect(r.fits).toBe(false);
   });
 
-  it("refuses to claim a fit when it could not READ the quota", async () => {
+  it("refuses to claim a fit when it could not READ the quota, and says WHICH refusal it is", async () => {
     const { fetchImpl } = fakeRunPod({ quotaError: "template not found" });
     const r = await preflightQuota(new RunPodClient("rpa_k", fetchImpl));
-    expect(r).toMatchObject({ quota: null, fits: false });
+    expect(r).toMatchObject({ quota: null, fits: false, refusal: "quota_unreadable" });
+  });
+
+  it("distinguishes too-small from unreadable (they need different actions from different people)", async () => {
+    const small = fakeRunPod({ endpoints: [{ id: "e1", name: "other", workersMax: 8 }] });
+    expect(await preflightQuota(new RunPodClient("rpa_k", small.fetchImpl))).toMatchObject({
+      fits: false, refusal: "quota_too_small",
+    });
   });
 });
 
@@ -144,9 +163,17 @@ describe("createTenantEndpoints", () => {
 
 describe("quotaGuidance", () => {
   it("tells the tenant the real numbers and that nothing was created", () => {
-    const msg = quotaGuidance({ quota: 5, atMost: 4, fits: false });
+    const msg = quotaGuidance({ quota: 5, atMost: 4, fits: false, refusal: "quota_too_small" });
     expect(msg).toContain("quota is 5");
     expect(msg).toContain("needs 5 workers");
     expect(msg).toContain("Nothing was created");
+  });
+
+  it("does NOT tell a tenant to fund their account when the failure is ours", () => {
+    // Wrong advice is worse than no advice: an unreadable quota is not something funding fixes.
+    const msg = quotaGuidance({ quota: null, atMost: null, fits: false, refusal: "quota_unreadable" });
+    expect(msg).toContain("on us");
+    expect(msg).toContain("Nothing was created");
+    expect(msg).not.toMatch(/fund|raise the quota|support/i);
   });
 });
