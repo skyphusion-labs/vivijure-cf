@@ -29,7 +29,12 @@ Shapes currently assumed:
 - `GET /api/hosted/plan` -> `{ endpoints: PlannedEndpoint[], cost_example }`
 - `POST /api/hosted/capacity` `{ runpod_key }` -> `{ quota, existing_worker_sum }`
 - `POST /api/hosted/provision` `{ runpod_key }` -> `{ job_id }`
-- `GET /api/hosted/provision/:job_id` -> `{ status, studio_url, steps[] }`
+- `GET /api/hosted/provision/:job_id` -> `{ status, studio_url, steps[], endpoints[] }`
+  (`status: AWAITING_INVOKE_KEY` drives the key-B step; `endpoints[]` carries the created
+  `{ key, label, id, name }` so the console walk-through is copy-match, not guesswork)
+- `POST /api/hosted/provision/:job_id/invoke-key` `{ invoke_key }` ->
+  `{ ok, probe: { graphql_denied, health: { [endpointId]: boolean } }, studio_url }`
+  (the #60-proven live scope probe; a wrongly-scoped key is rejected and never stored)
 - `GET /api/hosted/aup` -> `{ version, html }` (Ernst, #57)
 - `POST /api/hosted/aup/accept` `{ version }` -> `{ ok }`
 
@@ -37,9 +42,15 @@ The worker serving these needs an assets binding pointing at `hosted/public`.
 
 ## Rules this code follows (do not regress them)
 
-- **The key is never stored.** It lives in one closure variable, never in
-  localStorage/sessionStorage, never in a URL, never logged, and is cleared once
-  provisioning finishes. Live-verified, not just asserted.
+- **Neither key is ever stored by this page.** Both live in closure variables, never in
+  localStorage/sessionStorage, never in a URL, never logged. Key A is cleared the moment the
+  endpoints exist (before key B is asked for, so the page never holds both); key B is cleared on a
+  failed verdict and at go-live. Live-verified, not just asserted.
+- **Two-phase custody is not optional** (#52 ruling). RunPod keys are console-minted only and
+  per-endpoint scoping can only name endpoints that already exist, so the second mint is forced.
+  Account-wide invoke as a shortcut was REJECTED for launch: do not add an option branch for it.
+- **Key B is verified before it is kept.** A full key passes every health check, so "it works" is a
+  useless test; the refusal hangs on graphql being DENIED. Never relax that to a truthy check.
 - **Mock mode is an explicit opt-in** (`?mock=1`), never a fallback. A page that
   cannot reach its API must look broken, loudly. It must never quietly show a
   stranger invented quota numbers, invented costs, and a fake "your studio is

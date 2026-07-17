@@ -212,17 +212,76 @@
         </div>
       </section>
 
-      <!-- STEP 7: done --------------------------------------------------->
+      <!-- STEP 7: the render key (key B) --------------------------------->
+      <section class="panel" data-step="invoke" hidden>
+        <h2>One more key, and this is the last one</h2>
+        <p class="lede">
+          Your four endpoints exist now. This second key is the one your studio keeps, and it can
+          only do one thing: run jobs on these four endpoints. Nothing else on your account.
+        </p>
+
+        <div class="callout">
+          <p><strong>Why twice?</strong> RunPod only lets you create keys in their console, and a
+          key can only be locked to endpoints that already exist. So the first key had to come
+          first to build them, and this one can only be made now. We would have merged these two
+          screens if RunPod let us.</p>
+        </div>
+
+        <h3>These are the four we just created</h3>
+        <p class="small muted">
+          Tick exactly these in the console, and set each to Read/Write. The names are here so you
+          can match them instead of guessing.
+        </p>
+        <div class="rows" id="created-endpoints" aria-live="polite">loading...</div>
+
+        <h3>The click path</h3>
+        <ol class="small muted" id="invoke-steps">
+          <li>Open your <a href="https://console.runpod.io/user/settings" target="_blank" rel="noopener noreferrer">RunPod key settings</a> and create a new API key.</li>
+          <li>Choose <strong>Restricted</strong>.</li>
+          <li>Set <strong>api.runpod.io/graphql</strong> to <strong>None</strong>. This is the part that matters: it is what stops this key from touching the rest of your account.</li>
+          <li>Set <strong>api.runpod.ai</strong> to <strong>Restricted</strong>, then give <strong>Read/Write</strong> to the four endpoints listed above, and nothing else.</li>
+          <li>Create it, and paste it below.</li>
+        </ol>
+
+        <label for="invoke-key">Paste your render key</label>
+        <div class="field-row">
+          <input type="password" id="invoke-key" autocomplete="off" spellcheck="false"
+                 placeholder="rpa_..." aria-describedby="invoke-hint" />
+          <button type="button" id="invoke-reveal" aria-pressed="false">Show</button>
+        </div>
+        <p class="hint" id="invoke-hint" data-level="" aria-live="polite"></p>
+        <div id="invoke-verdict" aria-live="polite"></div>
+
+        <div class="callout callout-warn">
+          <p class="small"><strong>We check this key before we keep it.</strong> We try your four
+          endpoints with it, and we try an account-level call that should fail. If it turns out to
+          be more powerful than it needs to be, we tell you and we do not store it.</p>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="invoke-check" class="primary">Check this key</button>
+          <button type="button" class="primary" data-next="invoke" disabled>Go live</button>
+        </div>
+      </section>
+
+      <!-- STEP 8: done --------------------------------------------------->
       <section class="panel" data-step="done" hidden>
         <h2>Your studio is live</h2>
         <p class="lede">Go make something.</p>
         <p><a id="studio-link" href="#" class="row-name">Open my studio</a></p>
 
         <div class="callout callout-warn">
-          <p><strong>One last thing: delete the setup key.</strong> We are done with it. Deleting it
-          breaks nothing, and it means the powerful key stops existing.</p>
-          <p class="small"><a href="https://console.runpod.io/user/settings" target="_blank" rel="noopener noreferrer">Delete it in your RunPod console</a>.
-          Your studio already holds its own weaker key, scoped to only your four endpoints.</p>
+          <p><strong>One last thing: delete the setup key.</strong> That is the first key you
+          pasted, the powerful one. We never stored it, and we are done with it. Delete it or
+          rotate it whenever you like; nothing here breaks, because your studio does not have it.</p>
+          <p class="small"><a href="https://console.runpod.io/user/settings" target="_blank" rel="noopener noreferrer">Delete it in your RunPod console</a>.</p>
+        </div>
+
+        <div class="callout">
+          <p><strong>What we keep, in full:</strong> your render key, and nothing else. It can start
+          and check jobs on your four endpoints. It cannot create anything, cannot touch the rest of
+          your RunPod account, and cannot even change those four endpoints' settings. If it leaked
+          tomorrow, the worst anyone could do is render films on your four endpoints.</p>
         </div>
 
         <div class="callout">

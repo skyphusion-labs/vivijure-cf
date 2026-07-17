@@ -36,17 +36,35 @@ export interface QuotaFit {
   guidance: string[];
 }
 
+/**
+ * The control plane's live scope probe of key B (#60-proven probes):
+ * `health` maps each created endpoint id to whether GET /health succeeded, and
+ * `graphql_denied` records that a graphql call was refused.
+ */
+export interface ScopeProbe {
+  health?: Record<string, boolean>;
+  graphql_denied?: boolean;
+}
+
+export interface ScopeVerdict {
+  ok: boolean;
+  failures: string[];
+  message: string;
+}
+
 export interface OnboardingState {
   rulesAccepted?: boolean;
   keyPresent?: boolean;
   capacity?: QuotaFit | null;
   confirmed?: boolean;
+  invokeVerified?: boolean;
 }
 
 export const STEPS: OnboardingStep[];
 export const KEY_PREFIX: string;
 
 export function keyShapeHint(raw: string | null | undefined): KeyShapeHint;
+export function scopeVerdict(probe: ScopeProbe | null | undefined): ScopeVerdict;
 export function planWorkerTotal(plan: PlannedEndpoint[] | null | undefined): number;
 export function quotaFit(
   quota: number | null | undefined,

@@ -42,18 +42,26 @@
   const USE_MOCK =
     params.get("mock") === "1" || document.documentElement.dataset.mock === "1";
 
-  // ---- the key, and nowhere else ----------------------------------------
-  let runpodKey = "";
+  // ---- the keys, and nowhere else ---------------------------------------
+  // Two-phase custody (#52 ruling). Key A is transient and dies at the end of
+  // provisioning. Key B is verified before it is kept, and this page never
+  // keeps either one: both live in a closure and go nowhere else.
+  let runpodKey = "";   // key A: transient, graphql R/W, used once to build
+  let invokeKey = "";   // key B: invoke-only on the 4 created endpoints
   function clearKey() { runpodKey = ""; }
+  function clearInvokeKey() { invokeKey = ""; }
 
   const state = {
     rulesAccepted: false,
     keyPresent: false,
     capacity: null,
     confirmed: false,
+    invokeVerified: false,
     plan: [],
     costExample: null,
     studioUrl: null,
+    createdEndpoints: [],
+    provisionJobId: null,
   };
 
   let current = "what";
@@ -103,6 +111,24 @@
       const r = await fetch(API_BASE + "/api/hosted/provision/" + encodeURIComponent(jobId));
       if (!r.ok) throw new Error("could not read setup status (" + r.status + ")");
       return r.json();
+    },
+
+    // Key B: the control plane probes its scope LIVE before storing it
+    // (health on each created endpoint + graphql must be denied), then installs
+    // it via the per-script secrets PUT. A wrongly-scoped key is rejected and
+    // never stored -- that refusal is the whole point of the two-phase design.
+    async invokeKey(jobId, key) {
+      if (USE_MOCK) return mock.invokeKey();
+      const r = await fetch(API_BASE + "/api/hosted/provision/" + encodeURIComponent(jobId) + "/invoke-key", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ invoke_key: key }),
+      });
+      const body = await r.json().catch(function () { return {}; });
+      if (!r.ok && !body.probe) {
+        throw new Error(body.error || "could not check that key (" + r.status + ")");
+      }
+      return body;
     },
 
     // Ernst's versioned AUP text (#57). Until it exists the marked placeholder
@@ -162,8 +188,14 @@
     provision() { return { job_id: "mock-provision-job" }; },
     provisionStatus() {
       return {
-        status: "COMPLETED",
+        status: "AWAITING_INVOKE_KEY",
         studio_url: "https://your-studio.studio.vivijure.com",
+        endpoints: [
+          { key: "backend", label: "backend", id: "abc123backend", name: "vivijure-backend-yourname" },
+          { key: "upscale", label: "upscale", id: "abc123upscale", name: "vivijure-upscale-yourname" },
+          { key: "lipsync", label: "lipsync", id: "abc123lipsync", name: "vivijure-musetalk-yourname" },
+          { key: "audio-upscale", label: "audio-upscale", id: "abc123audio", name: "vivijure-audio-upscale-yourname" },
+        ],
         steps: [
           { key: "d1", label: "Creating your database", status: "done" },
           { key: "r2", label: "Creating your storage bucket", status: "done" },
@@ -171,6 +203,16 @@
           { key: "studio", label: "Deploying your studio", status: "done" },
           { key: "verify", label: "Checking it all works", status: "done" },
         ],
+      };
+    },
+    invokeKey() {
+      return {
+        ok: true,
+        probe: {
+          graphql_denied: true,
+          health: { abc123backend: true, abc123upscale: true, abc123lipsync: true, abc123audio: true },
+        },
+        studio_url: "https://your-studio.studio.vivijure.com",
       };
     },
   };
@@ -253,6 +295,40 @@
         img.className = "row-why row-image";
         img.textContent = ep.image;
         row.appendChild(img);
+      }
+      el.appendChild(row);
+    });
+  }
+
+  // The four endpoints we just created, named, so the console step is a
+  // copy-match rather than guesswork (#52 ruling).
+  function renderCreatedEndpoints() {
+    const el = $("#created-endpoints");
+    if (!el) return;
+    el.innerHTML = "";
+    if (!state.createdEndpoints.length) {
+      el.innerHTML = '<p class="muted small">No endpoints reported yet.</p>';
+      return;
+    }
+    state.createdEndpoints.forEach(function (ep) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const head = document.createElement("div");
+      head.className = "row-head";
+      const name = document.createElement("span");
+      name.className = "row-name";
+      name.textContent = ep.name || ep.label || ep.key;
+      head.appendChild(name);
+      const meta = document.createElement("span");
+      meta.className = "row-meta";
+      meta.textContent = "Read/Write";
+      head.appendChild(meta);
+      row.appendChild(head);
+      if (ep.id) {
+        const id = document.createElement("p");
+        id.className = "row-why row-image";
+        id.textContent = "id: " + ep.id;
+        row.appendChild(id);
       }
       el.appendChild(row);
     });
@@ -394,25 +470,115 @@
     renderProgress([{ key: "start", label: "Starting setup", status: "running" }]);
     try {
       const job = await PlatformApi.provision(runpodKey);
+      state.provisionJobId = job.job_id;
       const status = await PlatformApi.provisionStatus(job.job_id);
       renderProgress(status.steps);
-      if (status.status === "COMPLETED") {
-        // Done with the powerful key. It stops existing here.
+
+      state.studioUrl = status.studio_url || state.studioUrl;
+      state.createdEndpoints = status.endpoints || [];
+
+      // The endpoints exist, so key A has done its whole job. It stops existing
+      // here, BEFORE the tenant is asked for key B: we never hold both at once.
+      // (This is also why a failed RunPod step cannot self-resume -- we have
+      // nothing to resume with. The honest cost of not storing it.)
+      if (status.status === "AWAITING_INVOKE_KEY" || status.status === "COMPLETED") {
         clearKey();
-        state.studioUrl = status.studio_url || null;
-        const link = $("#studio-link");
-        if (link && state.studioUrl) {
-          link.href = state.studioUrl;
-          link.textContent = "Open my studio: " + state.studioUrl;
-        }
-        show("done");
-      } else {
-        const cont = $("#build-continue");
-        if (cont) cont.hidden = false;
       }
+
+      if (status.status === "AWAITING_INVOKE_KEY") {
+        renderCreatedEndpoints();
+        show("invoke");
+        return;
+      }
+
+      if (status.status === "COMPLETED") {
+        // A control plane that skipped the key-B phase is a contract change,
+        // not a shortcut to take quietly.
+        finishAndShowDone();
+        return;
+      }
+
+      const cont = $("#build-continue");
+      if (cont) cont.hidden = false;
     } catch (err) {
-      renderProgress([{ key: "start", label: "Setup could not start", status: "failed", error: err.message }]);
+      // Ruled on #52: because we never store key A, a RunPod-step failure
+      // cannot self-resume. Retry answers 409 runpod_key_required and the
+      // tenant re-pastes. Say that plainly instead of a dead end.
+      const needsKey = /runpod_key_required|\b409\b/.test(err.message || "");
+      renderProgress([{
+        key: "start",
+        label: needsKey ? "Setup needs your key again" : "Setup could not finish",
+        status: "failed",
+        error: err.message,
+      }]);
+      if (needsKey) {
+        const note = $("#build-progress");
+        if (note) {
+          const p = document.createElement("p");
+          p.className = "small muted";
+          p.textContent =
+            "We never stored your setup key, so we cannot retry this on our own. That is the " +
+            "tradeoff for not holding it. Go back and paste it again to pick up where this left off.";
+          note.appendChild(p);
+        }
+      }
+      const cont = $("#build-continue");
+      if (cont) { cont.hidden = false; cont.textContent = "Back to the key step"; }
     }
+  }
+
+  function finishAndShowDone() {
+    clearKey();
+    clearInvokeKey();
+    const link = $("#studio-link");
+    if (link && state.studioUrl) {
+      link.href = state.studioUrl;
+      link.textContent = "Open my studio: " + state.studioUrl;
+    }
+    show("done");
+  }
+
+  // Key B: verify scope LIVE, then keep it. Never keep it on a failed verdict.
+  async function runInvokeKeyCheck() {
+    const verdictEl = $("#invoke-verdict");
+    if (verdictEl) verdictEl.innerHTML = '<p class="small muted">Checking that key against your endpoints...</p>';
+    state.invokeVerified = false;
+    refreshGates();
+
+    let verdict;
+    try {
+      const res = await PlatformApi.invokeKey(state.provisionJobId, invokeKey);
+      verdict = checks.scopeVerdict(res.probe);
+      if (res.studio_url) state.studioUrl = res.studio_url;
+    } catch (err) {
+      verdict = { ok: false, failures: [err.message], message: err.message };
+    }
+
+    state.invokeVerified = verdict.ok;
+    if (!verdict.ok) {
+      // Rejected keys are not kept, here or anywhere. Clear the field so a bad
+      // key does not sit in the DOM waiting to be pasted somewhere worse.
+      clearInvokeKey();
+      const input = $("#invoke-key");
+      if (input) input.value = "";
+    }
+
+    if (verdictEl) {
+      verdictEl.innerHTML = "";
+      const callout = document.createElement("div");
+      callout.className = "callout " + (verdict.ok ? "" : "callout-bad");
+      verdict.ok
+        ? callout.appendChild(textP(verdict.message))
+        : verdict.failures.forEach(function (f) { callout.appendChild(textP(f)); });
+      verdictEl.appendChild(callout);
+    }
+    refreshGates();
+  }
+
+  function textP(text) {
+    const p = document.createElement("p");
+    p.textContent = text;
+    return p;
   }
 
   // ---- wiring -----------------------------------------------------------
@@ -463,6 +629,38 @@
       });
     }
 
+    const invokeInput = $("#invoke-key");
+    const invokeHint = $("#invoke-hint");
+    if (invokeInput) {
+      invokeInput.addEventListener("input", function () {
+        invokeKey = invokeInput.value.trim();
+        const hint = checks.keyShapeHint(invokeKey);
+        if (invokeHint) {
+          invokeHint.textContent = hint.message;
+          invokeHint.dataset.level = hint.level === "empty" ? "" : hint.level;
+        }
+        // Editing the key invalidates any earlier verdict: never let a verified
+        // flag outlive the key it was about.
+        state.invokeVerified = false;
+        refreshGates();
+      });
+    }
+    const invokeReveal = $("#invoke-reveal");
+    if (invokeReveal && invokeInput) {
+      invokeReveal.addEventListener("click", function () {
+        const showing = invokeInput.type === "text";
+        invokeInput.type = showing ? "password" : "text";
+        invokeReveal.textContent = showing ? "Show" : "Hide";
+        invokeReveal.setAttribute("aria-pressed", String(!showing));
+      });
+    }
+    const invokeCheck = $("#invoke-check");
+    if (invokeCheck) {
+      invokeCheck.addEventListener("click", function () {
+        if (invokeKey) runInvokeKeyCheck();
+      });
+    }
+
     document.querySelectorAll("[data-next]").forEach(function (btn) {
       btn.addEventListener("click", async function () {
         const from = btn.dataset.next;
@@ -472,6 +670,8 @@
           const version = ($("#aup-text") || {}).dataset ? $("#aup-text").dataset.version : "";
           try { await PlatformApi.acceptAup(version || null); } catch (err) { /* surfaced on the server */ }
         }
+
+        if (from === "invoke") { finishAndShowDone(); return; }
 
         const idx = checks.stepIndex(from);
         const next = checks.STEPS[idx + 1];

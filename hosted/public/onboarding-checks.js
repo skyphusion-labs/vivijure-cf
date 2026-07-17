@@ -25,13 +25,22 @@
   }
 })(typeof self !== "undefined" ? self : this, function () {
   // The onboarding steps, in order. The stepper renders from this list.
+  // Two-phase key custody (ruled on #52): RunPod keys are console-minted only,
+  // and a per-endpoint invoke scope can only name endpoints that ALREADY exist.
+  // So the tenant necessarily mints twice: key A (transient, graphql R/W)
+  // creates the 4 endpoints, then key B (invoke-only, scoped to exactly those
+  // 4) is what we keep. The "invoke" step is that second mint. It cannot be
+  // collapsed into one paste, and account-wide invoke as a shortcut was
+  // rejected for launch: we hold other people's keys, so minimal stored blast
+  // radius beats one screen of friction.
   const STEPS = [
     { key: "what", title: "What you get" },
     { key: "rules", title: "The rules" },
-    { key: "key", title: "Your RunPod key" },
+    { key: "key", title: "Setup key" },
     { key: "capacity", title: "Your capacity" },
     { key: "review", title: "Review" },
     { key: "build", title: "Building" },
+    { key: "invoke", title: "Render key" },
     { key: "done", title: "Done" },
   ];
 
@@ -165,6 +174,54 @@
     return "$" + amount.toFixed(2);
   }
 
+  // Turn the control plane's live scope probe of key B into a verdict.
+  //
+  // The probes are the #60-proven ones: GET /health must succeed on each of the
+  // 4 endpoints we created, AND a graphql call must be DENIED. Both halves
+  // matter and they catch different mistakes:
+  //   - graphql NOT denied  => they pasted a full/graphql key. It would work
+  //     fine, which is exactly the danger: we would be storing account-wide
+  //     power forever to save one screen of friction.
+  //   - a health failure    => the key is scoped to the wrong endpoints (403).
+  // Either way we refuse and never store it. "It works" is not the bar; "it can
+  // do only what it needs" is.
+  function scopeVerdict(probe) {
+    const p = probe || {};
+    const health = p.health && typeof p.health === "object" ? p.health : null;
+    const failures = [];
+
+    if (p.graphql_denied !== true) {
+      failures.push(
+        "That key can do more than run your renders: it still has account access. " +
+          "This is the one thing we will not store, so we have not kept it. Mint a key with " +
+          "the invoke surface only, and api.runpod.io/graphql set to None.",
+      );
+    }
+
+    if (!health) {
+      failures.push("We could not check that key against your endpoints, so we have not stored it.");
+    } else {
+      const unreachable = Object.keys(health).filter(function (id) { return health[id] !== true; });
+      if (unreachable.length) {
+        failures.push(
+          "That key cannot reach " +
+            (unreachable.length === 1 ? "this endpoint" : "these endpoints") +
+            ": " +
+            unreachable.join(", ") +
+            ". Check you gave it Read/Write on all four of the endpoints we just created.",
+        );
+      }
+    }
+
+    return {
+      ok: failures.length === 0,
+      failures: failures,
+      message: failures.length === 0
+        ? "That key checks out: it can run jobs on your four endpoints, and nothing else."
+        : failures[0],
+    };
+  }
+
   function stepIndex(key) {
     for (let i = 0; i < STEPS.length; i++) {
       if (STEPS[i].key === key) return i;
@@ -181,6 +238,8 @@
     if (key === "key") return typeof s.keyPresent === "boolean" ? s.keyPresent : false;
     if (key === "capacity") return !!(s.capacity && s.capacity.fits === true);
     if (key === "review") return s.confirmed === true;
+    // Nothing goes live on a key whose scope we did not verify.
+    if (key === "invoke") return !!(s.invokeVerified === true);
     return true;
   }
 
@@ -188,6 +247,7 @@
     STEPS: STEPS,
     KEY_PREFIX: KEY_PREFIX,
     keyShapeHint: keyShapeHint,
+    scopeVerdict: scopeVerdict,
     planWorkerTotal: planWorkerTotal,
     quotaFit: quotaFit,
     costCeilingUsd: costCeilingUsd,

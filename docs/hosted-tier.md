@@ -64,10 +64,26 @@ time.
 
 ---
 
-## The key we ask for, and why
+## The keys we ask for, and why there are two
 
-You give us a RunPod API key **once**, during setup. We use it to create those 4 endpoints, and then
-we are done with it. Here is exactly what to make:
+Setup asks you to make **two** RunPod keys. That is one more than anybody wants, so here is the
+honest reason: RunPod only lets you create keys in their console, and a key can only be locked to
+endpoints that **already exist**. The first key builds your four endpoints. The second key can only
+be made after that, because it points at them by name. We would merge these steps if RunPod let us.
+
+The payoff is worth the extra screen: the powerful key is used once and thrown away, and the key we
+keep forever is one that can do almost nothing.
+
+| | **Key A: the setup key** | **Key B: the render key** |
+|---|---|---|
+| What it can do | Create endpoints (and, unavoidably, anything else on your account) | Run jobs on your 4 endpoints. Nothing else. |
+| How long we hold it | Minutes, in memory, during setup | For as long as your studio exists |
+| Where we store it | **Nowhere** | As a secret on your own studio |
+| What you do after | Delete it | Leave it alone |
+
+### Key A: the setup key
+
+Here is exactly what to make:
 
 > **In your RunPod console, create a key with the Restricted setting:**
 > - set **api.runpod.io/graphql** to **Read/Write**
@@ -85,13 +101,33 @@ So we treat it the way you would want:
 
 - It is used **once**, during setup, and held only in memory while your endpoints are built.
 - It is **never stored**. Not in a database, not in a log, not on your studio.
-- When setup finishes, **delete it from your RunPod console**. We show you that step and link you
-  straight to it. Nothing breaks when you do, because we are already done with it.
+- We drop it the moment your endpoints exist, before we even ask you for the second key. We never
+  hold both at once.
+- When setup finishes, **delete or rotate it in your RunPod console**. We show you that step and
+  link you straight to it. Nothing breaks when you do, because your studio never had it.
 
-### What your studio actually keeps
+One honest consequence of not storing it: if setup fails partway through the RunPod step, we cannot
+quietly retry on your behalf, because we have nothing to retry with. We ask you to paste the key
+again. That is the price of not keeping it, and we think it is the right trade.
 
-After setup, your studio holds a **second, much weaker key**: a Restricted key scoped to invoke
-**only your 4 endpoints**. That is all a render needs: submit a job, check on it, cancel it.
+### Key B: the render key, and the check we run on it
+
+Once your four endpoints exist, we ask you for a second key, scoped to invoke **only those four**.
+That is all a render needs: submit a job, check on it, cancel it. The setup screen lists the four
+endpoints we just created, by name, so you tick the right boxes instead of guessing.
+
+In the console: **Restricted**, `api.runpod.io/graphql` set to **None**, `api.runpod.ai` set to
+**Restricted** with **Read/Write** on those four endpoints and nothing else.
+
+**We check that key before we keep it**, and we check the part that matters rather than the part
+that is easy. We try your four endpoints with it, and we try an account-level call that **should
+fail**. If that call succeeds, you pasted a powerful key: it would work perfectly, which is exactly
+the danger, so we reject it and tell you rather than quietly storing account-wide access forever to
+save you a screen. A key that fails the check is never stored.
+
+You might reasonably ask why we do not just offer "give it access to everything, it is easier." We
+considered it and said no. We are holding other people's keys; the smallest thing that works wins
+over one screen of convenience, every time.
 
 We tested that boundary rather than assuming it:
 
@@ -100,7 +136,7 @@ We tested that boundary rather than assuming it:
 - it cannot change your endpoint settings at all (a **401**, even on your own endpoints).
 
 So the worst case for the key we store is "someone could run renders on your four endpoints." The
-worst case is not your RunPod account.
+worst case is not your RunPod account. That is the entire reason setup asks you to mint twice.
 
 ---
 
