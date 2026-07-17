@@ -57,6 +57,10 @@ function deps(over: Partial<ProvisionDeps> = {}): ProvisionDeps {
     store,
     cf: fakeCf(),
     runpod: { createEndpoints: vi.fn(async () => (calls.push("runpod.createEndpoints"), ENDPOINTS)) },
+    tokenMinter: {
+      mintBucketToken: vi.fn(async () => (calls.push("mintR2Token"), { id: "tok-1", value: "TOKEN_VALUE_SECRET" })),
+      revoke: vi.fn(async () => void calls.push("revokeToken")),
+    },
     bundle: {
       fetch: vi.fn(async () => ({
         mainModule: "index.js",
@@ -66,7 +70,6 @@ function deps(over: Partial<ProvisionDeps> = {}): ProvisionDeps {
     },
     namespace: "vivijure-tenants",
     release: "v1.0.0",
-    r2PermissionGroupId: "pg-1",
     tenantScriptName: (slug: string) => `tenant-${slug}-studio`,
     log: (event, fields) => void logs.push({ event, fields }),
     ...over,
@@ -186,7 +189,7 @@ describe("runProvisionJob", () => {
     const job = await store.createProvisionJob("job_1", t.id, "provision");
     await runProvisionJob(d, job.id, fresh, "rpa_keyA", MIGRATIONS);
 
-    expect(d.cf.revokeToken).toHaveBeenCalledWith("tok-old");
+    expect(d.tokenMinter.revoke).toHaveBeenCalledWith("tok-old");
     expect(calls.indexOf("revokeToken")).toBeLessThan(calls.indexOf("mintR2Token"));
     expect(store.tenants.get(t.id)?.r2_token_id).toBe("tok-1");
   });
@@ -220,7 +223,7 @@ describe("teardownTenant", () => {
     const d = deps();
     const res = await teardownTenant(d, await provisioned(), { deleteData: true });
     expect(res.ok).toBe(true);
-    expect(d.cf.revokeToken).toHaveBeenCalledWith("tok-1");
+    expect(d.tokenMinter.revoke).toHaveBeenCalledWith("tok-1");
   });
 
   it("KEEPS GOING after a failure and reports every one (a first-error stop strands credentials)", async () => {
@@ -232,7 +235,7 @@ describe("teardownTenant", () => {
     expect(res.ok).toBe(false);
     expect(res.failures).toEqual([{ resource: "worker", error: expect.stringContaining("script busy") }]);
     // The credential is STILL revoked even though the first step failed.
-    expect(d.cf.revokeToken).toHaveBeenCalledWith("tok-1");
+    expect(d.tokenMinter.revoke).toHaveBeenCalledWith("tok-1");
     expect(calls).toContain("deleteD1");
   });
 

@@ -17,6 +17,7 @@
 import type { CfApi } from "./cf-api";
 import { CfApiError } from "./cf-api";
 import type { ControlPlaneStore, Tenant } from "./store";
+import type { TokenMinter } from "./token-minter";
 
 /** The named steps, in order. These strings reach the tenant's screen; keep them legible. */
 export const PROVISION_STEPS = [
@@ -71,10 +72,14 @@ export interface ProvisionDeps {
   cf: CfApi;
   runpod: RunPodProvisioner;
   bundle: StudioBundleSource;
+  /**
+   * The R2 credential seam. Split out because it is the one leg our API-created provisioner token
+   * cannot perform (CF refuses API-created tokens any token-management rights), so it is blocked on
+   * a dashboard-created cred while every other leg is live-verified.
+   */
+  tokenMinter: TokenMinter;
   namespace: string;
   release: string;
-  /** The R2 permission-group id for a bucket-scoped read/write token. Deploy config, not a secret. */
-  r2PermissionGroupId: string;
   tenantScriptName(slug: string): string;
   log(event: string, fields: Record<string, unknown>): void;
 }
@@ -139,14 +144,14 @@ export async function runProvisionJob(
     const previousTokenId = tenant.r2_token_id;
     if (previousTokenId) {
       try {
-        await deps.cf.revokeToken(previousTokenId);
+        await deps.tokenMinter.revoke(previousTokenId);
       } catch (e) {
         // A stale token that will not revoke must not strand the tenant, but it MUST be visible:
         // it is a live credential we failed to clean up.
         deps.log("r2_token.revoke_failed", { tenant: tenant.id, error: String(e) });
       }
     }
-    const token = await deps.cf.mintR2Token(tenantR2TokenName(tenant.slug), bucket, deps.r2PermissionGroupId);
+    const token = await deps.tokenMinter.mintBucketToken(tenantR2TokenName(tenant.slug), bucket);
     await deps.store.setTenantR2Token(tenant.id, token.id);
     await mark("r2_token");
 
@@ -275,7 +280,7 @@ export async function teardownTenant(
 
   await attempt("worker", () => deps.cf.deleteUserWorker(deps.namespace, deps.tenantScriptName(tenant.slug)));
   // The credential goes next: an un-revoked token outliving its bucket is an orphaned grant.
-  if (tenant.r2_token_id) await attempt("r2_token", () => deps.cf.revokeToken(tenant.r2_token_id!));
+  if (tenant.r2_token_id) await attempt("r2_token", () => deps.tokenMinter.revoke(tenant.r2_token_id!));
 
   if (opts.deleteData) {
     if (tenant.d1_database_id) await attempt("d1", () => deps.cf.deleteD1(tenant.d1_database_id!));
