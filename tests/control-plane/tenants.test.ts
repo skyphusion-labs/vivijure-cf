@@ -82,7 +82,14 @@ describe("tenantView", () => {
 });
 
 describe("tenantEndpointIds", () => {
-  it("reads the provisioner's endpoint list", () => {
+  it("reads the provisioner's endpoint list (the CreatedEndpoint[] shape it actually stores)", () => {
+    const stored = JSON.stringify([
+      { key: "backend", label: "Render", id: "ep_backend", name: "vivijure-hero-backend" },
+      { key: "upscale", label: "Video upscale", id: "ep_upscale", name: "vivijure-hero-upscale" },
+    ]);
+    expect(tenantEndpointIds(tenant({ endpoints_json: stored }))).toEqual(["ep_backend", "ep_upscale"]);
+  });
+  it("tolerates a bare string-id array too", () => {
     expect(tenantEndpointIds(tenant({ endpoints_json: '["a","b"]' }))).toEqual(["a", "b"]);
   });
   it("treats absent or malformed json as no endpoints, never as a crash", () => {

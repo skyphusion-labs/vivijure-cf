@@ -98,7 +98,20 @@ export function tenantEndpointIds(tenant: Tenant): string[] {
   if (!tenant.endpoints_json) return [];
   try {
     const parsed: unknown = JSON.parse(tenant.endpoints_json);
-    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+    if (!Array.isArray(parsed)) return [];
+    // The provisioner stores endpoints_json as the CreatedEndpoint[] it built (objects carrying
+    // {key,label,id,name} -- the same shape invokeKeyRecipe consumes), so the endpoint id is the
+    // .id field. A bare-string element is tolerated for safety, but the writer emits objects. The
+    // earlier string-only filter returned [] against the real stored shape, so every live key
+    // install 409-d no_endpoints; stubbed tests hand-stored string arrays the provisioner never
+    // produces, so they never caught it.
+    const idOf = (v: unknown): string | null =>
+      typeof v === "string"
+        ? v
+        : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string"
+          ? (v as { id: string }).id
+          : null;
+    return parsed.map(idOf).filter((v): v is string => v !== null);
   } catch {
     return [];
   }
