@@ -10,6 +10,7 @@
 
 import { b64url, pkceChallenge, randomToken } from "./crypto";
 import type { ControlPlaneEnv } from "./env";
+import { publicOrigin } from "./env";
 import type { AuthProvider } from "./store";
 
 export interface VerifiedIdentity {
@@ -40,7 +41,7 @@ export function isSsoProvider(v: string): v is SsoProvider {
 }
 
 export function redirectUri(env: ControlPlaneEnv, provider: SsoProvider): string {
-  return `${env.PUBLIC_ORIGIN}/auth/${provider}/callback`;
+  return `${publicOrigin(env)}/auth/${provider}/callback`;
 }
 
 /** The authorize-URL leg. Returns the URL plus the state row the caller must persist. */

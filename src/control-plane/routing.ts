@@ -9,7 +9,7 @@
 // control-plane API call, and must not be evaluated against control-plane auth.
 //
 // PARITY (Conrad ruling 2026-07-17, absolute): the hosted door ships AGPL and anyone may run a
-// competing hosted vivijure, so no hostname is hardcoded -- PUBLIC_ORIGIN and TENANT_DOMAIN_SUFFIX
+// competing hosted vivijure, so no hostname is hardcoded -- everything derives from CONTROL_PLANE_HOST
 // are deploy-injected. A `vivijure.com` literal here would make that structurally impossible.
 //
 // ONE DEFINITION, consumed not duplicated: slug rules come from ./tenants (validateSlug), the tenant
@@ -17,6 +17,7 @@
 
 import type { ControlPlaneDeps } from "./deps";
 import type { ControlPlaneEnv } from "./env";
+import { tenantDomainSuffix } from "./env";
 import type { Tenant } from "./store";
 import { validateSlug } from "./tenants";
 
@@ -137,7 +138,7 @@ export async function routeTenantRequest(
   env: ControlPlaneEnv,
   deps: ControlPlaneDeps,
 ): Promise<Response | null> {
-  const route = classifyHost(request.headers.get("host"), env.TENANT_DOMAIN_SUFFIX);
+  const route = classifyHost(request.headers.get("host"), tenantDomainSuffix(env));
   if (route.kind === "front-door") return null;
   if (route.kind === "invalid-tenant") return refusal(404, "No studio at this address.");
 

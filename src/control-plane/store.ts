@@ -48,6 +48,8 @@ export interface Tenant {
   d1_database_id: string | null;
   r2_bucket_name: string | null;
   endpoints_json: string | null;
+  /** The ID of the bucket-scoped R2 token, never its value. Teardown revokes by this. */
+  r2_token_id: string | null;
   studio_release: string | null;
   created_at: string;
   live_at: string | null;
@@ -122,6 +124,8 @@ export interface ControlPlaneStore {
   recordAupAcceptance(
     accountId: string,
     version: string,
+    /** SHA-256 of the served AUP bytes: the label says what we called it, this says what it said. */
+    aupSha256: string,
     ipHash: string | null,
     userAgent: string | null,
   ): Promise<void>;
@@ -138,9 +142,20 @@ export interface ControlPlaneStore {
   resumeTenant(id: string): Promise<void>;
   listTenants(filter: { status?: string; q?: string }): Promise<Tenant[]>;
 
+  // tenant provisioning writes (#53). Ids and names only; a credential VALUE never lands here.
+  setTenantD1(id: string, databaseId: string): Promise<void>;
+  setTenantBucket(id: string, bucket: string): Promise<void>;
+  setTenantR2Token(id: string, tokenId: string): Promise<void>;
+  setTenantEndpoints(id: string, endpointsJson: string): Promise<void>;
+  setTenantScript(id: string, scriptName: string, release: string): Promise<void>;
+
   // provision jobs
   createProvisionJob(id: string, tenantId: string, kind: "provision" | "deprovision"): Promise<ProvisionJob>;
   getLatestJobForTenant(tenantId: string): Promise<ProvisionJob | null>;
+  getJob(id: string): Promise<ProvisionJob | null>;
+  setJobRunning(id: string): Promise<void>;
+  updateJobProgress(id: string, step: string, stepsDoneJson: string): Promise<void>;
+  finishJob(id: string, status: "succeeded" | "failed", errorStep: string | null, errorMessage: string | null): Promise<void>;
 
   // settings + audit
   getSetting(key: string): Promise<string | null>;

@@ -14,7 +14,7 @@
 // steps) lands in #53/#54. A tenant created today therefore parks at status "pending" with a
 // "queued" job until that runner ships. Nothing here claims otherwise to the caller.
 
-import { acceptAup, hasAcceptedCurrent, isAupExempt } from "./aup";
+import { acceptAup, fetchAupSha256, hasAcceptedCurrent, isAupExempt } from "./aup";
 import {
   clearedSessionCookie,
   endSession,
@@ -32,6 +32,7 @@ import { bearerFrom, newId } from "./crypto";
 import type { ControlPlaneDeps } from "./deps";
 import { productionDeps } from "./deps";
 import type { ControlPlaneEnv } from "./env";
+import { publicOrigin, tenantDomainSuffix } from "./env";
 import { authorizeUrl, configuredProviders, exchangeCode, isSsoProvider } from "./oauth";
 import { routeTenantRequest } from "./routing";
 import { verifyInvokeKeyScope } from "./runpod-invoke-key";
@@ -74,7 +75,7 @@ export async function handle(
   // are GETs (not state-changing in this sense) and carry their own single-use state/token guard.
   if (request.method !== "GET" && request.method !== "HEAD" && path.startsWith("/api/")) {
     const origin = request.headers.get("origin");
-    if (origin && origin !== env.PUBLIC_ORIGIN) return err("bad_origin", 403);
+    if (origin && origin !== publicOrigin(env)) return err("bad_origin", 403);
   }
 
   try {
@@ -89,7 +90,13 @@ export async function handle(
     }
 
     if (request.method === "GET" && path === "/api/aup/current") {
-      return json({ version: env.AUP_VERSION, url: env.AUP_URL });
+      // sha256 of the served bytes travels with the label so the front door can show, and later
+      // prove, exactly what it put in front of someone.
+      return json({
+        version: env.AUP_VERSION,
+        url: env.AUP_URL,
+        sha256: await fetchAupSha256(env.AUP_URL, deps.fetch),
+      });
     }
 
     // ---- auth ----
@@ -138,8 +145,15 @@ export async function handle(
           String(body?.version ?? ""),
           env.AUP_VERSION,
           request,
+          await fetchAupSha256(env.AUP_URL, deps.fetch),
         );
-        if (!result.ok) return err(result.error, 409, { current: result.current });
+        if (!result.ok) {
+          // 409 for a stale version (reload and re-read); 503 when WE cannot pin the text, because
+          // that is our failure, not the tenant's, and it must be loud rather than silently absent.
+          return result.error === "aup_unverifiable"
+            ? err(result.error, 503, { message: "we could not verify the policy text; nothing was recorded" })
+            : err(result.error, 409, { current: result.current });
+        }
         return new Response(null, { status: 204 });
       }
 
@@ -195,7 +209,7 @@ async function emailStart(
   // Fire-and-forget so the response timing does not vary with whether an account exists (another
   // enumeration side channel), and so a slow postern cannot hang the request.
   ctx.waitUntil(
-    sendMagicLink(deps.store, deps.mailer, env.PUBLIC_ORIGIN, email, deps.now()).catch((e: unknown) => {
+    sendMagicLink(deps.store, deps.mailer, publicOrigin(env), email, deps.now()).catch((e: unknown) => {
       console.error("magic-link send failed", { error: String(e) });
     }),
   );
@@ -278,7 +292,7 @@ async function me(env: ControlPlaneEnv, deps: ControlPlaneDeps, account: Account
       required_version: env.AUP_VERSION,
       accepted: await hasAcceptedCurrent(deps.store, account.id, env.AUP_VERSION),
     },
-    tenant: tenant ? tenantView(tenant, env.TENANT_DOMAIN_SUFFIX) : null,
+    tenant: tenant ? tenantView(tenant, tenantDomainSuffix(env)) : null,
   });
 }
 
@@ -417,7 +431,7 @@ async function adminRoutes(
       status: url.searchParams.get("status") ?? undefined,
       q: url.searchParams.get("q") ?? undefined,
     });
-    return json({ tenants: tenants.map((t) => tenantView(t, env.TENANT_DOMAIN_SUFFIX)) });
+    return json({ tenants: tenants.map((t) => tenantView(t, tenantDomainSuffix(env))) });
   }
 
   if (request.method === "GET" && path === "/api/admin/settings") {
@@ -469,5 +483,5 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 function redirectTo(env: ControlPlaneEnv, path: string, headers: Record<string, string> = {}): Response {
-  return new Response(null, { status: 302, headers: { location: `${env.PUBLIC_ORIGIN}${path}`, ...headers } });
+  return new Response(null, { status: 302, headers: { location: `${publicOrigin(env)}${path}`, ...headers } });
 }

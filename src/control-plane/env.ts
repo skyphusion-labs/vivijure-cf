@@ -33,10 +33,14 @@ export interface ControlPlaneEnv {
   AUP_VERSION: string;
   /** Where the AUP text lives (Ernst, #57). The control plane holds no opinion on the words. */
   AUP_URL: string;
-  /** e.g. https://studio.vivijure.com -- the CSRF origin and the magic-link/callback base. */
-  PUBLIC_ORIGIN: string;
-  /** e.g. .studio.vivijure.com -- tenant studios live at <slug><suffix> (Strummer, #55). */
-  TENANT_DOMAIN_SUFFIX: string;
+  /**
+   * e.g. "studio.vivijure.com". THE single source of the deployment's hostname, shared with
+   * routing (#55). PUBLIC_ORIGIN and the tenant domain suffix are DERIVED from it, never
+   * configured alongside it: three names for one fact is a drift generator, and a mismatch between
+   * them fails only in production. Never a literal in code (parity: a hardcoded hostname makes
+   * running a competing hosted vivijure structurally impossible).
+   */
+  CONTROL_PLANE_HOST: string;
 
   /** postern send door (POST /api/send). Var: it is a URL, not a secret. */
   POSTERN_SEND_URL?: string;
@@ -72,3 +76,9 @@ export interface ControlPlaneEnv {
   /** Throttles the outbound-email amplifier (/api/auth/email/start) and provisioning. */
   CP_RATE_LIMIT?: RateLimiter;
 }
+
+/** The front door origin. Derived, so it can never disagree with routing's root host. */
+export const publicOrigin = (env: ControlPlaneEnv): string => `https://${env.CONTROL_PLANE_HOST}`;
+
+/** Tenant studios live at <slug><suffix>. Derived from the same single fact. */
+export const tenantDomainSuffix = (env: ControlPlaneEnv): string => `.${env.CONTROL_PLANE_HOST}`;

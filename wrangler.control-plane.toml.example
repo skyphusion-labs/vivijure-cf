@@ -53,11 +53,20 @@ namespace = "${TENANT_DISPATCH_NAMESPACE}"
 # Bumping AUP_VERSION re-gates every account on their next request, by construction.
 AUP_VERSION = "${AUP_VERSION}"
 AUP_URL = "${AUP_URL}"
-# Derived from CONTROL_PLANE_HOST so the CSRF/magic-link origin and the Worker route below
-# cannot drift apart. Two independently-injected hostnames WILL diverge eventually, and the
-# failure is nasty: magic links pointing at a host this Worker is not routed on.
-PUBLIC_ORIGIN = "https://${CONTROL_PLANE_HOST}"
-TENANT_DOMAIN_SUFFIX = "${TENANT_DOMAIN_SUFFIX}"
+# THE single injected hostname (the vars ruling). The front-door origin and the tenant domain
+# suffix are DERIVED from it in src/control-plane/env.ts (publicOrigin/tenantDomainSuffix), and the
+# routes below derive from the same placeholder, so there is exactly ONE hostname fact in the whole
+# deployment. Strummer's reasoning stands and is why this went further: two independently-injected
+# hostnames WILL diverge, and the failure is nasty (magic links pointing at a host this Worker is
+# not routed on). Deriving the SUFFIX too closes the last gap -- it was still independently
+# settable, which is the same bug wearing a different name.
+#
+# The coupling this accepts, stated plainly: tenant hostnames must be CHILDREN of the front-door
+# host (<tenant>.studio.<root> under studio.<root>). That is the ruled shape and holds for any
+# self-host (<tenant>.panel.example.com under panel.example.com). A deployment wanting tenants on
+# an unrelated domain would need the suffix injected again; nobody has asked for that, and the
+# drift class it reopens is worse than the flexibility it buys.
+CONTROL_PLANE_HOST = "${CONTROL_PLANE_HOST}"
 # postern's send door (POST /api/send). A URL, not a secret.
 POSTERN_SEND_URL = "${POSTERN_SEND_URL}"
 # SSO client identifiers are public; their secrets are wrangler secrets (below). A provider is
@@ -96,10 +105,10 @@ custom_domain = true
 # The tenant leg: a WILDCARD route. It canNOT be a custom domain -- Workers Custom Domains do not
 # support wildcards (spike-confirmed) -- so it needs BOTH of these live on the zone or it does not
 # serve at all:
-#   (a) a PROXIED wildcard DNS record for *<TENANT_DOMAIN_SUFFIX>; a Worker route only fires on
+#   (a) a PROXIED wildcard DNS record for *.<CONTROL_PLANE_HOST>; a Worker route only fires on
 #       proxied DNS. House style on this zone is `AAAA -> 100::`, proxied (confirmed against every
 #       existing Worker hostname there).
-#   (b) a certificate covering *<TENANT_DOMAIN_SUFFIX>. That is a SECOND-level wildcard, which
+#   (b) a certificate covering *.<CONTROL_PLANE_HOST>. That is a SECOND-level wildcard, which
 #       Universal SSL does NOT cover, so it needs an Advanced Certificate Manager pack.
 #
 # *** BLOCKED as of 2026-07-17 (#55): ACM is NOT currently entitled on the vivijure.com zone. The
@@ -113,5 +122,5 @@ custom_domain = true
 # reaches this Worker while sitting OUTSIDE the one-label wildcard cert. classifyHost() refuses
 # multi-label hosts explicitly rather than letting them fall through to a confusing dispatch miss.
 [[routes]]
-pattern = "*${TENANT_DOMAIN_SUFFIX}/*"
+pattern = "*.${CONTROL_PLANE_HOST}/*"
 zone_name = "${CONTROL_PLANE_ZONE_NAME}"
