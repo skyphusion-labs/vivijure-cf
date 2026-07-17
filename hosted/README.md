@@ -18,27 +18,41 @@ business shipping to a self-hosted studio.
 
 ## Wiring this up (integration notes)
 
-**The API adapter in `onboarding.js` (`PlatformApi`) is PROVISIONAL.** The
-control plane is Rollins' lane (#52 skeleton, #54 provisioner); these shapes are
-a seam so the screens are drivable today, not a contract. When the real contract
-lands, `PlatformApi` is the only place that changes: the screens render from the
-data it returns and never hardcode what a plan contains.
+Reconciled against Rollins' posted #52 contract (issue 52, comment 4998960324). Routes below are
+split into what the contract carries and what this flow still needs.
 
-Shapes currently assumed:
+The worker serving these needs its `ASSETS` binding pointing at **`hosted/public`**.
 
-- `GET /api/hosted/plan` -> `{ endpoints: PlannedEndpoint[], cost_example }`
-- `POST /api/hosted/capacity` `{ runpod_key }` -> `{ quota, existing_worker_sum }`
-- `POST /api/hosted/provision` `{ runpod_key }` -> `{ job_id }`
-- `GET /api/hosted/provision/:job_id` -> `{ status, studio_url, steps[], endpoints[] }`
-  (`status: AWAITING_INVOKE_KEY` drives the key-B step; `endpoints[]` carries the created
-  `{ key, label, id, name }` so the console walk-through is copy-match, not guesswork)
-- `POST /api/hosted/provision/:job_id/invoke-key` `{ invoke_key }` ->
-  `{ ok, probe: { graphql_denied, health: { [endpointId]: boolean } }, studio_url }`
-  (the #60-proven live scope probe; a wrongly-scoped key is rejected and never stored)
-- `GET /api/hosted/aup` -> `{ version, html }` (Ernst, #57)
-- `POST /api/hosted/aup/accept` `{ version }` -> `{ ok }`
+### From the contract (authoritative; this adapter follows it)
 
-The worker serving these needs an assets binding pointing at `hosted/public`.
+| Route | Used for |
+|---|---|
+| `GET /api/platform/config` | signups switch, AUP version, `auth_methods` (projected, never hardcoded) |
+| `GET /api/me` | the shell: account, AUP state, tenant + tenant status |
+| `GET /api/aup/current` -> `{version, url, summary}` | the rules step (rendered as text + link, never innerHTML) |
+| `POST /api/aup/accept` `{version}` | the blocking gate |
+| `GET /api/tenant/slug-available?slug` | the name step |
+| `POST /api/tenant/provision` `{slug, runpod_api_key}` | starts the build |
+| `GET /api/tenant/:id/job` | polled; `error_message` shown VERBATIM |
+| `POST /api/tenant/:id/retry` (409 `runpod_key_required`) | the re-paste path |
+| `POST /api/tenant/:id/invoke-key` `{runpod_invoke_key}` | key B |
+
+Job status (`queued|running|succeeded|failed`) and tenant status
+(`provisioning|awaiting_invoke_key|live`) are different machines. The flow polls the job, then reads
+tenant status from `/api/me`. A succeeded job is NOT "live".
+
+### Requested, not yet in the contract (raised on #52; NOT invented facts)
+
+| Want | Why the UI needs it |
+|---|---|
+| `GET /api/tenant/provision-plan` -> `{endpoints[], cost_example}` | The review screen says "this is exactly what we will create on your account." The endpoint list and the pinned `max_workers` are the provisioner's (#54), not this page's. |
+| `POST /api/tenant/capacity` `{runpod_api_key}` -> `{quota, existing_worker_sum}` | #58 requires the happy path to surface the account's REAL quota BEFORE we touch it. A number that only appears inside a failure message does not satisfy that. Must create nothing. |
+| `endpoints[] {key,label,id,name}` on the tenant (via `/api/me`) | The key-B console walk-through has to name the 4 endpoints we just created so the tenant ticks the right boxes. Ruled as copy-match, not guesswork. |
+| a probe body on invoke-key rejection: `{probe:{graphql_denied, health:{[id]:bool}}}` | "Your key is wrong" is not an honest error. The tenant needs to know WHICH way (too powerful vs scoped to the wrong endpoints) to fix it. A bare 204 pass is handled; a bare failure cannot be explained. |
+| `tenant_domain_suffix` on `/api/platform/config` | to build the studio URL without hardcoding the domain (currently defaults to `.studio.vivijure.com`). |
+
+Until these land the flow falls back honestly: a bare 204 on invoke-key is reported as "your studio
+accepted it" and never dressed up as a check this page performed.
 
 ## Rules this code follows (do not regress them)
 

@@ -19,6 +19,10 @@
       Preview: contract-mocked data, no control plane wired yet (#52 / #54).
     </div>
 
+    <div class="mock-banner" id="signups-off" hidden>
+      Signups are closed right now. Nothing on this page will go through.
+    </div>
+
     <header class="topbar">
       <a class="brand" href="/" aria-label="Vivijure">
         <span class="brand-mark" aria-hidden="true"></span>
@@ -108,7 +112,31 @@
         </div>
       </section>
 
-      <!-- STEP 3: the key ------------------------------------------------>
+      <!-- STEP 3: name it (the slug) -------------------------------------->
+      <section class="panel" data-step="name" hidden>
+        <h2>Name your studio</h2>
+        <p class="lede">
+          This becomes your studio's web address. Pick something you will not mind typing.
+        </p>
+
+        <label for="slug">Studio name</label>
+        <div class="field-row">
+          <input type="text" id="slug" autocomplete="off" spellcheck="false"
+                 placeholder="my-studio" aria-describedby="slug-hint" />
+        </div>
+        <p class="small muted" id="slug-preview" aria-live="polite"></p>
+        <p class="hint" id="slug-hint" data-level="" aria-live="polite"></p>
+        <p class="small muted">
+          Lowercase letters, numbers, and dashes. A few names are reserved for us.
+        </p>
+
+        <div class="actions">
+          <button type="button" data-back="name">Back</button>
+          <button type="button" class="primary" data-next="name" disabled>Continue</button>
+        </div>
+      </section>
+
+      <!-- STEP 4: the key ------------------------------------------------>
       <section class="panel" data-step="key" hidden>
         <h2>Your RunPod key</h2>
         <p class="lede">

@@ -36,6 +36,7 @@
   const STEPS = [
     { key: "what", title: "What you get" },
     { key: "rules", title: "The rules" },
+    { key: "name", title: "Name it" },
     { key: "key", title: "Setup key" },
     { key: "capacity", title: "Your capacity" },
     { key: "review", title: "Review" },
@@ -50,6 +51,39 @@
   // hint at paste time, NOT authorization: only RunPod can say if a key works,
   // and the capacity probe is what actually proves it.
   const KEY_PREFIX = "rpa_";
+
+  // Client-side MIRROR of the control plane's slug rule (#52 contract). The
+  // server is the authority and re-validates; this exists so a typo is caught
+  // while the tenant is looking at the field, not after a round trip.
+  //
+  // The slug is BOTH the subdomain and the WfP script name, which is why the
+  // rule is this strict: it has to be legal in both alphabets.
+  const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/;
+  const SLUG_RESERVED = [
+    "www", "api", "admin", "demo", "studio", "mcp", "app", "status", "mail",
+  ];
+
+  function slugHint(raw) {
+    const slug = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    if (!slug) return { level: "empty", valid: false, message: "" };
+    if (slug.length < 3) {
+      return { level: "warn", valid: false, message: "A bit longer, please: at least 3 characters." };
+    }
+    if (slug.length > 32) {
+      return { level: "warn", valid: false, message: "That is too long. Keep it to 32 characters or fewer." };
+    }
+    if (SLUG_RESERVED.indexOf(slug) !== -1) {
+      return { level: "warn", valid: false, message: "\"" + slug + "\" is reserved for us. Pick another name." };
+    }
+    if (!SLUG_RE.test(slug)) {
+      return {
+        level: "warn",
+        valid: false,
+        message: "Use lowercase letters, numbers, and dashes; start and end with a letter or number.",
+      };
+    }
+    return { level: "ok", valid: true, message: "" };
+  }
 
   function keyShapeHint(raw) {
     const key = typeof raw === "string" ? raw.trim() : "";
@@ -235,6 +269,9 @@
   function canAdvance(key, state) {
     const s = state || {};
     if (key === "rules") return s.rulesAccepted === true;
+    // The server owns slug availability; the UI will not advance on a local
+    // regex pass alone.
+    if (key === "name") return !!(s.slugValid === true && s.slugAvailable === true);
     if (key === "key") return typeof s.keyPresent === "boolean" ? s.keyPresent : false;
     if (key === "capacity") return !!(s.capacity && s.capacity.fits === true);
     if (key === "review") return s.confirmed === true;
@@ -247,6 +284,8 @@
     STEPS: STEPS,
     KEY_PREFIX: KEY_PREFIX,
     keyShapeHint: keyShapeHint,
+    slugHint: slugHint,
+    SLUG_RESERVED: SLUG_RESERVED,
     scopeVerdict: scopeVerdict,
     planWorkerTotal: planWorkerTotal,
     quotaFit: quotaFit,

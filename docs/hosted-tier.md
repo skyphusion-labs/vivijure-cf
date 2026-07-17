@@ -164,6 +164,13 @@ be pleasantly surprised than quote you a prettier one we cannot stand behind.
 After your first render, stop reading estimates: your studio shows your real spend, and RunPod's
 dashboard shows the real bill.
 
+<!-- COST-FIGURE TODO (mackaye ruling, 2026-07-17): the ceiling framing above stands for launch
+     copy. We are NOT spending GPU just to measure billed seconds. The #53/#54 provisioner
+     end-to-end verify render (test account, already authorized) produces a real billed-seconds
+     figure as a side effect; when it lands, replace the wall-clock-derived ceiling with the real
+     number and drop the "at most" framing. Until then this stays a ceiling, because a number we
+     cannot prove is worse than a bigger number we can. -->
+
 Costs scale with how much video you make. Longer films, more shots, and the finish steps (sharper
 video, lip-sync) all add GPU seconds. The finish steps run on cheaper GPUs than the main render.
 

@@ -12,6 +12,12 @@ export interface KeyShapeHint {
   message: string;
 }
 
+export interface SlugHint {
+  level: "empty" | "warn" | "ok";
+  valid: boolean;
+  message: string;
+}
+
 /**
  * One endpoint in the provisioning plan. This is DATA from the control plane
  * (owned by the provisioner, #54), not a UI constant: the review screen renders
@@ -58,12 +64,16 @@ export interface OnboardingState {
   capacity?: QuotaFit | null;
   confirmed?: boolean;
   invokeVerified?: boolean;
+  slugValid?: boolean;
+  slugAvailable?: boolean;
 }
 
 export const STEPS: OnboardingStep[];
 export const KEY_PREFIX: string;
 
 export function keyShapeHint(raw: string | null | undefined): KeyShapeHint;
+export function slugHint(raw: string | null | undefined): SlugHint;
+export const SLUG_RESERVED: string[];
 export function scopeVerdict(probe: ScopeProbe | null | undefined): ScopeVerdict;
 export function planWorkerTotal(plan: PlannedEndpoint[] | null | undefined): number;
 export function quotaFit(

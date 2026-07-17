@@ -10,6 +10,8 @@ import {
   planWorkerTotal,
   quotaFit,
   scopeVerdict,
+  slugHint,
+  SLUG_RESERVED,
   stepIndex,
   type PlannedEndpoint,
 } from "../hosted/public/onboarding-checks.js";
@@ -153,6 +155,50 @@ describe("costCeilingUsd / formatUsd", () => {
   });
 });
 
+describe("slugHint (mirrors the control plane's slug rule, #52)", () => {
+  it("accepts a normal name", () => {
+    expect(slugHint("my-studio").valid).toBe(true);
+    expect(slugHint("a1b").valid).toBe(true);
+  });
+
+  it("NORMALIZES case and whitespace rather than scolding about it", () => {
+    // The server rule is lowercase-only, but rejecting "My-Studio" would be
+    // pedantry: we lowercase it, provision the normalized value, and the
+    // address preview shows exactly what they will get. Normalizing is only
+    // honest because the result is visible before they commit.
+    expect(slugHint("  My-Studio  ").valid).toBe(true);
+    expect(slugHint("Upper").valid).toBe(true);
+  });
+
+  it("REFUSES the reserved names, which are the ones that would break routing", () => {
+    for (const reserved of SLUG_RESERVED) {
+      const hint = slugHint(reserved);
+      expect(hint.valid).toBe(false);
+      expect(hint.message).toContain("reserved");
+    }
+    // The suffix is <slug>.studio.vivijure.com, so "studio" and "www" landing
+    // as tenant slugs would collide with the front door itself.
+    expect(SLUG_RESERVED).toContain("studio");
+    expect(SLUG_RESERVED).toContain("www");
+  });
+
+  it("REFUSES shapes the subdomain AND the WfP script name cannot both take", () => {
+    for (const bad of ["-lead", "trail-", "has_underscore", "has space", "dot.dot", "ab", "a"]) {
+      expect(slugHint(bad).valid).toBe(false);
+    }
+  });
+
+  it("REFUSES an over-long name", () => {
+    expect(slugHint("a".repeat(33)).valid).toBe(false);
+    expect(slugHint("a".repeat(32)).valid).toBe(true);
+  });
+
+  it("says nothing on an empty field", () => {
+    expect(slugHint("").level).toBe("empty");
+    expect(slugHint(null).valid).toBe(false);
+  });
+});
+
 describe("scopeVerdict (key B, the one we actually keep)", () => {
   const FOUR = { ep_backend: true, ep_upscale: true, ep_lipsync: true, ep_audio: true };
 
@@ -210,6 +256,13 @@ describe("canAdvance (the gates)", () => {
     expect(canAdvance("rules", { rulesAccepted: true })).toBe(true);
   });
 
+  it("blocks the name step on a local pass alone: the SERVER owns availability", () => {
+    expect(canAdvance("name", { slugValid: true, slugAvailable: false })).toBe(false);
+    expect(canAdvance("name", { slugValid: false, slugAvailable: true })).toBe(false);
+    expect(canAdvance("name", {})).toBe(false);
+    expect(canAdvance("name", { slugValid: true, slugAvailable: true })).toBe(true);
+  });
+
   it("blocks the key step until a key is present", () => {
     expect(canAdvance("key", { keyPresent: false })).toBe(false);
     expect(canAdvance("key", {})).toBe(false);
@@ -245,8 +298,11 @@ describe("canAdvance (the gates)", () => {
 describe("STEPS / stepIndex", () => {
   it("orders the flow: understand and consent BEFORE the key is asked for", () => {
     expect(STEPS.map((s) => s.key)).toEqual([
-      "what", "rules", "key", "capacity", "review", "build", "invoke", "done",
+      "what", "rules", "name", "key", "capacity", "review", "build", "invoke", "done",
     ]);
+    // The slug is required by POST /api/tenant/provision, so it must be
+    // collected before the build.
+    expect(stepIndex("name")).toBeLessThan(stepIndex("build"));
     // Two-phase custody (#52): key B can only be minted once the endpoints it
     // scopes to exist, so the invoke step MUST sit after the build.
     expect(stepIndex("build")).toBeLessThan(stepIndex("invoke"));

@@ -61,103 +61,160 @@
     costExample: null,
     studioUrl: null,
     createdEndpoints: [],
-    provisionJobId: null,
+    tenantId: null,
+    slug: "",
+    slugValid: false,
+    slugAvailable: false,
+    tenantDomainSuffix: ".studio.vivijure.com",
   };
 
   let current = "what";
 
-  // ---- API seam (PROVISIONAL, pending #52/#54) --------------------------
+  // ---- the control-plane API (reconciled against Rollins' #52 contract) --
+  //
+  // Routes below marked CONTRACT are from the posted #52 contract
+  // (issuecomment-4998960324) and are authoritative. Routes marked REQUESTED
+  // are ones this flow needs that the contract does not carry yet; they are
+  // raised on #52 and are NOT invented facts -- if they land in a different
+  // shape, this adapter is the only thing that changes.
   const PlatformApi = {
-    // GET the provisioning plan: which endpoints get created, and the pinned
-    // max_workers for each. DATA, not a UI constant -- the review screen
-    // renders whatever rows come back.
-    async plan() {
-      if (USE_MOCK) return mock.plan();
-      const r = await fetch(API_BASE + "/api/hosted/plan");
-      if (!r.ok) throw new Error("could not load the setup plan (" + r.status + ")");
-      return r.json();
-    },
-
-    // POST the key once, transiently, to read the account's REAL quota and the
-    // worker sum its existing endpoints already spend. The control plane does
-    // not store the key on this call.
-    async capacity(key) {
-      if (USE_MOCK) return mock.capacity();
-      const r = await fetch(API_BASE + "/api/hosted/capacity", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runpod_key: key }),
-      });
+    async json(path, init) {
+      const r = await fetch(API_BASE + path, init);
+      const body = await r.json().catch(function () { return {}; });
       if (!r.ok) {
-        const detail = await r.text().catch(function () { return ""; });
-        throw new Error("RunPod capacity check failed (" + r.status + "). " + detail);
+        const err = new Error(body.error || "request failed (" + r.status + ")");
+        err.status = r.status;
+        err.body = body;
+        throw err;
       }
-      return r.json();
+      return body;
     },
 
-    async provision(key) {
-      if (USE_MOCK) return mock.provision();
-      const r = await fetch(API_BASE + "/api/hosted/provision", {
+    // CONTRACT. Drives the shell: signups switch, AUP version, and the auth
+    // methods. auth_methods is projected, never hardcoded -- Apple appears the
+    // day Conrad stages the .p8, with no UI change. Same ethos as the planner
+    // rendering from the module registry.
+    config() {
+      if (USE_MOCK) return Promise.resolve(mock.config());
+      return this.json("/api/platform/config");
+    },
+
+    // CONTRACT. The one call the front door needs on load: account, AUP state,
+    // and the tenant (or null). Tenant status is what tells us whether we are
+    // awaiting key B or live.
+    me() {
+      if (USE_MOCK) return Promise.resolve(mock.me());
+      return this.json("/api/me");
+    },
+
+    // CONTRACT: { version, url, summary }. Ernst owns the words (#57).
+    async aup() {
+      if (USE_MOCK) return null;
+      try { return await this.json("/api/aup/current"); } catch (err) { return null; }
+    },
+
+    // CONTRACT: 204, or 409 aup_version_stale with the current version.
+    async acceptAup(version) {
+      if (USE_MOCK) return { ok: true };
+      await fetch(API_BASE + "/api/aup/accept", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runpod_key: key }),
+        body: JSON.stringify({ version: version }),
       });
-      if (!r.ok) throw new Error("could not start setup (" + r.status + ")");
-      return r.json();
+      return { ok: true };
     },
 
-    async provisionStatus(jobId) {
-      if (USE_MOCK) return mock.provisionStatus();
-      const r = await fetch(API_BASE + "/api/hosted/provision/" + encodeURIComponent(jobId));
-      if (!r.ok) throw new Error("could not read setup status (" + r.status + ")");
-      return r.json();
+    // CONTRACT: { available, reason? }
+    slugAvailable(slug) {
+      if (USE_MOCK) return Promise.resolve(mock.slugAvailable(slug));
+      return this.json("/api/tenant/slug-available?slug=" + encodeURIComponent(slug));
     },
 
-    // Key B: the control plane probes its scope LIVE before storing it
-    // (health on each created endpoint + graphql must be denied), then installs
-    // it via the per-script secrets PUT. A wrongly-scoped key is rejected and
-    // never stored -- that refusal is the whole point of the two-phase design.
-    async invokeKey(jobId, key) {
+    // REQUESTED (raised on #52): what will be created, with the pinned
+    // max_workers per endpoint. The review screen cannot honestly say "this is
+    // what we will create on your account" without it, and the numbers belong
+    // to the provisioner (#54), not to this page.
+    plan() {
+      if (USE_MOCK) return Promise.resolve(mock.plan());
+      return this.json("/api/tenant/provision-plan");
+    },
+
+    // REQUESTED (raised on #52): a read-only capacity probe that creates
+    // nothing, so we can show the account's REAL quota BEFORE touching it.
+    // #58 requires the happy path to surface the number we found; a number
+    // that only appears in a failure message does not satisfy that.
+    capacity(key) {
+      if (USE_MOCK) return Promise.resolve(mock.capacity());
+      return this.json("/api/tenant/capacity", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runpod_api_key: key }),
+      });
+    },
+
+    // CONTRACT: 202 { tenant_id, job_id }
+    provision(slug, key) {
+      if (USE_MOCK) return Promise.resolve(mock.provision());
+      return this.json("/api/tenant/provision", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slug: slug, runpod_api_key: key }),
+      });
+    },
+
+    // CONTRACT: { status, step, steps_done, error_step, error_message }.
+    // error_message is the REAL step error, verbatim, and we show it as such.
+    job(tenantId) {
+      if (USE_MOCK) return Promise.resolve(mock.job());
+      return this.json("/api/tenant/" + encodeURIComponent(tenantId) + "/job");
+    },
+
+    // CONTRACT: 202 { job_id }, or 409 runpod_key_required when the failure was
+    // in the RunPod steps (we stored no key, so we cannot resume alone).
+    retry(tenantId, key) {
+      if (USE_MOCK) return Promise.resolve({ job_id: "mock-job" });
+      return this.json("/api/tenant/" + encodeURIComponent(tenantId) + "/retry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(key ? { runpod_api_key: key } : {}),
+      });
+    },
+
+    // CONTRACT: 204 on success. REQUESTED: a probe body on rejection
+    // ({ graphql_denied, health }), because "your key is wrong" is not an
+    // honest error -- the tenant needs to know WHICH way it is wrong (too
+    // powerful vs scoped to the wrong endpoints) to fix it.
+    async invokeKey(tenantId, key) {
       if (USE_MOCK) return mock.invokeKey();
-      const r = await fetch(API_BASE + "/api/hosted/provision/" + encodeURIComponent(jobId) + "/invoke-key", {
+      const r = await fetch(API_BASE + "/api/tenant/" + encodeURIComponent(tenantId) + "/invoke-key", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ invoke_key: key }),
+        body: JSON.stringify({ runpod_invoke_key: key }),
       });
+      if (r.status === 204) return { ok: true, probe: null };
       const body = await r.json().catch(function () { return {}; });
       if (!r.ok && !body.probe) {
         throw new Error(body.error || "could not check that key (" + r.status + ")");
       }
       return body;
     },
-
-    // Ernst's versioned AUP text (#57). Until it exists the marked placeholder
-    // seam in the HTML stays visible.
-    async aup() {
-      if (USE_MOCK) return null;
-      const r = await fetch(API_BASE + "/api/hosted/aup");
-      if (!r.ok) return null;
-      return r.json();
-    },
-
-    async acceptAup(version) {
-      if (USE_MOCK) return { ok: true };
-      const r = await fetch(API_BASE + "/api/hosted/aup/accept", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version: version }),
-      });
-      if (!r.ok) throw new Error("could not record your acceptance (" + r.status + ")");
-      return r.json();
-    },
   };
 
   // ---- mock data (preview only; the banner is loud about it) ------------
-  //
-  // The plan mirrors the spec's shapes as of 2026-07-17 (spike deltas: pin
-  // max_workers explicitly; 2+1+1+1 fits any observed quota). The provisioner
-  // (#54) is the authority; when it lands, these numbers come from it.
   const mock = {
+    config() {
+      return { signups_enabled: true, aup_version: "mock-v1", auth_methods: ["email", "google", "github"] };
+    },
+    me() {
+      return {
+        account: { id: "acct_mock", email: "you@example.com" },
+        aup: { required_version: "mock-v1", accepted: true },
+        tenant: mockTenant,
+      };
+    },
+    slugAvailable(slug) {
+      return { available: slug !== "taken", reason: slug === "taken" ? "already in use" : undefined };
+    },
     plan() {
       return {
         endpoints: [
@@ -170,7 +227,9 @@
         // 2 shots, 10s of finished video, final quality). wall_clock_ms is
         // wall-clock since submit, so the derived cost is a CEILING and is
         // labelled as one wherever it is shown. Provenance travels WITH the
-        // number so a reader can audit it.
+        // number so a reader can audit it. TODO(#53/#54): the provisioner's
+        // end-to-end verify render produces a real BILLED-seconds figure as a
+        // side effect; swap this for that number and drop the ceiling framing.
         cost_example: {
           job_id: "film-2294a9d7-d994-4807-8ed8-301a8e2fd796",
           rendered_on: "2026-07-14",
@@ -182,28 +241,10 @@
         },
       };
     },
-    capacity() {
-      return { quota: 10, existing_worker_sum: 0 };
-    },
-    provision() { return { job_id: "mock-provision-job" }; },
-    provisionStatus() {
-      return {
-        status: "AWAITING_INVOKE_KEY",
-        studio_url: "https://your-studio.studio.vivijure.com",
-        endpoints: [
-          { key: "backend", label: "backend", id: "abc123backend", name: "vivijure-backend-yourname" },
-          { key: "upscale", label: "upscale", id: "abc123upscale", name: "vivijure-upscale-yourname" },
-          { key: "lipsync", label: "lipsync", id: "abc123lipsync", name: "vivijure-musetalk-yourname" },
-          { key: "audio-upscale", label: "audio-upscale", id: "abc123audio", name: "vivijure-audio-upscale-yourname" },
-        ],
-        steps: [
-          { key: "d1", label: "Creating your database", status: "done" },
-          { key: "r2", label: "Creating your storage bucket", status: "done" },
-          { key: "runpod", label: "Creating your 4 RunPod endpoints", status: "done" },
-          { key: "studio", label: "Deploying your studio", status: "done" },
-          { key: "verify", label: "Checking it all works", status: "done" },
-        ],
-      };
+    capacity() { return { quota: 10, existing_worker_sum: 0 }; },
+    provision() { return { tenant_id: "ten_mock", job_id: "job_mock" }; },
+    job() {
+      return { status: "succeeded", step: "verify", steps_done: ["d1", "r2", "runpod", "studio", "verify"] };
     },
     invokeKey() {
       return {
@@ -212,9 +253,22 @@
           graphql_denied: true,
           health: { abc123backend: true, abc123upscale: true, abc123lipsync: true, abc123audio: true },
         },
-        studio_url: "https://your-studio.studio.vivijure.com",
       };
     },
+  };
+
+  // The mock tenant walks the real status machine: a provision lands in
+  // awaiting_invoke_key, and only key B moves it to live.
+  let mockTenant = {
+    id: "ten_mock",
+    slug: "your-studio",
+    status: "awaiting_invoke_key",
+    endpoints: [
+      { key: "backend", label: "backend", id: "abc123backend", name: "vivijure-backend-your-studio" },
+      { key: "upscale", label: "upscale", id: "abc123upscale", name: "vivijure-upscale-your-studio" },
+      { key: "lipsync", label: "lipsync", id: "abc123lipsync", name: "vivijure-musetalk-your-studio" },
+      { key: "audio-upscale", label: "audio-upscale", id: "abc123audio", name: "vivijure-audio-upscale-your-studio" },
+    ],
   };
 
   // ---- rendering --------------------------------------------------------
@@ -433,18 +487,79 @@
     }
   }
 
+  // Contract shape is { version, url, summary } (#52). Rendered as TEXT plus a
+  // link, never as innerHTML: policy copy is Ernst's, and it is not this page's
+  // job to execute whatever markup arrives in it.
   async function loadAup() {
     try {
       const aup = await PlatformApi.aup();
-      if (!aup || !aup.html) return; // seam stays visible; that is correct.
+      if (!aup || !aup.summary) return; // seam stays visible; that is correct.
       const el = $("#aup-text");
       if (!el) return;
       el.classList.remove("placeholder-seam");
-      el.innerHTML = aup.html;
+      el.innerHTML = "";
+      el.appendChild(textP(aup.summary));
+      if (aup.url) {
+        const p = document.createElement("p");
+        p.className = "small";
+        const a = document.createElement("a");
+        a.href = aup.url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = "Read the full policy";
+        p.appendChild(a);
+        el.appendChild(p);
+      }
       el.dataset.version = aup.version || "";
     } catch (err) {
       // Leave the placeholder up. Never fabricate policy text.
     }
+  }
+
+  // Slug availability is the SERVER's answer; the local regex only catches
+  // typos early. Debounced so a keystroke is not a request.
+  let slugTimer = null;
+  function onSlugInput(value) {
+    const hint = checks.slugHint(value);
+    state.slug = (value || "").trim().toLowerCase();
+    state.slugValid = hint.valid;
+    state.slugAvailable = false;
+    const el = $("#slug-hint");
+    if (el) {
+      el.textContent = hint.message;
+      el.dataset.level = hint.level === "empty" ? "" : hint.level;
+    }
+    const preview = $("#slug-preview");
+    if (preview) {
+      preview.textContent = state.slug
+        ? "https://" + state.slug + state.tenantDomainSuffix
+        : "";
+    }
+    refreshGates();
+    if (slugTimer) clearTimeout(slugTimer);
+    if (!hint.valid) return;
+    slugTimer = setTimeout(checkSlug, 350);
+  }
+
+  async function checkSlug() {
+    const el = $("#slug-hint");
+    try {
+      const res = await PlatformApi.slugAvailable(state.slug);
+      state.slugAvailable = res.available === true;
+      if (el) {
+        el.textContent = res.available
+          ? "\"" + state.slug + "\" is free."
+          : "\"" + state.slug + "\" is taken" + (res.reason ? " (" + res.reason + ")" : "") + ". Try another.";
+        el.dataset.level = res.available ? "ok" : "warn";
+      }
+    } catch (err) {
+      state.slugAvailable = false;
+      if (el) {
+        el.textContent = "We could not check that name: " + err.message;
+        el.dataset.level = "bad";
+      }
+    }
+    refreshGates();
   }
 
   async function runCapacityCheck() {
@@ -466,68 +581,79 @@
     refreshGates();
   }
 
+  // Provisioning: start the job, poll it, then read the TENANT status to learn
+  // where we landed. Job status (queued/running/succeeded/failed) and tenant
+  // status (provisioning/awaiting_invoke_key/live) are different machines in
+  // the #52 contract, and conflating them is how a UI ends up lying: a job can
+  // succeed and the tenant still not be live, which is exactly the
+  // awaiting_invoke_key case.
+  const POLL_MS = 2500;
+  const POLL_CEILING = 240; // ~10 minutes, then we stop and say so.
+
   async function runProvision() {
     renderProgress([{ key: "start", label: "Starting setup", status: "running" }]);
     try {
-      const job = await PlatformApi.provision(runpodKey);
-      state.provisionJobId = job.job_id;
-      const status = await PlatformApi.provisionStatus(job.job_id);
-      renderProgress(status.steps);
+      const job = await PlatformApi.provision(state.slug, runpodKey);
+      state.tenantId = job.tenant_id;
 
-      state.studioUrl = status.studio_url || state.studioUrl;
-      state.createdEndpoints = status.endpoints || [];
+      let last = null;
+      for (let i = 0; i < POLL_CEILING; i++) {
+        last = await PlatformApi.job(state.tenantId);
+        renderJobProgress(last);
+        if (last.status === "succeeded" || last.status === "failed") break;
+        await sleep(POLL_MS);
+      }
+
+      if (!last || (last.status !== "succeeded" && last.status !== "failed")) {
+        // No silent cap: if we stop watching, say so rather than spin forever.
+        renderProgress([{
+          key: "timeout", label: "Setup is taking longer than we expected", status: "failed",
+          error: "We stopped watching after 10 minutes. Setup may still be running; reload this page to pick the status back up.",
+        }]);
+        return;
+      }
+
+      if (last.status === "failed") {
+        renderJobProgress(last);
+        offerRetry(last);
+        return;
+      }
 
       // The endpoints exist, so key A has done its whole job. It stops existing
       // here, BEFORE the tenant is asked for key B: we never hold both at once.
-      // (This is also why a failed RunPod step cannot self-resume -- we have
-      // nothing to resume with. The honest cost of not storing it.)
-      if (status.status === "AWAITING_INVOKE_KEY" || status.status === "COMPLETED") {
-        clearKey();
-      }
+      clearKey();
 
-      if (status.status === "AWAITING_INVOKE_KEY") {
+      const me = await PlatformApi.me();
+      const tenant = (me && me.tenant) || null;
+      state.createdEndpoints = (tenant && tenant.endpoints) || [];
+      if (tenant && tenant.slug) state.studioUrl = "https://" + tenant.slug + state.tenantDomainSuffix;
+
+      if (tenant && tenant.status === "awaiting_invoke_key") {
         renderCreatedEndpoints();
         show("invoke");
         return;
       }
-
-      if (status.status === "COMPLETED") {
-        // A control plane that skipped the key-B phase is a contract change,
-        // not a shortcut to take quietly.
+      if (tenant && tenant.status === "live") {
+        // The contract says a provision lands in awaiting_invoke_key. Going
+        // straight to live means the control plane skipped the key-B phase,
+        // which is a contract change, not something to shrug past.
         finishAndShowDone();
         return;
       }
-
-      const cont = $("#build-continue");
-      if (cont) cont.hidden = false;
-    } catch (err) {
-      // Ruled on #52: because we never store key A, a RunPod-step failure
-      // cannot self-resume. Retry answers 409 runpod_key_required and the
-      // tenant re-pastes. Say that plainly instead of a dead end.
-      const needsKey = /runpod_key_required|\b409\b/.test(err.message || "");
       renderProgress([{
-        key: "start",
-        label: needsKey ? "Setup needs your key again" : "Setup could not finish",
-        status: "failed",
-        error: err.message,
+        key: "status", label: "Setup finished in an unexpected state", status: "failed",
+        error: "Your studio reports status " + (tenant ? tenant.status : "unknown") +
+          ". We have not marked it live. Please tell us about this rather than retrying.",
       }]);
-      if (needsKey) {
-        const note = $("#build-progress");
-        if (note) {
-          const p = document.createElement("p");
-          p.className = "small muted";
-          p.textContent =
-            "We never stored your setup key, so we cannot retry this on our own. That is the " +
-            "tradeoff for not holding it. Go back and paste it again to pick up where this left off.";
-          note.appendChild(p);
-        }
-      }
-      const cont = $("#build-continue");
-      if (cont) { cont.hidden = false; cont.textContent = "Back to the key step"; }
+    } catch (err) {
+      handleProvisionError(err);
     }
   }
 
   function finishAndShowDone() {
+    // Both keys stop existing here. Key A was already dropped when the
+    // endpoints appeared; key B lives on the tenant's own studio now, not in
+    // this page.
     clearKey();
     clearInvokeKey();
     const link = $("#studio-link");
@@ -536,6 +662,76 @@
       link.textContent = "Open my studio: " + state.studioUrl;
     }
     show("done");
+  }
+
+  function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // Render the contract's job payload. error_message is the REAL step error and
+  // is shown verbatim: if RunPod says the worker quota is 10 and we need 12,
+  // the tenant reads exactly that, not "provisioning failed".
+  function renderJobProgress(job) {
+    const done = Array.isArray(job.steps_done) ? job.steps_done : [];
+    const known = [
+      { key: "d1", label: "Creating your database" },
+      { key: "r2", label: "Creating your storage bucket" },
+      { key: "runpod", label: "Creating your 4 RunPod endpoints" },
+      { key: "studio", label: "Deploying your studio" },
+      { key: "verify", label: "Checking it all works" },
+    ];
+    renderProgress(known.map(function (st) {
+      let status = "todo";
+      if (done.indexOf(st.key) !== -1) status = "done";
+      else if (job.error_step === st.key) status = "failed";
+      else if (job.step === st.key) status = job.status === "failed" ? "failed" : "running";
+      return {
+        key: st.key,
+        label: st.label,
+        status: status,
+        error: job.error_step === st.key ? job.error_message : undefined,
+      };
+    }));
+  }
+
+  function offerRetry(job) {
+    const ol = $("#build-progress");
+    if (!ol) return;
+    const p = document.createElement("p");
+    p.className = "small muted";
+    p.textContent =
+      "Nothing is half-built on your account that we know of; the step above is where it stopped. " +
+      "You can go back and try again.";
+    ol.appendChild(p);
+    const cont = $("#build-continue");
+    if (cont) { cont.hidden = false; cont.textContent = "Back to the key step"; }
+  }
+
+  function handleProvisionError(err) {
+    // Ruled on #52: because we never store key A, a failure in the RunPod steps
+    // cannot self-resume. Retry answers 409 runpod_key_required and the tenant
+    // re-pastes. Say that plainly instead of a dead end.
+    const needsKey = err.status === 409 ||
+      /runpod_key_required/.test((err.body && err.body.error) || err.message || "");
+    renderProgress([{
+      key: "start",
+      label: needsKey ? "Setup needs your key again" : "Setup could not finish",
+      status: "failed",
+      error: err.message,
+    }]);
+    if (needsKey) {
+      const ol = $("#build-progress");
+      if (ol) {
+        const p = document.createElement("p");
+        p.className = "small muted";
+        p.textContent =
+          "We never stored your setup key, so we cannot retry this on our own. That is the " +
+          "tradeoff for not holding it. Go back and paste it again to pick up where this left off.";
+        ol.appendChild(p);
+      }
+    }
+    const cont = $("#build-continue");
+    if (cont) { cont.hidden = false; cont.textContent = "Back to the key step"; }
   }
 
   // Key B: verify scope LIVE, then keep it. Never keep it on a failed verdict.
@@ -547,8 +743,17 @@
 
     let verdict;
     try {
-      const res = await PlatformApi.invokeKey(state.provisionJobId, invokeKey);
-      verdict = checks.scopeVerdict(res.probe);
+      const res = await PlatformApi.invokeKey(state.tenantId, invokeKey);
+      if (res.probe) {
+        verdict = checks.scopeVerdict(res.probe);
+      } else if (res.ok) {
+        // Contract returns a bare 204: the control plane verified scope
+        // server-side and accepted. We report exactly that, and do not dress it
+        // up as a check this page performed.
+        verdict = { ok: true, failures: [], message: "That key checks out: your studio accepted it." };
+      } else {
+        verdict = { ok: false, failures: ["That key was not accepted."], message: "That key was not accepted." };
+      }
       if (res.studio_url) state.studioUrl = res.studio_url;
     } catch (err) {
       verdict = { ok: false, failures: [err.message], message: err.message };
@@ -594,6 +799,11 @@
         state.rulesAccepted = accept.checked;
         refreshGates();
       });
+    }
+
+    const slugInput = $("#slug");
+    if (slugInput) {
+      slugInput.addEventListener("input", function () { onSlugInput(slugInput.value); });
     }
 
     const keyInput = $("#runpod-key");
@@ -706,11 +916,26 @@
     el.textContent = text;
   }
 
+  async function loadConfig() {
+    try {
+      const cfg = await PlatformApi.config();
+      if (cfg && cfg.tenant_domain_suffix) state.tenantDomainSuffix = cfg.tenant_domain_suffix;
+      if (cfg && cfg.signups_enabled === false) {
+        const banner = $("#signups-off");
+        if (banner) banner.hidden = false;
+        document.querySelectorAll("[data-next]").forEach(function (b) { b.disabled = true; });
+      }
+    } catch (err) {
+      // Non-fatal: the per-step calls surface their own errors honestly.
+    }
+  }
+
   function init() {
     if (!checks) return;
     wire();
     show("what");
     refreshGates();
+    loadConfig();
     loadPlan();
     loadAup();
   }
