@@ -85,6 +85,15 @@ export interface AupAcceptFailure {
   status?: number;
 }
 export function aupAcceptFailureCopy(res: AupAcceptFailure | null | undefined): string;
+
+export interface AupUrlPinning {
+  /** pinned: a commit SHA or version tag. moving: a branch that can change under a recorded
+   *  acceptance. unverifiable: not a forge URL, cannot be judged client-side. missing: no URL. */
+  state: "pinned" | "moving" | "unverifiable" | "missing";
+  movingRef: string | null;
+}
+export function aupUrlPinning(url: string | null | undefined): AupUrlPinning;
+export function aupPinningRefusalCopy(pinning: AupUrlPinning | null | undefined): string;
 export function invokeRejectionCopy(
   reason: string | null | undefined,
   detail?: string | null,

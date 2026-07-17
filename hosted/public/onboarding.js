@@ -504,9 +504,71 @@
     }
   }
 
-  // Contract shape is { version, url, summary } (#52). Rendered as TEXT plus a
-  // link, never as innerHTML: policy copy is Ernst's, and it is not this page's
-  // job to execute whatever markup arrives in it.
+  // The rules step, wired to Ernst's landed AUP (#57).
+  //
+  // The control plane serves { version, url } from GET /api/aup/current, pinned
+  // by AUP_VERSION. Three things this function will not do, each because the
+  // acceptance record has to be worth something:
+  //
+  //   1. It never writes policy prose. The text is Ernst's, in one place.
+  //   2. It fails CLOSED. No policy readable -> the accept box stays disabled.
+  //      You should not be able to agree to something you cannot read, and a
+  //      gate that shrugs and lets you through is not a gate (the same lesson
+  //      as the 409 swallow).
+  //   3. It refuses a MOVING policy URL, per Ernst's immutable-ref rule: if the
+  //      link points at a branch, the wording can change after someone agreed
+  //      while the recorded label stays put, and "nothing detects the drift."
+  //      Something detects it now.
+  async function loadAup() {
+    const el = $("#aup-text");
+    if (!el) return;
+    let aup = null;
+    try {
+      aup = await PlatformApi.aup();
+    } catch (err) {
+      aup = null;
+    }
+
+    const pinning = checks.aupUrlPinning(aup && aup.url);
+    if (!aup || pinning.state === "missing" || pinning.state === "moving") {
+      // Fail closed, loudly, and say whose fault it is.
+      const copy = checks.aupPinningRefusalCopy(pinning) ||
+        "We cannot show you the policy right now, so we are not going to ask you to accept it.";
+      el.classList.add("placeholder-seam");
+      el.innerHTML = "";
+      el.appendChild(textP(copy));
+      lockAupGate(copy);
+      return;
+    }
+
+    el.classList.remove("placeholder-seam");
+    el.innerHTML = "";
+    if (aup.summary) el.appendChild(textP(aup.summary));
+
+    const p = document.createElement("p");
+    const a = document.createElement("a");
+    a.href = aup.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = "Read the Acceptable Use Policy" + (aup.version ? " (version " + aup.version + ")" : "");
+    p.appendChild(a);
+    el.appendChild(p);
+
+    // The one line that is never a link and never a summary.
+    const csam = document.createElement("p");
+    csam.className = "small muted";
+    csam.textContent =
+      "One line, so you do not have to go looking for it: vivijure has an absolute ban on child " +
+      "sexual abuse material, including AI-generated material. It is enforced, it is reported, and " +
+      "it is not negotiable.";
+    el.appendChild(csam);
+
+    // Record the version the tenant is actually being shown. The acceptance
+    // POSTs this exact string, and the control plane 409s if it has moved on.
+    el.dataset.version = aup.version || "";
+    unlockAupGate();
+  }
+
   function showAupError(res) {
     const el = $("#aup-error");
     if (!el) return;
@@ -519,34 +581,19 @@
     if (el) el.hidden = true;
   }
 
-  async function loadAup() {
-    try {
-      const aup = await PlatformApi.aup();
-      // The shipped route returns { version, url }; the design also allowed a
-      // summary. With neither, the placeholder seam stays up, which is correct:
-      // this page never invents policy text.
-      if (!aup || (!aup.summary && !aup.url)) return;
-      const el = $("#aup-text");
-      if (!el) return;
-      el.classList.remove("placeholder-seam");
-      el.innerHTML = "";
-      if (aup.summary) el.appendChild(textP(aup.summary));
-      else el.appendChild(textP("Please read the acceptable-use policy before you continue."));
-      if (aup.url) {
-        const p = document.createElement("p");
-        p.className = "small";
-        const a = document.createElement("a");
-        a.href = aup.url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.textContent = "Read the full policy";
-        p.appendChild(a);
-        el.appendChild(p);
-      }
-      el.dataset.version = aup.version || "";
-    } catch (err) {
-      // Leave the placeholder up. Never fabricate policy text.
-    }
+  function lockAupGate(copy) {
+    const box = $("#accept-aup");
+    if (box) { box.checked = false; box.disabled = true; }
+    state.rulesAccepted = false;
+    const err = $("#aup-error");
+    if (err && copy) { err.textContent = copy; err.hidden = false; }
+    refreshGates();
+  }
+
+  function unlockAupGate() {
+    const box = $("#accept-aup");
+    if (box) box.disabled = false;
+    hideAupError();
   }
 
   // Slug availability is the SERVER's answer; the local regex only catches

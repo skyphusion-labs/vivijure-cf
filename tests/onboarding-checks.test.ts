@@ -9,6 +9,8 @@ import {
   keyShapeHint,
   planWorkerTotal,
   aupAcceptFailureCopy,
+  aupPinningRefusalCopy,
+  aupUrlPinning,
   invokeRejectionCopy,
   REJECTION_COPY,
   quotaFit,
@@ -293,6 +295,84 @@ describe("aupAcceptFailureCopy (a consent gate must not lie about consent)", () 
     expect(aupAcceptFailureCopy({ ok: false, error: "boom" })).toContain("Nothing has been saved");
     expect(aupAcceptFailureCopy({})).toContain("Nothing has been saved");
     expect(aupAcceptFailureCopy(null)).toContain("Nothing has been saved");
+  });
+});
+
+describe("aupUrlPinning (Ernst's immutable-ref rule, docs/legal/hosted/README.md)", () => {
+  it("spots the moving forge refs, which is the mistake that actually gets made", () => {
+    const moving = [
+      "https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/legal/hosted/aup/1.0.0.md",
+      "https://github.com/o/r/blob/master/aup.md",
+      "https://raw.githubusercontent.com/o/r/main/aup.md",
+      "https://github.com/o/r/tree/HEAD/aup.md",
+      "https://github.com/o/r/raw/develop/aup.md",
+      "https://example.com/refs/heads/main/aup.md",
+      // refs/heads/<anything> is a branch by construction, whatever it is called.
+      "https://example.com/refs/heads/policy-v1/aup.md",
+      // The one that nearly slipped through: raw.githubusercontent.com has no
+      // /blob/ segment, and is probably the likeliest way to get this wrong.
+      "https://raw.githubusercontent.com/skyphusion-labs/vivijure-cf/main/docs/legal/hosted/aup/1.0.0.md",
+      "https://raw.githubusercontent.com/o/r/master/aup.md",
+    ];
+    for (const url of moving) {
+      const p = aupUrlPinning(url);
+      expect(p.state).toBe("moving");
+      expect(p.movingRef).toBeTruthy();
+    }
+  });
+
+  it("accepts a ref pinned to a commit SHA or a version tag", () => {
+    const pinned = [
+      "https://github.com/o/r/blob/4143f8e6f0a09b843936c466245806c8a5107a90/aup.md",
+      "https://github.com/o/r/blob/4143f8e/aup.md",
+      "https://raw.githubusercontent.com/o/r/v1.0.0/aup.md",
+      "https://github.com/o/r/blob/1.0.0/aup.md",
+    ];
+    for (const url of pinned) {
+      expect(aupUrlPinning(url).state).toBe("pinned");
+    }
+  });
+
+  it("says unverifiable rather than crying wolf on a non-forge URL", () => {
+    // A client cannot prove immutability. The guard must never false-positive
+    // and wrongly close the gate on a perfectly good policy URL.
+    for (const url of ["https://vivijure.com/aup/1.0.0", "https://example.org/legal/aup"]) {
+      expect(aupUrlPinning(url).state).toBe("unverifiable");
+    }
+    // A ref that is neither a known-moving name nor a SHA/semver tag could be
+    // either; refusing it would be a false positive that closes the gate on a
+    // good URL.
+    expect(aupUrlPinning("https://github.com/o/r/blob/policy-tag/aup.md").state).toBe("unverifiable");
+  });
+
+  it("reports a missing URL rather than treating it as fine", () => {
+    expect(aupUrlPinning("").state).toBe("missing");
+    expect(aupUrlPinning(null).state).toBe("missing");
+    expect(aupUrlPinning(undefined).state).toBe("missing");
+  });
+
+  it("does not mistake a branch NAME inside a pinned path for a moving ref", () => {
+    // "main" appearing as a directory is not the ref slot.
+    expect(aupUrlPinning("https://github.com/o/r/blob/v1.0.0/main/aup.md").state).toBe("pinned");
+  });
+});
+
+describe("aupPinningRefusalCopy", () => {
+  it("owns the mistake instead of blaming the tenant", () => {
+    const copy = aupPinningRefusalCopy({ state: "moving", movingRef: "main" });
+    expect(copy).toContain("main");
+    expect(copy).toContain("our configuration mistake");
+    expect(copy).toContain("change after you agreed");
+  });
+
+  it("explains a missing policy as a reason not to ask for consent at all", () => {
+    expect(aupPinningRefusalCopy({ state: "missing", movingRef: null })).toContain("cannot read");
+  });
+
+  it("is silent when there is nothing to refuse", () => {
+    expect(aupPinningRefusalCopy({ state: "pinned", movingRef: null })).toBe("");
+    expect(aupPinningRefusalCopy({ state: "unverifiable", movingRef: null })).toBe("");
+    expect(aupPinningRefusalCopy(null)).toBe("");
   });
 });
 
