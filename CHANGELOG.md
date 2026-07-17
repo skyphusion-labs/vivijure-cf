@@ -3,12 +3,32 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## v1.1.0 -- 2026-07-17
 
+**The hosted-tier train lands (#63-#82).** MINOR: hosted control plane, studio release
+pipeline, provisioner wiring. This is the first tag intended to produce a published studio
+release artifact (the v1.0.0 GitHub release carries no assets and predates the #77/#78/#79
+asset fixes).
+
+- **Hosted control-plane worker** (`wrangler.control-plane.toml`): accounts + magic-link
+  sign-in, AUP acceptance gate at signup, and the tenant provisioner over Workers for
+  Platforms dispatch (per-tenant D1, R2 bucket, RunPod endpoints). With no studio release
+  pinned or no provisioner token configured, provisioning refuses honestly with a 503
+  before writing any rows.
+- **Studio release pipeline** (`.github/workflows/studio-release.yml`): a `v*` tag builds
+  the per-tag tenant studio artifact, attaches it to the GitHub release, and mirrors it to
+  the R2 release bucket with a tag + sha256 manifest. The manifest carries `assets_config`
+  so tenants get the tested asset shape (#78); `run_worker_first` is set so tenant
+  hostnames never fall through to static assets (#77); tenants get the release's own
+  asset handling (#79).
+- **Provisioner wiring (#82):** `runProvisionJob` dispatched via `waitUntil`; real
+  invoke-key install via per-script secrets; provisioning exempt from the signups gate;
+  production `StudioBundleSource` reads the R2 release mirror; migrations ship as wrangler
+  Text modules with a disk-parity guard.
+- **Container revert:** module containers back on py3.11 (#71).
 - **Installer default:** `UPSCALE_IMAGE_TAG` `1.0.0` → `1.0.1` (matches vivijure-upscale v1.0.1 GHCR). Live RunPod endpoint retag remains operator-opt-in / spend-gated.
-
-- **deploy:** bump installer `*_IMAGE_TAG` defaults to the current promoted constellation line
-  (`BACKEND_IMAGE_TAG` `1.0.2`; upscale / musetalk / audio-upscale `1.0.0`). Live RunPod retag
+- **deploy:** bump installer `*_IMAGE_TAG` defaults to the current promoted constellation
+  line (`BACKEND_IMAGE_TAG` `1.0.2`; upscale / musetalk / audio-upscale `1.0.0`). Live RunPod retag
   remains operator-opt-in (no spend from this bump). Closes #41.
 
 ## v1.0.0 -- 2026-07-16
