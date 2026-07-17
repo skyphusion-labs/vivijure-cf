@@ -25,8 +25,24 @@ instance.
 | File | What it is |
 |---|---|
 | [`PRIVACY.md`](PRIVACY.md) | Privacy policy. Lead promise made literal: you self-host, so Skyphusion Labs never sees a byte; there is no hosted service collecting user data. Describes what the software stores on the operator's own infrastructure, and what Conrad's own private instance does, grounded in the real schema, storage, logging, and processing path. |
-| [`ACCEPTABLE-USE.md`](ACCEPTABLE-USE.md) | Acceptable Use Policy. Conditions of use for the software and the project, and the policy Conrad applies to his instance. CSAM is the zero-tolerance red line (synthetic/AI-generated included, and the one exception to the hands-off privacy posture); also NCII, non-consensual deepfakes/likeness, hate/harassment, and other illegal use. Plus enforcement and reporting. |
+| [`ACCEPTABLE-USE.md`](ACCEPTABLE-USE.md) | **Pointer to the canonical AUP at the constellation hub** (`skyphusion-labs/vivijure`, `docs/legal/ACCEPTABLE-USE.md`), which is the binding copy for the whole constellation, this host included. Summary of what it covers: Conditions of use for the software and the project, and the policy Conrad applies to his instance. CSAM is the zero-tolerance red line (synthetic/AI-generated included, and the one exception to the hands-off privacy posture); also NCII, non-consensual deepfakes/likeness, hate/harassment, and other illegal use. Plus enforcement and reporting. |
 | [`TERMS.md`](TERMS.md) | Terms of Use for the software and the project (not a SaaS agreement), plus the conditions for Conrad's own instance. AS-IS disclaimer, liability, input/output ownership, the AGPL interplay, copyright/IP terms, termination, and passed-through provider terms. |
+
+## The hosted studio (DRAFT, not in force)
+
+The [`hosted/`](hosted/) directory holds the legal scaffolding for the hosted BYO-RunPod-key tier
+(epic #40, issue #57): the versioned AUP the signup gate serves, the privacy delta, the NCMEC/abuse
+posture, the counsel-review checklist, and the parity commitment wording.
+
+**Nothing in `hosted/` is in force.** It takes effect when the hosted studio opens to signups.
+Until then, the documents in THIS directory are the in-force set and are correct as written, because
+today Skyphusion Labs runs no hosted service.
+
+**Launch-gate warning:** several statements in `PRIVACY.md`, `TERMS.md`, and this README (that
+Skyphusion Labs does not run a hosted multi-tenant service and holds no user data) become FALSE the
+day the hosted studio opens. The exact required edits are specified in
+[`hosted/PRIVACY-DELTA.md`](hosted/PRIVACY-DELTA.md) Section 7, and flipping them is a launch-gate
+item.
 
 ## Scope
 
@@ -55,8 +71,12 @@ The Privacy policy was written after reading the actual data path:
 
 ## Canonical home and serving
 
-- **Canonical home: this directory (`docs/legal/*.md`).** Markdown, version-controlled, reviewable in
-  PRs, the single source of truth.
+- **Canonical home: this directory (`docs/legal/*.md`) for `PRIVACY.md` and `TERMS.md`.** Markdown,
+  version-controlled, reviewable in PRs, the single source of truth.
+- **Except the AUP.** The canonical Acceptable Use Policy lives at the constellation hub
+  (`skyphusion-labs/vivijure`, `docs/legal/ACCEPTABLE-USE.md`); the copy in this directory is a
+  pointer to it so the two cannot drift. The hosted studio has its own separate, versioned AUP
+  instrument (see below).
 - **Linking them:** the `vivijure.com` storefront footer links to all three documents (their GitHub
   pages -- this directory IS the canonical home). Serving worker-local human-readable pages (e.g.
   `/legal/privacy`, `/legal/terms`, `/legal/acceptable-use`) is still a follow-up; when it lands,
