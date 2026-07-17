@@ -38,7 +38,8 @@ function depsWith(getTenantBySlug: (slug: string) => Promise<Tenant | null>): Co
 
 function envWith(get: (name: string) => Fetcher): ControlPlaneEnv {
   return {
-    TENANT_DOMAIN_SUFFIX: SUFFIX,
+    // Single source (vars ruling): the suffix is DERIVED from the host, not set beside it.
+    CONTROL_PLANE_HOST: SUFFIX.replace(/^\./, ""),
     TENANT_DISPATCH: { get } as unknown as DispatchNamespace,
   } as unknown as ControlPlaneEnv;
 }
@@ -91,7 +92,7 @@ describe("classifyHost", () => {
     expect(classifyHost(host, SUFFIX).kind).toBe("invalid-tenant");
   });
 
-  it("routes to the front door when TENANT_DOMAIN_SUFFIX is unset or malformed", () => {
+  it("routes to the front door when the tenant suffix is unset or malformed", () => {
     // Tenant routing is not configured, so nothing is a tenant. The misconfiguration surfaces as
     // tenants 404ing on the control-plane router, not as a Worker that refuses everything.
     expect(classifyHost(`acme${SUFFIX}`, "").kind).toBe("front-door");
