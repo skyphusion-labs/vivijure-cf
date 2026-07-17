@@ -41,6 +41,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The vanilla-JS frontend is deliberately build-free, so tsc never sees it and a call to a
+      # function that no longer exists is valid syntax `node --check` happily accepts. Three such
+      # defects shipped into the hosted assets in one night (a helper deleted, its call sites left
+      # behind); each was caught only by driving the page in a browser. This is that check, run as a
+      # step of the required `ci` job so it inherits branch protection. Overrides are per-identifier
+      # and need a reason; there is no way to silence a whole file. See scripts/resolve-guard.mjs.
+      - name: Resolve guard (frontend calls resolve)
+        run: npm run guard:resolve
+
       - name: Test
         run: npm test
 

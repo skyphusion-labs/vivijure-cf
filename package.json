@@ -29,6 +29,7 @@
     "deploy:mcp": "wrangler deploy -c wrangler.mcp.toml",
     "deploy:control-plane": "wrangler deploy -c wrangler.control-plane.toml",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
+    "guard:resolve": "node scripts/resolve-guard.mjs",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
