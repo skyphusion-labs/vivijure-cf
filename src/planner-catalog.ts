@@ -26,6 +26,7 @@ const PLANNING_MODEL_IDS: readonly string[] = [
   // flooded default picker. (v0.165.0; Haiku dropped 2026-06-14)
   "anthropic/claude-opus-4-8",
   "anthropic/claude-opus-4-7",
+  "anthropic/claude-sonnet-5",
   "anthropic/claude-sonnet-4-6",
 ] as const;
 
