@@ -122,16 +122,26 @@ The design of record (from the #40 spike and the #60 probes) is **two-key custod
 - **NOT ALLOWED** unless and until the code does it: any claim that we mint, rotate, or manage keys
   on the tenant's behalf.
 
-**Open mechanism question, flagged to #53/#54 and #58, not resolved here.** #60 established that
-RunPod API keys appear to be **console-minted only** (no API path to create keys; key mutations
-undocumented, GraphQL introspection disabled). If that holds, the provisioner **cannot** mint the
-stored endpoint-scoped key itself, and the two-key design implies the tenant mints and pastes a
-**second** key by hand after provisioning. That is an onboarding-flow fact (#58) and a provisioner
-fact (#54), and it changes what the honesty copy must say. This document is deliberately written to
-the **custody invariant** ("the provisioning key is never stored; the stored key can only invoke
-your own endpoints"), which holds either way. **Whoever resolves the mechanism owns telling Ernst,
-because if the stored key ever becomes the provisioning key, the privacy text above is false and has
-to change in the same PR.**
+**Mechanism: RESOLVED (ruled and built, 2026-07-17).** The custody design below is two-phase, and
+it lands in the direction this document was written to assume, so the claims above stand unchanged:
+
+- The **provisioning key is transient and never stored**, as stated.
+- The tenant **hand-mints the second key** in the RunPod console after provisioning, invoke-only and
+  scoped to exactly their 4 endpoints, and pastes it. The provisioner does not mint it.
+- The provisioner **live scope-verifies** that stored key before go-live, rather than trusting the
+  paste. A key that is not correctly scoped does not reach a live studio.
+- An **account-wide invoke key is rejected outright.** The stored secret is narrow or it is refused.
+
+**Why the second paste exists (the dated finding, preserved).** #60 established that RunPod API keys
+are **console-minted only**: no API path to create keys, key mutations undocumented, GraphQL
+introspection disabled. The provisioner therefore *cannot* mint the stored endpoint-scoped key
+itself. The hand-paste is not friction we failed to remove; it is the price of the custody boundary,
+and the honest onboarding copy (#58) says so.
+
+**The standing constraint, which does not expire with this resolution.** The claims in this section
+are a constraint on the build, not a description of it. **If the stored key ever becomes the
+provisioning key, or an account-wide key is ever accepted, the privacy text above is false and has to
+change in the same PR that changes the code.**
 
 ---
 
