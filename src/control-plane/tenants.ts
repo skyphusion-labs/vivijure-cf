@@ -22,12 +22,16 @@ const RESERVED = new Set([
   "dev", "internal", "vivijure",
 ]);
 
-export type SlugRejection = "too_short" | "too_long" | "bad_shape" | "reserved";
+export type SlugRejection = "too_short" | "too_long" | "bad_shape" | "reserved" | "punycode";
 
 export function validateSlug(slug: string): { ok: true } | { ok: false; reason: SlugRejection } {
   if (slug.length < 3) return { ok: false, reason: "too_short" };
   if (slug.length > 32) return { ok: false, reason: "too_long" };
   if (!SLUG_RE.test(slug)) return { ok: false, reason: "bad_shape" };
+  // Punycode (#55): "xn--" survives SLUG_RE (lowercase alnum + hyphens), but a browser renders it
+  // as the Unicode it encodes -- so a tenant could mint a hostname that LOOKS like the front door
+  // (homograph). Refused at signup AND at route time, because it is one rule in one place.
+  if (slug.startsWith("xn--")) return { ok: false, reason: "punycode" };
   if (RESERVED.has(slug)) return { ok: false, reason: "reserved" };
   return { ok: true };
 }
@@ -42,6 +46,8 @@ export function slugRejectionMessage(reason: SlugRejection): string {
       return "use lowercase letters, numbers, and hyphens; must start and end with a letter or number";
     case "reserved":
       return "that name is reserved";
+    case "punycode":
+      return "use plain letters, numbers, and hyphens";
   }
 }
 
@@ -74,6 +80,17 @@ export function tenantView(tenant: Tenant, domainSuffix: string): TenantView {
     live_at: tenant.live_at,
     suspended_reason: tenant.suspended_reason,
   };
+}
+
+/**
+ * The canonical tenant studio script name in the dispatch namespace (#55).
+ *
+ * ONE definition, both sides: the provisioner (#53) creates the user Worker under this name and
+ * records it as tenant.script_name; routing dispatches to the STORED name (authoritative at request
+ * time). If the two ever drift, every tenant 503s.
+ */
+export function tenantScriptName(slug: string): string {
+  return `tenant-${slug}-studio`;
 }
 
 /** The 4 endpoint ids the provisioner (#53/#54) records; read by the invoke-key scope check. */

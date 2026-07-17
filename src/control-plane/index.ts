@@ -33,6 +33,7 @@ import type { ControlPlaneDeps } from "./deps";
 import { productionDeps } from "./deps";
 import type { ControlPlaneEnv } from "./env";
 import { authorizeUrl, configuredProviders, exchangeCode, isSsoProvider } from "./oauth";
+import { routeTenantRequest } from "./routing";
 import { verifyInvokeKeyScope } from "./runpod-invoke-key";
 import type { Account } from "./store";
 import { slugRejectionMessage, tenantEndpointIds, tenantView, validateSlug } from "./tenants";
@@ -59,6 +60,13 @@ export async function handle(
   ctx: ExecutionContext,
   deps: ControlPlaneDeps,
 ): Promise<Response> {
+  // The tenant leg runs FIRST (#55). A request to <slug><TENANT_DOMAIN_SUFFIX> is that tenant's own
+  // studio, never a control-plane API call, so it must not be evaluated against anything below --
+  // in particular the CSRF check, which compares Origin to PUBLIC_ORIGIN. A tenant's own POST
+  // legitimately carries ITS OWN origin, so checking that first would 403 every render submit.
+  const tenantResponse = await routeTenantRequest(request, env, deps);
+  if (tenantResponse) return tenantResponse;
+
   const url = new URL(request.url);
   const path = url.pathname;
 

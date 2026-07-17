@@ -20,6 +20,13 @@ export interface ControlPlaneEnv {
   // Control-plane D1. PLATFORM data only; never tenant studio data.
   CP_DB: D1Database;
 
+  // Tenant studios: the Workers-for-Platforms dispatch namespace (#55). Each tenant is a user
+  // Worker in it, named tenant-<slug>-studio. Routing resolves it per request:
+  //   env.TENANT_DISPATCH.get(script).fetch(freshRequest(req))
+  // DANGLING-BINDING HAZARD: the namespace must EXIST before this Worker deploys, or the deploy
+  // fails. typecheck cannot catch that; only a real deploy can.
+  TENANT_DISPATCH: DispatchNamespace;
+
   // ---- vars (public identifiers, not secrets) ----
 
   /** Current AUP version. Bumping this re-gates every account on their next request. */

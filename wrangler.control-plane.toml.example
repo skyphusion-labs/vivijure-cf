@@ -35,11 +35,28 @@ database_name = "vivijure-control-plane"
 database_id = "${CONTROL_PLANE_D1_ID}"
 migrations_dir = "migrations-control-plane"
 
+# Tenant studios: the Workers-for-Platforms dispatch namespace (#55). Each tenant is a user Worker
+# in it, named tenant-<slug>-studio (tenants.ts tenantScriptName(); the provisioner creates under
+# the same name -- ONE definition, both sides). Mirrored in src/control-plane/env.ts.
+#
+# DANGLING-BINDING HAZARD: the namespace must EXIST before this Worker deploys, or `wrangler deploy`
+# FAILS. typecheck will not catch it; only a real deploy will.
+#   npx wrangler dispatch-namespace create vivijure-tenants
+# DONE on the prod account 2026-07-17 (#55): `vivijure-tenants` exists and is empty. It is NEW and
+# SEPARATE from `vivijure-modules` (the Phase-3 module namespace) -- sharing one would collide
+# script names and put a module bug inside the tenant blast radius.
+[[dispatch_namespaces]]
+binding = "TENANT_DISPATCH"
+namespace = "${TENANT_DISPATCH_NAMESPACE}"
+
 [vars]
 # Bumping AUP_VERSION re-gates every account on their next request, by construction.
 AUP_VERSION = "${AUP_VERSION}"
 AUP_URL = "${AUP_URL}"
-PUBLIC_ORIGIN = "${PUBLIC_ORIGIN}"
+# Derived from CONTROL_PLANE_HOST so the CSRF/magic-link origin and the Worker route below
+# cannot drift apart. Two independently-injected hostnames WILL diverge eventually, and the
+# failure is nasty: magic links pointing at a host this Worker is not routed on.
+PUBLIC_ORIGIN = "https://${CONTROL_PLANE_HOST}"
 TENANT_DOMAIN_SUFFIX = "${TENANT_DOMAIN_SUFFIX}"
 # postern's send door (POST /api/send). A URL, not a secret.
 POSTERN_SEND_URL = "${POSTERN_SEND_URL}"
@@ -66,3 +83,35 @@ simple = { limit = 5, period = 60 }
 #   APPLE_PRIVATE_KEY           -- the .p8; parked with the rest of the Apple seam.
 #   CONTROL_PLANE_ADMIN_TOKEN   -- the admin gate. Unset = no admin surface (fails closed).
 #   CF_PROVISIONER_TOKEN        -- mints tenant D1 + R2 + scoped creds. Consumed by #53, not #52.
+
+# --- Routing (#55) ---
+#
+# The front door: a Custom Domain (CF manages its DNS record + certificate), the same pattern the
+# core and the MCP Worker use. It needs no ACM pack -- the zone's existing vivijure.com +
+# *.vivijure.com advanced pack already covers a FIRST-level host like studio.vivijure.com.
+[[routes]]
+pattern = "${CONTROL_PLANE_HOST}"
+custom_domain = true
+
+# The tenant leg: a WILDCARD route. It canNOT be a custom domain -- Workers Custom Domains do not
+# support wildcards (spike-confirmed) -- so it needs BOTH of these live on the zone or it does not
+# serve at all:
+#   (a) a PROXIED wildcard DNS record for *<TENANT_DOMAIN_SUFFIX>; a Worker route only fires on
+#       proxied DNS. House style on this zone is `AAAA -> 100::`, proxied (confirmed against every
+#       existing Worker hostname there).
+#   (b) a certificate covering *<TENANT_DOMAIN_SUFFIX>. That is a SECOND-level wildcard, which
+#       Universal SSL does NOT cover, so it needs an Advanced Certificate Manager pack.
+#
+# *** BLOCKED as of 2026-07-17 (#55): ACM is NOT currently entitled on the vivijure.com zone. The
+# cert-pack quota reads allocated:0/used:6 and ordering returns 1450. The spike's "ACM already
+# active, zero new spend" reading was inferred from the EXISTENCE of five wildcard packs, which
+# proves they were ordered once, not that the subscription is live. Awaiting a spend/domain-shape
+# decision from Conrad. Everything here is correct for the ruled <tenant>.studio.<root> shape and
+# changes with it. ***
+#
+# NOTE the asymmetry with the certificate: this pattern's `*` matches ACROSS dots, so a.b.<suffix>
+# reaches this Worker while sitting OUTSIDE the one-label wildcard cert. classifyHost() refuses
+# multi-label hosts explicitly rather than letting them fall through to a confusing dispatch miss.
+[[routes]]
+pattern = "*${TENANT_DOMAIN_SUFFIX}/*"
+zone_name = "${CONTROL_PLANE_ZONE_NAME}"
