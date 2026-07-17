@@ -59,11 +59,20 @@ export interface AssetManifestEntry {
 }
 
 export class CfApi {
+  // The global fetch must run with globalThis as its receiver. Stored as an instance property and
+  // invoked as this.fetchImpl(...), the receiver becomes this CfApi instance and workerd rejects the
+  // call with "Illegal invocation". miniflare/wrangler dev is lax about the binding, so this only
+  // surfaced on the first live provision against the deployed runtime (step d1_create). Normalizing
+  // to a bare-call wrapper makes every call site correct regardless of the injected fetch (the
+  // default global, or a test stub, which ignores `this` either way).
+  private readonly fetchImpl: typeof fetch;
   constructor(
     private readonly accountId: string,
     private readonly token: string,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    fetchImpl: typeof fetch = fetch,
+  ) {
+    this.fetchImpl = (input, init) => fetchImpl(input, init);
+  }
 
   private async call<T>(
     operation: string,

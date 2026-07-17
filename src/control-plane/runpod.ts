@@ -181,10 +181,16 @@ export function parseQuotaError(message: string): { quota: number | null; atMost
 }
 
 export class RunPodClient {
+  // Same detached-global-fetch fix as CfApi: calling this.fetchImpl(...) rebinds `this` to the
+  // instance and workerd rejects the global fetch with "Illegal invocation" (miniflare is lax, so
+  // it would only bite on the first live endpoint create). Normalize to a bare-call wrapper once.
+  private readonly fetchImpl: typeof fetch;
   constructor(
     private readonly key: string,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    fetchImpl: typeof fetch = fetch,
+  ) {
+    this.fetchImpl = (input, init) => fetchImpl(input, init);
+  }
 
   private async call<T>(operation: string, method: string, path: string, body?: unknown): Promise<T> {
     const res = await this.fetchImpl(`${RUNPOD_API}${path}`, {
