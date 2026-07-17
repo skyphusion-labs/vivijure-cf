@@ -41,6 +41,7 @@ of these areas, update the matching doc.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
 - `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
 - `docs/mcp.md` -- MCP deploy pointer; canon in **vivijure-core** `docs/mcp.md`.
+- `docs/control-plane.md` -- the hosted-tier platform control plane (accounts, auth, AUP gate, tenants, admin switches); a SEPARATE Worker that deploys independently. Read before touching the hosted door.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/demo-studio.md` -- the public, read-only, zero-spend demo studio (`demo.vivijure.com`, `AUTH_MODE=demo`): the binding-absence rule, D1 seed procedure, and live-verify list.
