@@ -63,6 +63,17 @@ export interface StudioBundleSource {
     moduleText: string;
     compatibilityDate: string;
     compatibilityFlags?: string[];
+    /**
+     * The release's OWN asset handling (manifest assets_config, #78). Consumed verbatim, never
+     * re-derived: html_handling="none" + run_worker_first=true are load-bearing in the core (the
+     * #374 redirect loop and the post-v0.7.4 unheadered-pages finding), and hardcoding them here
+     * would be the exact drift the manifest exists to prevent.
+     *
+     * `{}` is MEANINGFUL, not missing: it means the release was built with CF's defaults, so the
+     * tenant gets CF's defaults. Substituting the core's values for an empty object would re-create
+     * the hardcode one layer up.
+     */
+    assetsConfig?: Record<string, unknown>;
     assets?: { path: string; base64: string; contentType: string; hash: string; size: number }[];
   }>;
 }
@@ -177,6 +188,10 @@ export async function runProvisionJob(
       compatibilityDate: built.compatibilityDate,
       compatibilityFlags: built.compatibilityFlags,
       assetsJwt,
+      // The release's own asset handling, verbatim. Without this a tenant got CF defaults while a
+      // self-hoster running the SAME release got html_handling="none" -- a blank page at the
+      // tenant's studio root, hosted-only, on identical code (#77/#78).
+      assetsConfig: built.assetsConfig,
       bindings: [
         { type: "d1", name: "DB", id: db.uuid },
         { type: "r2_bucket", name: "R2_RENDERS", bucket_name: bucket },

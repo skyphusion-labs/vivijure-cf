@@ -272,3 +272,52 @@ describe("teardownTenant", () => {
     expect(calls).not.toContain("deleteR2Bucket");
   });
 });
+
+describe("assets_config (the hosted-only parity defect, #77/#78)", () => {
+  const withBundle = (assetsConfig: Record<string, unknown> | undefined) =>
+    deps({
+      bundle: {
+        fetch: vi.fn(async () => ({
+          mainModule: "worker.js",
+          moduleText: "export default {}",
+          compatibilityDate: "2026-06-01",
+          assetsConfig,
+          assets: [{ path: "/index.html", base64: "eA==", contentType: "text/html", hash: "h1", size: 1 }],
+        })),
+      },
+    });
+
+  const uploadArg = (d: ProvisionDeps) =>
+    (d.cf.uploadUserWorker as unknown as { mock: { calls: [{ assetsConfig?: Record<string, unknown> }][] } })
+      .mock.calls[0][0];
+
+  it("passes the release's OWN asset handling to the tenant upload", async () => {
+    // Without this, every tenant got CF defaults while a self-hoster running the SAME release got
+    // html_handling="none" -- a blank page at the tenant's root (#374 loop), hosted-only, on
+    // identical code. The upload SUCCEEDS either way, which is why nothing else caught it.
+    const t = await tenant();
+    const d = withBundle({ html_handling: "none", run_worker_first: true });
+    const job = await store.createProvisionJob("job_1", t.id, "provision");
+    await runProvisionJob(d, job.id, t, "rpa_keyA", MIGRATIONS);
+    expect(uploadArg(d).assetsConfig).toEqual({ html_handling: "none", run_worker_first: true });
+  });
+
+  it("passes {} THROUGH rather than substituting the core's values (the empty-object corollary)", async () => {
+    // {} is meaningful, not missing: it means the release was built with CF defaults, so the tenant
+    // gets CF defaults. Substituting here would re-create the hardcode one layer up, which is the
+    // drift the manifest exists to prevent.
+    const t = await tenant();
+    const d = withBundle({});
+    const job = await store.createProvisionJob("job_1", t.id, "provision");
+    await runProvisionJob(d, job.id, t, "rpa_keyA", MIGRATIONS);
+    expect(uploadArg(d).assetsConfig).toEqual({});
+  });
+
+  it("never invents a config when the release carries none", async () => {
+    const t = await tenant();
+    const d = withBundle(undefined);
+    const job = await store.createProvisionJob("job_1", t.id, "provision");
+    await runProvisionJob(d, job.id, t, "rpa_keyA", MIGRATIONS);
+    expect(uploadArg(d).assetsConfig).toBeUndefined();
+  });
+});
