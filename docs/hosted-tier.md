@@ -248,21 +248,32 @@ account. See [quickstart.md](quickstart.md).
 
 ## The rules
 
-<!-- AUP-PLACEHOLDER-START: Ernst owns this text (issue #57). Do not write policy copy here.
-     When #57 lands, replace this block with the real acceptable-use summary and the links to the
-     hosted AUP, terms, and privacy pages. The signup screen embeds the same text from the same
-     source. -->
+The acceptable-use policy for the hosted studio is written and is what the signup gate serves:
+[the hosted AUP](legal/hosted/aup/1.0.0.md). It is versioned and self-contained, and setup asks you
+to accept it before anything is created. What you accept is recorded with the exact version, so we
+can always say what you agreed to and when.
 
-> **Placeholder, pending issue #57.** The acceptable-use policy, terms, and privacy text for the
-> hosted tier are being written and reviewed. They are not drafted here.
+It is still a **draft** until the hosted studio opens; it takes effect at launch, and it goes to a
+real lawyer before then. The full legal scaffolding, including what changes about privacy when we
+hold your account and your studio's data, is in [legal/hosted/](legal/hosted/).
+
+Three things about that gate, because a consent record is worthless if you cannot trust it:
+
+- **You accept a version, not a vibe.** The gate pins one exact version and never resolves "the
+  latest thing on the branch."
+- **If the policy changes, we ask you again.** We do not quietly carry your old tick forward onto
+  new wording. Your old acceptance is kept as the record of what you agreed to at the time.
+- **If we cannot show you the policy, we will not ask you to accept it.** The gate stays shut. That
+  includes the case where our own link to it is not pinned properly: a policy that can change after
+  you agreed to it is not something we will take your agreement against.
 
 One line is not a placeholder and is not up for discussion: **vivijure has an absolute ban on child
 sexual abuse material, including AI-generated material.** It is enforced, it is reported, and there
-is no version of this product where that is negotiable.
+is no version of this product where that is negotiable. Be clear that a studio we host is not the
+same as one you run yourself: on your own machine we genuinely cannot see anything, and on a studio
+we host for you, we are not blind, and reporting is the law rather than a favor we choose to do.
 
-<!-- AUP-PLACEHOLDER-END -->
-
-Current legal text for the self-hosted studio is in [legal/](legal/).
+Legal text for the self-hosted studio (the in-force documents today) is in [legal/](legal/).
 
 ---
 

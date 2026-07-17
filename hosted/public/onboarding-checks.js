@@ -306,6 +306,84 @@
     return "We could not record your acceptance. Nothing has been saved; please try again.";
   }
 
+  // Is AUP_URL pinned to an IMMUTABLE ref?
+  //
+  // Ernst's rule (docs/legal/hosted/README.md, recommendation 2): if AUP_URL
+  // resolves to a moving branch, the text a tenant reads changes whenever the
+  // branch does while the recorded version label stays 1.0.0, "and nothing
+  // detects the drift." An acceptance record pointing at text that can change
+  // is not evidence of anything. So: something detects the drift now.
+  //
+  // DELIBERATELY CONSERVATIVE. A client cannot prove a URL is immutable (an
+  // opaque https://vivijure.com/aup/1.0.0 may be perfectly pinned, or served
+  // from a mutable file). It CAN recognise the known-moving forge refs, which
+  // is the mistake that actually gets made. So this reports "moving" only on a
+  // ref it can positively identify as moving, and "unverifiable" otherwise --
+  // never a false positive that would wrongly close the gate on a good URL.
+  // The real guarantee is operator-side and at first serve; this is the cheap
+  // tripwire under it.
+  const MOVING_NAMES = ["main", "master", "head", "develop", "trunk"];
+  const SHA_RE = /^[0-9a-f]{7,64}$/i;
+  const TAG_RE = /^v?\d+\.\d+\.\d+[A-Za-z0-9.-]*$/;
+
+  // Pull the ref out of a forge URL. Two shapes matter, and the second one is
+  // the one that nearly slipped through: raw.githubusercontent.com has NO
+  // /blob/ segment, so a pattern written around /blob/<ref>/ misses
+  // raw.githubusercontent.com/<owner>/<repo>/main/... entirely -- which is
+  // probably the single most likely way this mistake gets made. Caught by the
+  // test, not by reading the regex.
+  function refOf(url) {
+    let m = /\/(?:blob|raw|tree|blame)\/([^/]+)\//.exec(url);
+    if (m) return { ref: m[1], alwaysMoving: false };
+
+    m = /^https?:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([^/]+)\//i.exec(url);
+    if (m) return { ref: m[1], alwaysMoving: false };
+
+    // An explicit refs/heads/<branch> is a branch by construction, whatever it
+    // is called.
+    m = /refs\/heads\/([^/]+)/i.exec(url);
+    if (m) return { ref: m[1], alwaysMoving: true };
+
+    return null;
+  }
+
+  function aupUrlPinning(url) {
+    const u = typeof url === "string" ? url.trim() : "";
+    if (!u) return { state: "missing", movingRef: null };
+
+    const found = refOf(u);
+    if (!found) return { state: "unverifiable", movingRef: null };
+
+    if (found.alwaysMoving) return { state: "moving", movingRef: found.ref };
+    if (MOVING_NAMES.indexOf(found.ref.toLowerCase()) !== -1) {
+      return { state: "moving", movingRef: found.ref };
+    }
+    if (SHA_RE.test(found.ref) || TAG_RE.test(found.ref)) {
+      return { state: "pinned", movingRef: null };
+    }
+    // A ref slot holding something that is neither a known-moving name nor a
+    // SHA/semver tag: could be a tag we do not recognise, could be a branch.
+    // Not provable either way from here, and a false positive would wrongly
+    // close the gate on a good URL, so it stays unverifiable.
+    return { state: "unverifiable", movingRef: null };
+  }
+
+  // Why we refuse to take an acceptance against a moving policy URL.
+  function aupPinningRefusalCopy(pinning) {
+    const p = pinning || {};
+    if (p.state === "moving") {
+      return "We are not going to ask you to accept this policy, because the link we have for it " +
+        "points at a moving target (" + p.movingRef + "), which means the wording could change " +
+        "after you agreed to it. That is our configuration mistake, not yours. It is being fixed; " +
+        "nothing you do here would be recorded properly until it is.";
+    }
+    if (p.state === "missing") {
+      return "We cannot show you the policy right now, so we are not going to ask you to accept " +
+        "it. You should never have to agree to something you cannot read.";
+    }
+    return "";
+  }
+
   function stepIndex(key) {
     for (let i = 0; i < STEPS.length; i++) {
       if (STEPS[i].key === key) return i;
@@ -339,6 +417,8 @@
     scopeVerdict: scopeVerdict,
     invokeRejectionCopy: invokeRejectionCopy,
     aupAcceptFailureCopy: aupAcceptFailureCopy,
+    aupUrlPinning: aupUrlPinning,
+    aupPinningRefusalCopy: aupPinningRefusalCopy,
     REJECTION_COPY: REJECTION_COPY,
     planWorkerTotal: planWorkerTotal,
     quotaFit: quotaFit,

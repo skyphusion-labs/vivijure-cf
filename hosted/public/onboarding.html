@@ -83,23 +83,14 @@
         <h2>The rules</h2>
         <p class="lede">Short version: make films, do not make the things on the list.</p>
 
-        <!-- AUP-PLACEHOLDER-START ------------------------------------------
-             Ernst owns this text (#57). This is a marked SEAM, not copy:
-             onboarding.js replaces the contents of #aup-text with the versioned
-             AUP the control plane serves (GET /api/hosted/aup), and records the
-             accepted version with the acceptance. Do NOT write policy prose in
-             this file. The dashed border is deliberate: a placeholder must LOOK
-             like a placeholder in the rendered page, never only in a comment.
-        -->
-        <div class="aup-embed placeholder-seam" id="aup-text">
-          <p><strong>Placeholder, pending #57.</strong> The acceptable-use policy for the hosted
-          tier is being written and reviewed. The real text loads here, from one source, versioned,
-          and your acceptance records which version you agreed to.</p>
-          <p class="small muted">One line is not a placeholder and never will be: vivijure has an
-          absolute ban on child sexual abuse material, including AI-generated material. It is
-          enforced, it is reported, and it is not negotiable.</p>
+        <!-- The AUP text is Ernst's and lives in ONE place: the control plane serves
+             { version, url } from GET /api/aup/current, pinned by AUP_VERSION, and the
+             acceptance records that exact version (#57, landed). This page never writes policy
+             prose and never resolves "latest". If the policy cannot be read, the gate below stays
+             shut: you should not be able to accept what you cannot read. -->
+        <div class="aup-embed" id="aup-text">
+          <p class="muted">Loading the policy...</p>
         </div>
-        <!-- AUP-PLACEHOLDER-END -->
 
         <div class="checkbox-row">
           <input type="checkbox" id="accept-aup" />
