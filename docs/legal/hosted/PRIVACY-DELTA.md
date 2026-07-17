@@ -43,7 +43,7 @@ We decide why and how this exists. It is ours, in the control-plane D1 (spec sec
 |---|---|---|
 | **Accounts** | email address; auth identifiers (a Google/GitHub/Apple subject identifier for SSO signups, or a magic-link token for email signups) | To have an account at all, and to let you back into it. |
 | **Tenants** | tenant name/slug, the subdomain, provisioning state, quota + suspend state | To route `<tenant>.studio.vivijure.com` to your studio and to enforce quotas. |
-| **AUP acceptances** | account id, AUP version, SHA-256 of the accepted text, timestamp, IP address, user agent | To prove what you agreed to and when. This is evidence; it is retained for as long as the account exists plus a limitations-period tail (see Section 5). |
+| **AUP acceptances** | account id, AUP version, timestamp, **a hash of your IP address (never the raw IP)**, user agent | To prove what you agreed to and when. This is evidence; it is retained for as long as the account exists plus a limitations-period tail (see Section 5). Corrected 2026-07-17 to match the shipped gate: an earlier draft of this table claimed a raw IP and a content hash of the accepted text. The code stores neither. **A privacy document that overstates what we collect is still a false privacy document**, so the table now describes `aup_acceptances` as built. |
 | **Provision jobs** | job state, step results, error text | So a failed provision fails honestly and is resumable. May contain your tenant name and RunPod endpoint IDs. **Never contains a RunPod key** (Section 3). |
 
 **Tenant-facing studio data never lives in the control plane.** That is an architectural rule from
