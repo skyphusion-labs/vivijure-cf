@@ -239,6 +239,24 @@ describe("teardownTenant", () => {
     expect(calls).toContain("deleteD1");
   });
 
+  it("REPORTS a non-empty bucket honestly instead of stranding it silently (live-verified constraint)", async () => {
+    // Real R2 refuses to delete a non-empty bucket, and its REST API cannot empty one (no object
+    // endpoint). So a tenant who ever rendered CANNOT have their bucket deleted by this path. The
+    // requirement is that we say so, loudly, rather than report a clean teardown that did not
+    // happen. Found on real R2 during the #53 live verify; the fake happily deleted anything.
+    const notEmpty = new CfApiError("r2.deleteBucket", 400, [
+      { message: "The bucket you tried to delete is not empty" },
+    ]);
+    const d = deps({ cf: fakeCf({ deleteR2Bucket: vi.fn(async () => { throw notEmpty; }) }) });
+    const res = await teardownTenant(d, await provisioned(), { deleteData: true });
+
+    expect(res.ok).toBe(false);
+    expect(res.failures.map((f) => f.resource)).toContain("r2_bucket");
+    expect(res.failures.find((f) => f.resource === "r2_bucket")?.error).toContain("not empty");
+    // and the rest of the teardown still completed: the credential is revoked either way
+    expect(d.tokenMinter.revoke).toHaveBeenCalledWith("tok-1");
+  });
+
   it("NEVER touches the tenant's RunPod account: their endpoints are theirs", async () => {
     const d = deps();
     await teardownTenant(d, await provisioned(), { deleteData: true });

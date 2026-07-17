@@ -284,6 +284,14 @@ export async function teardownTenant(
 
   if (opts.deleteData) {
     if (tenant.d1_database_id) await attempt("d1", () => deps.cf.deleteD1(tenant.d1_database_id!));
+    // KNOWN, LIVE-PROVEN CONSTRAINT: R2 refuses to delete a NON-EMPTY bucket, and R2's REST API has
+    // no object-list/delete endpoint at all (404) -- emptying a bucket only goes through the S3 API.
+    // So this call SUCCEEDS only for a tenant that never rendered, and for everyone else it fails
+    // with CF's own "bucket is not empty". That failure is REPORTED, never swallowed: the caller
+    // gets it in `failures` and the tenant's data is still there, which is the safe direction to
+    // fail. Emptying-then-deleting needs an S3 client here (mint a bucket cred, ListObjectsV2 +
+    // DeleteObjects, delete, revoke) and is tracked as #53 follow-up rather than faked.
+    // Caught on real R2; the unit fake said delete always works.
     if (tenant.r2_bucket_name) await attempt("r2_bucket", () => deps.cf.deleteR2Bucket(tenant.r2_bucket_name!));
   }
 

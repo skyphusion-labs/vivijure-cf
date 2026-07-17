@@ -191,7 +191,7 @@ export class CfApi {
   async mintR2Token(
     name: string,
     bucket: string,
-    policyPermissionGroupId: string,
+    permissionGroupIds: string[],
   ): Promise<{ id: string; value: string }> {
     return await this.call<{ id: string; value: string }>("tokens.create", `/accounts/${this.accountId}/tokens`, {
       method: "POST",
@@ -201,7 +201,11 @@ export class CfApi {
         policies: [
           {
             effect: "allow",
-            permission_groups: [{ id: policyPermissionGroupId }],
+            // A LIST, not one group: a render both reads and writes its bucket, so the credential
+            // needs Bucket Item Read AND Write. Minting write-only produced a token that CF
+            // reported as active with exactly the right resources, and which then 401'd on its own
+            // bucket -- a credential that looks perfect in the API and does nothing.
+            permission_groups: permissionGroupIds.map((id) => ({ id })),
             resources: {
               [`com.cloudflare.edge.r2.bucket.${this.accountId}_default_${bucket}`]: "*",
             },

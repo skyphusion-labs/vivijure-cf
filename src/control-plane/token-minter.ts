@@ -27,15 +27,23 @@ export interface TokenMinter {
   revoke(tokenId: string): Promise<void>;
 }
 
-/** The real minter. Blocked today on a dashboard-created credential; the code is ready for it. */
+/**
+ * R2's bucket-scoped permission groups. Stable CF ids, deploy-independent, not secrets.
+ * BOTH are required: a render reads and writes its own bucket. These are the real ids, read off
+ * the account's permission-groups endpoint rather than guessed.
+ */
+export const R2_BUCKET_ITEM_READ = "6a018a9f2fc74eb6b293b0c548f38b39";
+export const R2_BUCKET_ITEM_WRITE = "2efd5506f9c8494dacb1fa10a3e7d5b6";
+
+/** The real minter. */
 export class CfTokenMinter implements TokenMinter {
   constructor(
     private readonly cf: CfApi,
-    private readonly permissionGroupId: string,
+    private readonly permissionGroupIds: string[] = [R2_BUCKET_ITEM_READ, R2_BUCKET_ITEM_WRITE],
   ) {}
 
   async mintBucketToken(name: string, bucket: string): Promise<MintedR2Credential> {
-    return await this.cf.mintR2Token(name, bucket, this.permissionGroupId);
+    return await this.cf.mintR2Token(name, bucket, this.permissionGroupIds);
   }
 
   async revoke(tokenId: string): Promise<void> {
