@@ -13,7 +13,8 @@ export interface RateLimiter {
 }
 
 export interface ControlPlaneEnv {
-  // The front-door UI (Joan, #52/#58), served via Workers Assets.
+  // The front-door UI (Joan, #58), served via Workers Assets. Bundle lives at hosted/public, kept
+  // separate from public/ (the studio frontend that ships to every self-hoster).
   ASSETS: Fetcher;
 
   // Control-plane D1. PLATFORM data only; never tenant studio data.

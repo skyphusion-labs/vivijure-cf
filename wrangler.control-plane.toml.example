@@ -23,8 +23,9 @@ compatibility_flags = ["nodejs_compat"]
 preview_urls = false
 workers_dev = false
 
-# The front-door UI (Joan, #52/#58).
-assets = { directory = "./public-control-plane", binding = "ASSETS" }
+# The front-door UI (Joan, #58). Deliberately a SEPARATE bundle from public/ (the studio frontend
+# that ships to every self-hoster): the hosted door is ours, the studio is everyone's.
+assets = { directory = "./hosted/public", binding = "ASSETS" }
 
 # Control-plane D1. PLATFORM data only (accounts, tenants, aup_acceptances, provision_jobs).
 # Tenant studio data lives in each tenant's OWN D1 and never here; the schema-guard test enforces it.
