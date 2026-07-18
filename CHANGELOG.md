@@ -3,6 +3,47 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.3.0 -- 2026-07-18
+
+**The studio release artifact carries its own schema and its own env contract (cf#85).** MINOR: a new
+manifest capability, added so the hosted control plane can be extracted into its own repository
+without reaching back into this one.
+
+- **`manifest.json` gains `migrations` and `required_vars`.** The release artifact now ships the
+  tenant D1 schema (every top-level `migrations/*.sql`, in apply order, each with its own `sha256`
+  and `size`) and the studio env var contract (`ORCHESTRATOR_VAR_KEYS`, projected at build time).
+  `studio-release.yml` uploads `migrations/` to the R2 release mirror alongside `worker.js` and
+  `assets/`.
+- **Why: the hosted control plane was reaching into this repo at build time.** It imported
+  `../../migrations/*.sql` and `ORCHESTRATOR_VAR_KEYS` directly. The extraction contract (cf#85)
+  forbids source-level imports across the repo seam, since the control plane consumes the studio ONLY
+  as a published artifact, so the two things it legitimately needs had to move INTO the artifact.
+  Copying them into the new repo was rejected: a copy plus a guard test that validates the copy is a
+  drift factory with a green light on it, and drift in exactly these two lists is what caused two
+  live provision failures.
+- **This closes the versioning caveat that `studio-migrations.ts` documented against itself.** The
+  migrations used to ride the CONTROL PLANE deploy commit while the worker was a pinned RELEASE, so
+  a tenant could get its schema from one version of the studio and its worker from another. Tenant
+  schema and tenant worker now come from ONE pinned artifact and that skew cannot exist.
+- **Migrations are named, not content-addressed.** The runner records each by FILENAME in the tenant
+  `schema_migrations` table, so the name is load-bearing state rather than a label.
+- **The builder refuses a zero-migration set.** A silent empty set would give every new tenant a
+  blank D1 and report success, the worst failure mode available. Both refusal paths (empty directory,
+  missing `--migrations`) are negative-tested with a positive control on the same command.
+- **`ORCHESTRATOR_VAR_KEYS` moved to a leaf module** (`src/platform/orchestrator-vars.ts`, zero
+  imports); `cf-platform.ts` re-exports it, so every consumer is unchanged and there is still exactly
+  ONE source of truth. It is a leaf because the consumer is a plain node build script, which has no
+  business dragging the Worker runtime graph (Env, presigner, secret store, module transport, R2
+  store) in behind a list of strings.
+- **CONSUMER NOTE, the `vivijure-control-plane` pin floor is v1.3.0.** The extracted control plane
+  reads migrations and the bind census from the pinned bundle and FAILS LOUD below this tag, with no
+  baked-in fallback. `tests/release-manifest-contract.test.ts` guards the shape: the manifest is now
+  an interface consumed by another repository, so removing a field is a breaking change.
+- **Test-side fix (cf#107).** `orch()` in `tests/orchestrator-env.ts` attached `PRESIGNER` and then
+  declared its return type as plain `T`, discarding the type it had just added. Invisible because
+  `tsconfig` never typechecked `tests/` and vitest transpiles without checking. Type-level only; no
+  behaviour change.
+
 ## v1.2.5 -- 2026-07-18
 
 **The tenant studio gets the env its own code requires (#116).** PATCH: the fifth and last defect of
