@@ -3,6 +3,34 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.3.1 -- 2026-07-18
+
+**The v1.3.0 release artifact never published; this is the tag that ships it.** PATCH: a build-script
+import fix plus the CI guard that makes this class fail on a PR instead of on a tag.
+
+- **v1.3.0 built nothing.** The tag fired, the studio deployed (inert), the D1 migrate was a no-op --
+  and then the release-artifact job died in 14 seconds with `ERR_MODULE_NOT_FOUND`. Nothing reached
+  the GitHub release or the R2 mirror. The v1.3.0 tag is left exactly where it is; tags never move.
+- **The cause.** `scripts/build-studio-release.ts` imported
+  `../src/platform/orchestrator-vars.js`. The release workflow runs it as
+  `node scripts/build-studio-release.ts`, and Node type-stripping does not rewrite relative
+  specifiers: the literal `.js` path must exist on disk, and only the `.ts` does. Fixed by importing
+  the `.ts` extension directly.
+- **Why every gate said green.** `tsc --noEmit` accepts the `.js` specifier because
+  `moduleResolution` is `bundler`, which maps it to the `.ts` source. The test suite never executed
+  the script. And the pre-merge end-to-end run of the builder went through a resolver that also maps
+  `.js` to `.ts`, rather than the bare `node` the workflow actually uses. Three green signals, one
+  dead runtime, and the only place it could surface was a tag.
+- **The guard: `tests/release-builder-runs.test.ts`.** It invokes the builder under bare `node` and
+  asserts it reaches its own `missing --bundle` argument check, which proves the whole import graph
+  resolved. About a second, no wrangler bundle required, and it runs in normal CI -- so a broken
+  release builder now fails on the pull request. It carries a positive control, so it cannot pass by
+  the script dying earlier for an unrelated reason.
+- **CONSUMER NOTE, the `vivijure-control-plane` pin floor is v1.3.1, not v1.3.0.** v1.3.0 exists as a
+  tag but published no artifact, so a floor pointing at it would resolve to an empty mirror slot:
+  it would fail honestly, but confusingly. The manifest shape is unchanged from what v1.3.0
+  described (`migrations` + `required_vars`); only the tag that actually carries it has moved on.
+
 ## v1.3.0 -- 2026-07-18
 
 **The studio release artifact carries its own schema and its own env contract (cf#85).** MINOR: a new

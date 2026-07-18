@@ -133,7 +133,19 @@ jobs:
             const onDisk=readdirSync('dist-release/assets').length;
             const unique=new Set(m.assets.map(a=>a.hash)).size;
             if (onDisk!==unique) throw new Error('asset count mismatch: '+onDisk+' files vs '+unique+' unique hashes');
-            console.log('artifact verified:', m.assets.length, 'assets,', unique, 'unique,', w.byteLength, 'bytes of worker');
+            // Migrations + the var contract (cf#85). The control plane verifies these hashes against
+            // bytes it did NOT build, so we must not publish a set we have not re-derived ourselves;
+            // publishing an unverified schema is how a tenant D1 gets provisioned wrong.
+            if (!Array.isArray(m.migrations) || m.migrations.length===0) throw new Error('manifest carries no migrations');
+            for (const g of m.migrations) {
+              const b=readFileSync('dist-release/migrations/'+g.name);
+              if (createHash('sha256').update(b).digest('hex')!==g.sha256) throw new Error('migration sha256 mismatch: '+g.name);
+              if (b.byteLength!==g.size) throw new Error('migration size mismatch: '+g.name);
+            }
+            const migsOnDisk=readdirSync('dist-release/migrations').length;
+            if (migsOnDisk!==m.migrations.length) throw new Error('migration count mismatch: '+migsOnDisk+' files vs '+m.migrations.length+' in manifest');
+            if (!Array.isArray(m.required_vars) || m.required_vars.length===0) throw new Error('manifest carries no required_vars');
+            console.log('artifact verified:', m.assets.length, 'assets,', unique, 'unique,', w.byteLength, 'bytes of worker,', m.migrations.length, 'migrations,', m.required_vars.length, 'required_vars');
           "
 
       # Same discipline as the studio artifact: re-derive each module worker digest from the bytes
