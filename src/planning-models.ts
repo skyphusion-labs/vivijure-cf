@@ -18,11 +18,12 @@ import { servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry"
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
 import type { ModelEntry } from "./models";
 
-/** A planning row: a ModelEntry plus the module that declared it, so the panel never has to parse
- *  the owning module back out of `group`. */
-export interface PlanningModelEntry extends ModelEntry {
-  module: string;
-}
+// NOTE on the emitted row shape: it is EXACTLY local's planningModelsFromModules output
+// ({ id, label, group, type, capabilities }) and must stay that way. public/ is a verbatim-shared
+// surface between cf and vivijure-local, so a cf-only field is either dead weight or, if the panel
+// consumed it, a divergence that breaks the shared panel on local. Row OWNERSHIP is still known
+// internally -- resolvePlanningTarget reads it off the manifests directly -- it is just not put on
+// the wire. Adding a `module`/`default` field is proposed upstream in local first; cf ports it after.
 
 export interface PlanningTarget {
   moduleName: string;
@@ -44,8 +45,8 @@ function modelValues(mod: RegisteredModule): string[] {
 }
 
 /** Build the GET /api/storyboard/models catalog from the installed plan.enhance modules. */
-export function planningModelsFromModules(modules: RegisteredModule[]): PlanningModelEntry[] {
-  const out: PlanningModelEntry[] = [];
+export function planningModelsFromModules(modules: RegisteredModule[]): ModelEntry[] {
+  const out: ModelEntry[] = [];
   for (const mod of servingForHook(modules, "plan.enhance")) {
     const values = modelValues(mod);
     if (values.length > 0) {
@@ -56,7 +57,6 @@ export function planningModelsFromModules(modules: RegisteredModule[]): Planning
           group: `Planning · ${mod.name}`,
           type: "chat",
           capabilities: [],
-          module: mod.name,
         });
       }
       continue;
@@ -67,7 +67,6 @@ export function planningModelsFromModules(modules: RegisteredModule[]): Planning
       group: `Planning · ${mod.name}`,
       type: "chat",
       capabilities: [],
-      module: mod.name,
     });
   }
   return out;
@@ -113,6 +112,6 @@ export function resolvePlanningTarget(
 export function findPlanningModel(
   modules: RegisteredModule[],
   modelId: string,
-): PlanningModelEntry | undefined {
+): ModelEntry | undefined {
   return planningModelsFromModules(modules).find((m) => m.id === modelId);
 }

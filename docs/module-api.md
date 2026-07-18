@@ -123,7 +123,10 @@ The projection rules, in full:
 
 - A module declaring `config_schema.model` as an enum contributes **one catalog row per enum value**.
   The row's `id` is the enum value **verbatim**, its `label` is `"<provides[0].label or name> · <id>"`,
-  its `group` is `"Planning · <module name>"`, and its `module` names the declaring module.
+  and its `group` is `"Planning · <module name>"`. The emitted row is exactly
+  `{ id, label, group, type, capabilities }` -- the same shape vivijure-local emits, because the
+  panel that renders it is a verbatim-shared surface between the two hosts. Do not add host-only
+  fields here; land a shape change in local first, then port it.
 - A module serving `plan.enhance` with **no** `model` enum still appears, as **one row** under its own
   name and label. Not declaring a model list is a valid choice, not an exclusion.
 - The chosen id **routes back to the module that declared it**, and is handed to that module as

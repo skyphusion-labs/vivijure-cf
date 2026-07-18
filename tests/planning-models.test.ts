@@ -107,23 +107,27 @@ describe("planningModelsFromModules", () => {
       id: "bespoke-planner",
       label: "Bespoke Planner",
       group: "Planning · bespoke-planner",
-      module: "bespoke-planner",
     });
   });
 
   it("ignores modules that do not serve plan.enhance, model enum or not", () => {
     expect(planningModelsFromModules([unrelated])).toEqual([]);
-    expect(planningModelsFromModules([unrelated, ours]).every((m) => m.module === "plan-enhance")).toBe(true);
+    const kept = planningModelsFromModules([unrelated, ours]).map((m) => m.id);
+    expect(kept).not.toContain("rife/v4.6");
+    expect(kept).toContain("anthropic/claude-opus-4-8");
   });
 
   it("serves an EMPTY catalog when no planning module is installed (a legitimate answer)", () => {
     expect(planningModelsFromModules([])).toEqual([]);
   });
 
-  it("tags every row with the module that declared it", () => {
-    const rows = planningModelsFromModules([ours, thirdParty]);
-    expect(rows.find((m) => m.id === "acme/planner-xl")?.module).toBe("acme-planner");
-    expect(rows.find((m) => m.id === "anthropic/claude-sonnet-5")?.module).toBe("plan-enhance");
+  // The emitted shape is a PARITY CONTRACT, not an implementation detail: public/ is shared
+  // verbatim with vivijure-local, so a cf-only field here is dead weight at best and a
+  // panel-breaking divergence at worst. Pinned to local's planningModelsFromModules output exactly.
+  it("emits EXACTLY local's row shape -- no cf-only fields", () => {
+    for (const row of planningModelsFromModules([ours, thirdParty, noEnum])) {
+      expect(Object.keys(row).sort()).toEqual(["capabilities", "group", "id", "label", "type"]);
+    }
   });
 
   // ACCEPTANCE CRITERION (projection half).
@@ -142,7 +146,6 @@ describe("planningModelsFromModules", () => {
       group: "Planning · acme-planner",
       type: "chat",
       capabilities: [],
-      module: "acme-planner",
     });
   });
 });
@@ -195,7 +198,7 @@ describe("resolvePlanningTarget", () => {
 
 describe("findPlanningModel", () => {
   it("returns the catalog row for an installed id, undefined otherwise", () => {
-    expect(findPlanningModel([ours], "anthropic/claude-sonnet-5")?.module).toBe("plan-enhance");
+    expect(findPlanningModel([ours], "anthropic/claude-sonnet-5")?.id).toBe("anthropic/claude-sonnet-5");
     expect(findPlanningModel([ours], "acme/planner-xl")).toBeUndefined();
   });
 });
@@ -264,7 +267,7 @@ describe("GET /api/storyboard/models -- projected over the wire (acceptance crit
       ctx,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { models: Array<{ id: string; module: string }> };
+    const body = (await res.json()) as { models: Array<{ id: string }> };
     const ids = body.models.map((m) => m.id);
     expect(ids).toContain("anthropic/claude-sonnet-5");
     expect(ids).toContain("acme/planner-xl");
