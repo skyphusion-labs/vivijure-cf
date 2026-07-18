@@ -3,6 +3,34 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.2.2 -- 2026-07-18
+
+**Provision survives an adopted studio script (#108).** PATCH: the second adopt-path defect the
+hosted-tier finale surfaced. `modules_install` no longer races the token it just uploaded.
+
+- **`modules_install` waits for the studio to actually serve the new token (cf#108).** The
+  provisioner mints a fresh `STUDIO_API_TOKEN`, rides it into the tenant studio upload as a
+  `secret_text` binding, then immediately drives that studio for each module. The studio script name
+  is slug-based, so a re-provision ADOPTS the existing script object, and the edge can still be
+  serving the PREVIOUS version, which carries the PREVIOUS token. The install 403d and the whole
+  provision failed at step 7 of 8. A brand-new script has no previous version, which is why the
+  earlier fresh-slug run passed this step and the first adopt run did not. There is now a bounded
+  pre-install liveness probe: one authenticated read, retried with backoff until the studio answers
+  200 or a 60s deadline expires, run once before the per-module loop.
+- **The retry cannot launder a bad credential.** 403 is retryable ONLY inside the probe window,
+  because 403 is exactly what a stale serving version looks like. Any non-403 fails immediately
+  rather than burning the window on a real error. A genuinely wrong token exhausts the deadline and
+  fails loudly with attempt count and elapsed time. Per-module installs stay single-attempt: the
+  probe did not turn the install loop into a retry loop.
+- **Gated by test, including the negative half.** `tests/control-plane/studio-token-probe.test.ts`
+  models a stale version that rejects every path, not just the probe. Mutation-checked twice:
+  removing the probe reproduces the live `install keyframe (...) -> 403: {"error":"bad API token"}`,
+  and making the probe succeed on exhaustion instead of failing turns the negative tests red.
+- **Recorded on #108: `modified_on` is not a freshness signal.** On a Workers-for-Platforms
+  dispatch-namespace script it tracks creation and matches the namespace `created_on`; it does not
+  move on re-upload. It nearly produced a wrong diagnosis here. Check bindings, or another
+  content-derived fact, to decide whether an upload landed.
+
 ## v1.2.1 -- 2026-07-18
 
 **Provision survives an adopted D1 (#105).** PATCH: the hosted-tier finale hit a hard failure on
