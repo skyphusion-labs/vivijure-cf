@@ -299,11 +299,23 @@ function normalizeList<T>(payload: unknown, key: string): T[] {
  */
 export async function preflightQuota(
   client: RunPodClient,
+  slug?: string,
   plan: PlannedEndpoint[] = PROVISION_PLAN,
 ): Promise<QuotaReading> {
-  const needed = planWorkerTotal(plan);
   const existing = await client.listEndpoints();
   const existingSum = existing.reduce((n, e) => n + (e.workersMax ?? 0), 0);
+  // Only NET-NEW endpoints add workers. Endpoints that already exist by name will be ADOPTED
+  // (idempotent-by-name), so their workers are ALREADY in existingSum; counting the whole plan on
+  // top double-counts a re-provision's OWN endpoints and permanently blocks retry after a partial
+  // failure -- the tenant's own endpoints counting against them (#40 e2e burn). Without a slug (the
+  // unit path) there is nothing to match against, so the whole plan is treated as net-new.
+  const existingNames = new Set(existing.map((e) => e.name));
+  const needed =
+    slug === undefined
+      ? planWorkerTotal(plan)
+      : plan
+          .filter((pl) => !existingNames.has(tenantEndpointName(slug, pl.key)))
+          .reduce((n, pl) => n + pl.maxWorkers, 0);
 
   // Probe with a deliberately impossible workersMax so RunPod tells us the real quota in its
   // refusal. Nothing is created: the request is rejected at validation, before any resource exists.
@@ -384,7 +396,7 @@ export async function createTenantEndpoints(
   // Fit-or-fail BEFORE creating anything: a half-provisioned RunPod account is the tenant's mess to
   // clean up, on their bill, so we refuse early with RunPod's real numbers instead of discovering
   // the wall on endpoint 3 of 4.
-  const quota = await preflightQuota(client, plan);
+  const quota = await preflightQuota(client, slug, plan);
   if (!quota.fits) throw new RunPodError("quota.preflight", 400, quotaGuidance(quota, plan));
 
   const [templates, endpoints] = await Promise.all([client.listTemplates(), client.listEndpoints()]);

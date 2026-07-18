@@ -129,6 +129,24 @@ describe("preflightQuota", () => {
       fits: false, refusal: "quota_too_small",
     });
   });
+
+  it("does NOT double-count a re-provision's OWN endpoints (existing-by-name are adopted, not re-added)", async () => {
+    // A prior partial provision left the tenant's 4 endpoints (5 workers) on the account, plus an
+    // unrelated 3-worker endpoint = 8 used, quota 10. Counting the whole plan on top (8 + 5 = 13)
+    // would exceed quota and permanently block the retry; adopt-by-name means net-new is 0.
+    const existing = [
+      { id: "b", name: tenantEndpointName("hero", "backend"), workersMax: 2 },
+      { id: "u", name: tenantEndpointName("hero", "upscale"), workersMax: 1 },
+      { id: "l", name: tenantEndpointName("hero", "lipsync"), workersMax: 1 },
+      { id: "a", name: tenantEndpointName("hero", "audio-upscale"), workersMax: 1 },
+      { id: "x", name: "someone-else", workersMax: 3 },
+    ];
+    const { fetchImpl } = fakeRunPod({ endpoints: existing });
+    // No slug: the whole plan is net-new (8 + 5 = 13 > 10) -- the old double-count.
+    expect((await preflightQuota(new RunPodClient("rpa_k", fetchImpl))).fits).toBe(false);
+    // With the slug: the tenant's own 4 endpoints adopt (net-new 0), 8 + 0 = 8 <= 10 -> fits.
+    expect((await preflightQuota(new RunPodClient("rpa_k", fetchImpl), "hero")).fits).toBe(true);
+  });
 });
 
 describe("createTenantEndpoints", () => {
