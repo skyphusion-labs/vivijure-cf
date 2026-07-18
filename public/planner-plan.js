@@ -23,7 +23,7 @@ function selectPlanningModel(value) {
   const sel = $("#planner-model");
   if (!sel || !value) return;
   const want = String(value);
-  const ids = realOptionIds(sel);
+  const ids = modelCatalog.realOptionIds(sel);
   // The catalog is ALREADY loaded (the common case: switching projects mid-session).
   // Resolve NOW rather than stashing: a stash would leave the picker blank and silent
   // until the next loadModels(), which in normal use may never come.
@@ -37,26 +37,16 @@ function selectPlanningModel(value) {
   sel.value = want;
 }
 
-// The selectable model ids currently in the picker: real projected models only, never the
-// "loading..." / "no planning models available" placeholders (those carry an empty value).
-function realOptionIds(sel) {
-  return Array.from(sel.options).map((o) => String(o.value)).filter(Boolean);
-}
-
-// Apply a desired model id against a known-good id list. A id the catalog no longer serves
-// drops VISIBLY -- the picker lands on a real model and says what was lost -- instead of
-// leaving the user with a blank picker and a preference they believe is still in effect.
+// Apply a desired model id against a known-good id list. The MECHANICS (drop visibly, land
+// on a real model, clear the stash) live in modelCatalog.applyChoice because every picker
+// needs them identically, cf#129; only the planner wording belongs here.
 function applyModelChoice(sel, want, ids) {
-  delete sel.dataset.pendingValue;
-  if (ids.includes(want)) {
-    sel.value = want;
-    return;
-  }
-  sel.value = ids[0];
-  setStatus(
-    "saved planning model \"" + want + "\" is no longer available; using \"" + sel.value + "\" instead",
-    "error",
-  );
+  modelCatalog.applyChoice(sel, want, ids, function (lost, used) {
+    setStatus(
+      "saved planning model \"" + lost + "\" is no longer available; using \"" + used + "\" instead",
+      "error",
+    );
+  });
 }
 
 async function loadModels() {
@@ -64,44 +54,29 @@ async function loadModels() {
   // Desired value, in priority order: a restore that ran before the options existed
   // (data-pending-value), then the current selection (preserved across re-loads).
   // BOTH are captured BEFORE the loading placeholder replaces the options -- reading
-  // `prev` after that wipe would only ever see the placeholder, silently losing the
-  // user's current pick on every refresh.
+  // prev after that wipe would only ever see the placeholder, silently losing the
+  // current pick on every refresh.
   const pending = select.dataset.pendingValue || "";
   const prev = select.value;
-  select.disabled = true;
-  select.innerHTML = '<option>loading models...</option>';
+  modelCatalog.renderLoading(select);
   try {
     const resp = await fetch("/api/storyboard/models");
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
-    select.innerHTML = "";
     if (!Array.isArray(data.models) || data.models.length === 0) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.disabled = true;
-      opt.textContent = "no planning models available";
-      select.appendChild(opt);
-      // Keep the restore pending: installing a plan.enhance module and reloading
-      // should still land on the user's saved choice.
+      // Honest fail: say what is missing rather than showing a blank picker. The restore
+      // stays pending on purpose, so installing a plan.enhance module and reloading still
+      // lands on the saved choice.
+      modelCatalog.renderEmpty(select, "planning models");
       return;
     }
-    for (const model of data.models) {
-      const opt = document.createElement("option");
-      opt.value = model.id;
-      opt.textContent = model.label || model.id;
-      select.appendChild(opt);
-    }
-    select.disabled = false;
+    const ids = modelCatalog.renderRows(select, data.models);
     // ONE resolver shared with selectPlanningModel, so an early restore and a mid-session
     // restore cannot drift apart in what they do with a stale id.
-    const ids = data.models.map((m) => String(m.id));
     if (pending) applyModelChoice(select, pending, ids);
     else if (ids.includes(prev)) select.value = prev;
   } catch (err) {
-    select.innerHTML = "";
-    const opt = document.createElement("option");
-    opt.textContent = "failed to load models: " + err.message;
-    select.appendChild(opt);
+    modelCatalog.renderError(select, err.message);
   }
 }
 
