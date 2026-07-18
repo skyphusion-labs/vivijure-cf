@@ -91,13 +91,16 @@
       || s.includes("has been flagged")
       || s.includes("choose another prompt");
   }
-  // v0.132.2: FLUX-2's safety checker deterministically over-flags some fine
-  // inputs (masked / glowing-red-eyes characters) that Google's Nano Banana Pro
-  // renders without complaint (verified: same portrait, flux-2-klein-9b +
-  // flux-2-dev both 3030, nano-banana-pro 200). When the per-call retries
-  // exhaust on a flag, fall back to this model once before surfacing the error,
-  // so a borderline character does not dead-end on the model picker.
-  const FLAG_FALLBACK_MODEL = "google/nano-banana-pro";
+  // cf#129: a hardcoded FLAG_FALLBACK_MODEL used to live here and silently re-issued
+  // a flagged request against a different model. It is gone, for two reasons: it hid
+  // from the user which model actually rendered their image, and it hardcoded a model
+  // id into the panel, which is the exact coupling this sprint removes.
+  //
+  // A catalog-derived replacement would need a module-declared "tolerant of borderline
+  // inputs" capability to select on. No such capability exists today (image rows carry
+  // an empty capabilities array), so rather than invent one, exhaustion on a safety
+  // flag now surfaces VISIBLY and names what happened. Choosing another model is the
+  // user decision, made knowingly.
 
   function postChat(payload) {
     return api("/api/chat", {
@@ -118,14 +121,15 @@
         if (!isFlaggedError(e && e.message)) throw e;
       }
     }
-    // Retries exhausted on a safety flag: try the more permissive model once,
-    // unless that is already the model we were using.
-    if (isFlaggedError(lastErr && lastErr.message) && payload.model !== FLAG_FALLBACK_MODEL) {
-      try {
-        return await postChat({ ...payload, model: FLAG_FALLBACK_MODEL });
-      } catch (e) {
-        lastErr = e;
-      }
+    // Retries exhausted on a safety flag. Say so plainly and name the model that
+    // refused, instead of silently swapping in a different one (cf#129). A silent
+    // substitution tells the user their render succeeded while a model they never
+    // chose actually produced it.
+    if (isFlaggedError(lastErr && lastErr.message)) {
+      throw new Error(
+        "\"" + payload.model + "\" flagged this input " + max + " times and will not render it. "
+        + "Pick a different image model and try again.",
+      );
     }
     throw lastErr;
   }
@@ -603,33 +607,55 @@
 
   // ---------- v0.47.0: portrait + training-set generation via /api/chat ----------
 
-  // v0.65.0: The training-set generator needs a model that identity-conditions
-  // on the saved portrait via the attachments path. Empirically (verified
-  // against /api/chat output) the multi-reference behavior is shared across
-  // the FLUX 2 family - both Dev AND the two Klein variants accept the
-  // attached portrait and produce output that locks the subject's identity
-  // (hair color, skin tone, eyes, clothing). gpt-image-1.5 accepts the
-  // attachment but IGNORES it for identity, so it is not surfaced here.
-  // v0.135.11: nano-banana-pro is now offered too. The earlier "ignores
-  // identity" verdict was drawn from photoreal testing; for ANIME subjects it
-  // locks identity well (confirmed in use), and it does not over-flag on
-  // content the way FLUX 2 does (the 3030 path). FLUX Klein-9b stays the
-  // default (safe for photoreal too); pick nano-banana for anime characters.
+  // v0.65.0 / v0.135.11 EMPIRICAL NOTES, kept because they are hard-won and still true.
+  // They are GUIDANCE for whoever picks a model now, not a hardcoded selection:
+  // the training-set generator needs a model that identity-conditions on the saved
+  // portrait via the attachments path. Verified against /api/chat output, the
+  // multi-reference behavior is shared across the FLUX 2 family (Dev and both Klein
+  // variants): each accepts the attached portrait and locks the subject identity
+  // (hair color, skin tone, eyes, clothing). gpt-image-1.5 accepts the attachment but
+  // IGNORES it for identity. nano-banana-pro locks identity well for ANIME subjects
+  // and does not over-flag the way FLUX 2 does (the 3030 path).
   //
-  // Pre-v0.65 this was hardcoded to flux-2-dev based on a stale catalog
-  // comment claiming Dev was the only multi-reference model. That cost us
-  // the ability to fall back to a Klein variant when the FLUX 2 Dev gateway
-  // was flaking with 502s, which is exactly what happened during the
-  // post-v0.60 smoke test. The picker defaults to Klein-9b (frontier
-  // quality, better gateway availability lately) but the user can switch
-  // back to Dev or down to the faster Klein-4b.
-  const TRAINING_MODELS = [
-    { id: "@cf/black-forest-labs/flux-2-klein-9b", label: "FLUX 2 Klein 9B (frontier, recommended)" },
-    { id: "google/nano-banana-pro",                label: "Nano Banana Pro (Google; strong anime identity, no over-flag)" },
-    { id: "@cf/black-forest-labs/flux-2-klein-4b", label: "FLUX 2 Klein 4B (faster)" },
-    { id: "@cf/black-forest-labs/flux-2-dev",       label: "FLUX 2 Dev (original multi-reference)" },
-  ];
-  const DEFAULT_TRAINING_MODEL_ID = TRAINING_MODELS[0].id;
+  // cf#129: the LIST is no longer hardcoded here. A TRAINING_MODELS array used to sit
+  // at this spot and fed all three image pickers, which made the panel a THIRD catalog
+  // disagreeing with both hosts. The pickers now render the host catalog from
+  // GET /api/models filtered on type==="image", so installing or removing an image
+  // module changes the panel with no panel edit. There is no hardcoded default either:
+  // the first row the host returns is the default.
+  const imageCatalog = (function () {
+    let pending = null;
+    return function load() {
+      if (!pending) {
+        pending = api("/api/models")
+          .then((data) => (Array.isArray(data.models) ? data.models : []).filter((m) => m.type === "image"))
+          // A failed load must stay RETRYABLE: drop the cached promise so the next
+          // picker to open tries again instead of inheriting the failure forever.
+          .catch((err) => { pending = null; throw err; });
+      }
+      return pending;
+    };
+  })();
+
+  // Hydrate an image-model picker from the projected catalog. Shared by all three
+  // image pickers so they cannot drift apart, and so their loading / empty / error
+  // states come from the SAME generic path the planner picker uses.
+  //
+  // The re-entry guard tests for REAL rows, not for any options at all: a picker left
+  // showing an honestly-empty or failed placeholder must be allowed to try again,
+  // whereas one already holding real rows must not refetch on every open.
+  async function hydrateImagePicker(selector) {
+    const sel = $(selector);
+    if (!sel || modelCatalog.realOptionIds(sel).length > 0) return;
+    modelCatalog.renderLoading(sel);
+    try {
+      const rows = await imageCatalog();
+      if (rows.length === 0) modelCatalog.renderEmpty(sel, "image models");
+      else modelCatalog.renderRows(sel, rows);
+    } catch (err) {
+      modelCatalog.renderError(sel, err.message);
+    }
+  }
   const FLUX2_REF_MAX_DIM = 512;
 
   // 10 training templates spanning orthogonal axes: framing (close-up,
@@ -716,23 +742,19 @@
     return downscaleToDataUrl(blob, FLUX2_REF_MAX_DIM);
   }
 
-  // v0.65.0: populate the training-set model dropdown once at page load.
-  // Pure DOM init - no network fetch needed; the list is static.
-  function ensureTrainingModelOptions() {
-    const sel = $("#cast-training-model");
-    if (!sel || sel.options.length > 0) return;
-    for (const m of TRAINING_MODELS) {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = m.label;
-      sel.appendChild(opt);
-    }
-    sel.value = DEFAULT_TRAINING_MODEL_ID;
+  // v0.65.0: populate the training-set model dropdown. cf#129: this is now a fetch of
+  // the projected host catalog, not a static list, so the comment that used to promise
+  // "no network fetch needed" no longer holds.
+  async function ensureTrainingModelOptions() {
+    await hydrateImagePicker("#cast-training-model");
   }
 
+  // No hardcoded fallback id (cf#129): if the catalog is empty the answer is honestly
+  // "nothing selected", and callers gate on that rather than silently substituting a
+  // model the host may not even serve.
   function getSelectedTrainingModelId() {
     const sel = $("#cast-training-model");
-    return (sel && sel.value) || DEFAULT_TRAINING_MODEL_ID;
+    return (sel && sel.value) || "";
   }
 
   // v0.135.13: per-character training art-style, remembered in localStorage
@@ -756,24 +778,10 @@
     try { localStorage.setItem(TRAINING_STYLE_LS + state.selectedId, el.value.trim()); } catch (_) {}
   }
 
-  // Portrait-gen shares the same hardcoded image-gen catalog as training (TRAINING_MODELS).
-  // KNOWN GAP, tracked by cf#129: this catalog is NOT projected from the installed modules,
-  // so these options stay populated even when no image-capable module is installed and the
-  // user only learns the pick is unservable at POST /api/chat time.
-  // Host note: the previous comment here claimed GET /api/models 404s. That was true for
-  // vivijure-cf only (no such route); vivijure-local DOES serve it, hardcoded, from
-  // src/image-models.ts. Same panel bytes ship against both hosts, so do not re-assert a
-  // per-host claim as if it were universal.
+  // Portrait-gen renders the SAME projected image catalog as the training-set picker,
+  // via the one shared hydrator, so the two cannot drift apart.
   async function ensurePortraitGenModelOptions() {
-    const sel = $("#cast-portrait-gen-model");
-    if (sel.options.length > 0) return;
-    for (const m of TRAINING_MODELS) {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = m.label || m.id;
-      sel.appendChild(opt);
-    }
-    sel.value = DEFAULT_TRAINING_MODEL_ID;
+    await hydrateImagePicker("#cast-portrait-gen-model");
   }
 
   // Portrait gen state (one in-flight at a time per character).
@@ -959,6 +967,17 @@
       : "the saved portrait";
     if (!window.confirm(`generate ${TRAINING_PROMPTS.length} training images using ${refLabel} as the reference? this takes about 2-4 minutes -- keep this tab open while it runs.`)) return;
 
+    // cf#129: with no image-capable module installed the picker is honestly empty, so
+    // there is no model to render with. Say so here rather than POSTing an empty model
+    // id and surfacing a backend validation error the user cannot act on.
+    const trainingModel = getSelectedTrainingModelId();
+    if (!trainingModel) {
+      setTrainingStatus(
+        "no image models available -- install an image module to generate a training set.",
+        true,
+      );
+      return;
+    }
     training.busy = true;
     training.abort = false;
     $("#cast-training-btn").disabled = true;
@@ -970,7 +989,7 @@
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          config: { model: getSelectedTrainingModelId(), num_images: TRAINING_PROMPTS.length },
+          config: { model: trainingModel, num_images: TRAINING_PROMPTS.length },
           art_style: getTrainingStyle() || undefined,
           source_keys: useSources ? sourcesToUse.map((s) => s.key) : undefined,
         }),
@@ -1096,15 +1115,7 @@
   }
 
   async function ensureMultiSceneModels() {
-    const sel = $("#cast-multi-model");
-    if (!sel || sel.options.length > 0) return;
-    for (const m of TRAINING_MODELS) {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = m.label;
-      sel.appendChild(opt);
-    }
-    sel.value = DEFAULT_TRAINING_MODEL_ID;
+    await hydrateImagePicker("#cast-multi-model");
     updateMultiSceneGate();
   }
 
@@ -1417,7 +1428,10 @@
   }
 
   // Expose pure helpers for vitest.
-  window.__castHelpers = { encodeRefKey, artifactUrl, composeTrainingPrompt };
+  // cf#129: hydrateImagePicker and getSelectedTrainingModelId are exported too, so the
+  // projected-catalog states (rows / honestly-empty / failed / retry) are asserted against
+  // the REAL shipped file rather than a reimplementation of it in a test.
+  window.__castHelpers = { encodeRefKey, artifactUrl, composeTrainingPrompt, hydrateImagePicker, getSelectedTrainingModelId };
 
   document.addEventListener("DOMContentLoaded", () => {
     wire();
