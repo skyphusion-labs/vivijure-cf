@@ -4,7 +4,8 @@ import type { Env } from "./env";
 import { aiRun, aiLogId } from "./ai-binding";
 import { detectProviderFailure, extractProxiedImageUrl } from "@skyphusion-labs/vivijure-core/output-extract";
 import { buildProxiedImageParams } from "./proxied-image-params";
-import { findModel, type ModelEntry } from "./models";
+import type { ModelEntry } from "./models";
+import { findImageModel } from "./image-models";
 import { base64ToBytes, parseDataUrl } from "./utils";
 import { generateOpenAIImage } from "./providers/openai-image";
 import { putChatArtifact, type OutputArtifact } from "./chat-artifacts";
@@ -166,7 +167,7 @@ async function generateImageBytes(
 }
 
 export async function chatImage(env: Env, args: ChatImageArgs): Promise<ChatImageResult> {
-  const model = findModel(args.model);
+  const model = findImageModel(args.model);
   if (!model || model.type !== "image") {
     return { ok: false, error: `model "${args.model}" is not an image model`, model: args.model };
   }
