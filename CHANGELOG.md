@@ -3,7 +3,7 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## [Unreleased]
+## v1.2.0 -- 2026-07-18
 
 - **Tenant render-module provisioning (cf#99): the studio-to-endpoint bridge.** A provisioned
   tenant came up live but with ZERO render modules (`/api/modules/installed` empty, renders
