@@ -7,8 +7,34 @@
 
 // ---------- Model picker hydration ----------
 
+// cf#62: select a planning model robustly regardless of whether the projected
+// <option>s exist yet. Mirrors plannerRenderConfig.selectTier: set .value (effective
+// if the options are built) AND stash the desired value so loadModels honors it once
+// they are. Every restore path (session stash, project prefs) goes through here
+// instead of assigning .value directly.
+//
+// Why this exists: the catalog is PROJECTED from the installed plan.enhance modules,
+// so it arrives asynchronously and its contents can change between sessions. A bare
+// `select.value = savedId` loses in two ways -- it is dropped entirely when it runs
+// before the options are built (a race against loadModels), and it silently blanks
+// the picker when the saved id is no longer in the catalog (a module uninstalled, an
+// enum edited, a third-party module swapped).
+function selectPlanningModel(value) {
+  const sel = $("#planner-model");
+  if (!sel || !value) return;
+  sel.dataset.pendingValue = String(value);
+  sel.value = String(value);
+}
+
 async function loadModels() {
   const select = $("#planner-model");
+  // Desired value, in priority order: a restore that ran before the options existed
+  // (data-pending-value), then the current selection (preserved across re-loads).
+  // BOTH are captured BEFORE the loading placeholder replaces the options -- reading
+  // `prev` after that wipe would only ever see the placeholder, silently losing the
+  // user's current pick on every refresh.
+  const pending = select.dataset.pendingValue || "";
+  const prev = select.value;
   select.disabled = true;
   select.innerHTML = '<option>loading models...</option>';
   try {
@@ -18,8 +44,12 @@ async function loadModels() {
     select.innerHTML = "";
     if (!Array.isArray(data.models) || data.models.length === 0) {
       const opt = document.createElement("option");
+      opt.value = "";
+      opt.disabled = true;
       opt.textContent = "no planning models available";
       select.appendChild(opt);
+      // Keep the restore pending: installing a plan.enhance module and reloading
+      // should still land on the user's saved choice.
       return;
     }
     for (const model of data.models) {
@@ -29,6 +59,20 @@ async function loadModels() {
       select.appendChild(opt);
     }
     select.disabled = false;
+    const ids = data.models.map((m) => String(m.id));
+    const want = ids.includes(pending) ? pending : ids.includes(prev) ? prev : "";
+    if (want) select.value = want;
+    // A saved model that the catalog no longer serves drops VISIBLY, never silently:
+    // the picker falls back to the first available model and says why, so the user is
+    // not left believing a stale preference is still in effect.
+    if (pending && !ids.includes(pending)) {
+      setStatus(
+        "saved planning model \"" + pending + "\" is no longer available; using \""
+          + select.value + "\" instead",
+        "error",
+      );
+    }
+    delete select.dataset.pendingValue;
   } catch (err) {
     select.innerHTML = "";
     const opt = document.createElement("option");
