@@ -3,7 +3,10 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## [Unreleased]
+## v1.2.0 -- 2026-07-18
+
+**The hosted render bridge (#99).** MINOR: the last gap from the hosted-tier e2e burn -- a
+provisioned tenant now comes up with working render modules, not an empty catalog.
 
 - **Tenant render-module provisioning (cf#99): the studio-to-endpoint bridge.** A provisioned
   tenant came up live but with ZERO render modules (`/api/modules/installed` empty, renders
