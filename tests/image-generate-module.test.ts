@@ -14,6 +14,23 @@ import { base64ToBytes, sniffImageMime } from "../modules/image-generate/src/ima
 // A 1x1 PNG, so the bytes that come back are a real image rather than a placeholder string.
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
+/** Did any recorded fetch go to a given HOST?
+ *
+ *  Parses and compares the hostname EXACTLY rather than substring-matching the URL. A substring
+ *  check is an assertion that can pass on the wrong thing -- "api.openai.com" appears in
+ *  https://evil-api.openai.com.attacker.dev/ and in a query string -- which is the same
+ *  assert-exact-values rule this suite applies everywhere else, and is what CodeQL flags as
+ *  js/incomplete-url-substring-sanitization. A malformed URL is NOT that host. */
+function calledHost(calls: Array<unknown[]>, host: string): boolean {
+  return calls.some((c) => {
+    try {
+      return new URL(String(c[0])).hostname === host;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function envWith(run: (model: string, params: unknown, opts?: unknown) => Promise<unknown>) {
   return { AI: { run }, GATEWAY_ID: "vivijure" };
 }
@@ -52,6 +69,25 @@ describe("image-generate manifest", () => {
 // resolve them at all. For an OPTIONAL key that is a trap: a non-empty placeholder reads as
 // "configured", so the module would take the BYOK path with a garbage credential and hard-fail,
 // instead of degrading to the proxied path. These pin the placeholder as ABSENT.
+// Pins the helper itself. CodeQL flagged the substring version (js/incomplete-url-substring-
+// sanitization); this proves the replacement is genuinely STRICTER rather than merely quieter --
+// the lookalike host below is exactly what the old `.includes("api.openai.com")` would have
+// accepted, which would have made the BYOK assertions pass on the wrong host.
+describe("calledHost matches the host EXACTLY", () => {
+  it("matches the real host", () => {
+    expect(calledHost([["https://api.openai.com/v1/images/generations"]], "api.openai.com")).toBe(true);
+  });
+
+  it("REJECTS a lookalike the substring check would have accepted", () => {
+    expect(calledHost([["https://evil-api.openai.com.attacker.dev/x"]], "api.openai.com")).toBe(false);
+    expect(calledHost([["https://attacker.dev/?next=api.openai.com"]], "api.openai.com")).toBe(false);
+  });
+
+  it("treats a malformed URL as not-that-host rather than throwing", () => {
+    expect(calledHost([["not a url"]], "api.openai.com")).toBe(false);
+  });
+});
+
 describe("operator placeholder is treated as an unset secret", () => {
   const PLACEHOLDER = "REPLACE_ME__vivijure-deploy-operator-secret";
 
@@ -73,8 +109,7 @@ describe("operator placeholder is treated as an unset secret", () => {
     });
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
     expect(seen).toEqual(["openai/gpt-image-1.5"]);
-    const calledOpenAI = fetchSpy.mock.calls.some((c) => String(c[0]).includes("api.openai.com"));
-    expect(calledOpenAI).toBe(false);
+    expect(calledHost(fetchSpy.mock.calls, "api.openai.com")).toBe(false);
     vi.unstubAllGlobals();
   });
 
@@ -94,8 +129,7 @@ describe("operator placeholder is treated as an unset secret", () => {
       input: { prompt: "x" },
       config: { model: "openai/gpt-image-1.5" },
     });
-    const calledOpenAI = fetchSpy.mock.calls.some((c) => String(c[0]).includes("api.openai.com"));
-    expect(calledOpenAI).toBe(true);
+    expect(calledHost(fetchSpy.mock.calls, "api.openai.com")).toBe(true);
     vi.unstubAllGlobals();
   });
 });
