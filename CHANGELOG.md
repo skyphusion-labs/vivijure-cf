@@ -3,7 +3,7 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## v1.6.0 -- 2026-07-18
 
 MINOR: the module contract gains a credential-readiness endpoint, and stops lying about a credential
 that is configured but not yet served (cf#114, a launch gate under cf#40).
