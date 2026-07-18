@@ -45,6 +45,7 @@ function fakeCf(over: Partial<Record<string, unknown>> = {}) {
       { type: "d1", name: "DB" },
       { type: "r2_bucket", name: "R2_RENDERS" },
       { type: "plain_text", name: "AUTH_MODE" },
+      { type: "ratelimit", name: "SPEND_RATE_LIMITER" },
       { type: "plain_text", name: "RUNPOD_ENDPOINT_ID" },
       { type: "plain_text", name: "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID" },
     ]),
@@ -165,6 +166,9 @@ describe("runProvisionJob", () => {
     // The studio auth token is a SECRET on the tenant worker.
     expect(byName.get("STUDIO_API_TOKEN")?.type).toBe("secret_text");
     const tokenValue = byName.get("STUDIO_API_TOKEN")!.text!;
+    // The spend limiter must be BOUND or the studio fail-closes every render (503). Parity with
+    // self-host: 30 req / 60s.
+    expect(byName.get("SPEND_RATE_LIMITER")).toMatchObject({ type: "ratelimit", simple: { limit: 30, period: 60 } });
 
     // ...and the SAME value is persisted control-plane-side, ENCRYPTED (never plaintext at rest).
     const enc = store.tenants.get(t.id)!.studio_token_enc!;

@@ -119,6 +119,14 @@ export const tenantD1Name = (slug: string) => `vivijure-tenant-${slug}`;
 export const tenantBucketName = (slug: string) => `vivijure-tenant-${slug}`;
 export const tenantR2TokenName = (slug: string) => `vivijure-tenant-${slug}-r2`;
 
+/**
+ * The Workers Rate Limiting namespace the tenant spend limiter binds to. Shared across tenant
+ * workers (the limiter keys by client IP, so a shared namespace still throttles per-IP); distinct
+ * from the control plane's own CP_RATE_LIMIT namespace. Self-host uses an operator-set id; a fixed
+ * platform id is the hosted equivalent.
+ */
+const SPEND_RATELIMIT_NAMESPACE = "3001";
+
 export class ProvisionFailure extends Error {
   constructor(
     readonly step: ProvisionStep,
@@ -249,7 +257,16 @@ export async function runProvisionJob(
         // AUTH_MODE=token requires this; the dispatcher injects it for the owner and the studio
         // fail-closed-denies everyone else.
         { type: "secret_text", name: "STUDIO_API_TOKEN", text: studioApiToken },
-        // Optional per-tenant daily spend ceiling; omitted -> the studio's own default applies.
+        // The studio fail-CLOSES renders when SPEND_RATE_LIMITER is unbound; bind it so the tenant
+        // can render, matching self-host's posture exactly (30 req / 60s, fail-closed default).
+        {
+          type: "ratelimit",
+          name: "SPEND_RATE_LIMITER",
+          namespace_id: SPEND_RATELIMIT_NAMESPACE,
+          simple: { limit: 30, period: 60 },
+        },
+        // Per-tenant daily spend ceiling (the primary cost cap, DB-enforced fail-closed). Always set
+        // -- a hosted tenant without a ceiling has no cost bound. Operator-tunable via env.
         ...(deps.spendDailyCeiling
           ? [{ type: "plain_text" as const, name: "SPEND_DAILY_CEILING", text: deps.spendDailyCeiling }]
           : []),
@@ -265,7 +282,7 @@ export async function runProvisionJob(
     const script = deps.tenantScriptName(tenant.slug);
     const bindings = await deps.cf.getScriptBindings(deps.namespace, script);
     const names = new Set(bindings.map((b) => b.name));
-    const requiredBindings = ["DB", "R2_RENDERS", "AUTH_MODE", "ASSETS", ...endpoints.map((e) => e.endpointVar)];
+    const requiredBindings = ["DB", "R2_RENDERS", "AUTH_MODE", "ASSETS", "SPEND_RATE_LIMITER", ...endpoints.map((e) => e.endpointVar)];
     for (const required of requiredBindings) {
       if (!names.has(required)) {
         throw new ProvisionFailure("verify", `tenant worker is missing the ${required} binding after upload`);

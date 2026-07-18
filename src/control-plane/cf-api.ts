@@ -60,7 +60,24 @@ export interface AssetsBinding {
   type: "assets";
   name: string;
 }
-export type WorkerBinding = D1Binding | R2Binding | PlainTextBinding | SecretTextBinding | AssetsBinding;
+/**
+ * A Workers Rate Limiting binding. The studio arms its spend limiter on env.SPEND_RATE_LIMITER and
+ * fail-CLOSES when it is unbound (renders 503), so a tenant needs it bound to render at all --
+ * matching self-host, whose wrangler binds SPEND_RATE_LIMITER at 30 req / 60s (#40 e2e burn).
+ */
+export interface RatelimitBinding {
+  type: "ratelimit";
+  name: string;
+  namespace_id: string;
+  simple: { limit: number; period: number };
+}
+export type WorkerBinding =
+  | D1Binding
+  | R2Binding
+  | PlainTextBinding
+  | SecretTextBinding
+  | AssetsBinding
+  | RatelimitBinding;
 
 /** An asset in the upload manifest: the path plus a 32-hex hash and byte size. */
 export interface AssetManifestEntry {
