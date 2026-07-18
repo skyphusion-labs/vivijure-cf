@@ -52,8 +52,8 @@ import {
 import { runDemoChat, DEFAULT_DEMO_CHAT_CAPS, type DemoChatCaps, type DemoChatModel } from "./demo-chat";
 import { isSpendRoute, enforceSpendLimit } from "./rate-limit";
 import { applyResponseSecurity } from "./asset-response";
-import { chatImage, type ChatImageArgs } from "./chat-image";
-import { findImageModel, IMAGE_MODELS } from "./image-models";
+import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
+import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import {
   insertRender, updateRenderFromView, getRenderByIdForUser, listRendersForUser, DEFAULT_RENDERS_LIMIT, listUserTags,
@@ -1002,9 +1002,11 @@ const hRefine: Handler = async (req, env) => {
 const hChat: Handler = async (req, env) => {
   const a = await readBody<ChatCompleteArgs & ChatImageArgs>(req);
   if (!a.model || !a.user_input) throw badRequest("model and user_input required");
-  const modelEntry = findImageModel(a.model);
-  if (modelEntry?.type === "image") {
-    const r = await chatImage(env, a);
+  // Image or text? Ask the INSTALLED modules, not a hardcoded catalog: an id declared by an
+  // image.generate module is an image request, everything else falls through to the text path.
+  const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
+  if (resolveCatalogTarget(modules, "image.generate", a.model)) {
+    const r = await chatImageViaModule(env, modules, a);
     if (!r.ok) return json({ error: r.error, model: r.model }, 502);
     return json({
       model: r.model,
@@ -1326,7 +1328,8 @@ const hAllModels: Handler = async (_req, env) => {
   const modules = await discoverModules(env as unknown as Record<string, unknown>, {
     cacheTtlMs: 60_000,
   });
-  const models = [...planningModelsFromModules(modules), ...IMAGE_MODELS];
+  // BOTH halves are projections now (cf#129 phase 2): the studio hardcodes no model names at all.
+  const models = [...planningModelsFromModules(modules), ...imageModelsFromModules(modules)];
   return json({ models: catalogForDeploy(env, models) });
 };
 const hYaml: Handler = async (req) => {

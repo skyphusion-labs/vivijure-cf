@@ -36,13 +36,18 @@ function wrap(fn: () => Promise<Response>): Promise<Response> {
   });
 }
 
-/** Copy a chat-side artifact (env.R2) into R2_RENDERS under destPrefix.<ext>. */
+/** Copy a chat-side artifact into R2_RENDERS under destPrefix.<ext>.
+ *
+ *  Source is R2_RENDERS as of cf#140: chat artifacts are written to the served bucket now, so
+ *  reading from env.R2 here would look in the bucket they no longer land in. This is the mirror
+ *  image of the original defect and would have broken the accept-portrait path that used to be the
+ *  only part of this flow that worked. */
 export async function copyChatArtifactToRenders(
   env: Env,
   srcKey: string,
   destPrefix: string,
 ): Promise<{ key: string; mime: string }> {
-  const obj = await env.R2.get(srcKey);
+  const obj = await env.R2_RENDERS.get(srcKey);
   if (!obj) throw new HttpError(404, `source artifact not found: ${srcKey}`);
   const mime = obj.httpMetadata?.contentType || "image/png";
   if (!CAST_IMAGE_MIME_RE.test(mime)) {

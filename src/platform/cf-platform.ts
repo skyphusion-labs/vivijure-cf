@@ -46,7 +46,10 @@ export function cfPlatformFromEnv(env: Env): Platform {
   const platform: Platform = {
     db: env.DB,
     renders: cfObjectStoreFromR2(env.R2_RENDERS),
-    chatBucket: cfObjectStoreFromR2(env.R2),
+    // Chat artifacts live in the SERVED bucket as of cf#140, so chatBucket points at the same
+    // binding as renders. env.R2 (the separate chat bucket) is no longer where they land, and
+    // pointing this at it would recreate the write/serve split through the Platform ICD.
+    chatBucket: cfObjectStoreFromR2(env.R2_RENDERS),
     presigner: cfPresignerFromEnv(env),
     secrets: cfSecretStoreFromEnv(env),
     modules,
