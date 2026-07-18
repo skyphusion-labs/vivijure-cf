@@ -79,7 +79,55 @@ backend defect during a parity run.
 
 **Switching scenario means restarting**, which is deliberate: a restart is a fresh isolate, so the
 core's per-isolate module-discovery cache (60s TTL) is cleared too and the catalog change is immediate
-rather than something you wait out and misread as a bug.
+rather than something you wait out and misread as a bug. Stop the previous fleet properly first --
+see below, it is less obvious than it looks.
+
+## Stopping the fleet (read this before switching scenario)
+
+**A quiet port is not a stopped fleet.** `wrangler dev` runs a process TREE: the launcher, an `npm
+exec` wrapper, the wrangler CLI, an esbuild service, and one or more `workerd` processes. Only the
+last of those holds the port. Kill the port-holder and the port frees immediately, the fleet LOOKS
+down -- and the rest of the tree is still alive. Observed while running the cf#62 parity gate: three
+scenario switches, each stopping "the studio" by its port, left **24 orphaned processes**; the next
+launch then collided or bound a stale isolate.
+
+Stop it by PID, from the launch you recorded, not by the port:
+
+```
+# record the pid AT LAUNCH
+nohup env SCENARIO=thirdparty bash .dev-modbound/dev-modbound.sh 8795 > dev.log 2>&1 &
+echo $! > /tmp/studio.pid
+
+# ...and stop the whole tree later
+kill $(cat /tmp/studio.pid)
+```
+
+If you have lost the pid, enumerate by the worktree path and check each one before signalling it:
+
+```
+for p in $(ps -u "$USER" -o pid=); do
+  # brace-group the redirect: a pid that exits between ps and the read would otherwise print
+  # "/proc/<pid>/cmdline: No such file or directory" (2>/dev/null on tr alone does not catch it).
+  args=$( { tr '\0' ' ' < /proc/$p/cmdline; } 2>/dev/null )
+  case "$args" in *"$(pwd)"*) echo "$p: ${args:0:70}" ;; esac
+done
+```
+
+Two hard rules, both learned the expensive way on a crew box:
+
+- **Never `pkill -f`.** A crew box runs many concurrent dev servers and `sudo` wrappers; the pattern
+  you think is specific to your fleet also matches other sessions' command lines, including your own
+  parent shell. Enumerate, print, confirm, then kill by explicit PID.
+- **Confirm ownership before signalling anything.** Check the process user and its `/proc/<pid>/cwd`
+  against YOUR worktree. Another crew member's `wrangler dev` on a neighbouring port looks identical
+  in `ps` output. If it is not provably yours, leave it and say something.
+
+After stopping, verify the tree is actually gone rather than trusting the port:
+
+```
+ss -ltn | grep ":8795 "                       # expect no output
+ps -u "$USER" -o pid=,args= | grep "$(pwd)"   # expect no output
+```
 
 ## What is stubbed, and why
 
