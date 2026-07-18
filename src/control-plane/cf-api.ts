@@ -50,7 +50,17 @@ export interface SecretTextBinding {
   name: string;
   text: string;
 }
-export type WorkerBinding = D1Binding | R2Binding | PlainTextBinding | SecretTextBinding;
+/**
+ * The static-assets binding. A Worker with uploaded assets serves them via env.ASSETS.fetch(); the
+ * binding must be DECLARED for env.ASSETS to exist. Omitting it (while still uploading assets) leaves
+ * env.ASSETS undefined, so the studio's serveStudioAsset threw "Illegal invocation"-class on every
+ * static path -- a hosted-only 1101 the tenant saw at its studio root (#40 e2e burn).
+ */
+export interface AssetsBinding {
+  type: "assets";
+  name: string;
+}
+export type WorkerBinding = D1Binding | R2Binding | PlainTextBinding | SecretTextBinding | AssetsBinding;
 
 /** An asset in the upload manifest: the path plus a 32-hex hash and byte size. */
 export interface AssetManifestEntry {

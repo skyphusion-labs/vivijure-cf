@@ -16,6 +16,7 @@ import { CfApiError } from "../../src/control-plane/cf-api";
 import type { CfApi } from "../../src/control-plane/cf-api";
 import type { Tenant } from "../../src/control-plane/store";
 import { sha256Hex } from "../../src/control-plane/crypto";
+import { decryptStudioToken } from "../../src/control-plane/token-crypto";
 import { MemoryStore, recordingStore } from "./memory-store";
 
 const MIGRATIONS = "CREATE TABLE IF NOT EXISTS projects (id TEXT);";
@@ -39,8 +40,15 @@ function fakeCf(over: Partial<Record<string, unknown>> = {}) {
     uploadUserWorker: vi.fn(async () => void calls.push("uploadUserWorker")),
     deleteUserWorker: vi.fn(async () => void calls.push("deleteUserWorker")),
     putScriptSecret: vi.fn(async () => void calls.push("putScriptSecret")),
-    getScriptBindings: vi.fn(async () => [{ type: "d1", name: "DB" }, { type: "r2_bucket", name: "R2_RENDERS" }, { type: "plain_text", name: "AUTH_MODE" }]),
-    getScriptSecretNames: vi.fn(async () => ["R2_S3_SECRET_ACCESS_KEY", "RUNPOD_API_KEY"]),
+    getScriptBindings: vi.fn(async () => [
+      { type: "assets", name: "ASSETS" },
+      { type: "d1", name: "DB" },
+      { type: "r2_bucket", name: "R2_RENDERS" },
+      { type: "plain_text", name: "AUTH_MODE" },
+      { type: "plain_text", name: "RUNPOD_ENDPOINT_ID" },
+      { type: "plain_text", name: "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID" },
+    ]),
+    getScriptSecretNames: vi.fn(async () => ["R2_S3_SECRET_ACCESS_KEY", "RUNPOD_API_KEY", "STUDIO_API_TOKEN"]),
     createAssetsUploadSession: vi.fn(async () => ({ jwt: "jwt-1", buckets: [] })),
     uploadAssetBucket: vi.fn(async () => ({ jwt: "jwt-final" })),
     ...over,
@@ -49,8 +57,8 @@ function fakeCf(over: Partial<Record<string, unknown>> = {}) {
 }
 
 const ENDPOINTS = [
-  { key: "backend", label: "Render", id: "ep1", name: "n1" },
-  { key: "upscale", label: "Upscale", id: "ep2", name: "n2" },
+  { key: "backend", label: "Render", id: "ep1", name: "n1", endpointVar: "RUNPOD_ENDPOINT_ID" },
+  { key: "upscale", label: "Upscale", id: "ep2", name: "n2", endpointVar: "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID" },
 ];
 
 function deps(over: Partial<ProvisionDeps> = {}): ProvisionDeps {
@@ -73,6 +81,10 @@ function deps(over: Partial<ProvisionDeps> = {}): ProvisionDeps {
     namespace: "vivijure-tenants",
     release: "v1.0.0",
     tenantScriptName: (slug: string) => `tenant-${slug}-studio`,
+    // A valid base64 32-byte key so token-crypto importKey(AES-GCM-256) accepts it.
+    kek: btoa("0123456789abcdef0123456789abcdef"),
+    spendDailyCeiling: null,
+    probeTenantRoot: vi.fn(async () => ({ status: 200 })),
     log: (event, fields) => void logs.push({ event, fields }),
     ...over,
   };
@@ -132,6 +144,42 @@ describe("runProvisionJob", () => {
     };
     const secret = upload.bindings.find((b) => b.name === "R2_S3_SECRET_ACCESS_KEY");
     expect(secret?.text).toBe(r2.secretAccessKey);
+  });
+
+  it("wires ASSETS + the endpoint-id vars + STUDIO_API_TOKEN, and persists the ENCRYPTED token value", async () => {
+    const t = await tenant();
+    const d = deps();
+    const job = await store.createProvisionJob("job_1", t.id, "provision");
+    const res = await runProvisionJob(d, job.id, t, "rpa_keyA", MIGRATIONS);
+    expect(res.ok).toBe(true);
+
+    const upload = (d.cf.uploadUserWorker as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      bindings: { type: string; name: string; text?: string }[];
+    };
+    const byName = new Map(upload.bindings.map((b) => [b.name, b]));
+    // env.ASSETS must be declared or the studio 1101s on every static path.
+    expect(byName.get("ASSETS")?.type).toBe("assets");
+    // Each endpoint id is wired into the var the studio reads it from (spec.endpointVar).
+    expect(byName.get("RUNPOD_ENDPOINT_ID")?.text).toBe("ep1");
+    expect(byName.get("VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID")?.text).toBe("ep2");
+    // The studio auth token is a SECRET on the tenant worker.
+    expect(byName.get("STUDIO_API_TOKEN")?.type).toBe("secret_text");
+    const tokenValue = byName.get("STUDIO_API_TOKEN")!.text!;
+
+    // ...and the SAME value is persisted control-plane-side, ENCRYPTED (never plaintext at rest).
+    const enc = store.tenants.get(t.id)!.studio_token_enc!;
+    expect(enc).toBeTruthy();
+    expect(enc).not.toContain(tokenValue); // ciphertext, not the token
+    expect(await decryptStudioToken(btoa("0123456789abcdef0123456789abcdef"), enc)).toBe(tokenValue);
+  });
+
+  it("FAILS the provision (verify) when the tenant root does not SERVE, even if every binding exists", async () => {
+    const t = await tenant();
+    const d = deps({ probeTenantRoot: vi.fn(async () => ({ status: 502 })) });
+    const job = await store.createProvisionJob("job_1", t.id, "provision");
+    const res = await runProvisionJob(d, job.id, t, "rpa_keyA", MIGRATIONS);
+    expect(res).toMatchObject({ ok: false, step: "verify" });
+    expect(store.tenants.get(t.id)?.status).toBe("failed");
   });
 
   it("NEVER PASSES the transient key A to the store at all, and never logs it", async () => {

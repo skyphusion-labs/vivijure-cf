@@ -25,6 +25,7 @@ import {
   resolveSession,
   sendMagicLink,
   sessionCookie,
+  sessionCookieDomain,
   startSession,
   upsertAccountForVerifiedEmail,
 } from "./auth";
@@ -113,7 +114,7 @@ export async function handle(
         return redirectTo(env, result.reason === "signups_closed" ? "/?error=signups_closed" : "/?error=link_invalid");
       }
       const { token: sessionToken, maxAge } = await startSession(deps.store, result.account.id, deps.now());
-      return redirectTo(env, "/", { "set-cookie": sessionCookie(sessionToken, maxAge) });
+      return redirectTo(env, "/", { "set-cookie": sessionCookie(sessionToken, maxAge, sessionCookieDomain(env.CONTROL_PLANE_HOST)) });
     }
 
     const ssoStart = /^\/auth\/([a-z]+)\/start$/.exec(path);
@@ -124,7 +125,7 @@ export async function handle(
 
     if (request.method === "POST" && path === "/api/auth/logout") {
       await endSession(deps.store, request, deps.now());
-      return new Response(null, { status: 204, headers: { "set-cookie": clearedSessionCookie() } });
+      return new Response(null, { status: 204, headers: { "set-cookie": clearedSessionCookie(sessionCookieDomain(env.CONTROL_PLANE_HOST)) } });
     }
 
     // ---- admin (bearer, not session) ----
@@ -281,7 +282,7 @@ async function finishSso(
   const account = result.account;
 
   const { token, maxAge } = await startSession(deps.store, account.id, deps.now());
-  return redirectTo(env, stateRow.redirect_to ?? "/", { "set-cookie": sessionCookie(token, maxAge) });
+  return redirectTo(env, stateRow.redirect_to ?? "/", { "set-cookie": sessionCookie(token, maxAge, sessionCookieDomain(env.CONTROL_PLANE_HOST)) });
 }
 
 async function me(env: ControlPlaneEnv, deps: ControlPlaneDeps, account: Account): Promise<Response> {

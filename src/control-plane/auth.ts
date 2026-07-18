@@ -10,7 +10,7 @@ export type UpsertResult =
   | { ok: true; account: Account; created: boolean }
   | { ok: false; reason: "unavailable" | "signups_closed" };
 
-export const SESSION_COOKIE = "__Host-vp_session";
+export const SESSION_COOKIE = "__Secure-vp_session";
 export const LOGIN_TTL_MINUTES = 15;
 const SESSION_TTL_DAYS = 30;
 
@@ -29,25 +29,49 @@ export function looksLikeEmail(email: string): boolean {
 }
 
 /**
- * __Host- prefix: the browser enforces Secure + Path=/ + no Domain, so the cookie cannot be planted
- * by a sibling subdomain. That matters here specifically because tenant studios live on sibling
- * subdomains of the same registrable domain (<slug>.studio.vivijure.com).
+ * The control-plane session cookie.
+ *
+ * SCOPE: Domain=<control-plane host>, so the cookie rides to tenant hostnames (<slug>.<host>). That
+ * is REQUIRED by the dispatcher-injected auth model (routing.ts): the control plane runs first on
+ * every *.<host> request and must read its own session there to decide whether to inject the
+ * tenant's studio token. It STRIPS this cookie before the tenant worker runs, so a tenant never sees
+ * a control-plane credential.
+ *
+ * PREFIX TRADEOFF: this uses `__Secure-`, not `__Host-`. `__Host-` forbids a Domain attribute (it is
+ * what makes a cookie host-only) and had prevented a sibling subdomain from planting this cookie; a
+ * Domain-wide cookie reopens that in principle. It is defense-in-depth, not the gate: sessions are
+ * validated against a D1 hash (resolveSession), so a planted cookie must carry a real, unexpired
+ * token an attacker cannot forge, and tenant workers run the trusted studio artifact (not attacker
+ * code), so no sibling origin can Set-Cookie here. Recorded honestly (auth ruling 2026-07-18).
+ *
  * SameSite=Lax (not Strict) is REQUIRED: the magic-link click and the SSO callback are both
  * top-level cross-site GETs, and Strict would drop the cookie on exactly those hops.
  */
-export function sessionCookie(token: string, maxAgeSeconds: number): string {
+export function sessionCookie(token: string, maxAgeSeconds: number, domain?: string): string {
   return [
     `${SESSION_COOKIE}=${token}`,
     "HttpOnly",
     "Secure",
     "SameSite=Lax",
     "Path=/",
+    ...(domain ? [`Domain=${domain}`] : []),
     `Max-Age=${maxAgeSeconds}`,
   ].join("; ");
 }
 
-export function clearedSessionCookie(): string {
-  return sessionCookie("", 0);
+export function clearedSessionCookie(domain?: string): string {
+  return sessionCookie("", 0, domain);
+}
+
+/**
+ * The Domain to scope the session cookie to, or undefined for a host-only cookie. Real hostnames get
+ * a Domain (so the cookie reaches tenant subdomains); localhost / bare IPv4 / port-only hosts (dev,
+ * tests) get none, because Domain is invalid there and host-only is correct anyway.
+ */
+export function sessionCookieDomain(host: string): string | undefined {
+  const h = host.split(":")[0].trim().toLowerCase();
+  if (!h || h === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || !h.includes(".")) return undefined;
+  return h;
 }
 
 export function readSessionCookie(request: Request): string | null {

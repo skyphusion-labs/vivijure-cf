@@ -272,6 +272,10 @@ export class D1Store implements ControlPlaneStore {
       .run();
   }
 
+  async setTenantStudioToken(id: string, encValue: string): Promise<void> {
+    await this.db.prepare("UPDATE tenants SET studio_token_enc = ?2 WHERE id = ?1").bind(id, encValue).run();
+  }
+
   // ---- provision jobs ----
 
   async createProvisionJob(

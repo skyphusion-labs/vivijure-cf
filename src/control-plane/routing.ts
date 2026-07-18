@@ -15,11 +15,13 @@
 // ONE DEFINITION, consumed not duplicated: slug rules come from ./tenants (validateSlug), the tenant
 // record and its lookup come from ./store (getTenantBySlug). This module owns hostnames only.
 
+import { resolveSession, SESSION_COOKIE } from "./auth";
 import type { ControlPlaneDeps } from "./deps";
 import type { ControlPlaneEnv } from "./env";
-import { tenantDomainSuffix } from "./env";
+import { publicOrigin, tenantDomainSuffix } from "./env";
 import type { Tenant } from "./store";
 import { validateSlug } from "./tenants";
+import { decryptStudioToken } from "./token-crypto";
 
 export type HostRoute =
   /** Not a tenant hostname. The control-plane router owns it (front door, and localhost in dev). */
@@ -101,6 +103,40 @@ export function freshRequest(request: Request): Request {
   return new Request(request.url, init as RequestInit);
 }
 
+function wantsHtml(request: Request): boolean {
+  return request.method === "GET" && (request.headers.get("accept") ?? "").includes("text/html");
+}
+
+/**
+ * A dispatch Request with the control-plane session cookie STRIPPED and (for the owner) the tenant
+ * studio token injected as a Bearer. The tenant worker never sees a control-plane credential; its
+ * auth is exactly the injected token. Same fresh-Request/duplex handling as freshRequest (the 1042
+ * fix), plus the cookie strip and header injection.
+ */
+export function dispatchRequest(request: Request, injectedToken: string | null): Request {
+  const headers = new Headers(request.headers);
+  stripSessionCookie(headers);
+  if (injectedToken) headers.set("authorization", `Bearer ${injectedToken}`);
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  const init: RequestInit & { duplex?: "half" } = { method: request.method, headers, redirect: "manual" };
+  if (hasBody) {
+    init.body = request.body;
+    init.duplex = "half";
+  }
+  return new Request(request.url, init as RequestInit);
+}
+
+function stripSessionCookie(headers: Headers): void {
+  const raw = headers.get("cookie");
+  if (!raw) return;
+  const kept = raw
+    .split(";")
+    .map((c) => c.trim())
+    .filter((c) => c && !c.startsWith(`${SESSION_COOKIE}=`));
+  if (kept.length) headers.set("cookie", kept.join("; "));
+  else headers.delete("cookie");
+}
+
 /**
  * Map a tenant record to a refusal, or null when it should be dispatched.
  *
@@ -165,6 +201,31 @@ export async function routeTenantRequest(
     return refusal(503, "This studio is not available.");
   }
 
+  // Dispatcher-injected auth (ruling 2026-07-18), decided BEFORE the dispatch stub is resolved so a
+  // signed-out browser navigation is redirected to sign in and never touches the namespace. The
+  // studio artifact is byte-identical to self-host and runs AUTH_MODE=token; the control plane --
+  // the ONLY reader of its own session cookie, which it sees on every *.<host> request -- injects
+  // the tenant studio token for the OWNER and strips its own cookie before the tenant worker runs.
+  // Non-owners get no token: a browser navigation is bounced to sign in, everything else falls to
+  // the studio's own fail-closed 403.
+  const account = await resolveSession(deps.store, request, deps.now());
+  const isOwner = account !== null && account.id === tenant.account_id;
+
+  let injectedToken: string | null = null;
+  if (isOwner && env.STUDIO_TOKEN_KEK && tenant.studio_token_enc) {
+    try {
+      injectedToken = await decryptStudioToken(env.STUDIO_TOKEN_KEK, tenant.studio_token_enc);
+    } catch {
+      // A token we cannot decrypt is a misconfiguration, never an auth grant. Fall through with no
+      // token; the studio's own fail-closed 403 answers rather than us guessing at access.
+      injectedToken = null;
+    }
+  }
+
+  if (!isOwner && wantsHtml(request)) {
+    return Response.redirect(`${publicOrigin(env)}/`, 302);
+  }
+
   let stub: Fetcher;
   try {
     stub = env.TENANT_DISPATCH.get(tenant.script_name);
@@ -173,5 +234,5 @@ export async function routeTenantRequest(
     return refusal(503, "This studio is not available.");
   }
 
-  return await stub.fetch(freshRequest(request));
+  return await stub.fetch(dispatchRequest(request, injectedToken));
 }

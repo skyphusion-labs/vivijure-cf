@@ -88,7 +88,16 @@ export interface ControlPlaneEnv {
   /** The release-artifact mirror written by studio-release.yml (studio-releases/<tag>/...). */
   STUDIO_RELEASES?: R2Bucket;
 
+  /** Base64 32-byte KEK for AES-256-GCM encryption of per-tenant STUDIO_API_TOKEN values at rest
+   *  (token-crypto.ts). A worker secret, never in D1. Required for provisioning under the
+   *  dispatcher-injected auth model: absent -> provisioning refuses 503, same as this whole block. */
+  STUDIO_TOKEN_KEK?: string;
+
   // ---- optional ----
+
+  /** Per-tenant daily spend ceiling ($) set as the tenant studio's SPEND_DAILY_CEILING at provision
+   *  time. Unset -> the studio's own default applies. A var, not a secret (a public policy number). */
+  TENANT_SPEND_DAILY_CEILING?: string;
 
   /** Throttles the outbound-email amplifier (/api/auth/email/start) and provisioning. */
   CP_RATE_LIMIT?: RateLimiter;

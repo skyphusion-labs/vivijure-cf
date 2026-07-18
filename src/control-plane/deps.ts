@@ -58,8 +58,16 @@ export function productionDeps(env: ControlPlaneEnv): ControlPlaneDeps {
 
 /** Exported for the wiring test: the same construction production takes. */
 export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore): ProvisionerWiring | undefined {
-  const { CF_PROVISIONER_TOKEN, CF_ACCOUNT_ID, DISPATCH_NAMESPACE, STUDIO_RELEASE, STUDIO_RELEASES } = env;
-  if (!CF_PROVISIONER_TOKEN || !CF_ACCOUNT_ID || !DISPATCH_NAMESPACE || !STUDIO_RELEASE || !STUDIO_RELEASES) {
+  const { CF_PROVISIONER_TOKEN, CF_ACCOUNT_ID, DISPATCH_NAMESPACE, STUDIO_RELEASE, STUDIO_RELEASES, STUDIO_TOKEN_KEK } =
+    env;
+  if (
+    !CF_PROVISIONER_TOKEN ||
+    !CF_ACCOUNT_ID ||
+    !DISPATCH_NAMESPACE ||
+    !STUDIO_RELEASE ||
+    !STUDIO_RELEASES ||
+    !STUDIO_TOKEN_KEK
+  ) {
     return undefined;
   }
 
@@ -74,6 +82,18 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
     namespace: DISPATCH_NAMESPACE,
     release: STUDIO_RELEASE,
     tenantScriptName: (slug) => `tenant-${slug}-studio`,
+    kek: STUDIO_TOKEN_KEK,
+    spendDailyCeiling: env.TENANT_SPEND_DAILY_CEILING ?? null,
+    // Prove SERVING at verify: dispatch straight to the tenant worker (bypassing the control-plane
+    // status gate, which 503s a still-provisioning tenant) and report the status. A Bearer is
+    // attached so an auth-gated root also answers; the static root needs none once ASSETS is bound.
+    probeTenantRoot: async (scriptName, studioApiToken) => {
+      const stub = env.TENANT_DISPATCH.get(scriptName);
+      const res = await stub.fetch(
+        new Request("https://tenant.internal/", { headers: { authorization: `Bearer ${studioApiToken}` } }),
+      );
+      return { status: res.status };
+    },
     // Structured, greppable, and NEVER carries a secret (provisioner discipline).
     log: (event, fields) => console.log("provision", { event, ...fields }),
   };
