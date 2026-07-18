@@ -294,7 +294,8 @@ function restoreRenderStagePanel(saved) {
     project: saved.currentProject || "(restored)",
     label: saved.currentLabel || null,
     bundle_key: saved.bundleKey,
-    quality_tier: saved.qualityTier || "final",
+    // cf#62: no invented tier -- an absent one renders honestly as "?" in the row.
+    quality_tier: saved.qualityTier || null,
     status: saved.lastKnownStatus || "IN_PROGRESS",
     output_key: null,
     output: null,

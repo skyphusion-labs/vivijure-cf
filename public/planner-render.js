@@ -160,9 +160,11 @@ async function submitRender() {
 
   const reqBody = {
     bundleKey: bundleState.bundleKey,
-    qualityTier,
     scenes: filmScenes,
   };
+  // cf#62: omit rather than invent when the projection gave us no tiers (the scatter
+  // path below already gates the same way); the core applies its own default.
+  if (qualityTier) reqBody.qualityTier = qualityTier;
   // v0.43.0: buildRenderOverrides returns {} when nothing is set, so
   // gate on key count rather than truthiness; an empty object would
   // otherwise round-trip as `render_overrides: {}` and the Worker

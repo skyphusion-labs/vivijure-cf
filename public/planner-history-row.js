@@ -1490,11 +1490,13 @@ function promptCustomBundle() {
   );
   if (!key || !key.trim()) return;
   const trimmed = key.trim();
+  // cf#62: a pasted bundle has no PRIOR render, so there is no tier to carry forward.
+  // Omitting it leaves the projected picker on whatever the core/user already chose,
+  // instead of silently forcing a hardcoded tier onto a custom render.
   rerunBundle({
     job_id: "(custom)",
     project: deriveProjectFromKey(trimmed),
     bundle_key: trimmed,
-    quality_tier: "final",
     status: "PENDING",
   });
 }

@@ -47,6 +47,13 @@ class El {
     return this.children.length ? this.children.map((c) => c.textContent).join("") : this._text;
   }
   appendChild(c: El) { this.children.push(c); return c; }
+  // The browser clears children on innerHTML = ""; the shipped renderTierPicker relies on
+  // it to rebuild the picker. Model it, or a stale-option bug would pass these tests.
+  set innerHTML(v: string) {
+    if (v === "") { this.children = []; this._clearOptions(); }
+  }
+  get innerHTML(): string { return ""; }
+  _clearOptions() {}
   insertBefore(c: El, ref: El) {
     const i = this.children.indexOf(ref);
     if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
@@ -83,6 +90,7 @@ class SelectEl extends El {
     }
     return c;
   }
+  _clearOptions() { this.options = []; this._selIdx = -1; }
   get selectedIndex() { return this._selIdx; }
   set selectedIndex(i: number) { this._selIdx = i; }
   get value() {
@@ -112,6 +120,7 @@ function makeDocument(roots: El[]) {
 
 // ---- load the real IIFE once ------------------------------------------------
 let mod: {
+  renderTierPicker: (render: unknown) => void;
   renderBackendSelector: (mods: unknown[], wrap: El) => boolean;
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
   collect: () => { motion_backend?: string };
@@ -235,5 +244,88 @@ describe("collectForSubmit (vivijure#501: block submit until a door is chosen)",
     expect(mod.collectForSubmit("", { keyframesOnly: true })).toBeUndefined();
     // and the full-render path with the same state still blocks
     expect(() => mod.collectForSubmit("", { keyframesOnly: false })).toThrow(/pick a render backend/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cf#62 (bare-skeleton doctrine): the quality tiers are CORE-owned. The panel used to
+// carry a hardcoded FALLBACK_RENDER (draft/standard/final + default "final") for the
+// offline / failed-projection case. That is a value the studio must not invent: it
+// drifts from core silently and can offer a tier this deploy does not serve. The picker
+// must now degrade to an honest, unselectable empty so every send path omits the field.
+function tierDoc() {
+  const sel = new SelectEl();
+  sel.id = "planner-quality-tier";
+  (globalThis as Record<string, unknown>).document = {
+    createElement: (t: string) => (t === "select" ? new SelectEl() : new El(t)),
+    getElementById: (id: string) => (id === "planner-quality-tier" ? sel : null),
+    querySelector: () => null,
+    querySelectorAll: () => [] as El[],
+  };
+  return sel;
+}
+
+const PROJECTION = {
+  quality_tiers: [
+    { value: "draft", label: "draft", blurb: "fast" },
+    { value: "final", label: "final", blurb: "production" },
+  ],
+  default_tier: "final",
+};
+
+describe("renderTierPicker (cf#62: tiers are core-owned, never invented in the panel)", () => {
+  it("POSITIVE CONTROL: a real projection builds exactly its tiers and enables the picker", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(PROJECTION);
+    expect(sel.options.map((o) => String(o.value))).toEqual(["draft", "final"]);
+    expect(sel.disabled).toBe(false);
+    expect(sel.value).toBe("final"); // the SERVER-declared default, not a panel constant
+  });
+
+  it("a MISSING projection yields an honest empty picker, not invented tiers", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(undefined);
+    expect(sel.options.length).toBe(1);
+    expect(String(sel.options[0].value)).toBe("");
+    expect(sel.options[0].disabled).toBe(true);
+    expect(sel.options[0].textContent).toMatch(/unavailable/i);
+    expect(sel.disabled).toBe(true);
+    // THE guarantee the send paths depend on: no value => the field is omitted on the wire.
+    expect(sel.value).toBe("");
+  });
+
+  it("an EMPTY quality_tiers list degrades the same way (not silently ignored)", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker({ quality_tiers: [], default_tier: "final" });
+    expect(sel.options.length).toBe(1);
+    expect(sel.value).toBe("");
+    expect(sel.disabled).toBe(true);
+  });
+
+  it("the retired fallback is GONE: no draft/standard/final is offered without a projection", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(null);
+    const offered = sel.options.map((o) => String(o.value)).filter(Boolean);
+    expect(offered).toEqual([]);
+    for (const ghost of ["draft", "standard", "final"]) {
+      expect(offered).not.toContain(ghost);
+    }
+  });
+
+  it("a pending restore SURVIVES a failed projection and is honored by a later good one", () => {
+    const sel = tierDoc();
+    mod.selectTier("draft"); // restore ran before any options existed
+    mod.renderTierPicker(undefined); // registry error: picker degrades...
+    expect(sel.value).toBe("");
+    mod.renderTierPicker(PROJECTION); // ...and the retry still honors the user's choice
+    expect(sel.value).toBe("draft");
+  });
+
+  it("re-rendering preserves the current selection over the server default", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(PROJECTION);
+    sel.value = "draft";
+    mod.renderTierPicker(PROJECTION);
+    expect(sel.value).toBe("draft");
   });
 });

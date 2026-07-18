@@ -614,8 +614,10 @@ async function renderFromKeyframes(bundleKey, btn, status) {
     "render this bundle's " + Object.keys(bundleState.sceneStartImages || {}).length
     + " injected keyframe(s) with " + gpuMotionLabel() + " (no " + keyframeLabel() + " keyframe pass)?\n\ncontinue?"
   )) return;
+  // cf#62: no hardcoded tier default. An unset picker omits the field and the core
+  // applies its own default; the panel never invents a core-owned value.
   const tierEl = $("#planner-quality-tier");
-  const qualityTier = tierEl && tierEl.value ? tierEl.value : "final";
+  const qualityTier = tierEl && tierEl.value ? tierEl.value : "";
   let renderOverrides;
   try {
     renderOverrides = collectRenderOverrides();
@@ -624,7 +626,8 @@ async function renderFromKeyframes(bundleKey, btn, status) {
     status.textContent = err.message;
     return;
   }
-  const body = { project: project, bundleKey: bundleKey, qualityTier: qualityTier };
+  const body = { project: project, bundleKey: bundleKey };
+  if (qualityTier) body.qualityTier = qualityTier;
   if (renderOverrides) body.renderOverrides = renderOverrides;
   if (planState.audioKey) body.audioKey = planState.audioKey;
   btn.disabled = true;
