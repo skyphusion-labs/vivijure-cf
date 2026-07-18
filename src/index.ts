@@ -53,7 +53,7 @@ import { runDemoChat, DEFAULT_DEMO_CHAT_CAPS, type DemoChatCaps, type DemoChatMo
 import { isSpendRoute, enforceSpendLimit } from "./rate-limit";
 import { applyResponseSecurity } from "./asset-response";
 import { chatImage, type ChatImageArgs } from "./chat-image";
-import { findModel } from "./models";
+import { findImageModel, IMAGE_MODELS } from "./image-models";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import {
   insertRender, updateRenderFromView, getRenderByIdForUser, listRendersForUser, DEFAULT_RENDERS_LIMIT, listUserTags,
@@ -1002,7 +1002,7 @@ const hRefine: Handler = async (req, env) => {
 const hChat: Handler = async (req, env) => {
   const a = await readBody<ChatCompleteArgs & ChatImageArgs>(req);
   if (!a.model || !a.user_input) throw badRequest("model and user_input required");
-  const modelEntry = findModel(a.model);
+  const modelEntry = findImageModel(a.model);
   if (modelEntry?.type === "image") {
     const r = await chatImage(env, a);
     if (!r.ok) return json({ error: r.error, model: r.model }, 502);
@@ -1309,6 +1309,25 @@ const hModels: Handler = async (_req, env) => {
     cacheTtlMs: 60_000,
   });
   return json({ models: catalogForDeploy(env, planningModelsFromModules(modules)) });
+};
+// GET /api/models -- the CANONICAL full catalog, both hosts (cf#129). Serves every row the studio
+// can dispatch: the PROJECTED planning rows (from installed plan.enhance modules, cf#62) plus the
+// image rows. The panel filters on row.type rather than on any naming convention, so one render
+// path serves every picker.
+//
+// /api/storyboard/models is retained as a FILTERED VIEW of this same projection (the MCP
+// storyboard_models tool and shipped panel consumers ride it); it is not a second catalog.
+//
+// Envelope is {models:[...]} and is deliberately stable: cf#129 phase 2 swaps the image rows from
+// this hardcoded list to a module projection, and that change must be invisible to every consumer.
+// An empty array is a legitimate, honest answer (nothing installed declares anything) -- never a
+// 404, and never a hardcoded backfill standing in for an uninstalled module.
+const hAllModels: Handler = async (_req, env) => {
+  const modules = await discoverModules(env as unknown as Record<string, unknown>, {
+    cacheTtlMs: 60_000,
+  });
+  const models = [...planningModelsFromModules(modules), ...IMAGE_MODELS];
+  return json({ models: catalogForDeploy(env, models) });
 };
 const hYaml: Handler = async (req) => {
   const a = await readBody<{ storyboard?: unknown }>(req);
@@ -1641,6 +1660,7 @@ const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/storyboard/music-generate",       handler: hScoreBedGenerate },
   { method: "GET",    pattern: "/api/job/:id",                         handler: hPollScoreBed },
   { method: "POST",   pattern: "/api/storyboard/enhance",              handler: hEnhance },
+  { method: "GET",    pattern: "/api/models",                          handler: hAllModels },
   { method: "GET",    pattern: "/api/storyboard/models",               handler: hModels },
   { method: "POST",   pattern: "/api/storyboard/yaml",                 handler: hYaml },
   { method: "POST",   pattern: "/api/storyboard/markers",              handler: hMarkers },
