@@ -1394,9 +1394,10 @@ function rerunBundle(row) {
   // Pre-select the same quality tier the original render used so a single
   // click matches the previous run; the user can still flip it before
   // hitting render.
-  const tierSelect = $("#planner-quality-tier");
-  if (tierSelect && row.quality_tier) {
-    tierSelect.value = row.quality_tier;
+  // cf#62 (FE-4): via selectTier, so carrying a tier forward survives the projection
+  // arriving later and a tier this deploy no longer serves does not blank the picker.
+  if (row.quality_tier && window.plannerRenderConfig) {
+    window.plannerRenderConfig.selectTier(row.quality_tier);
   }
 
   // v0.35.3: pre-fill the renderOverrides textarea from the row so a
