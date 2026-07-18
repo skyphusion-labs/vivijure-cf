@@ -171,12 +171,100 @@ export async function uploadTenantModules(
  * failure carrying the studio's own words. Requires the studio to already carry the MODULE_DISPATCH
  * binding (bound in the studio upload, which runs before this). Returns the installed module names.
  */
+/**
+ * How long to wait for a freshly-uploaded STUDIO_API_TOKEN to become the one the edge serves, and
+ * the backoff schedule inside that window. Deliberately bounded: this converts a propagation race
+ * into a wait, and it must NEVER become an indefinite retry that hides a genuinely bad credential.
+ */
+export const STUDIO_TOKEN_PROBE_DEADLINE_MS = 60_000;
+const STUDIO_TOKEN_PROBE_BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000] as const;
+
+/** Injectable clock + sleep, so the probe is testable without burning real seconds. Production
+ *  passes neither and gets the real ones. */
+export interface ProbeTiming {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+const realTiming: ProbeTiming = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+/**
+ * Wait until the tenant studio actually SERVES the token we just uploaded (#108).
+ *
+ * The studio script name is slug-based, so a re-provision ADOPTS an existing script object. The
+ * fresh STUDIO_API_TOKEN rides that upload as a secret_text binding, but the edge can still be
+ * serving the PREVIOUS version, which carries the PREVIOUS token. The install loop then 403s and the
+ * whole provision dies. A brand-new script has no previous version, which is why this only ever bit
+ * the adopt path.
+ *
+ * WHAT IS AND IS NOT RETRYABLE, because this is the line between a wait and a cover-up:
+ * 403 is retried, and ONLY inside this window, because 403 is exactly what a stale serving version
+ * looks like. Any other non-200 fails immediately -- it is a real error, not a race. A token that is
+ * genuinely wrong exhausts the window and fails loudly with attempts and elapsed time, so a bad
+ * credential can never be silently absorbed by the retry.
+ */
+export async function awaitStudioTokenLive(
+  deps: TenantModuleDeps,
+  studioScriptName: string,
+  studioApiToken: string,
+  timing: ProbeTiming = realTiming,
+  deadlineMs: number = STUDIO_TOKEN_PROBE_DEADLINE_MS,
+): Promise<{ attempts: number; elapsedMs: number }> {
+  const started = timing.now();
+  let attempts = 0;
+  let last = "";
+
+  for (;;) {
+    attempts += 1;
+    const res = await deps.callTenantStudio(studioScriptName, {
+      method: "GET",
+      path: "/api/modules/installed",
+      studioApiToken,
+    });
+    const elapsedMs = timing.now() - started;
+
+    if (res.status === 200) {
+      deps.log("studio_token.live", { script: studioScriptName, attempts, elapsedMs });
+      return { attempts, elapsedMs };
+    }
+
+    last = `${res.status}: ${res.text.slice(0, 200)}`;
+
+    // Not a propagation shape. Fail now rather than spending the window on it.
+    if (res.status !== 403) {
+      throw new TenantModuleError(
+        "modules_install",
+        `studio token probe -> ${last} (not retryable; attempts=${attempts}, elapsed=${elapsedMs}ms)`,
+      );
+    }
+
+    const wait = STUDIO_TOKEN_PROBE_BACKOFF_MS[Math.min(attempts - 1, STUDIO_TOKEN_PROBE_BACKOFF_MS.length - 1)];
+    if (elapsedMs + wait >= deadlineMs) {
+      throw new TenantModuleError(
+        "modules_install",
+        `studio never served the uploaded STUDIO_API_TOKEN -> ${last} ` +
+          `(gave up after ${attempts} attempts, ${elapsedMs}ms; either propagation is far slower than ` +
+          `${deadlineMs}ms or the token is wrong)`,
+      );
+    }
+    await timing.sleep(wait);
+  }
+}
+
 export async function installTenantModules(
   deps: TenantModuleDeps,
   tenantId: string,
   studioScriptName: string,
   studioApiToken: string,
+  timing?: ProbeTiming,
 ): Promise<string[]> {
+  // The studio must be serving OUR token before the first install, or the adopt path 403s (#108).
+  // Done once, here, rather than per-module: the race is about the script version, not the module.
+  await awaitStudioTokenLive(deps, studioScriptName, studioApiToken, timing ?? realTiming);
+
   const installed: string[] = [];
   for (const spec of TENANT_MODULE_CATALOG) {
     const scriptName = tenantModuleScriptName(tenantId, spec.module);
