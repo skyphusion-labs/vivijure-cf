@@ -102,3 +102,26 @@ export function scenePrompts(storyboard: PlanEnhanceStoryboard): string[] | null
   if (!storyboard || !Array.isArray(storyboard.scenes) || storyboard.scenes.length === 0) return null;
   return storyboard.scenes.map((s) => (typeof s.prompt === "string" ? s.prompt : ""));
 }
+
+/** Parse a full storyboard JSON object from a model reply (plan / refine modes).
+ *
+ *  Accepts three shapes, in order: an already-parsed object carrying scenes[], a bare JSON string,
+ *  and a fenced ```json block (models fence unprompted). Returns null on anything else so the caller
+ *  degrades honestly instead of inventing a storyboard. Pure. */
+export function parsePlanStoryboard(raw: unknown): PlanEnhanceStoryboard | null {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as PlanEnhanceStoryboard;
+    if (Array.isArray(o.scenes)) return o;
+  }
+  if (typeof raw !== "string") return null;
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1]!.trim();
+  try {
+    const parsed = JSON.parse(text) as PlanEnhanceStoryboard;
+    if (parsed && Array.isArray(parsed.scenes)) return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+}

@@ -3,6 +3,7 @@ import { gateApi, verifyTokenRequest, constantTimeEqual, sha256Hex, isDemoMode, 
 import worker from "../src/index";
 import type { Env } from "../src/env";
 import { __resetJwksCacheForTest, type CertsFetcher } from "../src/access-auth";
+import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
 
 // ---- shared fixtures -----------------------------------------------------------------------
 
@@ -439,13 +440,49 @@ describe("AUTH_MODE=demo Phase B -- exactly two demo write routes are allowed", 
 
 describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/voices", () => {
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
+
+  // The projected planning catalog goes through the core's per-isolate discovery cache, which is a
+  // module-level singleton NOT keyed by env. Within one test file the demo request would otherwise
+  // seed the cache that the token-mode request reads back, so the two envs must not share it.
+  beforeEach(() => {
+    _resetModuleDiscoveryCache();
+  });
+  // The planning catalog is projected from installed plan.enhance modules (cf#62), so a token-mode
+  // env with NO planning module bound legitimately serves []. Bind one here, or the "no over-scrub
+  // outside demo" assertion below passes/fails for the wrong reason: an empty catalog would no
+  // longer distinguish "demo scrubbed it" from "nothing was installed".
+  const planEnhanceBinding = {
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          name: "plan-enhance",
+          version: "0.2.1",
+          api: "vivijure-module/2",
+          hooks: ["plan.enhance"],
+          provides: [{ id: "auto-direction", label: "Opus auto-direction" }],
+          config_schema: {
+            model: {
+              type: "enum",
+              values: ["anthropic/claude-opus-4-8", "anthropic/claude-sonnet-5"],
+              default: "anthropic/claude-opus-4-8",
+              label: "model",
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  };
   const demoEnv = {
     AUTH_MODE: "demo",
+    // Deliberately bound: demo must scrub a catalog that WOULD otherwise be populated. Without the
+    // binding, models: [] would be trivially true and the scrub would be untested.
+    MODULE_PLANENHANCE: planEnhanceBinding,
     ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
   } as unknown as Env;
   const tokenEnv = {
     AUTH_MODE: "token",
     STUDIO_API_TOKEN: SECRET,
+    MODULE_PLANENHANCE: planEnhanceBinding,
     ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
   } as unknown as Env;
 

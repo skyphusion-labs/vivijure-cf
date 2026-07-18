@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import planEnhanceWorker from "../modules/plan-enhance/src/index";
 import { checkManifest, checkInvokeResponse, checkCancelResponse, checkHookOutput, hookOutputViolation, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 const goodManifest = {
@@ -196,5 +197,32 @@ describe("hookOutputViolation (terminal-seam guard, #345)", () => {
     // an honest master degrade: ok:true, audio_key passed through, applied:[], plus a degraded reason
     const degraded = { audio_key: "renders/p/audio/bed.wav", applied: [], degraded: "container unreachable" };
     expect(hookOutputViolation("audio-master", "master", degraded)).toBeNull();
+  });
+});
+
+// ---- the SHIPPED plan-enhance manifest conforms (cf#62) -----------------------------------------
+//
+// The studio projects its planning catalog straight out of this manifest, so a manifest that fails
+// conformance is a broken model picker. Checked against what the worker actually SERVES on
+// GET /module.json, not a re-declared copy.
+
+describe("conformance: the shipped plan-enhance manifest", () => {
+  it("passes checkManifest as served on GET /module.json", async () => {
+    const res = await planEnhanceWorker.fetch(new Request("https://module/module.json"), {} as never);
+    expect(res.status).toBe(200);
+    const checks = checkManifest(await res.json());
+    expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
+  });
+
+  it("declares plan.enhance and a well-formed model enum the catalog can project", async () => {
+    const res = await planEnhanceWorker.fetch(new Request("https://module/module.json"), {} as never);
+    const m = (await res.json()) as {
+      hooks: string[];
+      config_schema: { model: { type: string; values: string[]; default: string } };
+    };
+    expect(m.hooks).toContain("plan.enhance");
+    expect(m.config_schema.model.type).toBe("enum");
+    expect(m.config_schema.model.values).toContain(m.config_schema.model.default);
+    expect(new Set(m.config_schema.model.values).size).toBe(m.config_schema.model.values.length);
   });
 });

@@ -19,7 +19,16 @@ import {
   type PlanEnhanceInput,
   type PlanEnhanceOutput,
 } from "./contract";
-import { buildMessages, parseEnhanced, mergeEnhanced, scenePrompts, type Intensity } from "./enhance";
+import {
+  buildMessages,
+  parseEnhanced,
+  mergeEnhanced,
+  parsePlanStoryboard,
+  scenePrompts,
+  type ChatMessage,
+  type Intensity,
+} from "./enhance";
+import { plannerAiMockEnabled, mockPlannerRaw } from "./mock";
 import {
   pickProvider,
   opusModel,
@@ -41,6 +50,7 @@ interface WorkerEnv {
   GATEWAY_ID?: SecretsStoreSecret;
   CF_AIG_TOKEN?: SecretsStoreSecret;
   ENHANCE_MODEL?: string;
+  PLANNER_AI_MOCK?: string;
 }
 
 /** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
@@ -63,6 +73,22 @@ const MANIFEST: ModuleManifest = {
   hooks: ["plan.enhance"],
   provides: [{ id: "auto-direction", label: "Opus auto-direction" }],
   config_schema: {
+    // The planning-model catalog. GET /api/storyboard/models is PROJECTED from this enum across
+    // every installed plan.enhance module (src/planning-models.ts) -- the studio hardcodes no model
+    // names. A third-party plan.enhance module declaring its own model enum is honored identically;
+    // that is the contract, not a courtesy. Ids are catalog form ("anthropic/<slug>"); the provider
+    // strips the prefix for the gateway.
+    model: {
+      type: "enum",
+      values: [
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-opus-4-7",
+        "anthropic/claude-sonnet-5",
+        "anthropic/claude-sonnet-4-6",
+      ],
+      default: "anthropic/claude-opus-4-8",
+      label: "model",
+    },
     intensity: {
       type: "enum",
       values: ["light", "medium", "bold"],
@@ -85,17 +111,32 @@ function json(body: unknown, status = 200): Response {
 // model. Either provider erroring throws to the caller, which degrades to passthrough.
 async function direct(
   env: Env,
-  messages: ReturnType<typeof buildMessages>,
+  messages: ChatMessage[],
+  modelId?: string,
 ): Promise<{ reply: string | string[] | undefined; model: string }> {
-  if (pickProvider(env) === "opus") {
+  // A "@cf/..." catalog id names a Workers AI model directly; anything else rides the local default
+  // when we degrade off Opus.
+  const localModel = modelId?.trim().startsWith("@cf/") ? modelId.trim() : LOCAL_MODEL;
+  if (pickProvider(env, modelId) === "opus") {
     try {
-      return { reply: await callOpus(env, messages), model: opusModel(env) };
+      return { reply: await callOpus(env, messages, modelId), model: opusModel(env, modelId) };
     } catch {
       // Opus unavailable -> fall through to the free local model rather than failing the stage.
-      return { reply: await callLocal(env, messages), model: `${LOCAL_MODEL} (opus fell back)` };
+      return {
+        reply: await callLocal(env, messages, localModel),
+        model: `${localModel} (opus fell back)`,
+      };
     }
   }
-  return { reply: await callLocal(env, messages), model: LOCAL_MODEL };
+  return { reply: await callLocal(env, messages, localModel), model: localModel };
+}
+
+/** Build the two-turn message list for the generative modes. */
+function planMessages(systemMessage: string, userMessage: string): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  if (systemMessage) messages.push({ role: "system", content: systemMessage });
+  messages.push({ role: "user", content: userMessage });
+  return messages;
 }
 
 async function runEnhance(
@@ -103,8 +144,95 @@ async function runEnhance(
   req: InvokeRequest<PlanEnhanceInput>,
 ): Promise<InvokeResponse<PlanEnhanceOutput>> {
   const storyboard = req.input?.storyboard;
-  const prompts = storyboard ? scenePrompts(storyboard) : null;
-  if (!storyboard || !prompts) {
+  if (!storyboard) {
+    return { ok: false, error: "plan.enhance: input.storyboard required" };
+  }
+
+  // vivijure-module/2 planning modes. "enhance" (the default, and this module's original behaviour)
+  // is a director pass over an existing storyboard. "plan" / "refine" / "chat" are the studio's
+  // three planner entry points, routed here so model choice AND dispatch live in the module -- the
+  // studio holds no model names and no provider routing (cf#62, bare-skeleton doctrine).
+  const mode = typeof req.config?.mode === "string" ? req.config.mode : "enhance";
+  const modelId = typeof req.config?.model === "string" ? req.config.model : undefined;
+  const systemMessage =
+    typeof req.config?.system_message === "string" ? req.config.system_message.trim() : "";
+  const userMessage = typeof req.config?.message === "string" ? req.config.message.trim() : "";
+
+  if (mode === "plan" || mode === "refine") {
+    // Malformed I/O fails loud; only a model MISS degrades.
+    if (!userMessage) {
+      return { ok: false, error: `plan.enhance: config.message required for mode ${mode}` };
+    }
+    let reply: string | string[] | undefined;
+    let modelLabel: string;
+    if (plannerAiMockEnabled(env)) {
+      // Dev-only (#411): replace the network dispatch with a deterministic canned completion. The
+      // reply still runs the real parsePlanStoryboard -> studio validateStoryboard pipeline below.
+      reply = mockPlannerRaw(userMessage);
+      modelLabel = "dev-mock";
+      const mocked = parsePlanStoryboard(reply);
+      if (!mocked) {
+        return {
+          ok: true,
+          output: {
+            storyboard,
+            notes: [`${mode} skipped: ${modelLabel} reply was not valid storyboard JSON`],
+          },
+        };
+      }
+      return { ok: true, output: { storyboard: mocked, notes: [`${mode} via ${modelLabel}`] } };
+    }
+    try {
+      ({ reply, model: modelLabel } = await direct(
+        env,
+        planMessages(systemMessage, userMessage),
+        modelId,
+      ));
+    } catch (e) {
+      return {
+        ok: true,
+        output: { storyboard, notes: [`${mode} skipped: model error (${(e as Error).message})`] },
+      };
+    }
+    if (reply == null) {
+      return { ok: true, output: { storyboard, notes: [`${mode} skipped: no model reply`] } };
+    }
+    const raw = Array.isArray(reply) ? JSON.stringify(reply) : reply;
+    const planned = parsePlanStoryboard(raw);
+    if (!planned) {
+      return {
+        ok: true,
+        output: {
+          storyboard,
+          notes: [`${mode} skipped: ${modelLabel} reply was not valid storyboard JSON`],
+        },
+      };
+    }
+    return { ok: true, output: { storyboard: planned, notes: [`${mode} via ${modelLabel}`] } };
+  }
+
+  if (mode === "chat") {
+    if (!userMessage) {
+      return { ok: false, error: "plan.enhance: config.message required for chat mode" };
+    }
+    if (plannerAiMockEnabled(env)) {
+      return { ok: true, output: { storyboard: { scenes: [] }, notes: [mockPlannerRaw(userMessage)] } };
+    }
+    // Chat has no storyboard to pass through, so a model failure is a real failure, not a degrade.
+    try {
+      const { reply } = await direct(env, planMessages(systemMessage, userMessage), modelId);
+      const text = Array.isArray(reply) ? reply.join("\n") : String(reply ?? "");
+      if (!text.trim()) {
+        return { ok: true, output: { storyboard: { scenes: [] }, notes: ["chat skipped: empty reply"] } };
+      }
+      return { ok: true, output: { storyboard: { scenes: [] }, notes: [text] } };
+    } catch (e) {
+      return { ok: false, error: "plan.enhance chat failed: " + (e as Error).message };
+    }
+  }
+
+  const prompts = scenePrompts(storyboard);
+  if (!prompts) {
     return { ok: false, error: "plan.enhance: input.storyboard has no scenes" };
   }
   const intensity = (req.config?.intensity as Intensity) || "medium";
@@ -112,7 +240,7 @@ async function runEnhance(
   let reply: string | string[] | undefined;
   let model: string;
   try {
-    ({ reply, model } = await direct(env, buildMessages(prompts, intensity)));
+    ({ reply, model } = await direct(env, buildMessages(prompts, intensity), modelId));
   } catch (e) {
     // Soft degrade: no model available -> pass the storyboard through unchanged.
     return {
@@ -166,6 +294,7 @@ export default {
         GATEWAY_ID: await secretValue(env.GATEWAY_ID),
         CF_AIG_TOKEN: await secretValue(env.CF_AIG_TOKEN),
         ENHANCE_MODEL: env.ENHANCE_MODEL,
+        PLANNER_AI_MOCK: env.PLANNER_AI_MOCK,
       };
       return json(await runEnhance(provEnv, req));
     }
