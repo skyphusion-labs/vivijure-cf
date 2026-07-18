@@ -716,15 +716,6 @@
     return downscaleToDataUrl(blob, FLUX2_REF_MAX_DIM);
   }
 
-  let imageModelsCache = null;
-
-  async function loadImageModels() {
-    if (imageModelsCache) return imageModelsCache;
-    const data = await api("/api/models");
-    imageModelsCache = (data.models || []).filter((m) => m.type === "image");
-    return imageModelsCache;
-  }
-
   // v0.65.0: populate the training-set model dropdown once at page load.
   // Pure DOM init - no network fetch needed; the list is static.
   function ensureTrainingModelOptions() {
@@ -765,9 +756,14 @@
     try { localStorage.setItem(TRAINING_STYLE_LS + state.selectedId, el.value.trim()); } catch (_) {}
   }
 
-  // Portrait-gen uses the same static image-gen catalog as training (FLUX 2 / Nano Banana).
-  // No fetch: the old /api/models route 404'd, and /api/storyboard/models serves LLM planning
-  // models (type "text"), not image-gen -- so the filtered list was always empty anyway.
+  // Portrait-gen shares the same hardcoded image-gen catalog as training (TRAINING_MODELS).
+  // KNOWN GAP, tracked by cf#129: this catalog is NOT projected from the installed modules,
+  // so these options stay populated even when no image-capable module is installed and the
+  // user only learns the pick is unservable at POST /api/chat time.
+  // Host note: the previous comment here claimed GET /api/models 404s. That was true for
+  // vivijure-cf only (no such route); vivijure-local DOES serve it, hardcoded, from
+  // src/image-models.ts. Same panel bytes ship against both hosts, so do not re-assert a
+  // per-host claim as if it were universal.
   async function ensurePortraitGenModelOptions() {
     const sel = $("#cast-portrait-gen-model");
     if (sel.options.length > 0) return;
