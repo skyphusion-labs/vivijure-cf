@@ -3,6 +3,36 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.4.0 -- 2026-07-18
+
+MINOR: the bare-skeleton port (cf#62). The studio stops providing model names; plan.enhance modules
+do. Full record on the closed issue (completion contract) and in docs/module-api.md.
+
+- **Planning models are module-declared.** `modules/plan-enhance` carries its models in
+  `config_schema.model` (including `anthropic/claude-sonnet-5`); `GET /api/storyboard/models` is a
+  projection of EVERY installed plan.enhance module's enum -- no hardcoded list anywhere in core. A
+  module with no model enum is listed under its own name and label. Third-party modules are honored
+  per the contract with no special-casing of ours (proven live: routing asserted by which module
+  answered).
+- **The planner is a module invoker.** plan/refine/chat route through the installed module
+  (`config.mode`), provider dispatch left core, and `planner-catalog.ts` plus the hardcoded
+  Anthropic rows in `models.ts` are deleted. Plan/refine responses carry `provider: "module"` +
+  `module` (vivijure-local's shape exactly; the shared panel stays byte-identical).
+- **`POST /api/chat` text path routes through the plan.enhance module** and fails honestly when no
+  planning module is installed. Its image path and the rest of MODELS are unchanged (cf#129 tracks
+  that catalog).
+- **Panel stops inventing core-owned values.** The quality-tier fallback (which had ALREADY drifted
+  from what core serves) and five hardcoded tier literals are gone; stale saved models/tiers now
+  drop visibly with an honest message instead of blanking or silently persisting invented state.
+- **Restore paths hardened.** Saved model/tier restores go through one guarded pending-value
+  mechanism; two live-found defects (post-load stale id leaving the picker blank+silent; tier
+  control blanking on stale tier) fixed and re-verified live.
+- **Dev: modbound scenario harness** (`SCENARIO=default|empty|thirdparty|staleid`, `DRY_RUN=1`) for
+  gate runs against real module absence; planner AI mock moved into the module (its dev wiring fix
+  rode #134); teardown runbook documents the orphaned-worker hazard.
+- Parity gate: cf and local panels verified functionally identical live in a browser, both hosts,
+  per-surface evidence; local synced via vivijure-local#102.
+
 ## v1.3.1 -- 2026-07-18
 
 **The v1.3.0 release artifact never published; this is the tag that ships it.** PATCH: a build-script
