@@ -7,7 +7,12 @@
 //   - migrations vs the top-level migrations/*.sql on disk (same scope rule as the provisioner)
 //   - required_vars vs ORCHESTRATOR_VAR_KEYS (the single source of truth, imported directly)
 //
-// Removing a field here is a BREAKING change for vivijure-control-plane, whose pin floor is v1.3.0.
+// Removing a field here is a BREAKING change for vivijure-control-plane, whose pin floor is
+// v1.3.1. (Not v1.3.0: that tag built no artifact -- the builder died on bare-node .js
+// specifier resolution with every gate green -- so v1.3.1 is the first pinnable release.
+// The control plane now lives in its own repo; this contract is the ONLY thing between
+// the two, so a field removed here breaks provisioning over there with nothing else to
+// catch it.)
 
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
