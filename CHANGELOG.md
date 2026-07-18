@@ -3,6 +3,36 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.5.0 -- 2026-07-18
+
+MINOR: the chat/image surface becomes module territory (cf#129). The studio now hardcodes NO model
+names at all; full record on the closed issue (completion contract).
+
+- **New core hook `image.generate`** (core 1.1.0): modules declare image models in
+  `config_schema.model` and return image BYTES; the core persists them. A module holds no bucket
+  binding, so a write/serve split (cf#140's class) is structurally unrepresentable. First-party
+  `modules/image-generate` carries the 11 image models with every learned per-model quirk.
+- **Canonical `GET /api/models`** on both hosts: the full projected catalog (planning + image rows)
+  from one generalized projection; `/api/storyboard/models` stays as a filtered view with an
+  agreement test. Empty catalog = `200` + honest empty array, never 404, never backfill.
+- **BREAKING (response shape): rows no longer carry a `provider` field.** The studio no longer has
+  that knowledge -- dispatch belongs to the declaring module. Consumers wanting provenance read the
+  declaring module via `GET /api/modules`.
+- **Cast image pickers are catalog-fed.** All three project the served image rows through the shared
+  render path with visible honest-fail states; the hardcoded silent flag-retry fallback model is
+  removed (exhaustion now fails visibly, naming the model).
+- **cf#140 fixed:** chat artifacts write the SERVED bucket; the portrait-gen preview renders. Fixed
+  on main here; prod carries the fix from this tag (live-verify closes the issue).
+- **Module deployability:** deploy ships `image-generate` (wrangler.toml + README + service binding
+  were absent -- the module could never have deployed); the operator store secret
+  `IMAGE_GENERATE_OPENAI_API_KEY` is OPTIONAL (absent = opaque instead of transparent PNG), and the
+  installer placeholder is treated as absent so an unreplaced optional key degrades honestly instead
+  of hard-failing.
+- **Billing guard pinned by test:** plan-enhance's Anthropic call must emit `cf-aig-authorization`
+  and must NEVER emit `x-api-key`, whatever is in env (recording proxy + positive control).
+- Dead catalog rows (55), dead `streaming`/`byok_alias` flags, and the 11-file orphaned
+  provider/parser island removed (cf#133).
+
 ## v1.4.0 -- 2026-07-18
 
 MINOR: the bare-skeleton port (cf#62). The studio stops providing model names; plan.enhance modules
