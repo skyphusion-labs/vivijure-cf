@@ -16,6 +16,12 @@ import type {
   TenantLifecycle,
 } from "./store";
 
+/**
+ * How long one driver holds a job (#112). Sized to a single invocation, not to a whole provision:
+ * the point is that a driver which dies frees the job quickly enough for the next poll to resume it.
+ */
+export const JOB_LEASE_SECONDS = 60;
+
 export class D1Store implements ControlPlaneStore {
   constructor(private readonly db: D1Database) {}
 
@@ -313,18 +319,42 @@ export class D1Store implements ControlPlaneStore {
     await this.db
       .prepare(
         "UPDATE provision_jobs SET status = 'running', attempts = attempts + 1, " +
-          "lease_until = datetime('now', '+10 minutes'), updated_at = datetime('now') " +
+          `lease_until = datetime('now', '+${JOB_LEASE_SECONDS} seconds'), updated_at = datetime('now') ` +
           "WHERE id = ?1 AND (lease_until IS NULL OR lease_until < datetime('now'))",
       )
       .bind(id)
       .run();
   }
 
+  /**
+   * The driving claim (#112). Wins only if nobody holds a live lease, and reports which way it went
+   * so the caller can decline to drive. `changes === 1` is the entire arbitration: SQLite applies
+   * the UPDATE atomically, so exactly one of two racing polls can match the predicate.
+   */
+  async claimJob(id: string, leaseSeconds: number): Promise<boolean> {
+    const res = await this.db
+      .prepare(
+        "UPDATE provision_jobs SET lease_until = datetime('now', '+' || ?2 || ' seconds'), " +
+          "updated_at = datetime('now') " +
+          "WHERE id = ?1 AND status IN ('queued', 'running') " +
+          "AND (lease_until IS NULL OR lease_until < datetime('now'))",
+      )
+      .bind(id, leaseSeconds)
+      .run();
+    return (res.meta?.changes ?? 0) === 1;
+  }
+
+  /**
+   * LEASE LENGTH IS LOAD-BEARING (#112): this used to push the lease out 10 minutes on every step.
+   * Under poll-driven continuation that would mean a job whose invocation died stayed un-drivable
+   * for ten minutes, which is the eternal-spinner bug wearing a lease. The lease now tracks one
+   * invocation, so a lost driver frees the job within a minute and the next poll resumes it.
+   */
   async updateJobProgress(id: string, step: string, stepsDoneJson: string): Promise<void> {
     await this.db
       .prepare(
         "UPDATE provision_jobs SET step = ?2, steps_done = ?3, updated_at = datetime('now'), " +
-          "lease_until = datetime('now', '+10 minutes') WHERE id = ?1",
+          `lease_until = datetime('now', '+${JOB_LEASE_SECONDS} seconds') WHERE id = ?1`,
       )
       .bind(id, step, stepsDoneJson)
       .run();

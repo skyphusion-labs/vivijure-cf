@@ -37,7 +37,7 @@ import { publicOrigin, tenantDomainSuffix } from "./env";
 import { authorizeUrl, configuredProviders, exchangeCode, isSsoProvider } from "./oauth";
 import { routeTenantRequest } from "./routing";
 import { verifyInvokeKeyScope } from "./runpod-invoke-key";
-import type { Account, Tenant } from "./store";
+import type { Account, Tenant, ProvisionJob } from "./store";
 import { slugRejectionMessage, tenantEndpointIds, tenantView, validateSlug } from "./tenants";
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
@@ -327,8 +327,15 @@ async function tenantRoutes(
     const action = scoped[2];
 
     if (request.method === "GET" && action === "job") {
-      const job = await deps.store.getLatestJobForTenant(tenant.id);
+      let job = await deps.store.getLatestJobForTenant(tenant.id);
       if (!job) return err("not_found", 404);
+      // The poll IS the engine (#112). A provision cannot fit in one invocation's budget, so each
+      // poll drives the job a little further under its own fresh waitUntil, and the client's normal
+      // polling cadence walks it to completion. Two things guard this:
+      //   - a stale job (no progress for MAX_JOB_AGE) is declared lost instead of driven forever;
+      //   - only the poll that WINS the lease drives, so overlapping polls cannot double-mint.
+      const driven = await driveJobIfNeeded(ctx, deps, tenant, job);
+      if (driven) job = driven;
       return json({
         status: job.status,
         step: job.step,
@@ -346,6 +353,58 @@ async function tenantRoutes(
   }
 
   return err("not_found", 404);
+}
+
+/**
+ * How long a job may show no progress before we call the driver lost (#112).
+ *
+ * Comfortably above the slowest legitimate step (RunPod endpoint creation) and well below human
+ * patience. A job past this is marked FAILED with an honest message, because an eternal "running"
+ * is a lie of omission: the tenant can neither wait for it nor retry it.
+ */
+const MAX_JOB_STALE_MS = 10 * 60 * 1000;
+
+/** One invocation's claim on a job. Matches the store's lease length. */
+const JOB_CLAIM_SECONDS = 60;
+
+/**
+ * Drive a non-terminal job forward, or declare it lost. Returns the re-read job when it changed.
+ *
+ * CONCURRENCY, the part that is easy to get wrong: the client polls every few seconds, so several
+ * polls are in flight around the same job. Without arbitration each one would start its own driver,
+ * and two drivers running the provisioner concurrently would mint two R2 credentials, upload twice,
+ * and race each other's writes. claimJob is a conditional UPDATE, so exactly one poll wins; every
+ * other poll returns the current state and does nothing.
+ */
+async function driveJobIfNeeded(
+  ctx: ExecutionContext,
+  deps: ControlPlaneDeps,
+  tenant: Tenant,
+  job: ProvisionJob,
+): Promise<ProvisionJob | null> {
+  if (job.status === "succeeded" || job.status === "failed") return null;
+  if (!deps.provisioner) return null;
+
+  // Lost driver: no progress for too long. Fail honestly rather than leave a spinner running.
+  const lastProgress = Date.parse(`${job.updated_at.replace(" ", "T")}Z`);
+  if (Number.isFinite(lastProgress) && Date.now() - lastProgress > MAX_JOB_STALE_MS) {
+    await deps.store.finishJob(
+      job.id,
+      "failed",
+      job.step,
+      `invocation lost: no progress for over ${Math.round(MAX_JOB_STALE_MS / 60000)} minutes; ` +
+        "the provision did not complete",
+    );
+    await deps.store.setTenantStatus(tenant.id, "failed");
+    return await deps.store.getJob(job.id);
+  }
+
+  // Only the winner drives. A lost claim is the normal case for all but one concurrent poll.
+  if (!(await deps.store.claimJob(job.id, JOB_CLAIM_SECONDS))) return null;
+
+  const stepsDone = JSON.parse(job.steps_done) as string[];
+  ctx.waitUntil(deps.provisioner.resume(job.id, tenant, stepsDone));
+  return null;
 }
 
 async function provision(

@@ -70,6 +70,8 @@ export interface ProvisionJob {
   error_step: string | null;
   error_message: string | null;
   attempts: number;
+  /** Who is currently driving this job, expressed as when that claim expires (#112). */
+  lease_until: string | null;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -158,6 +160,14 @@ export interface ControlPlaneStore {
   getLatestJobForTenant(tenantId: string): Promise<ProvisionJob | null>;
   getJob(id: string): Promise<ProvisionJob | null>;
   setJobRunning(id: string): Promise<void>;
+  /**
+   * Take the driving claim on a job, or report that someone else holds it (#112).
+   *
+   * This is the whole concurrency story for poll-driven continuation: the client polls every few
+   * seconds, so without a claim two overlapping polls would BOTH drive the same job and double-mint
+   * credentials. Returns true only for the caller that won the claim.
+   */
+  claimJob(id: string, leaseSeconds: number): Promise<boolean>;
   updateJobProgress(id: string, step: string, stepsDoneJson: string): Promise<void>;
   finishJob(id: string, status: "succeeded" | "failed", errorStep: string | null, errorMessage: string | null): Promise<void>;
 

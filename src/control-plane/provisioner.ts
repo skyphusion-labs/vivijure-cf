@@ -20,7 +20,7 @@ import { applyStudioMigrations, type StudioMigration } from "./migrate";
 import { randomToken } from "./crypto";
 import type { TenantR2Creds } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
-import { encryptStudioToken } from "./token-crypto";
+import { decryptStudioToken, encryptStudioToken } from "./token-crypto";
 import type { TokenMinter } from "./token-minter";
 import type { ModuleBundleSource } from "./tenant-modules";
 import {
@@ -149,6 +149,48 @@ export const tenantR2TokenName = (slug: string) => `vivijure-tenant-${slug}-r2`;
  */
 const SPEND_RATELIMIT_NAMESPACE = "3001";
 
+/**
+ * How long ONE invocation will spend driving a job before yielding (#112).
+ *
+ * WHY THIS EXISTS AT ALL: the job runs under waitUntil, whose extension window is on the order of
+ * 30 seconds. Run 4 of the cf#99 finale died exactly here -- 22 of the 30 seconds went to the steps
+ * before the module install, the install probe then waited on a real propagation race, and the
+ * runtime cancelled the invocation mid-wait. The job row was left saying "running" forever with no
+ * error, because the catch that writes a terminal state only runs if the function is still running.
+ *
+ * Shortening individual waits does not fix that; it only buys headroom until the next slow step.
+ * The structural answer is to stop trying to fit a whole provision into one invocation: work until
+ * the budget is spent, persist progress, and let the next poll drive the rest.
+ */
+export const PROVISION_INVOCATION_BUDGET_MS = 15_000;
+
+/** A job that ran out of invocation budget with work left. NOT a failure: progress is persisted. */
+export interface ProvisionYielded {
+  ok: false;
+  yielded: true;
+  after: ProvisionStep;
+}
+
+export type ProvisionOutcome =
+  | { ok: true; status: "awaiting_invoke_key" }
+  | { ok: false; step: ProvisionStep; message: string }
+  | ProvisionYielded;
+
+/** Injectable clock so budget behaviour is testable without burning real seconds. */
+export interface ProvisionClock {
+  now(): number;
+}
+
+const realClock: ProvisionClock = { now: () => Date.now() };
+
+/** Internal control-flow signal: this invocation is out of budget, not broken. */
+class ProvisionYield extends Error {
+  constructor(readonly after: ProvisionStep) {
+    super(`provision yielded after ${after}`);
+    this.name = "ProvisionYield";
+  }
+}
+
 export class ProvisionFailure extends Error {
   constructor(
     readonly step: ProvisionStep,
@@ -171,11 +213,24 @@ export async function runProvisionJob(
   tenant: Tenant,
   runpodApiKey: string | null,
   studioMigrations: readonly StudioMigration[],
-): Promise<{ ok: true; status: "awaiting_invoke_key" } | { ok: false; step: ProvisionStep; message: string }> {
+  clock: ProvisionClock = realClock,
+  budgetMs: number = PROVISION_INVOCATION_BUDGET_MS,
+): Promise<ProvisionOutcome> {
+  const startedAt = clock.now();
   const done: ProvisionStep[] = [];
+
+  /**
+   * Record a completed step, then YIELD if this invocation is out of budget (#112).
+   *
+   * Yielding between steps rather than inside one is deliberate: a step is the unit the job row can
+   * describe, so stopping on a boundary always leaves a state the next driver can resume from. The
+   * throw is caught below and turned into an honest "yielded", NOT a failure -- nothing is wrong,
+   * we simply ran out of invocation.
+   */
   const mark = async (step: ProvisionStep) => {
     done.push(step);
     await deps.store.updateJobProgress(jobId, step, JSON.stringify(done));
+    if (clock.now() - startedAt >= budgetMs) throw new ProvisionYield(step);
   };
 
   try {
@@ -361,6 +416,12 @@ export async function runProvisionJob(
     await deps.store.finishJob(jobId, "succeeded", null, null);
     return { ok: true, status: "awaiting_invoke_key" };
   } catch (e) {
+    // Out of invocation budget, not broken: leave the job RUNNING with its progress persisted so the
+    // next poll picks it up. Writing a failure here would turn "not finished yet" into "failed".
+    if (e instanceof ProvisionYield) {
+      deps.log("provision.yielded", { tenant: tenant.id, after: e.after, elapsedMs: clock.now() - startedAt });
+      return { ok: false, yielded: true, after: e.after };
+    }
     const step =
       e instanceof ProvisionFailure ? e.step : e instanceof TenantModuleError ? e.step : inferStep(done);
     // The REAL error, verbatim. If RunPod says the worker quota is 10 and we need 12, that exact
@@ -368,6 +429,136 @@ export async function runProvisionJob(
     const message =
       e instanceof CfApiError || e instanceof ProvisionFailure || e instanceof TenantModuleError ? e.message : String(e);
     deps.log("provision.failed", { tenant: tenant.id, step, message });
+    await deps.store.finishJob(jobId, "failed", step, message);
+    await deps.store.setTenantStatus(tenant.id, "failed");
+    return { ok: false, step, message };
+  }
+}
+
+/**
+ * The endpoint list as the provisioner stored it (#112 continuation).
+ *
+ * The writer persists the CreatedEndpoint[] verbatim, so this reads objects, not ids. It is
+ * deliberately strict: a row that cannot produce a well-formed endpoint carrying its endpointVar is
+ * treated as no endpoints at all, because a continuation that guessed a var name would wire a studio
+ * to nothing and call it success. The same shape assumption bit us once already (#92, where a
+ * string-only reader made every live key install 409).
+ */
+export function readTenantEndpoints(tenant: Tenant): TenantEndpoint[] {
+  if (!tenant.endpoints_json) return [];
+  try {
+    const parsed: unknown = JSON.parse(tenant.endpoints_json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is TenantEndpoint =>
+        !!e &&
+        typeof e === "object" &&
+        typeof (e as TenantEndpoint).id === "string" &&
+        typeof (e as TenantEndpoint).key === "string" &&
+        typeof (e as TenantEndpoint).endpointVar === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Drive a job that a previous invocation left unfinished (#112).
+ *
+ * WHY THIS IS A SEPARATE ENTRY POINT AND NOT "call runProvisionJob again":
+ * key A is transient by design. It lives in the request that carried it and nowhere else, so a
+ * continuation driven by a POLL does not have it and never can. That is not a limitation to work
+ * around, it is the custody rule, and it decides exactly how much of the job is resumable:
+ *
+ *   steps 1-6 (d1 .. wfp_upload)  need key A and/or the minted R2 secret  -> NOT resumable
+ *   steps 7-9 (modules_upload ..) need only persisted state               -> resumable
+ *
+ * Everything step 7 onward needs is already on the tenant row: the endpoint list (endpoints_json)
+ * and the studio API token (studio_token_enc, decrypted with the same KEK the dispatcher uses). So
+ * a continuation can finish a provision that got as far as the studio upload, and must honestly
+ * refuse one that did not.
+ *
+ * That refusal matters: a job interrupted before the endpoints exist cannot be completed by anyone
+ * except the tenant re-submitting with their key, and saying so is better than a job that waits
+ * forever for a driver that can never succeed.
+ */
+export async function continueProvisionJob(
+  deps: ProvisionDeps,
+  jobId: string,
+  tenant: Tenant,
+  stepsDone: readonly string[],
+  clock: ProvisionClock = realClock,
+  budgetMs: number = PROVISION_INVOCATION_BUDGET_MS,
+): Promise<ProvisionOutcome> {
+  const startedAt = clock.now();
+  const done: ProvisionStep[] = PROVISION_STEPS.filter((s) => stepsDone.includes(s));
+  const mark = async (step: ProvisionStep) => {
+    done.push(step);
+    await deps.store.updateJobProgress(jobId, step, JSON.stringify(done));
+    if (clock.now() - startedAt >= budgetMs) throw new ProvisionYield(step);
+  };
+  const complete = (step: ProvisionStep) => done.includes(step);
+
+  try {
+    // The resumability boundary, checked rather than assumed.
+    if (!complete("wfp_upload")) {
+      throw new ProvisionFailure(
+        inferStep(done),
+        "provisioning was interrupted before the studio was uploaded, and the RunPod key needed to " +
+          "finish it is never stored; start provisioning again to continue",
+      );
+    }
+    const endpoints = readTenantEndpoints(tenant);
+    if (!endpoints.length) {
+      throw new ProvisionFailure("runpod_endpoints", "no endpoints recorded for this tenant; re-provision to continue");
+    }
+    if (!tenant.studio_token_enc) {
+      throw new ProvisionFailure("wfp_upload", "no studio token recorded for this tenant; re-provision to continue");
+    }
+    const studioApiToken = await decryptStudioToken(deps.kek, tenant.studio_token_enc);
+    const script = deps.tenantScriptName(tenant.slug);
+
+    if (!complete("modules_upload")) {
+      await uploadTenantModules(deps, tenant.id, endpoints);
+      await mark("modules_upload");
+    }
+    if (!complete("modules_install")) {
+      await installTenantModules(deps, tenant.id, script, studioApiToken);
+      await mark("modules_install");
+    }
+    if (!complete("verify")) {
+      const bindings = await deps.cf.getScriptBindings(deps.namespace, script);
+      const names = new Set(bindings.map((b) => b.name));
+      const required = ["DB", "R2_RENDERS", "AUTH_MODE", "ASSETS", "SPEND_RATE_LIMITER", ...endpoints.map((e) => e.endpointVar)];
+      for (const need of required) {
+        if (!names.has(need)) throw new ProvisionFailure("verify", `tenant worker is missing the ${need} binding after upload`);
+      }
+      const secrets = await deps.cf.getScriptSecretNames(deps.namespace, script);
+      for (const need of ["R2_S3_SECRET_ACCESS_KEY", "STUDIO_API_TOKEN"]) {
+        if (!secrets.includes(need)) throw new ProvisionFailure("verify", `tenant worker is missing the ${need} secret after upload`);
+      }
+      const probe = await deps.callTenantStudio(script, { method: "GET", path: "/", studioApiToken });
+      if (probe.status >= 500) {
+        throw new ProvisionFailure("verify", `tenant studio root returned ${probe.status}; the worker is not serving`);
+      }
+      const installedModules = await verifyTenantModulesInstalled(deps, script, studioApiToken);
+      deps.log("provision.modules_installed", { tenant: tenant.id, modules: installedModules });
+      await mark("verify");
+    }
+
+    await deps.store.setTenantStatus(tenant.id, "awaiting_invoke_key");
+    await deps.store.finishJob(jobId, "succeeded", null, null);
+    deps.log("provision.resumed_to_completion", { tenant: tenant.id });
+    return { ok: true, status: "awaiting_invoke_key" };
+  } catch (e) {
+    if (e instanceof ProvisionYield) {
+      deps.log("provision.yielded", { tenant: tenant.id, after: e.after, elapsedMs: clock.now() - startedAt, resumed: true });
+      return { ok: false, yielded: true, after: e.after };
+    }
+    const step = e instanceof ProvisionFailure ? e.step : e instanceof TenantModuleError ? e.step : inferStep(done);
+    const message =
+      e instanceof CfApiError || e instanceof ProvisionFailure || e instanceof TenantModuleError ? e.message : String(e);
+    deps.log("provision.failed", { tenant: tenant.id, step, message, resumed: true });
     await deps.store.finishJob(jobId, "failed", step, message);
     await deps.store.setTenantStatus(tenant.id, "failed");
     return { ok: false, step, message };

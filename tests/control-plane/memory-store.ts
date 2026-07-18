@@ -183,6 +183,7 @@ export class MemoryStore implements ControlPlaneStore {
       error_step: null,
       error_message: null,
       attempts: 0,
+      lease_until: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       finished_at: null,
@@ -228,11 +229,26 @@ export class MemoryStore implements ControlPlaneStore {
       j.attempts += 1;
     }
   }
+  /**
+   * Mirrors the D1 predicate: win only if nobody holds a LIVE lease. Modelled faithfully because the
+   * whole point of the claim is what happens when two callers race, and a fake that always says yes
+   * would make the contention test meaningless.
+   */
+  async claimJob(id: string, leaseSeconds: number) {
+    const j = this.jobs.get(id);
+    if (!j) return false;
+    if (j.status !== "queued" && j.status !== "running") return false;
+    const held = j.lease_until !== null && Date.parse(j.lease_until) > Date.now();
+    if (held) return false;
+    j.lease_until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+    return true;
+  }
   async updateJobProgress(id: string, step: string, stepsDoneJson: string) {
     const j = this.jobs.get(id);
     if (j) {
       j.step = step;
       j.steps_done = stepsDoneJson;
+      j.updated_at = new Date().toISOString();
     }
   }
   async finishJob(id: string, status: "succeeded" | "failed", errorStep: string | null, errorMessage: string | null) {
@@ -242,6 +258,7 @@ export class MemoryStore implements ControlPlaneStore {
       j.error_step = errorStep;
       j.error_message = errorMessage;
       j.finished_at = new Date().toISOString();
+      j.lease_until = null;
     }
   }
 

@@ -176,8 +176,18 @@ export async function uploadTenantModules(
  * the backoff schedule inside that window. Deliberately bounded: this converts a propagation race
  * into a wait, and it must NEVER become an indefinite retry that hides a genuinely bad credential.
  */
-export const STUDIO_TOKEN_PROBE_DEADLINE_MS = 60_000;
-const STUDIO_TOKEN_PROBE_BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000] as const;
+/**
+ * BUDGET, and why it is this small (#112 / the run-4 hang): this probe runs inside a provision job
+ * driven by waitUntil, whose extension window is on the order of 30 seconds. The original 60s
+ * deadline could not fit that, so a probe that actually waited would be killed mid-sleep, taking the
+ * whole job with it and stranding the tenant at "provisioning" with no error. Bounding the retry
+ * loop was not enough: the loop has to finish well inside the execution budget it runs in.
+ *
+ * 15s with a 2s backoff cap still covers a propagation blip (the thing this exists for) while
+ * leaving the rest of the job room to finish and write an honest terminal state.
+ */
+export const STUDIO_TOKEN_PROBE_DEADLINE_MS = 15_000;
+const STUDIO_TOKEN_PROBE_BACKOFF_MS = [250, 500, 1000, 2000] as const;
 
 /** Injectable clock + sleep, so the probe is testable without burning real seconds. Production
  *  passes neither and gets the real ones. */
