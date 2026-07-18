@@ -61,6 +61,11 @@ const MODELS = [
 
 beforeAll(() => {
   g = globalThis as unknown as Record<string, unknown>;
+  // cf#129: the picker states (loading / rows / honestly-empty / failed) were extracted
+  // into the shared public/model-catalog.js, so the REAL shipped pair is eval-d here, in
+  // <script> order. Evaluating planner-plan.js alone would throw on modelCatalog, which is
+  // the point: the extraction is a real load-order dependency, not a test convenience.
+  (0, eval)(readFileSync("public/model-catalog.js", "utf8"));
   const src = readFileSync("public/planner-plan.js", "utf8");
   g.$ = (s: string) => (s === "#planner-model" ? sel : null);
   g.setStatus = (text: string, kind: string) => { statusCalls.push({ text, kind }); };
