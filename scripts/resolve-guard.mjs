@@ -37,7 +37,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-const ROOTS = ["public", "hosted/public"];
+const ROOTS = ["public"];
 const MIN_REASON = 10;
 
 // Bare identifiers that are legitimately callable without a local definition:

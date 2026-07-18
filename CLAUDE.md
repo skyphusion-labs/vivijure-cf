@@ -41,12 +41,11 @@ of these areas, update the matching doc.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
 - `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
 - `docs/mcp.md` -- MCP deploy pointer; canon in **vivijure-core** `docs/mcp.md`.
-- `docs/control-plane.md` -- the hosted-tier platform control plane (accounts, auth, AUP gate, tenants, admin switches); a SEPARATE Worker that deploys independently. Read before touching the hosted door.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/demo-studio.md` -- the public, read-only, zero-spend demo studio (`demo.vivijure.com`, `AUTH_MODE=demo`): the binding-absence rule, D1 seed procedure, and live-verify list.
 - `docs/dev-modbound.md` -- run the core + every module worker as one local dev so `/api/modules` returns the REAL catalog (no GPU, no prod data). The dev-parity env for driving planner/module flows locally.
-- `docs/hosted-tier.md` -- the hosted BYO-RunPod-key tier: the two-key custody flow, cost honesty, the real-quota rule, the parity commitment, and the data-export/leave story. Front-door assets live in `hosted/`.
+- The **hosted tier** (accounts, signup, tenancy, the hosted AUP, the front-door UI) lives in its OWN repo: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane). It is NOT part of this repo. This repo is the self-hostable studio; nothing here requires operating a hosted service.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and the public-facing legal/AUP framing.
 
 ## Commands

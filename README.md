@@ -13,6 +13,12 @@ agent with [`vivijure-mcp`](https://github.com/skyphusion-labs/vivijure-mcp).
 
 The constellation map is [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure).
 
+**This repo is the studio, and only the studio.** You self-host it; nothing here asks you to run a
+service for anyone else. The hosted door (accounts, signup, tenancy, the hosted AUP, provisioning)
+is a separate product in its own repo,
+[`vivijure-control-plane`](https://github.com/skyphusion-labs/vivijure-control-plane). It installs
+this studio's published release unmodified, so hosted and self-hosted never drift apart.
+
 **Vivijure Studio:** https://vivijure.com · **Live demo:** https://demo.vivijure.com · **Skyphusion Labs:** https://skyphusion.org
 
 ## Layout
@@ -52,3 +58,4 @@ npm run dev
 - **vivijure-core** -- shared orchestration package
 - **vivijure-local** -- Node/MinIO homelab host (same core, different platform adapter)
 - **vivijure** -- original CF monolith (frozen reference; not modified by this split)
+- **vivijure-control-plane** -- the hosted door in front of this studio (optional; not needed to self-host)
