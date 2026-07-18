@@ -48,6 +48,58 @@ describe("image-generate manifest", () => {
   });
 });
 
+// The installer seeds operator-supplied secrets with a marked placeholder so the module deploy can
+// resolve them at all. For an OPTIONAL key that is a trap: a non-empty placeholder reads as
+// "configured", so the module would take the BYOK path with a garbage credential and hard-fail,
+// instead of degrading to the proxied path. These pin the placeholder as ABSENT.
+describe("operator placeholder is treated as an unset secret", () => {
+  const PLACEHOLDER = "REPLACE_ME__vivijure-deploy-operator-secret";
+
+  it("does NOT take the OpenAI BYOK path when the key is still the placeholder", async () => {
+    const seen: string[] = [];
+    const env = {
+      AI: { run: async (m: string) => { seen.push(m); return { url: "https://images.example/x.png" }; } },
+      OPENAI_API_KEY: PLACEHOLDER,
+    };
+    // A BYOK attempt would fetch api.openai.com; the proxied path goes through the AI binding.
+    const fetchSpy = vi.fn(async () => new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200, headers: { "content-type": "image/png" },
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await invoke(env, {
+      hook: "image.generate",
+      input: { prompt: "x" },
+      config: { model: "openai/gpt-image-1.5" },
+    });
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(seen).toEqual(["openai/gpt-image-1.5"]);
+    const calledOpenAI = fetchSpy.mock.calls.some((c) => String(c[0]).includes("api.openai.com"));
+    expect(calledOpenAI).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  // POSITIVE CONTROL: a REAL key must still take the BYOK path, or the assertion above would pass
+  // simply because the BYOK path never runs under any condition.
+  it("control: a real key DOES take the BYOK path", async () => {
+    const env = {
+      AI: { run: async () => ({ url: "https://images.example/x.png" }) },
+      OPENAI_API_KEY: "sk-real-key",
+    };
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await invoke(env, {
+      hook: "image.generate",
+      input: { prompt: "x" },
+      config: { model: "openai/gpt-image-1.5" },
+    });
+    const calledOpenAI = fetchSpy.mock.calls.some((c) => String(c[0]).includes("api.openai.com"));
+    expect(calledOpenAI).toBe(true);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("image.generate invoke", () => {
   it("returns a CONFORMANT payload for a plain @cf model", async () => {
     const res = await invoke(envWith(async () => ({ image: PNG_B64 })), {

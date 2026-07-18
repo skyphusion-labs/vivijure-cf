@@ -104,6 +104,11 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     "PLAN_ENHANCE_CF_AIG_TOKEN",
     "LOCAL_BACKEND_URL",
     "LOCAL_BACKEND_TOKEN",
+    # image-generate's per-function OpenAI BYOK key (cf#129). OPTIONAL in a way the others are not:
+    # left unreplaced, gpt-image-1.5 falls back to the proxied path and returns an OPAQUE image
+    # instead of a transparent PNG -- an honest degradation, not a failure. The module treats the
+    # placeholder below as ABSENT precisely so that degradation still happens; see its secretValue().
+    "IMAGE_GENERATE_OPENAI_API_KEY",
 )
 STORE_BINDING_NAMES = AUTO_STORE_NAMES + OPERATOR_STORE_NAMES
 
