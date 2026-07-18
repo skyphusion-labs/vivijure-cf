@@ -14,6 +14,23 @@ import { base64ToBytes, sniffImageMime } from "../modules/image-generate/src/ima
 // A 1x1 PNG, so the bytes that come back are a real image rather than a placeholder string.
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
+/** Did any recorded fetch go to a given HOST?
+ *
+ *  Parses and compares the hostname EXACTLY rather than substring-matching the URL. A substring
+ *  check is an assertion that can pass on the wrong thing -- "api.openai.com" appears in
+ *  https://evil-api.openai.com.attacker.dev/ and in a query string -- which is the same
+ *  assert-exact-values rule this suite applies everywhere else, and is what CodeQL flags as
+ *  js/incomplete-url-substring-sanitization. A malformed URL is NOT that host. */
+function calledHost(calls: Array<unknown[]>, host: string): boolean {
+  return calls.some((c) => {
+    try {
+      return new URL(String(c[0])).hostname === host;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function envWith(run: (model: string, params: unknown, opts?: unknown) => Promise<unknown>) {
   return { AI: { run }, GATEWAY_ID: "vivijure" };
 }
@@ -45,6 +62,75 @@ describe("image-generate manifest", () => {
     expect(field?.type).toBe("enum");
     expect((field as { values: string[] }).values).toEqual(MODELS);
     expect(MODELS.length).toBeGreaterThan(0);
+  });
+});
+
+// The installer seeds operator-supplied secrets with a marked placeholder so the module deploy can
+// resolve them at all. For an OPTIONAL key that is a trap: a non-empty placeholder reads as
+// "configured", so the module would take the BYOK path with a garbage credential and hard-fail,
+// instead of degrading to the proxied path. These pin the placeholder as ABSENT.
+// Pins the helper itself. CodeQL flagged the substring version (js/incomplete-url-substring-
+// sanitization); this proves the replacement is genuinely STRICTER rather than merely quieter --
+// the lookalike host below is exactly what the old `.includes("api.openai.com")` would have
+// accepted, which would have made the BYOK assertions pass on the wrong host.
+describe("calledHost matches the host EXACTLY", () => {
+  it("matches the real host", () => {
+    expect(calledHost([["https://api.openai.com/v1/images/generations"]], "api.openai.com")).toBe(true);
+  });
+
+  it("REJECTS a lookalike the substring check would have accepted", () => {
+    expect(calledHost([["https://evil-api.openai.com.attacker.dev/x"]], "api.openai.com")).toBe(false);
+    expect(calledHost([["https://attacker.dev/?next=api.openai.com"]], "api.openai.com")).toBe(false);
+  });
+
+  it("treats a malformed URL as not-that-host rather than throwing", () => {
+    expect(calledHost([["not a url"]], "api.openai.com")).toBe(false);
+  });
+});
+
+describe("operator placeholder is treated as an unset secret", () => {
+  const PLACEHOLDER = "REPLACE_ME__vivijure-deploy-operator-secret";
+
+  it("does NOT take the OpenAI BYOK path when the key is still the placeholder", async () => {
+    const seen: string[] = [];
+    const env = {
+      AI: { run: async (m: string) => { seen.push(m); return { url: "https://images.example/x.png" }; } },
+      OPENAI_API_KEY: PLACEHOLDER,
+    };
+    // A BYOK attempt would fetch api.openai.com; the proxied path goes through the AI binding.
+    const fetchSpy = vi.fn(async () => new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200, headers: { "content-type": "image/png" },
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await invoke(env, {
+      hook: "image.generate",
+      input: { prompt: "x" },
+      config: { model: "openai/gpt-image-1.5" },
+    });
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(seen).toEqual(["openai/gpt-image-1.5"]);
+    expect(calledHost(fetchSpy.mock.calls, "api.openai.com")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  // POSITIVE CONTROL: a REAL key must still take the BYOK path, or the assertion above would pass
+  // simply because the BYOK path never runs under any condition.
+  it("control: a real key DOES take the BYOK path", async () => {
+    const env = {
+      AI: { run: async () => ({ url: "https://images.example/x.png" }) },
+      OPENAI_API_KEY: "sk-real-key",
+    };
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await invoke(env, {
+      hook: "image.generate",
+      input: { prompt: "x" },
+      config: { model: "openai/gpt-image-1.5" },
+    });
+    expect(calledHost(fetchSpy.mock.calls, "api.openai.com")).toBe(true);
+    vi.unstubAllGlobals();
   });
 });
 

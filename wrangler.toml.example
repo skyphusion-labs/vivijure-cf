@@ -266,6 +266,14 @@ service = "vivijure-module-film-titles"
 binding = "MODULE_CAST_IMAGE"
 service = "vivijure-module-cast-image"
 
+# Image.generate: prompt -> one image, for the chat image path and the cast portrait preview.
+# LOAD-BEARING for the image catalog, not an optional extra: the core hardcodes no image model names
+# (cf#129 phase 2), so GET /api/models projects its image rows from THIS module's manifest. Unbound,
+# the image catalog is honestly empty and the picker offers nothing.
+[[services]]
+binding = "MODULE_IMAGE_GENERATE"
+service = "vivijure-module-image-generate"
+
 # Notify (render-complete): the email backend of the `notify` hook -- native CF Email Service.
 [[services]]
 binding = "MODULE_NOTIFY_EMAIL"

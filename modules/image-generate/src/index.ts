@@ -72,17 +72,36 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+// The installer seeds operator-supplied secrets with a MARKED placeholder so the module deploy
+// resolves at all (an unresolvable store binding fails wrangler with 10182). For a REQUIRED secret
+// that is fine -- the operator replaces it or the feature is plainly broken. For an OPTIONAL one it
+// is a trap: the placeholder is a non-empty string, so "is it configured?" answers yes and the code
+// takes the configured path with a garbage credential.
+//
+// That is exactly this module's OPENAI_API_KEY. Unreplaced, a naive check would send
+// "REPLACE_ME__..." to OpenAI, get a 401, and FAIL the generation -- when the designed behaviour is
+// to fall back to the proxied path and return an opaque image. So the placeholder is treated as
+// ABSENT, which is what keeps the honest degradation honest.
+const OPERATOR_PLACEHOLDER = "REPLACE_ME__vivijure-deploy-operator-secret";
+
 /** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
- *  Returns "" when unset or unreadable, so the existing not-configured guards still fire. */
+ *  Returns "" when unset, unreadable, or still holding the installer's placeholder, so every
+ *  not-configured guard downstream fires exactly as it would with no binding at all. */
 async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
-  if (typeof s === "string") return s;
-  if (!s) return "";
-  try {
-    return await s.get();
-  } catch (e) {
-    console.warn("secrets-store get failed: " + (e as Error).message);
+  let raw: string;
+  if (typeof s === "string") {
+    raw = s;
+  } else if (!s) {
     return "";
+  } else {
+    try {
+      raw = await s.get();
+    } catch (e) {
+      console.warn("secrets-store get failed: " + (e as Error).message);
+      return "";
+    }
   }
+  return raw.trim() === OPERATOR_PLACEHOLDER ? "" : raw;
 }
 
 async function runGenerate(

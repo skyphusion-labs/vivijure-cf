@@ -1,0 +1,48 @@
+# image-generate module worker (vivijure-module/2): serves the image.generate hook -- a prompt in,
+# one generated image out. This is where the studio's image MODEL NAMES live: the core hardcodes
+# none, and GET /api/models projects its image rows from this manifest (cf#129 phase 2). Bound into
+# the core as MODULE_IMAGE_GENERATE; the registry discovers it from GET /module.json.
+# account_id is read from CLOUDFLARE_ACCOUNT_ID (env), not hardcoded, same as the core.
+
+name = "vivijure-module-image-generate"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[observability]
+enabled = true
+
+# Image generation: FLUX 2 runs direct on the binding (multipart, gateway-incompatible); the proxied
+# models (google / openai / recraft) and the plain @cf models ride the AI Gateway when GATEWAY_ID is
+# bound. Without it they still run, ungatewayed.
+[ai]
+binding = "AI"
+
+# DELIBERATELY NO R2 BUCKET. This module returns image BYTES and never writes storage.
+#
+# That is the cf#140 lesson made structural: chat image artifacts were written to one bucket and
+# served from another, so every preview 404'd in production while every gate stayed green. A module
+# with no bucket binding cannot reintroduce that split and cannot invent its own key namespace. The
+# CORE owns persistence and places the bytes where its own serve route reads. Do not add an
+# [[r2_buckets]] block here to "optimise away" the base64 hop; the hop is the point.
+
+# GATEWAY_ID (the AI Gateway slug) is bound from the account-level Cloudflare Secrets Store --
+# declarative config that every `wrangler deploy` re-establishes; seeded ONCE by the operator from
+# the crew secret store, never in CI/GitHub. Set store_id at cutover.
+# See docs/DEPLOYMENT.md "Module secrets via the Secrets Store".
+[[secrets_store_secrets]]
+binding = "GATEWAY_ID"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "GATEWAY_ID"
+
+# OPENAI_API_KEY is OPTIONAL and per-function: it enables the only path to a TRANSPARENT PNG on
+# openai/gpt-image-1.5, because the Unified Billing proxy 7003-rejects background/output_format.
+# Absent, that model still works through the proxy and returns an OPAQUE image -- an honest
+# degradation, not a failure. Its own store secret (IMAGE_GENERATE_OPENAI_API_KEY), distinct from any
+# other consumer's, so rotating one never touches another.
+# NEW store secret to seed (optional): IMAGE_GENERATE_OPENAI_API_KEY
+[[secrets_store_secrets]]
+binding = "OPENAI_API_KEY"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "IMAGE_GENERATE_OPENAI_API_KEY"
