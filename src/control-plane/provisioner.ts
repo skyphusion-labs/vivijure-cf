@@ -21,6 +21,7 @@ import { randomToken } from "./crypto";
 import type { TenantR2Creds } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
 import { decryptStudioToken, encryptStudioToken } from "./token-crypto";
+import { REQUIRED_TENANT_STUDIO_VARS } from "./tenant-studio-env";
 import type { TokenMinter } from "./token-minter";
 import type { ModuleBundleSource } from "./tenant-modules";
 import {
@@ -337,6 +338,14 @@ export async function runProvisionJob(
         { type: "r2_bucket", name: "R2", bucket_name: bucket },
         { type: "plain_text", name: "AUTH_MODE", text: "token" },
         { type: "plain_text", name: "R2_S3_BUCKET", text: bucket },
+        // #116: r2-presign.ts requires ALL FOUR of R2_S3_{ACCESS_KEY_ID,SECRET_ACCESS_KEY,ENDPOINT,
+        // BUCKET} and THROWS without them. This one was missing, so a tenant provisioned 9/9 green
+        // and then died on its first render: the keyframe rendered and landed in R2, and the
+        // keyframe->clips handoff threw inside presign on every poll thereafter. An identifier, not
+        // a credential (plain_text): the SAME endpoint already handed to the RunPod templates below.
+        // Self-host derives it from CLOUDFLARE_ACCOUNT_ID at deploy, so omitting it here was a
+        // parity break as well as a defect.
+        { type: "plain_text", name: "R2_S3_ENDPOINT", text: deps.r2Endpoint },
         // The 4 RunPod endpoint ids the studio renders against.
         ...endpointBindings,
         // The credential goes straight from the mint into a worker secret. It is never persisted
@@ -384,7 +393,15 @@ export async function runProvisionJob(
     const script = deps.tenantScriptName(tenant.slug);
     const bindings = await deps.cf.getScriptBindings(deps.namespace, script);
     const names = new Set(bindings.map((b) => b.name));
-    const requiredBindings = ["DB", "R2_RENDERS", "AUTH_MODE", "ASSETS", "SPEND_RATE_LIMITER", ...endpoints.map((e) => e.endpointVar)];
+    // #116: census covers the platform-env contract, not just remembered bindings (see above).
+    const requiredBindings = [
+      "DB",
+      "R2_RENDERS",
+      "ASSETS",
+      "SPEND_RATE_LIMITER",
+      ...REQUIRED_TENANT_STUDIO_VARS,
+      ...endpoints.map((e) => e.endpointVar),
+    ];
     for (const required of requiredBindings) {
       if (!names.has(required)) {
         throw new ProvisionFailure("verify", `tenant worker is missing the ${required} binding after upload`);
@@ -529,7 +546,14 @@ export async function continueProvisionJob(
     if (!complete("verify")) {
       const bindings = await deps.cf.getScriptBindings(deps.namespace, script);
       const names = new Set(bindings.map((b) => b.name));
-      const required = ["DB", "R2_RENDERS", "AUTH_MODE", "ASSETS", "SPEND_RATE_LIMITER", ...endpoints.map((e) => e.endpointVar)];
+      const required = [
+        "DB",
+        "R2_RENDERS",
+        "ASSETS",
+        "SPEND_RATE_LIMITER",
+        ...REQUIRED_TENANT_STUDIO_VARS,
+        ...endpoints.map((e) => e.endpointVar),
+      ];
       for (const need of required) {
         if (!names.has(need)) throw new ProvisionFailure("verify", `tenant worker is missing the ${need} binding after upload`);
       }
