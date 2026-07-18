@@ -1394,9 +1394,10 @@ function rerunBundle(row) {
   // Pre-select the same quality tier the original render used so a single
   // click matches the previous run; the user can still flip it before
   // hitting render.
-  const tierSelect = $("#planner-quality-tier");
-  if (tierSelect && row.quality_tier) {
-    tierSelect.value = row.quality_tier;
+  // cf#62 (FE-4): via selectTier, so carrying a tier forward survives the projection
+  // arriving later and a tier this deploy no longer serves does not blank the picker.
+  if (row.quality_tier && window.plannerRenderConfig) {
+    window.plannerRenderConfig.selectTier(row.quality_tier);
   }
 
   // v0.35.3: pre-fill the renderOverrides textarea from the row so a
@@ -1490,11 +1491,13 @@ function promptCustomBundle() {
   );
   if (!key || !key.trim()) return;
   const trimmed = key.trim();
+  // cf#62: a pasted bundle has no PRIOR render, so there is no tier to carry forward.
+  // Omitting it leaves the projected picker on whatever the core/user already chose,
+  // instead of silently forcing a hardcoded tier onto a custom render.
   rerunBundle({
     job_id: "(custom)",
     project: deriveProjectFromKey(trimmed),
     bundle_key: trimmed,
-    quality_tier: "final",
     status: "PENDING",
   });
 }

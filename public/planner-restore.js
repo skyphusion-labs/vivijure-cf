@@ -44,17 +44,14 @@ function afterPersistedStashApplied(stash) {
   buildStepper();
   stepState.unlocked = computeStepUnlocked();
   refreshSteps();
-  loadModels().then(() => {
-    if (stash && stash.planForm && stash.planForm.modelId) {
-      const select = $("#planner-model");
-      if (select) {
-        const found = Array.from(select.options).some(
-          (o) => o.value === stash.planForm.modelId,
-        );
-        if (found) select.value = stash.planForm.modelId;
-      }
-    }
-  });
+  // cf#62 (FE-4): stash the desired model BEFORE the catalog loads and let loadModels
+  // honor it. This used to be a bespoke post-load membership check here, which meant
+  // the two restore paths (this one and applyProjectPrefs) disagreed about what a
+  // stale or early restore does. One mechanism now, so they cannot drift again.
+  if (stash && stash.planForm && stash.planForm.modelId) {
+    selectPlanningModel(stash.planForm.modelId);
+  }
+  loadModels();
   loadCast().then(() => {
     renderCastPickerOptions();
     applyRestoredCastBindings();
@@ -245,7 +242,10 @@ function restoreRenderStagePanel(saved) {
 
   // Restore form fields first so the user sees the chosen tier and any
   // overrides text even if there is no live render to attach to.
-  if (saved.qualityTier) $("#planner-quality-tier").value = saved.qualityTier;
+  // cf#62 (FE-4): via selectTier so an early restore survives the tier projection.
+  if (saved.qualityTier && window.plannerRenderConfig) {
+    window.plannerRenderConfig.selectTier(saved.qualityTier);
+  }
   if (typeof saved.renderOverridesText === "string") {
     $("#planner-render-overrides").value = saved.renderOverridesText;
     if (saved.renderOverridesText.trim().length > 0) {
@@ -294,7 +294,8 @@ function restoreRenderStagePanel(saved) {
     project: saved.currentProject || "(restored)",
     label: saved.currentLabel || null,
     bundle_key: saved.bundleKey,
-    quality_tier: saved.qualityTier || "final",
+    // cf#62: no invented tier -- an absent one renders honestly as "?" in the row.
+    quality_tier: saved.qualityTier || null,
     status: saved.lastKnownStatus || "IN_PROGRESS",
     output_key: null,
     output: null,

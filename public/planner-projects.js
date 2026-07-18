@@ -77,7 +77,9 @@ function applyProjectPrefs(prefs) {
     const el = $(sel);
     if (el) el.checked = v;
   };
-  setVal("#planner-model", prefs.modelId);
+  // cf#62 (FE-4): NOT setVal. The model catalog is projected asynchronously, so a bare
+  // .value assignment races loadModels and silently blanks the picker on a stale id.
+  selectPlanningModel(prefs.modelId);
   setVal("#planner-brief", prefs.brief);
   if (typeof prefs.bpm === "number" && prefs.bpm > 0) {
     planState.bpm = prefs.bpm;
@@ -88,7 +90,11 @@ function applyProjectPrefs(prefs) {
     setVal("#planner-beats-per-shot", prefs.beatsPerShot);
   }
   // v0.54.0 dial-in: render-form fields.
-  setVal("#planner-quality-tier", prefs.qualityTier);
+  // cf#62 (FE-4): same class as the model picker above -- the tiers are projected, so
+  // this goes through selectTier's pending-value path rather than assigning .value.
+  if (prefs.qualityTier && window.plannerRenderConfig) {
+    window.plannerRenderConfig.selectTier(prefs.qualityTier);
+  }
   setCheck("#planner-keyframes-only", prefs.keyframesOnly);
   setVal("#planner-seed", prefs.seed);
   setVal("#planner-face-lock-mode", prefs.faceLockMode);
