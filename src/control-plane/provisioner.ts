@@ -21,6 +21,14 @@ import type { TenantR2Creds } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
 import { encryptStudioToken } from "./token-crypto";
 import type { TokenMinter } from "./token-minter";
+import type { ModuleBundleSource } from "./tenant-modules";
+import {
+  installTenantModules,
+  teardownTenantModules,
+  uploadTenantModules,
+  verifyTenantModulesInstalled,
+  TenantModuleError,
+} from "./tenant-modules";
 
 /** The named steps, in order. These strings reach the tenant's screen; keep them legible. */
 export const PROVISION_STEPS = [
@@ -30,6 +38,8 @@ export const PROVISION_STEPS = [
   "r2_token",
   "runpod_endpoints",
   "wfp_upload",
+  "modules_upload",
+  "modules_install",
   "verify",
 ] as const;
 export type ProvisionStep = (typeof PROVISION_STEPS)[number];
@@ -94,6 +104,8 @@ export interface ProvisionDeps {
   cf: CfApi;
   runpod: RunPodProvisioner;
   bundle: StudioBundleSource;
+  /** Where tenant MODULE worker bundles come from (cf#99). Same seam as `bundle`, per module. */
+  moduleBundle: ModuleBundleSource;
   /**
    * The R2 credential seam. Split out because it is the one leg our API-created provisioner token
    * cannot perform (CF refuses API-created tokens any token-management rights), so it is blocked on
@@ -103,14 +115,23 @@ export interface ProvisionDeps {
   /** The account S3 endpoint (https://<account>.r2.cloudflarestorage.com) the satellites use. */
   r2Endpoint: string;
   namespace: string;
+  /** The shared dispatch namespace tenant MODULE scripts live in (vivijure-tenant-modules). */
+  moduleNamespace: string;
   release: string;
   tenantScriptName(slug: string): string;
   /** Base64 KEK for encrypting the tenant STUDIO_API_TOKEN value at rest (token-crypto.ts). */
   kek: string;
   /** Optional per-tenant daily spend ceiling set as SPEND_DAILY_CEILING; null -> studio default. */
   spendDailyCeiling: string | null;
-  /** Dispatch a request to the tenant worker root to prove it SERVES (not just that bindings exist). */
-  probeTenantRoot(scriptName: string, studioApiToken: string): Promise<{ status: number }>;
+  /**
+   * Dispatch a request to the tenant studio over TENANT_DISPATCH, attaching the studio bearer so
+   * the AUTH_MODE=token gate passes. Proves the studio SERVES (GET /) and drives its own module
+   * install + installed-list routes (cf#99). Generalizes the old probeTenantRoot.
+   */
+  callTenantStudio(
+    scriptName: string,
+    init: { method: string; path: string; studioApiToken: string; body?: string },
+  ): Promise<{ status: number; text: string }>;
   log(event: string, fields: Record<string, unknown>): void;
 }
 
@@ -243,6 +264,11 @@ export async function runProvisionJob(
         // env.ASSETS must be DECLARED for the studio to serve its static UI; without it env.ASSETS
         // is undefined and asset serving throws 1101 on every static path (hosted-only, #40 burn).
         { type: "assets", name: "ASSETS" },
+        // MODULE_DISPATCH -> the shared tenant-modules namespace: the studio reaches its own
+        // module workers via env.MODULE_DISPATCH.get(script) (cf#99). This is UPLOAD METADATA, not
+        // studio code, so the studio bytes stay byte-identical to self-host (parity). A WfP user
+        // worker carrying a dispatch_namespace binding was live-proven in the cf#99 step-1 probe.
+        { type: "dispatch_namespace", name: "MODULE_DISPATCH", namespace: deps.moduleNamespace },
         { type: "d1", name: "DB", id: db.uuid },
         { type: "r2_bucket", name: "R2_RENDERS", bucket_name: bucket },
         { type: "r2_bucket", name: "R2", bucket_name: bucket },
@@ -277,6 +303,19 @@ export async function runProvisionJob(
     await deps.store.setTenantStudioToken(tenant.id, await encryptStudioToken(deps.kek, studioApiToken));
     await mark("wfp_upload");
 
+    // 7. Upload the tenant MODULE scripts (cf#99) into the shared modules namespace, each carrying
+    //    its endpoint id. Key B is NOT bound yet -- it lands in installInvokeKey, alongside the
+    //    studio. The studio (with its MODULE_DISPATCH binding) is already up, so the install pass
+    //    below can reach these. Idempotent-by-name (adopt-on-exists), like every other step.
+    await uploadTenantModules(deps, tenant.id, endpoints);
+    await mark("modules_upload");
+
+    // 8. Install each module through the studio's OWN conformance-gated route (cf#99): the studio
+    //    runs the live suite against the resident script via its now-bound MODULE_DISPATCH and
+    //    seeds installed_modules in the tenant D1. No install logic is duplicated here.
+    await installTenantModules(deps, tenant.id, deps.tenantScriptName(tenant.slug), studioApiToken);
+    await mark("modules_install");
+
     // 7. Verify what we actually built, from the API's own view, rather than trusting our writes.
     //    Names only; these endpoints never return values.
     const script = deps.tenantScriptName(tenant.slug);
@@ -297,10 +336,15 @@ export async function runProvisionJob(
     // SERVING, not just storage: a binding census green-lit the first live provision, which then
     // 1101'd at the studio root because env.ASSETS was undefined. Dispatch a real request to the
     // worker root and require it does not 5xx.
-    const probe = await deps.probeTenantRoot(script, studioApiToken);
+    const probe = await deps.callTenantStudio(script, { method: "GET", path: "/", studioApiToken });
     if (probe.status >= 500) {
       throw new ProvisionFailure("verify", `tenant studio root returned ${probe.status}; the worker is not serving`);
     }
+    // Module half (cf#99): the studio must report a NON-EMPTY installed set, or discovery is dark
+    // and a render 503s honestly. The moving-pixels gate (render past discovery) needs key B and
+    // is the out-of-band release gate; this proves the bridge exists.
+    const installedModules = await verifyTenantModulesInstalled(deps, script, studioApiToken);
+    deps.log("provision.modules_installed", { tenant: tenant.id, modules: installedModules });
     await mark("verify");
 
     // The studio is built but cannot render until key B lands: RunPod will not let us mint that key
@@ -309,10 +353,12 @@ export async function runProvisionJob(
     await deps.store.finishJob(jobId, "succeeded", null, null);
     return { ok: true, status: "awaiting_invoke_key" };
   } catch (e) {
-    const step = e instanceof ProvisionFailure ? e.step : inferStep(done);
+    const step =
+      e instanceof ProvisionFailure ? e.step : e instanceof TenantModuleError ? e.step : inferStep(done);
     // The REAL error, verbatim. If RunPod says the worker quota is 10 and we need 12, that exact
     // sentence is what the tenant reads.
-    const message = e instanceof CfApiError || e instanceof ProvisionFailure ? e.message : String(e);
+    const message =
+      e instanceof CfApiError || e instanceof ProvisionFailure || e instanceof TenantModuleError ? e.message : String(e);
     deps.log("provision.failed", { tenant: tenant.id, step, message });
     await deps.store.finishJob(jobId, "failed", step, message);
     await deps.store.setTenantStatus(tenant.id, "failed");
@@ -374,6 +420,11 @@ export async function teardownTenant(
   };
 
   await attempt("worker", () => deps.cf.deleteUserWorker(deps.namespace, deps.tenantScriptName(tenant.slug)));
+  // Module scripts next (cf#99): the studio (discovery) is already gone, so sweeping the tenant's
+  // module scripts cannot tear a /poll out from under a live studio. Prefix sweep + census; every
+  // failure is surfaced (a live-configured module worker is exactly what must not be left behind).
+  const moduleTeardown = await teardownTenantModules(deps, tenant.id);
+  for (const f of moduleTeardown.failures) failures.push(f);
   // The credential goes next: an un-revoked token outliving its bucket is an orphaned grant.
   if (tenant.r2_token_id) await attempt("r2_token", () => deps.tokenMinter.revoke(tenant.r2_token_id!));
 

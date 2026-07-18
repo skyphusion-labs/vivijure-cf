@@ -121,6 +121,14 @@ APPLE_SERVICES_ID = "${APPLE_SERVICES_ID}"
 # serves dispatch, the NAME serves the upload API, and they must agree.
 CF_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 DISPATCH_NAMESPACE = "${TENANT_DISPATCH_NAMESPACE}"
+# The shared dispatch namespace tenant MODULE workers are uploaded into (cf#99), distinct from
+# DISPATCH_NAMESPACE (tenant studios): sharing one would collide script names and put a module
+# bug inside the tenant blast radius. The provisioner CREATES it if missing (idempotent), so no
+# separate dashboard/wrangler step is needed -- but it is a required var: absent -> provisioning
+# refuses 503, same as the rest of this block. NO [[dispatch_namespaces]] binding is needed for
+# it here (the control plane never dispatches to modules; each TENANT studio carries its own
+# MODULE_DISPATCH -> this namespace in its upload metadata).
+TENANT_MODULE_NAMESPACE = "${TENANT_MODULE_NAMESPACE}"
 # The pinned studio release every new tenant gets (the golden-checkpoint pin; see the Q4 ruling).
 STUDIO_RELEASE = "${STUDIO_RELEASE}"
 

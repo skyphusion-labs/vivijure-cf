@@ -71,13 +71,27 @@ export interface RatelimitBinding {
   namespace_id: string;
   simple: { limit: number; period: number };
 }
+/**
+ * An outbound dynamic-dispatch (Workers for Platforms) binding. The tenant studio carries this so it
+ * can reach its own module workers in the shared modules namespace via env.MODULE_DISPATCH.get(script)
+ * -- the SAME binding self-host declares in wrangler ([[dispatch_namespaces]]). Live-proven that a WfP
+ * user worker CAN carry it (cf#99 step-1 probe: accepted, censused, and a runtime .get().fetch()
+ * reached the namespace). `namespace` is the namespace NAME, not its id (the metadata upload API keys
+ * on the name), mirroring how the control plane's own TENANT_DISPATCH is declared.
+ */
+export interface DispatchNamespaceBinding {
+  type: "dispatch_namespace";
+  name: string;
+  namespace: string;
+}
 export type WorkerBinding =
   | D1Binding
   | R2Binding
   | PlainTextBinding
   | SecretTextBinding
   | AssetsBinding
-  | RatelimitBinding;
+  | RatelimitBinding
+  | DispatchNamespaceBinding;
 
 /** An asset in the upload manifest: the path plus a 32-hex hash and byte size. */
 export interface AssetManifestEntry {
@@ -256,6 +270,49 @@ export class CfApi {
   }
 
   // ---- Workers for Platforms ----
+
+  /**
+   * Create the shared tenant-modules dispatch namespace if it does not already exist. Idempotent-by-
+   * name in the same shape as createD1: a create that hits an existing namespace is swallowed (the API
+   * 409/errors), so a resumed provision re-runs it safely. The namespace is a routing bucket, not an
+   * isolation boundary (the cf#99 topology ruling); tenant isolation is per-script, by each script's
+   * own key-B secret.
+   */
+  async createDispatchNamespace(name: string): Promise<void> {
+    try {
+      await this.call<unknown>("wfp.createNamespace", `/accounts/${this.accountId}/workers/dispatch/namespaces`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+        headers: { "content-type": "application/json" },
+      });
+    } catch (e) {
+      if (e instanceof CfApiError) {
+        // Already exists is the only tolerable failure: confirm it is resident, then adopt it. Any
+        // other error (permission, quota) must still surface.
+        const existing = await this.listDispatchNamespaces();
+        if (existing.includes(name)) return;
+      }
+      throw e;
+    }
+  }
+
+  /** The dispatch namespaces on the account, by name (adopt-on-exists + honest teardown reads). */
+  async listDispatchNamespaces(): Promise<string[]> {
+    const res = await this.call<{ namespace_name?: string; name?: string }[]>(
+      "wfp.listNamespaces",
+      `/accounts/${this.accountId}/workers/dispatch/namespaces`,
+    );
+    return res.map((n) => n.namespace_name ?? n.name ?? "").filter((n) => n.length > 0);
+  }
+
+  /** Resident script names in a dispatch namespace. Drives the teardown prefix sweep + its census. */
+  async listNamespaceScripts(namespace: string): Promise<string[]> {
+    const res = await this.call<{ id?: string; script_name?: string }[]>(
+      "wfp.listScripts",
+      `/accounts/${this.accountId}/workers/dispatch/namespaces/${namespace}/scripts`,
+    );
+    return res.map((x) => x.id ?? x.script_name ?? "").filter((n) => n.length > 0);
+  }
 
   /**
    * Upload a user Worker into the dispatch namespace. Multipart: a metadata part naming the main

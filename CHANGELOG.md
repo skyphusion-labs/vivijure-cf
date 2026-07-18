@@ -3,6 +3,22 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## [Unreleased]
+
+- **Tenant render-module provisioning (cf#99): the studio-to-endpoint bridge.** A provisioned
+  tenant came up live but with ZERO render modules (`/api/modules/installed` empty, renders
+  503'd): the spec built the studio and the GPU endpoints but not the module workers that read
+  the endpoint ids. The provisioner now, per tenant, uploads tenant-configured copies of the
+  module workers (`keyframe`, `own-gpu`, `finish-upscale`, `finish-lipsync`, `speech-upscale`)
+  into a shared `TENANT_MODULE_NAMESPACE` (tenant-id-prefixed script names), binds
+  `MODULE_DISPATCH` on the tenant studio (upload metadata only -- the studio bundle stays
+  byte-identical to self-host), and installs each through the studio's OWN conformance-gated
+  `/api/modules/install` route. Key B lands on the studio + every module script in
+  `installInvokeKey`. Teardown prefix-sweeps the module scripts and censuses zero remain. Module
+  bundles ship in the SAME release artifact (`studio-releases/<tag>/modules/<name>/`), built by
+  `scripts/build-module-release.ts` and fetched + integrity-checked by `r2ModuleBundleSource`.
+  New required var: `TENANT_MODULE_NAMESPACE` (provisioner-created if missing).
+
 ## v1.1.0 -- 2026-07-17
 
 **The hosted-tier train lands (#63-#82).** MINOR: hosted control plane, studio release

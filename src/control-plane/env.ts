@@ -83,6 +83,10 @@ export interface ControlPlaneEnv {
   CF_ACCOUNT_ID?: string;
   /** The WfP dispatch namespace NAME for uploads (TENANT_DISPATCH binds it for dispatch only). */
   DISPATCH_NAMESPACE?: string;
+  /** The shared dispatch namespace NAME tenant MODULE scripts are uploaded into (cf#99). Distinct
+   *  from DISPATCH_NAMESPACE (tenant studios): sharing one would collide script names and put a
+   *  module bug inside the tenant blast radius. Required for provisioning (module bridge). */
+  TENANT_MODULE_NAMESPACE?: string;
   /** The pinned studio release tag the provisioner ships to every new tenant. */
   STUDIO_RELEASE?: string;
   /** The release-artifact mirror written by studio-release.yml (studio-releases/<tag>/...). */
