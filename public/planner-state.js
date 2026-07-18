@@ -340,7 +340,9 @@ function collectRenderStageState() {
   return {
     jobId: renderState.jobId,
     bundleKey: bundleState.bundleKey,
-    qualityTier: tierEl ? tierEl.value : "final",
+    // cf#62: persist absence as absence. A hardcoded "final" here poisoned the saved
+    // stash -- it round-tripped through restore as if the user had chosen that tier.
+    qualityTier: tierEl ? tierEl.value : "",
     renderOverridesText: overridesEl ? overridesEl.value : "",
     moduleOverrides: window.plannerRenderConfig ? window.plannerRenderConfig.collect() : null,
     keyframesOnly: kfOnlyEl ? kfOnlyEl.checked : false,

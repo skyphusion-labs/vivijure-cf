@@ -171,24 +171,31 @@
   // markup. Preserves the current selection across re-renders; falls back to the
   // server-declared default tier. The element itself stays in planner.html (it is a
   // core-render control, not module config); we only fill its <option>s here.
-  // Last-resort fallback if GET /api/modules failed to return a render block, so the
-  // tier picker is never empty (the core is the source of truth; this just keeps the
-  // page usable offline / on a transient registry error).
-  var FALLBACK_RENDER = {
-    quality_tiers: [
-      { value: "draft", label: "draft", blurb: "fastest, lowest quality" },
-      { value: "standard", label: "standard", blurb: "balanced" },
-      { value: "final", label: "final", blurb: "production quality" },
-    ],
-    default_tier: "final",
-  };
-
+  //
+  // cf#62 (bare-skeleton doctrine): there is NO hardcoded tier fallback. The tiers are
+  // core-owned (QUALITY_TIERS / DEFAULT_QUALITY_TIER), so a panel-side copy is a value
+  // the studio must not invent -- it silently drifts from core and, worse, offers the
+  // user a tier this deploy may not serve. When the projection is missing or empty the
+  // picker says so and submits NOTHING: every send path omits qualityTier when the
+  // control has no value, and the core applies its own default. An honest empty beats a
+  // plausible wrong answer.
   function renderTierPicker(render) {
     const sel = document.getElementById("planner-quality-tier");
     if (!sel) return;
     if (!render || !Array.isArray(render.quality_tiers) || !render.quality_tiers.length) {
-      render = FALLBACK_RENDER;
+      const pendingLost = sel.dataset.pendingValue || "";
+      sel.innerHTML = "";
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.disabled = true;
+      opt.textContent = "quality tiers unavailable";
+      sel.appendChild(opt);
+      sel.disabled = true;
+      // Keep a restore pending: a later successful projection can still honor it.
+      if (pendingLost) sel.dataset.pendingValue = pendingLost;
+      return;
     }
+    sel.disabled = false;
     // Desired value, in priority order: a restore that ran before the options existed
     // (data-pending-value, set by the planner's session restore), then the current
     // selection (preserved across re-renders), then the server default. Because the
@@ -674,6 +681,7 @@
     collectForSubmit,
     restore,
     mergeExpert,
+    renderTierPicker,
     selectTier,
     backendChoicePending,
   };
