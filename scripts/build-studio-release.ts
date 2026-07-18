@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { basename, extname, join, posix, relative, sep } from "node:path";
 import blake3 from "blake3-wasm";
-import { ORCHESTRATOR_VAR_KEYS } from "../src/platform/orchestrator-vars.js";
+import { ORCHESTRATOR_VAR_KEYS } from "../src/platform/orchestrator-vars.ts";
 
 /**
  * Content types, pinned explicitly rather than pulled from a mime database.
