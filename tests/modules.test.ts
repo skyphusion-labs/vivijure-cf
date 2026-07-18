@@ -162,8 +162,11 @@ describe("modulesResponse", () => {
   it("serves the static hook catalog (name + blurb + cardinality), independent of installs", () => {
     const r = modulesResponse([], render);
     expect(r.catalog.map((h) => h.name)).toEqual([
-      "keyframe", "motion.backend", "finish", "score", "dialogue", "speech", "plan.enhance", "cast.image", "notify", "master", "film.finish",
+      "keyframe", "motion.backend", "finish", "score", "dialogue", "speech", "plan.enhance", "image.generate", "cast.image", "notify", "master", "film.finish",
     ]);
+    // image.generate (cf#129 phase 2): pick_one -- one image is produced by one model. The catalog
+    // ORDER matters here too, since the self-assembling UI renders hooks in this sequence.
+    expect(r.catalog.find((h) => h.name === "image.generate")?.cardinality).toBe("pick_one");
     expect(r.catalog.find((h) => h.name === "dialogue")?.cardinality).toBe("pick_one");
     expect(r.catalog.find((h) => h.name === "speech")?.cardinality).toBe("chain");
     expect(r.catalog.find((h) => h.name === "cast.image")?.cardinality).toBe("pick_one");

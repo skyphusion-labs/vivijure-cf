@@ -7,8 +7,9 @@
 // its own models; cf#129 removed the remaining 55 dead rows. They were dead in the strict sense:
 // findModel() was consulted in exactly two places and BOTH only asked `type === "image"`, and no
 // route existed for video / tts / stt / music / voice (nor for /api/chat/stream, which is what the
-// old `streaming` flag gated). The surviving image rows live in src/image-models.ts, matching
-// vivijure-local's file layout so the two hosts stay structurally identical.
+// old `streaming` flag gated). cf#129 phase 2 then deleted the surviving image rows too: they are
+// PROJECTED from installed image.generate modules now (src/module-catalog.ts), so this host holds
+// no model names of any kind.
 //
 // Do NOT add model names here. Under the bare-skeleton doctrine the studio hardcodes none: the
 // planning catalog is projected from installed plan.enhance modules (src/planning-models.ts), and
