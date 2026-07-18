@@ -230,6 +230,19 @@ export class RunPodClient {
     });
   }
 
+  /**
+   * Rewrite an EXISTING template's env (#83). The adopt path depends on this: a template created on
+   * an earlier provision carries that provision's R2 credential, and every provision mints a fresh
+   * one. Without this the tenant's containers authenticate with a dead credential and the first
+   * render dies on R2 auth, which is exactly how this was found.
+   *
+   * The env passed here is the COMPLETE template env (templateEnv builds it), so a full overwrite is
+   * correct: there is no partial-merge case where a key we do not set must survive.
+   */
+  async updateTemplateEnv(templateId: string, env: Record<string, string>) {
+    return await this.call<{ id: string }>("templates.update", "PATCH", `/templates/${templateId}`, { env });
+  }
+
   async createEndpoint(args: {
     name: string;
     templateId: string;
@@ -406,23 +419,40 @@ export async function createTenantEndpoints(
 
   for (const spec of plan) {
     const name = tenantEndpointName(slug, spec.key);
-
+    const env = templateEnv(spec.key, r2);
+    const existingTemplate = templates.find((t) => t.name === name);
     const existingEndpoint = endpoints.find((e) => e.name === name);
+
+    // THE TEMPLATE COMES FIRST, ALWAYS (#83). Previously an adopted endpoint short-circuited the
+    // whole iteration and an adopted template was reused as-is, so the freshly-minted R2 credential
+    // only ever reached a template we CREATED. Every provision mints a new credential, so an adopted
+    // tenant rendered with a dead one and died at the first R2 read (401 HeadObject). Refreshing the
+    // template before touching the endpoint means the fresh credential reaches every consumer BEFORE
+    // anything can invalidate the old one.
+    let templateId: string;
+    if (existingTemplate) {
+      await client.updateTemplateEnv(existingTemplate.id, env);
+      templateId = existingTemplate.id;
+    } else if (existingEndpoint) {
+      // An endpoint we cannot trace to a template by name: we have nowhere to write the fresh
+      // credential, so we CANNOT honestly claim this endpoint can render. Fail loudly rather than
+      // hand back an endpoint that will 401 at the tenant's first render (the #83 failure mode).
+      throw new RunPodError(
+        "templates.refresh",
+        409,
+        `endpoint ${name} exists but no template named ${name} was found, so the freshly minted R2 ` +
+          `credential cannot be written to it; refusing to report this endpoint as ready`,
+      );
+    } else {
+      templateId = (
+        await client.createTemplate(name, `ghcr.io/skyphusion-labs/${spec.imageRepo}:${spec.tag}`, env)
+      ).id;
+    }
+
     if (existingEndpoint) {
       created.push({ key: spec.key, label: spec.label, id: existingEndpoint.id, name, endpointVar: spec.endpointVar });
       continue;
     }
-
-    const existingTemplate = templates.find((t) => t.name === name);
-    const templateId =
-      existingTemplate?.id ??
-      (
-        await client.createTemplate(
-          name,
-          `ghcr.io/skyphusion-labs/${spec.imageRepo}:${spec.tag}`,
-          templateEnv(spec.key, r2),
-        )
-      ).id;
 
     const endpoint = await client.createEndpoint({
       name,

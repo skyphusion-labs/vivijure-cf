@@ -3,6 +3,33 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.2.3 -- 2026-07-18
+
+**Provision survives an adopted RunPod template (#83).** PATCH: the third and last adopt-path defect
+the hosted-tier finale surfaced. An adopted tenant now renders instead of dying on R2 auth.
+
+- **Adopted templates get the freshly minted R2 credential (cf#83).** `createTenantEndpoints` is
+  idempotent-by-name, but an adopted ENDPOINT short-circuited the whole iteration and an adopted
+  TEMPLATE was reused as-is, so the newly minted R2 credential only ever reached a template we
+  CREATED. Every provision mints a new bucket-scoped credential, so an adopted tenant provisioned
+  green (9/9 steps) and then died at its first render with
+  `botocore ClientError (401) HeadObject: Unauthorized`, because the container was authenticating
+  with the credential baked in on an earlier run. The template is now refreshed via
+  `PATCH /templates/{id}` on every provision, BEFORE the endpoint is touched, so the fresh credential
+  reaches every consumer before anything can invalidate the old one.
+- **An endpoint with no matching template is now a refusal, not a silent pass.** That is the one
+  shape where the minted credential has nowhere to go; reporting the endpoint as ready would be the
+  same lie in a new costume, so it fails loudly instead.
+- **The env asymmetry survives the refresh path.** The backend reads `R2_ENDPOINT` +
+  `HF_HUB_OFFLINE`, satellites read `R2_ENDPOINT_URL` (finding F17). Getting that wrong on refresh
+  would only surface at a tenant first render, so it is asserted directly.
+- **Gated by a state-reading test, not a call-counting one.**
+  `tests/control-plane/adopted-template-cred.test.ts` uses a RunPod fake that STORES template env and
+  asserts the adopted template OBJECT ends up carrying the minted credential. Asserting that an
+  updater was called would pass against an updater that wrote nothing, which is the stub class that
+  let this ship broken. Mutation-checked: skipping the refresh reproduces the live stale-credential
+  shape (`expected 'STALE_AK_revoked' to be 'FRESH_AK_minted_this_run'`).
+
 ## v1.2.2 -- 2026-07-18
 
 **Provision survives an adopted studio script (#108).** PATCH: the second adopt-path defect the

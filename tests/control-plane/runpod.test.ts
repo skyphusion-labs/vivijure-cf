@@ -30,6 +30,10 @@ function fakeRunPod(opts: { endpoints?: unknown[]; templates?: unknown[]; quotaE
     const method = init?.method ?? "GET";
     if (method === "GET" && u.endsWith("/endpoints")) return new Response(JSON.stringify(opts.endpoints ?? []));
     if (method === "GET" && u.endsWith("/templates")) return new Response(JSON.stringify(opts.templates ?? []));
+    if (method === "PATCH" && u.includes("/templates/")) {
+      created.push(`template-refresh:${u.split("/templates/")[1]}`);
+      return new Response(JSON.stringify({ id: u.split("/templates/")[1] }));
+    }
     if (method === "POST" && u.endsWith("/templates")) {
       const body = JSON.parse(String(init?.body)) as { name: string };
       created.push(`template:${body.name}`);
@@ -159,11 +163,18 @@ describe("createTenantEndpoints", () => {
   });
 
   it("REUSES an existing endpoint by name instead of duplicating it on the tenant's bill", async () => {
+    // The template is seeded alongside the endpoint because that is the only state we can actually
+    // produce: we create both under the same name. An endpoint with no matching template is now a
+    // refusal (#83) -- it is the one shape where the freshly minted R2 credential has nowhere to go
+    // -- and it has its own test in adopted-template-cred.test.ts.
     const existing = { id: "ep-old", name: tenantEndpointName("hero", "backend"), workersMax: 2 };
-    const { fetchImpl, created } = fakeRunPod({ endpoints: [existing] });
+    const existingTemplate = { id: "tpl-old", name: tenantEndpointName("hero", "backend") };
+    const { fetchImpl, created } = fakeRunPod({ endpoints: [existing], templates: [existingTemplate] });
     const out = await createTenantEndpoints("rpa_keyA", "hero", R2, PROVISION_PLAN, fetchImpl);
     expect(out.find((e) => e.key === "backend")?.id).toBe("ep-old");
     expect(created).not.toContain(`endpoint:${existing.name}:2`);
+    // and the adopted template got the fresh credential written to it
+    expect(created).toContain("template-refresh:tpl-old");
   });
 
   it("FAILS BEFORE creating anything when the plan does not fit, with RunPod's real numbers", async () => {
