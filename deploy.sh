@@ -117,9 +117,14 @@ export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
 # modules/ is never picked up by accident, and the list matches the profile boundary in the docs.
 # STANDARD = core render modules + the media-stack finish modules (film-titles /
 # subtitle / beat-sync / audio-master), all reached over Workers VPC (provisioned in step 4, #519).
+#
+# image-generate (cf#129 phase 2) is load-bearing for the CHAT IMAGE path, not an optional extra:
+# the studio hardcodes no image model names, so GET /api/models projects its image rows from this
+# module's manifest. Omit it and the studio deploys with an honestly EMPTY image catalog and an image
+# picker that offers nothing -- which is what this list did until the omission was caught.
 STANDARD_MODULES="own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
-notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo vidu-q3 alibaba-wan \
-film-titles subtitle beat-sync audio-master"
+image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo vidu-q3 \
+alibaba-wan film-titles subtitle beat-sync audio-master"
 # alibaba-wan-lora is DELISTED for v1.0 (#771): custom-LoRA path unverified; source kept, re-add when fixed.
 # SATELLITES = the 3 opt-in GPU finish modules, each on its own separate RunPod endpoint.
 SATELLITE_MODULES="finish-upscale finish-lipsync speech-upscale"
