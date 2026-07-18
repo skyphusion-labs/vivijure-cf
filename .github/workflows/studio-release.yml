@@ -92,6 +92,7 @@ jobs:
             --bundle bundle-out/index.js \
             --assets public \
             --config wrangler.toml \
+            --migrations migrations \
             --tag "$TAG" \
             --out dist-release | tee build.log
           echo "pin=$(cat dist-release/PIN.txt)" >> "$GITHUB_OUTPUT"
@@ -186,6 +187,11 @@ jobs:
           BUCKET="${R2_RELEASES_BUCKET:-vivijure-studio-releases}"
           npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/manifest.json" --file dist-release/manifest.json --remote
           npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/worker.js" --file dist-release/worker.js --remote
+          # The tenant D1 schema rides the release (cf#85). Named, not content-addressed: the
+          # migration runner tracks each by FILENAME in the tenant schema_migrations table.
+          for f in dist-release/migrations/*.sql; do
+            npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/migrations/$(basename "$f")" --file "$f" --remote
+          done
           for f in dist-release/assets/*; do
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/assets/$(basename "$f")" --file "$f" --remote
           done

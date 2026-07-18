@@ -18,12 +18,13 @@
 // Usage:
 //   node scripts/build-studio-release.ts \
 //     --bundle <wrangler --outdir>/index.js --assets public --config wrangler.toml \
-//     --tag v1.2.3 --out dist-release
+//     --migrations migrations --tag v1.2.3 --out dist-release
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { basename, extname, join, posix, relative, sep } from "node:path";
 import blake3 from "blake3-wasm";
+import { ORCHESTRATOR_VAR_KEYS } from "../src/platform/orchestrator-vars.js";
 
 /**
  * Content types, pinned explicitly rather than pulled from a mime database.
@@ -169,11 +170,13 @@ function main(): void {
   const bundlePath = arg("bundle");
   const assetsDir = arg("assets");
   const configPath = arg("config");
+  const migrationsDir = arg("migrations");
   const tag = arg("tag");
   const outDir = arg("out");
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(join(outDir, "assets"), { recursive: true });
+  mkdirSync(join(outDir, "migrations"), { recursive: true });
 
   // The worker: copied verbatim from wrangler's outdir. sha256 is OUR integrity check (#53 req 4) --
   // distinct from the CF asset hash above, and deliberately the full 64 hex.
@@ -194,6 +197,35 @@ function main(): void {
     };
   });
 
+  // The studio D1 schema rides the release (cf#85). Before this, the hosted control plane imported
+  // these .sql files straight out of this repo at ITS build time, which meant a tenant could get its
+  // SCHEMA from the control plane deploy commit and its WORKER from a pinned release tag -- two
+  // different versions of the studio in one tenant. Shipping them here collapses that to ONE pinned
+  // artifact, and closes the versioning caveat studio-migrations.ts documented against itself.
+  //
+  // TOP-LEVEL ONLY, matching the live-verified provision chain exactly: migrations/manual/ is
+  // operator-run and migrations/demo/ is demo seed data; neither belongs in a tenant D1. `sort()` is
+  // the apply order and the filename is the tracking key, so both must stay stable.
+  const migrations = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((name) => {
+      const contents = readFileSync(join(migrationsDir, name));
+      // Named, not content-addressed: the runner records each migration by FILENAME in the tenant
+      // schema_migrations table, so the name is load-bearing state, not a label.
+      writeFileSync(join(outDir, "migrations", name), contents);
+      return {
+        name,
+        sha256: createHash("sha256").update(contents).digest("hex"),
+        size: contents.byteLength,
+      };
+    });
+
+  if (migrations.length === 0) {
+    // An empty set would provision every new tenant with an EMPTY schema and report success. Refuse.
+    throw new Error(`no .sql migrations found in ${migrationsDir}`);
+  }
+
   const compat = readCompat(configPath);
   const assetsConfig = readAssetsConfig(configPath);
   const manifest = {
@@ -208,6 +240,15 @@ function main(): void {
     // downstream -- that is the drift this manifest exists to prevent.
     assets_config: assetsConfig,
     assets,
+    // The tenant D1 schema, in apply order, each hashed so the consumer verifies bytes it did not
+    // build. See the block above for why it lives in the artifact rather than in the control plane.
+    migrations,
+    // The studio env var contract, exported from the SINGLE source of truth
+    // (src/platform/orchestrator-vars.ts) at build time. The hosted provisioner binds these onto a
+    // tenant studio; it used to keep its own hand-maintained copy, the two drifted, and the drift
+    // only surfaced at a tenant first render as an opaque 500. Publishing the contract in the
+    // artifact means the provisioner derives its bind census from the release it actually pinned.
+    required_vars: [...ORCHESTRATOR_VAR_KEYS],
   };
   // Stable key order + trailing newline: the manifest digest is the release pin, so the same inputs
   // must produce the same bytes.
@@ -223,6 +264,8 @@ function main(): void {
   console.log(`worker:          ${basename(bundlePath)} -> worker.js (${workerBytes.byteLength} bytes)`);
   console.log(`worker sha256:   ${workerSha256}`);
   console.log(`assets:          ${assets.length}`);
+  console.log(`migrations:      ${migrations.length} (${migrations.map((m) => m.name).join(", ")})`);
+  console.log(`required_vars:   ${ORCHESTRATOR_VAR_KEYS.length}`);
   console.log(`compat:          ${compat.date} [${compat.flags.join(", ")}]`);
   console.log(`assets_config:   ${JSON.stringify(assetsConfig)}`);
   console.log(`manifest sha256: ${manifestSha256}`);
