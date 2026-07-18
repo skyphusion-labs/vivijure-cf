@@ -96,6 +96,24 @@ jobs:
             --out dist-release | tee build.log
           echo "pin=$(cat dist-release/PIN.txt)" >> "$GITHUB_OUTPUT"
 
+      # Tenant MODULE workers (cf#99): each is its own wrangler project, so wrangler's own
+      # bundler produces the deploy shape and build-module-release.ts assembles + hashes it into
+      # the SAME release tree (studio-releases/<tag>/modules/<name>/). A tenant's studio and its
+      # modules ship as ONE tag, so they can never be a mismatched pair. Modules hold no assets;
+      # their secret bindings are the provisioner's upload metadata, so the bundle is code-only and
+      # reproducible (the dummy store ids in each wrangler.toml are inert at --dry-run).
+      - name: Bundle + assemble the tenant module workers (cf#99)
+        run: |
+          set -euo pipefail
+          for m in keyframe own-gpu finish-upscale finish-lipsync speech-upscale; do
+            ( cd "modules/$m" && npx wrangler deploy --dry-run --outdir="$GITHUB_WORKSPACE/module-out/$m" )
+            node scripts/build-module-release.ts \
+              --bundle "module-out/$m/index.js" \
+              --config "modules/$m/wrangler.toml" \
+              --module "$m" \
+              --out "dist-release/modules/$m"
+          done
+
       # A release the provisioner cannot verify is a release we cannot trust. Re-derive the manifest
       # digest from the bytes we are about to publish and fail if it moved.
       - name: Verify the artifact before publishing
@@ -116,6 +134,27 @@ jobs:
             if (onDisk!==unique) throw new Error('asset count mismatch: '+onDisk+' files vs '+unique+' unique hashes');
             console.log('artifact verified:', m.assets.length, 'assets,', unique, 'unique,', w.byteLength, 'bytes of worker');
           "
+
+      # Same discipline as the studio artifact: re-derive each module worker digest from the bytes
+      # about to publish and fail if it moved (a module bundle a tenant cannot verify is one we
+      # cannot trust).
+      - name: Verify the module artifacts before publishing (cf#99)
+        run: |
+          set -euo pipefail
+          for m in keyframe own-gpu finish-upscale finish-lipsync speech-upscale; do
+            test -s "dist-release/modules/$m/worker.js"
+            test -s "dist-release/modules/$m/manifest.json"
+            node -e "
+              const {createHash}=require('node:crypto');
+              const {readFileSync}=require('node:fs');
+              const man=JSON.parse(readFileSync(process.argv[1],'utf8'));
+              const w=readFileSync(process.argv[2]);
+              if (man.module!==process.argv[3]) throw new Error('module name mismatch');
+              if (createHash('sha256').update(w).digest('hex')!==man.worker.sha256) throw new Error('module worker sha256 mismatch');
+              if (w.byteLength!==man.worker.size) throw new Error('module worker size mismatch');
+              console.log('module', process.argv[3], 'verified:', w.byteLength, 'bytes');
+            " "dist-release/modules/$m/manifest.json" "dist-release/modules/$m/worker.js" "$m"
+          done
 
       - run: tar -czf studio-release-${{ github.event.inputs.tag || github.ref_name }}.tar.gz -C dist-release .
 
@@ -149,4 +188,8 @@ jobs:
           npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/worker.js" --file dist-release/worker.js --remote
           for f in dist-release/assets/*; do
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/assets/$(basename "$f")" --file "$f" --remote
+          done
+          for m in keyframe own-gpu finish-upscale finish-lipsync speech-upscale; do
+            npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/manifest.json" --file "dist-release/modules/$m/manifest.json" --remote
+            npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/worker.js" --file "dist-release/modules/$m/worker.js" --remote
           done

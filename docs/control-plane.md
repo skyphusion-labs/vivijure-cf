@@ -155,12 +155,59 @@ because a tenant parked on a job nothing will ever run is a lie with a status pa
 | `CF_PROVISIONER_TOKEN` (secret) | The DASHBOARD-created credential: mints tenant D1/R2/WfP uploads AND the per-tenant bucket tokens (an API-created token cannot mint; `token-minter.ts`) |
 | `CF_ACCOUNT_ID` (var) | Account id for `CfApi` paths and the tenant R2 S3 endpoint |
 | `DISPATCH_NAMESPACE` (var) | The WfP namespace NAME for uploads; must agree with the `TENANT_DISPATCH` binding |
+| `TENANT_MODULE_NAMESPACE` (var) | The shared WfP namespace tenant MODULE workers upload into (cf#99); provisioner-created if missing, but required |
 | `STUDIO_RELEASE` (var) | The pinned release tag every new tenant gets (the golden-checkpoint pin) |
 | `STUDIO_RELEASES` (R2 binding) | The release-artifact mirror `studio-release.yml` publishes |
 
 Deploy prereqs, same class as the dangling-namespace hazard: the mirror bucket must exist and the
 pinned tag's artifact must have been PUBLISHED into it (run the studio-release workflow) before a
 provision can succeed. An unpublished pin fails a provision honestly at `wfp_upload`.
+
+## Tenant render modules (the studio-to-endpoint bridge, cf#99)
+
+A fully-provisioned tenant is live, serving, authenticated, and spend-limited, with four GPU
+endpoints -- and, until this bridge, ZERO render modules: `/api/modules/installed` was `[]` and a
+render 503'd honestly. The endpoints exist and their ids are set, but those ids are read by
+**module workers**, and nothing created them. This is the piece the original spec built around
+but not through.
+
+The provisioner closes it the SAME way self-host does (Phase-3 dynamic dispatch), per tenant:
+
+1. **Module scripts.** Tenant-configured copies of the module workers (`keyframe`, `own-gpu`,
+   `finish-upscale`, `finish-lipsync`, `speech-upscale`) upload into ONE shared dispatch namespace
+   (`TENANT_MODULE_NAMESPACE`, e.g. `vivijure-tenant-modules`), script names prefixed with the
+   TENANT ID (stable across renames; teardown is a prefix sweep). Each carries only its own
+   endpoint id (`RUNPOD_ENDPOINT_ID`, plain_text). The catalog (`src/control-plane/tenant-modules.ts`,
+   `TENANT_MODULE_CATALOG`) maps module -> endpoint as DATA; extending the tier is a row there plus
+   the matching endpoint in `runpod.ts` (bare-skeleton doctrine).
+2. **`MODULE_DISPATCH` on the studio.** The tenant studio's WfP upload carries a
+   `dispatch_namespace` binding -> the modules namespace. This is UPLOAD METADATA, not studio code,
+   so the studio bundle stays byte-identical to self-host (parity). That a WfP user worker can
+   carry a dispatch binding was live-proven before any code (cf#99 step-1 probe: accepted,
+   censused, and a runtime `.get().fetch()` reached the namespace).
+3. **Install via the studio's own route.** The provisioner drives the tenant studio's
+   `POST /api/modules/install` over `TENANT_DISPATCH` (the studio bearer passes its own
+   `AUTH_MODE=token` gate). The studio runs the REAL conformance gate against the resident script
+   through its `MODULE_DISPATCH` and seeds `installed_modules` in the tenant D1. No install logic
+   is duplicated in the control plane.
+
+**Key-B ordering.** Modules upload + install DURING provisioning, before key B exists. That is
+safe because module conformance is envelope+degrade only (async GPU modules return pending/degrade;
+the gate never triggers real GPU work), and every module answers the conformance probe with a
+well-formed `{ ok:false }` envelope before it reads any RunPod credential (live-verified across all
+five modules with no key B bound). Key B lands on the studio AND every module script in
+`installInvokeKey`, in place (a secret PUT, no re-upload) -- the module can then render.
+
+**Bundles.** Module workers cannot be built at provision time (the control plane is a Worker), the
+same constraint the studio bundle has. They ship in the SAME release artifact under
+`studio-releases/<tag>/modules/<name>/` (one tag, one artifact: a tenant's studio and its modules
+are never a mismatched pair), fetched + sha256-integrity-checked by `r2ModuleBundleSource`, built
+by `scripts/build-module-release.ts` in the release workflow.
+
+**Verify + teardown.** A tenant is not verified until `/api/modules/installed` is non-empty (the
+in-job gate); a render past discovery + moving pixels needs key B and is the out-of-band release
+gate. Teardown pulls the studio worker first (discovery goes dark), then prefix-sweeps the tenant's
+module scripts and censuses that zero remain; the `installed_modules` rows die with the tenant D1.
 
 Naming: **"control-plane", never "platform"**. `src/platform/` is already the host-neutral Platform
 ICD, and colliding with it would be a trap for the next reader.

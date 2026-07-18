@@ -6,6 +6,7 @@
 // productionDeps() is what the live wrangler dev verify drives.
 
 import { r2StudioBundleSource } from "./bundle-r2";
+import { r2ModuleBundleSource } from "./module-bundle-r2";
 import { CfApi } from "./cf-api";
 import type { ControlPlaneEnv } from "./env";
 import type { MailSender } from "./email";
@@ -16,6 +17,7 @@ import type { ControlPlaneStore, Tenant } from "./store";
 import { D1Store } from "./store-d1";
 import { STUDIO_MIGRATIONS } from "./studio-migrations";
 import { CfTokenMinter } from "./token-minter";
+import { TENANT_MODULE_CATALOG, tenantModuleScriptName } from "./tenant-modules";
 
 /** The secret name the studio reads its stored invoke key (key B) from (src/env.ts). */
 export const TENANT_RUNPOD_SECRET = "RUNPOD_API_KEY";
@@ -58,12 +60,20 @@ export function productionDeps(env: ControlPlaneEnv): ControlPlaneDeps {
 
 /** Exported for the wiring test: the same construction production takes. */
 export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore): ProvisionerWiring | undefined {
-  const { CF_PROVISIONER_TOKEN, CF_ACCOUNT_ID, DISPATCH_NAMESPACE, STUDIO_RELEASE, STUDIO_RELEASES, STUDIO_TOKEN_KEK } =
-    env;
+  const {
+    CF_PROVISIONER_TOKEN,
+    CF_ACCOUNT_ID,
+    DISPATCH_NAMESPACE,
+    TENANT_MODULE_NAMESPACE,
+    STUDIO_RELEASE,
+    STUDIO_RELEASES,
+    STUDIO_TOKEN_KEK,
+  } = env;
   if (
     !CF_PROVISIONER_TOKEN ||
     !CF_ACCOUNT_ID ||
     !DISPATCH_NAMESPACE ||
+    !TENANT_MODULE_NAMESPACE ||
     !STUDIO_RELEASE ||
     !STUDIO_RELEASES ||
     !STUDIO_TOKEN_KEK
@@ -77,9 +87,12 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
     cf,
     runpod: { createEndpoints: (key, slug, r2) => createTenantEndpoints(key, slug, r2) },
     bundle: r2StudioBundleSource(STUDIO_RELEASES),
+    // Module bundles ship in the SAME release mirror, per-module subpath (cf#99).
+    moduleBundle: r2ModuleBundleSource(STUDIO_RELEASES),
     tokenMinter: new CfTokenMinter(cf),
     r2Endpoint: `https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     namespace: DISPATCH_NAMESPACE,
+    moduleNamespace: TENANT_MODULE_NAMESPACE,
     release: STUDIO_RELEASE,
     tenantScriptName: (slug) => `tenant-${slug}-studio`,
     kek: STUDIO_TOKEN_KEK,
@@ -88,12 +101,14 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
     // Prove SERVING at verify: dispatch straight to the tenant worker (bypassing the control-plane
     // status gate, which 503s a still-provisioning tenant) and report the status. A Bearer is
     // attached so an auth-gated root also answers; the static root needs none once ASSETS is bound.
-    probeTenantRoot: async (scriptName, studioApiToken) => {
+    callTenantStudio: async (scriptName, init) => {
       const stub = env.TENANT_DISPATCH.get(scriptName);
+      const headers: Record<string, string> = { authorization: `Bearer ${init.studioApiToken}` };
+      if (init.body !== undefined) headers["content-type"] = "application/json";
       const res = await stub.fetch(
-        new Request("https://tenant.internal/", { headers: { authorization: `Bearer ${studioApiToken}` } }),
+        new Request(`https://tenant.internal${init.path}`, { method: init.method, headers, body: init.body }),
       );
-      return { status: res.status };
+      return { status: res.status, text: await res.text() };
     },
     // Structured, greppable, and NEVER carries a secret (provisioner discipline).
     log: (event, fields) => console.log("provision", { event, ...fields }),
@@ -106,7 +121,18 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
     },
     async installInvokeKey(tenant, key) {
       if (!tenant.script_name) throw new Error("tenant has no studio worker to install the key on");
+      // Key B lands on the studio AND every tenant module script (cf#99): the studio reads its own
+      // RUNPOD_API_KEY, and each module worker reads it to reach RunPod. Rotates in place
+      // (putScriptSecret, no re-upload). Module script names are deterministic from the tenant id.
       await cf.putScriptSecret(DISPATCH_NAMESPACE, tenant.script_name, TENANT_RUNPOD_SECRET, key);
+      for (const spec of TENANT_MODULE_CATALOG) {
+        await cf.putScriptSecret(
+          TENANT_MODULE_NAMESPACE,
+          tenantModuleScriptName(tenant.id, spec.module),
+          TENANT_RUNPOD_SECRET,
+          key,
+        );
+      }
     },
   };
 }
