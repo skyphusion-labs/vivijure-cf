@@ -3,6 +3,27 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+MINOR: the module contract gains a credential-readiness endpoint, and stops lying about a credential
+that is configured but not yet served (cf#114, a launch gate under cf#40).
+
+- **New module-contract endpoint `GET /ready`** on all five tenant modules (`keyframe`, `own-gpu`,
+  `finish-upscale`, `finish-lipsync`, `speech-upscale`): `{ ok, module, credentials: { ... } }`,
+  **booleans only, never values**. It answers a question nothing outside the module can: whether the
+  version the edge is ACTUALLY SERVING can read its credentials. The platform API can only report
+  that a secret NAME exists, which was true during the live failure this fixes.
+- **Honest credential text.** The endpoint id is bound at module upload; the API key is written
+  later as a secret. Endpoint-present + key-absent is therefore diagnostic of PROPAGATION, and now
+  reads `credential not yet visible on this worker version (retry shortly)` instead of the previous
+  `not configured` -- which sent a real tenant chasing a correctly-configured credential during the
+  cf#99 finale. Both absent stays a genuine `not configured`.
+- **The soft-degrade path carries the same distinction**: the polish modules degrade with
+  `runpod-key-not-yet-visible` rather than `no-runpod-secrets`, so the honest-degrade record does
+  not itself carry the lie. No polish step changed its fail/degrade behaviour.
+- Contract documented in `docs/module-api.md`; module manifest versions bumped (a new endpoint is a
+  surface change). Tenants pick this up on re-provision against the new pin.
+
 ## v1.5.0 -- 2026-07-18
 
 MINOR: the chat/image surface becomes module territory (cf#129). The studio now hardcodes NO model

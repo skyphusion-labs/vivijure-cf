@@ -33,7 +33,7 @@ interface Env {
 // this module's `quality` enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "own-gpu",
-  version: "0.1.1",
+  version: "0.2.0",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-own-gpu", label: "Own GPU (Wan2.2 i2v)" }],
@@ -100,6 +100,19 @@ async function runpodCreds(env: Env): Promise<{ apiKey: string; endpointId: stri
   return { apiKey, endpointId };
 }
 
+/** cf#114: classify an absent RunPod credential HONESTLY.
+ *  RUNPOD_ENDPOINT_ID is a plain_text binding written at module UPLOAD; RUNPOD_API_KEY is a secret
+ *  written LATER (by installInvokeKey on the control plane). The two therefore arrive by different
+ *  routes at different times, so endpoint-present + key-absent is diagnostic of PROPAGATION, not of
+ *  misconfiguration, and saying "not configured" about it is a lie that sent a real tenant chasing a
+ *  correctly-configured credential. Both absent stays a genuine "not configured".
+ *  Returns null when both are readable. */
+function credentialProblem(apiKey: string, endpointId: string): string | null {
+  if (apiKey && endpointId) return null;
+  if (endpointId) return "credential not yet visible on this worker version (retry shortly)";
+  return "RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured";
+}
+
 /** /invoke: validate, submit the i2v_clip job to our backend, return a poll token immediately. */
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
@@ -107,7 +120,8 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
     return { ok: false, error: "motion.backend: input needs shot_id and prompt" };
   }
   const { apiKey, endpointId } = await runpodCreds(env);
-  if (!configured(apiKey, endpointId)) return { ok: false, error: "own-gpu: RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured" };
+  const credProblem = credentialProblem(apiKey, endpointId);
+  if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
   try {
     const r = await fetch(endpoint(endpointId) + "/run", {
       method: "POST",
@@ -129,7 +143,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "own-gpu: bad poll token" };
   const { apiKey, endpointId } = await runpodCreds(env);
-  if (!configured(apiKey, endpointId)) return { ok: false, error: "own-gpu: RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured" };
+  const credProblem = credentialProblem(apiKey, endpointId);
+  if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -182,6 +197,24 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
+    // GET /ready (cf#114): does the version the edge is ACTUALLY SERVING read its credentials?
+    // Booleans only, NEVER values -- this reports whether a credential is visible here, not what it
+    // is. Zero GPU cost and module-agnostic, which is what makes it a probe the control plane can
+    // run before flipping a tenant live. Unauthenticated by design, on the same footing as
+    // /module.json: these scripts are reachable only through the dispatch namespace (they carry no
+    // public route), the response contains nothing secret, and the control plane has to be able to
+    // ask this question at the exact moment the tenant has no working credential to authenticate
+    // with. Gating it would make it unusable for its one purpose while protecting nothing.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const { apiKey, endpointId } = await runpodCreds(env);
+      return json({
+        ok: Boolean(apiKey && endpointId),
+        // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
+        // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
+        module: MANIFEST.name,
+        credentials: { runpod_api_key: Boolean(apiKey), runpod_endpoint_id: Boolean(endpointId) },
+      });
+    }
 
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<MotionBackendInput>;

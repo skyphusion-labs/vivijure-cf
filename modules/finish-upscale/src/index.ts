@@ -35,7 +35,7 @@ interface Env {
 
 const MANIFEST: ModuleManifest = {
   name: "finish-upscale",
-  version: "0.1.3",
+  version: "0.2.0",
   api: MODULE_API,
   hooks: ["finish"],
   provides: [
@@ -87,6 +87,28 @@ async function runpodCreds(env: Env): Promise<{ apiKey: string; endpointId: stri
   return { apiKey, endpointId };
 }
 
+/** cf#114: classify an absent RunPod credential HONESTLY.
+ *  RUNPOD_ENDPOINT_ID is a plain_text binding written at module UPLOAD; RUNPOD_API_KEY is a secret
+ *  written LATER (by installInvokeKey on the control plane). The two therefore arrive by different
+ *  routes at different times, so endpoint-present + key-absent is diagnostic of PROPAGATION, not of
+ *  misconfiguration, and saying "not configured" about it is a lie that sent a real tenant chasing a
+ *  correctly-configured credential. Both absent stays a genuine "not configured".
+ *  Returns null when both are readable. */
+function credentialProblem(apiKey: string, endpointId: string): string | null {
+  if (apiKey && endpointId) return null;
+  if (endpointId) return "credential not yet visible on this worker version (retry shortly)";
+  return "RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured";
+}
+
+/** cf#114, degrade side of credentialProblem: the same propagation-vs-misconfiguration distinction,
+ *  expressed as a machine-readable degrade REASON. A polish step never fails the chain, but it must
+ *  still say WHICH of the two it hit -- "no-runpod-secrets" on a key that is merely not visible yet
+ *  reads as an operator error that does not exist. Returns null when both are readable. */
+function credentialDegradeReason(apiKey: string, endpointId: string): string | null {
+  if (apiKey && endpointId) return null;
+  return endpointId ? "runpod-key-not-yet-visible" : "no-runpod-secrets";
+}
+
 /** Is the endpoint still in its virgin cold start (no worker has ever come up)? Best-effort: any
  *  transport/HTTP failure reads as "not cold" so the #141 verdict still fires. */
 async function endpointStillCold(apiKey: string, endpointId: string): Promise<boolean> {
@@ -131,7 +153,8 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   }
   const { apiKey, endpointId } = await runpodCreds(env);
   if (!apiKey || !endpointId) {
-    return passthrough(input, "no-runpod-secrets");  // not configured: degrade, but say so
+    // Degrade, but say WHICH: absent-key-with-endpoint is propagation, not misconfiguration (cf#114).
+    return passthrough(input, credentialDegradeReason(apiKey, endpointId) ?? "no-runpod-secrets");
   }
 
   const cfg = coerceConfig(req.config);
@@ -158,7 +181,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "finish-upscale: bad poll token" };
   const { apiKey, endpointId } = await runpodCreds(env);
-  if (!apiKey || !endpointId) return { ok: false, error: "finish-upscale: not configured" };
+  const credProblem = credentialProblem(apiKey, endpointId);
+  if (credProblem) return { ok: false, error: "finish-upscale: " + credProblem };
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -220,6 +244,24 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
+    // GET /ready (cf#114): does the version the edge is ACTUALLY SERVING read its credentials?
+    // Booleans only, NEVER values -- this reports whether a credential is visible here, not what it
+    // is. Zero GPU cost and module-agnostic, which is what makes it a probe the control plane can
+    // run before flipping a tenant live. Unauthenticated by design, on the same footing as
+    // /module.json: these scripts are reachable only through the dispatch namespace (they carry no
+    // public route), the response contains nothing secret, and the control plane has to be able to
+    // ask this question at the exact moment the tenant has no working credential to authenticate
+    // with. Gating it would make it unusable for its one purpose while protecting nothing.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const { apiKey, endpointId } = await runpodCreds(env);
+      return json({
+        ok: Boolean(apiKey && endpointId),
+        // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
+        // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
+        module: MANIFEST.name,
+        credentials: { runpod_api_key: Boolean(apiKey), runpod_endpoint_id: Boolean(endpointId) },
+      });
+    }
 
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;

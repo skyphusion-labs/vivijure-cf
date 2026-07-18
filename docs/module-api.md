@@ -188,6 +188,51 @@ whose encode outlasts a request budget on a long film ALSO answers `pending` + `
 drives submit+poll across ticks and no single request holds the encode open (#602). Such a module
 stays FAIL-SAFE -- a poll failure soft-degrades (ships the film uncarded), it never fails the render.
 
+### Credential readiness (`GET /ready`, optional + additive)
+
+A module that reads a credential from its environment SHOULD serve `GET /ready`:
+
+```
+GET /ready
+->
+{
+  "ok": true,                                   // every credential below is readable here
+  "module": "keyframe",                         // echoed, so a prober can prove it hit the right script
+  "credentials": {                              // BOOLEANS ONLY -- never a value, ever
+    "runpod_api_key": true,
+    "runpod_endpoint_id": true
+  }
+}
+```
+
+**Booleans only, never values.** This endpoint reports whether a credential is VISIBLE to the code
+answering the request; the value itself never appears in the response, which is what makes the
+endpoint safe to leave unauthenticated alongside `/module.json`.
+
+**Why it exists (cf#114).** In a hosted deployment the module worker and its credentials arrive by
+different routes at different times: the endpoint id is bound when the script is uploaded, the API
+key is written afterwards as a secret. Between those two moments the edge can still serve a version
+that cannot read the key. Nothing outside the module can observe that: the platform API reports the
+secret NAME exists (it does) and cannot say which version the edge serves. Only code running INSIDE
+the served version can answer, which is the entire point of the endpoint.
+
+Zero backend cost, identical shape across every module, and no input required -- so a host can probe
+readiness without submitting work. The hosted control plane probes it after installing a key and
+before flipping a tenant live.
+
+**Honest credential text goes with it.** A module that can tell the two cases apart MUST say which
+one it hit:
+
+| endpoint id | api key | what it means | what the module says |
+|---|---|---|---|
+| present | present | ready | (proceeds) |
+| present | absent | the key is configured but this version cannot see it yet | `credential not yet visible on this worker version (retry shortly)` |
+| absent | absent | genuinely unconfigured | `RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured` |
+
+A polish module that soft-degrades rather than failing carries the same distinction in its degrade
+reason (`runpod-key-not-yet-visible` vs `no-runpod-secrets`), so the honest-degrade record does not
+itself carry the lie.
+
 ### Declared finish artifacts (`finish_artifacts`, optional + additive)
 
 A `finish` module SHOULD declare its artifact conventions in the manifest so the core's
