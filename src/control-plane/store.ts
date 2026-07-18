@@ -51,6 +51,8 @@ export interface Tenant {
   /** The ID of the bucket-scoped R2 token, never its value. Teardown revokes by this. */
   r2_token_id: string | null;
   studio_release: string | null;
+  /** AES-256-GCM(STUDIO_TOKEN_KEK) of the tenant STUDIO_API_TOKEN. The one stored VALUE, encrypted. */
+  studio_token_enc: string | null;
   created_at: string;
   live_at: string | null;
   suspended_at: string | null;
@@ -148,6 +150,8 @@ export interface ControlPlaneStore {
   setTenantR2Token(id: string, tokenId: string): Promise<void>;
   setTenantEndpoints(id: string, endpointsJson: string): Promise<void>;
   setTenantScript(id: string, scriptName: string, release: string): Promise<void>;
+  /** The encrypted per-tenant STUDIO_API_TOKEN value (dispatcher-injected auth). Value, not a hash. */
+  setTenantStudioToken(id: string, encValue: string): Promise<void>;
 
   // provision jobs
   createProvisionJob(id: string, tenantId: string, kind: "provision" | "deprovision"): Promise<ProvisionJob>;

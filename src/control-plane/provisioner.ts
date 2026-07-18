@@ -16,8 +16,10 @@
 
 import type { CfApi } from "./cf-api";
 import { CfApiError } from "./cf-api";
+import { randomToken } from "./crypto";
 import type { TenantR2Creds } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
+import { encryptStudioToken } from "./token-crypto";
 import type { TokenMinter } from "./token-minter";
 
 /** The named steps, in order. These strings reach the tenant's screen; keep them legible. */
@@ -38,6 +40,8 @@ export interface TenantEndpoint {
   label: string;
   id: string;
   name: string;
+  /** The studio env var this endpoint id is wired into (spec.endpointVar). */
+  endpointVar: string;
 }
 
 /**
@@ -101,6 +105,12 @@ export interface ProvisionDeps {
   namespace: string;
   release: string;
   tenantScriptName(slug: string): string;
+  /** Base64 KEK for encrypting the tenant STUDIO_API_TOKEN value at rest (token-crypto.ts). */
+  kek: string;
+  /** Optional per-tenant daily spend ceiling set as SPEND_DAILY_CEILING; null -> studio default. */
+  spendDailyCeiling: string | null;
+  /** Dispatch a request to the tenant worker root to prove it SERVES (not just that bindings exist). */
+  probeTenantRoot(scriptName: string, studioApiToken: string): Promise<{ status: number }>;
   log(event: string, fields: Record<string, unknown>): void;
 }
 
@@ -198,6 +208,17 @@ export async function runProvisionJob(
     let assetsJwt: string | undefined;
     if (built.assets?.length) assetsJwt = await uploadAssets(deps, tenant.slug, built.assets);
 
+    // The tenant's studio API token. Minted here, set as the tenant-studio secret (satisfying its
+    // AUTH_MODE=token fail-closed gate), and ALSO persisted control-plane-side (encrypted) because
+    // the dispatcher injects it for the owner's browser (auth ruling 2026-07-18). It is the one
+    // credential stored as a VALUE; token-crypto encrypts it under STUDIO_TOKEN_KEK before D1.
+    const studioApiToken = randomToken();
+
+    // Each created endpoint carries the studio env var its id belongs in (spec.endpointVar); the
+    // studio cannot dispatch a render without these. The mapping is DATA from the provision plan, so
+    // adding a service is a plan entry, not an edit here.
+    const endpointBindings = endpoints.map((e) => ({ type: "plain_text" as const, name: e.endpointVar, text: e.id }));
+
     await deps.cf.uploadUserWorker({
       namespace: deps.namespace,
       scriptName: deps.tenantScriptName(tenant.slug),
@@ -211,18 +232,32 @@ export async function runProvisionJob(
       // tenant's studio root, hosted-only, on identical code (#77/#78).
       assetsConfig: built.assetsConfig,
       bindings: [
+        // env.ASSETS must be DECLARED for the studio to serve its static UI; without it env.ASSETS
+        // is undefined and asset serving throws 1101 on every static path (hosted-only, #40 burn).
+        { type: "assets", name: "ASSETS" },
         { type: "d1", name: "DB", id: db.uuid },
         { type: "r2_bucket", name: "R2_RENDERS", bucket_name: bucket },
         { type: "r2_bucket", name: "R2", bucket_name: bucket },
         { type: "plain_text", name: "AUTH_MODE", text: "token" },
         { type: "plain_text", name: "R2_S3_BUCKET", text: bucket },
+        // The 4 RunPod endpoint ids the studio renders against.
+        ...endpointBindings,
         // The credential goes straight from the mint into a worker secret. It is never persisted
         // on our side and never returned to any caller.
         { type: "secret_text", name: "R2_S3_ACCESS_KEY_ID", text: token.id },
         { type: "secret_text", name: "R2_S3_SECRET_ACCESS_KEY", text: s3Secret },
+        // AUTH_MODE=token requires this; the dispatcher injects it for the owner and the studio
+        // fail-closed-denies everyone else.
+        { type: "secret_text", name: "STUDIO_API_TOKEN", text: studioApiToken },
+        // Optional per-tenant daily spend ceiling; omitted -> the studio's own default applies.
+        ...(deps.spendDailyCeiling
+          ? [{ type: "plain_text" as const, name: "SPEND_DAILY_CEILING", text: deps.spendDailyCeiling }]
+          : []),
       ],
     });
     await deps.store.setTenantScript(tenant.id, deps.tenantScriptName(tenant.slug), deps.release);
+    // Persist the token VALUE, encrypted, so the dispatcher can inject it. Never plaintext at rest.
+    await deps.store.setTenantStudioToken(tenant.id, await encryptStudioToken(deps.kek, studioApiToken));
     await mark("wfp_upload");
 
     // 7. Verify what we actually built, from the API's own view, rather than trusting our writes.
@@ -230,14 +265,24 @@ export async function runProvisionJob(
     const script = deps.tenantScriptName(tenant.slug);
     const bindings = await deps.cf.getScriptBindings(deps.namespace, script);
     const names = new Set(bindings.map((b) => b.name));
-    for (const required of ["DB", "R2_RENDERS", "AUTH_MODE"]) {
+    const requiredBindings = ["DB", "R2_RENDERS", "AUTH_MODE", "ASSETS", ...endpoints.map((e) => e.endpointVar)];
+    for (const required of requiredBindings) {
       if (!names.has(required)) {
         throw new ProvisionFailure("verify", `tenant worker is missing the ${required} binding after upload`);
       }
     }
     const secrets = await deps.cf.getScriptSecretNames(deps.namespace, script);
-    if (!secrets.includes("R2_S3_SECRET_ACCESS_KEY")) {
-      throw new ProvisionFailure("verify", "tenant worker is missing its R2 credential after upload");
+    for (const required of ["R2_S3_SECRET_ACCESS_KEY", "STUDIO_API_TOKEN"]) {
+      if (!secrets.includes(required)) {
+        throw new ProvisionFailure("verify", `tenant worker is missing the ${required} secret after upload`);
+      }
+    }
+    // SERVING, not just storage: a binding census green-lit the first live provision, which then
+    // 1101'd at the studio root because env.ASSETS was undefined. Dispatch a real request to the
+    // worker root and require it does not 5xx.
+    const probe = await deps.probeTenantRoot(script, studioApiToken);
+    if (probe.status >= 500) {
+      throw new ProvisionFailure("verify", `tenant studio root returned ${probe.status}; the worker is not serving`);
     }
     await mark("verify");
 

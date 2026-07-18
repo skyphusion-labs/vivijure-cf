@@ -363,6 +363,8 @@ export interface CreatedEndpoint {
   label: string;
   id: string;
   name: string;
+  /** The studio env var that carries this endpoint id (spec.endpointVar). The provisioner wires it. */
+  endpointVar: string;
 }
 
 /**
@@ -395,7 +397,7 @@ export async function createTenantEndpoints(
 
     const existingEndpoint = endpoints.find((e) => e.name === name);
     if (existingEndpoint) {
-      created.push({ key: spec.key, label: spec.label, id: existingEndpoint.id, name });
+      created.push({ key: spec.key, label: spec.label, id: existingEndpoint.id, name, endpointVar: spec.endpointVar });
       continue;
     }
 
@@ -417,7 +419,7 @@ export async function createTenantEndpoints(
       // ALWAYS explicit. RunPod's default of 3 x 4 endpoints = 12 breaks provisioning outright.
       workersMax: spec.maxWorkers,
     });
-    created.push({ key: spec.key, label: spec.label, id: endpoint.id, name });
+    created.push({ key: spec.key, label: spec.label, id: endpoint.id, name, endpointVar: spec.endpointVar });
   }
 
   return created;

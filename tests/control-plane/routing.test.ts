@@ -9,6 +9,9 @@ import type { ControlPlaneDeps } from "../../src/control-plane/deps";
 import type { ControlPlaneEnv } from "../../src/control-plane/env";
 import type { Tenant, TenantLifecycle } from "../../src/control-plane/store";
 import { tenantScriptName, validateSlug } from "../../src/control-plane/tenants";
+import { SESSION_COOKIE } from "../../src/control-plane/auth";
+import { sha256Hex } from "../../src/control-plane/crypto";
+import { encryptStudioToken } from "../../src/control-plane/token-crypto";
 
 const SUFFIX = ".studio.vivijure.com";
 
@@ -33,7 +36,7 @@ function tenant(over: Partial<Tenant> = {}): Tenant {
 }
 
 function depsWith(getTenantBySlug: (slug: string) => Promise<Tenant | null>): ControlPlaneDeps {
-  return { store: { getTenantBySlug } } as unknown as ControlPlaneDeps;
+  return { store: { getTenantBySlug }, now: () => 0 } as unknown as ControlPlaneDeps;
 }
 
 function envWith(get: (name: string) => Fetcher): ControlPlaneEnv {
@@ -245,5 +248,89 @@ describe("routeTenantRequest", () => {
 
     expect(res!.status).toBe(503);
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+
+const KEK = btoa("0123456789abcdef0123456789abcdef"); // 32 bytes -> valid AES-256 key
+
+function injectEnv(get: (name: string) => Fetcher): ControlPlaneEnv {
+  return {
+    CONTROL_PLANE_HOST: SUFFIX.replace(/^\./, ""),
+    TENANT_DISPATCH: { get } as unknown as DispatchNamespace,
+    STUDIO_TOKEN_KEK: KEK,
+  } as unknown as ControlPlaneEnv;
+}
+
+/** Deps whose session cookie <token> resolves to <accountId>; other tokens resolve to nothing. */
+async function sessionDeps(t: Tenant, token: string, accountId: string): Promise<ControlPlaneDeps> {
+  const hash = await sha256Hex(token);
+  return {
+    now: () => 0,
+    store: {
+      getTenantBySlug: async () => t,
+      getSession: async (h: string) =>
+        h === hash ? { token_hash: h, account_id: accountId, expires_at: "", revoked_at: null } : null,
+      getAccountById: async (id: string) =>
+        id === accountId
+          ? { id, email: "o@x", created_at: "", suspended_at: null, suspended_reason: null, deleted_at: null }
+          : null,
+    },
+  } as unknown as ControlPlaneDeps;
+}
+
+function reqCookie(host: string, cookie: string | null, accept?: string): Request {
+  const headers: Record<string, string> = { host };
+  if (cookie) headers.cookie = cookie;
+  if (accept) headers.accept = accept;
+  return new Request(`https://${host}/api/projects`, { headers });
+}
+
+describe("routeTenantRequest dispatcher-injected auth", () => {
+  it("injects the tenant studio token as a Bearer for the OWNER and strips the CP session cookie", async () => {
+    const enc = await encryptStudioToken(KEK, "rpa_studiotoken");
+    const t = tenant({ account_id: "acct_owner", studio_token_enc: enc, script_name: tenantScriptName("acme") });
+    let forwarded: Request | undefined;
+    const get = vi.fn(
+      () => ({ fetch: async (r: Request) => ((forwarded = r), new Response("ok")) }) as unknown as Fetcher,
+    );
+    const deps = await sessionDeps(t, "sess_owner", "acct_owner");
+
+    await routeTenantRequest(reqCookie(`acme${SUFFIX}`, `${SESSION_COOKIE}=sess_owner`), injectEnv(get), deps);
+
+    expect(forwarded!.headers.get("authorization")).toBe("Bearer rpa_studiotoken");
+    expect(forwarded!.headers.get("cookie") ?? "").not.toContain(SESSION_COOKIE);
+  });
+
+  it("redirects a signed-out BROWSER navigation to sign in, without dispatching", async () => {
+    const t = tenant({ account_id: "acct_owner", studio_token_enc: await encryptStudioToken(KEK, "rpa_x"), script_name: tenantScriptName("acme") });
+    const get = vi.fn(() => ({ fetch: async () => new Response("SHOULD NOT REACH") }) as unknown as Fetcher);
+    const deps = await sessionDeps(t, "sess_owner", "acct_owner");
+    const res = await routeTenantRequest(reqCookie(`acme${SUFFIX}`, null, "text/html"), injectEnv(get), deps);
+    expect(res!.status).toBe(302);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("passes a signed-out NON-browser request through with NO token (studio's own 403 answers)", async () => {
+    const t = tenant({ account_id: "acct_owner", studio_token_enc: await encryptStudioToken(KEK, "rpa_x"), script_name: tenantScriptName("acme") });
+    let forwarded: Request | undefined;
+    const get = vi.fn(
+      () => ({ fetch: async (r: Request) => ((forwarded = r), new Response("passthru")) }) as unknown as Fetcher,
+    );
+    const deps = await sessionDeps(t, "sess_owner", "acct_owner");
+    await routeTenantRequest(reqCookie(`acme${SUFFIX}`, null), injectEnv(get), deps);
+    expect(forwarded!.headers.get("authorization")).toBeNull();
+  });
+
+  it("does NOT inject for a valid session that is NOT the tenant owner, and still strips the cookie", async () => {
+    const t = tenant({ account_id: "acct_owner", studio_token_enc: await encryptStudioToken(KEK, "rpa_x"), script_name: tenantScriptName("acme") });
+    let forwarded: Request | undefined;
+    const get = vi.fn(
+      () => ({ fetch: async (r: Request) => ((forwarded = r), new Response("ok")) }) as unknown as Fetcher,
+    );
+    const deps = await sessionDeps(t, "sess_stranger", "acct_stranger");
+    await routeTenantRequest(reqCookie(`acme${SUFFIX}`, `${SESSION_COOKIE}=sess_stranger`), injectEnv(get), deps);
+    expect(forwarded!.headers.get("authorization")).toBeNull();
+    expect(forwarded!.headers.get("cookie") ?? "").not.toContain(SESSION_COOKIE);
   });
 });

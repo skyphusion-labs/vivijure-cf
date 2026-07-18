@@ -135,6 +135,7 @@ export class MemoryStore implements ControlPlaneStore {
       endpoints_json: null,
       r2_token_id: null,
       studio_release: null,
+      studio_token_enc: null,
       created_at: new Date().toISOString(),
       live_at: null,
       suspended_at: null,
@@ -211,6 +212,10 @@ export class MemoryStore implements ControlPlaneStore {
       t.script_name = scriptName;
       t.studio_release = release;
     }
+  }
+  async setTenantStudioToken(id: string, encValue: string) {
+    const t = this.tenants.get(id);
+    if (t) t.studio_token_enc = encValue;
   }
 
   async getJob(id: string) {
