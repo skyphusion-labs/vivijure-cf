@@ -3,6 +3,37 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.2.5 -- 2026-07-18
+
+**The tenant studio gets the env its own code requires (#116).** PATCH: the fifth and last defect of
+the "a value known at provision time never reaches one of its consumers" family.
+
+- **`R2_S3_ENDPOINT` is bound on the tenant studio (cf#116).** `r2-presign.ts` requires all four of
+  `R2_S3_{ACCESS_KEY_ID,SECRET_ACCESS_KEY,ENDPOINT,BUCKET}` and throws without them. Three were
+  bound. So a tenant provisioned 9/9 green, came up live, rendered its keyframe (a real 1MB PNG,
+  in R2), and then threw inside the keyframe -> clips handoff on EVERY poll, forever, surfacing as an
+  opaque 500. Deterministic, no race. The value is an identifier, not a credential: constructed as
+  `https://<account>.r2.cloudflarestorage.com`, the same endpoint already handed to the RunPod
+  templates.
+- **Parity break, not just a missing var.** Self-host derives `R2_S3_ENDPOINT` from
+  `CLOUDFLARE_ACCOUNT_ID` at deploy, so a self-hosted studio could presign and a hosted tenant could
+  not, on identical code.
+- **All 18 platform vars now carry a deliberate disposition.** `tenant-studio-env.ts` records, for
+  every key in the studio's `ORCHESTRATOR_VAR_KEYS`, whether it is `provisioned`, `conditional`,
+  `default` (deliberately absent, with the safe behaviour named), or `not-hosted` -- each with its
+  reason, verified against the reading code rather than guessed from the name. Three "absent is
+  fine" claims were checked directly: `ALLOW_UNAUTHENTICATED` allows only on the literal `"true"`
+  (absent = deny), `SPEND_LIMIT_FAIL_CLOSED` is `!== "false"` (absent = fail-closed), and
+  `FILM_CLIP_DURATION_FLOOR` falls back to the core default.
+- **The two lists are now linked in CI.** The studio's contract and the provisioner's bindings were
+  hand-maintained separately with nothing connecting them, which is the actual defect class: they
+  drifted silently and surfaced only at a first render. A gate now asserts the disposition map is
+  exhaustive in BOTH directions against `ORCHESTRATOR_VAR_KEYS`, and that every `provisioned` var
+  appears in the RECORDED UPLOAD rather than merely in a source array.
+- **The verify census covers the contract.** It previously checked a remembered subset, which is why
+  provisioning reported green over a studio that could not presign: a var nobody listed is a var
+  nobody checks.
+
 ## v1.2.4 -- 2026-07-18
 
 **Provisioning survives its own execution budget (#112).** PATCH: a provision no longer has to fit in

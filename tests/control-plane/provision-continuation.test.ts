@@ -54,6 +54,10 @@ function fakeCf(over: Record<string, unknown> = {}) {
       { type: "d1", name: "DB" },
       { type: "r2_bucket", name: "R2_RENDERS" },
       { type: "plain_text", name: "AUTH_MODE" },
+      // #116: the verify census now covers the platform-env contract, so the fake must carry
+      // the vars a real upload carries.
+      { type: "plain_text", name: "R2_S3_BUCKET" },
+      { type: "plain_text", name: "R2_S3_ENDPOINT" },
       { type: "ratelimit", name: "SPEND_RATE_LIMITER" },
       { type: "plain_text", name: "RUNPOD_ENDPOINT_ID" },
       { type: "plain_text", name: "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID" },

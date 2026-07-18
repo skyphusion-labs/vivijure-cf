@@ -5,7 +5,16 @@ import { cfSecretStoreFromEnv } from "./cf-secrets.js";
 import { cfModuleTransportFromEnv } from "./cf-module-transport.js";
 import { cfObjectStoreFromR2 } from "./cf-r2-store.js";
 
-const ORCHESTRATOR_VAR_KEYS = [
+/**
+ * The platform env contract: every var the studio reads through the orchestrator context.
+ *
+ * EXPORTED ON PURPOSE (#116): the hosted provisioner has to bind these onto a tenant studio, and for
+ * a long time it kept its OWN hand-maintained list with no link to this one. The two drifted, and the
+ * drift surfaced only at a tenant's first render, as an opaque 500. A test now asserts the
+ * provisioner has a deliberate disposition for every key here, so adding a var to this list fails CI
+ * instead of a stranger's render.
+ */
+export const ORCHESTRATOR_VAR_KEYS = [
   "AUTH_MODE",
   "ACCESS_TEAM_DOMAIN",
   "ACCESS_AUD",
