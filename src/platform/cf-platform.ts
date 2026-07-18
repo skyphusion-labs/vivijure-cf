@@ -1,3 +1,4 @@
+import { ORCHESTRATOR_VAR_KEYS } from "./orchestrator-vars.js";
 import type { Platform, RateLimiter } from "./types.js";
 import type { Env } from "../env.js";
 import { cfPresignerFromEnv } from "./cf-presigner.js";
@@ -5,35 +6,11 @@ import { cfSecretStoreFromEnv } from "./cf-secrets.js";
 import { cfModuleTransportFromEnv } from "./cf-module-transport.js";
 import { cfObjectStoreFromR2 } from "./cf-r2-store.js";
 
-/**
- * The platform env contract: every var the studio reads through the orchestrator context.
- *
- * EXPORTED ON PURPOSE (#116): the hosted provisioner has to bind these onto a tenant studio, and for
- * a long time it kept its OWN hand-maintained list with no link to this one. The two drifted, and the
- * drift surfaced only at a tenant's first render, as an opaque 500. A test now asserts the
- * provisioner has a deliberate disposition for every key here, so adding a var to this list fails CI
- * instead of a stranger's render.
- */
-export const ORCHESTRATOR_VAR_KEYS = [
-  "AUTH_MODE",
-  "ACCESS_TEAM_DOMAIN",
-  "ACCESS_AUD",
-  "ALLOW_UNAUTHENTICATED",
-  "DEMO_RENDER_ENABLED",
-  "DEMO_ARTIFACT_ORIGIN",
-  "DEMO_ASSISTANT_MODEL",
-  "DEMO_RENDER_PER_IP_DAILY",
-  "DEMO_RENDER_GLOBAL_DAILY",
-  "DEMO_RENDER_QUEUE_DEPTH",
-  "DEMO_CHAT_PER_IP_DAILY",
-  "DEMO_CHAT_GLOBAL_DAILY",
-  "PLANNER_AI_MOCK",
-  "SPEND_LIMIT_FAIL_CLOSED",
-  "SPEND_DAILY_CEILING",
-  "FILM_CLIP_DURATION_FLOOR",
-  "R2_S3_ENDPOINT",
-  "R2_S3_BUCKET",
-] as const;
+// The env contract now lives in a LEAF module (orchestrator-vars.ts) so the release builder can
+// stamp it into the manifest without importing the entire Worker runtime graph (cf#85).
+// Re-exported here so every existing consumer keeps working unchanged; this is still the
+// single source of truth, just relocated one file down.
+export { ORCHESTRATOR_VAR_KEYS } from "./orchestrator-vars.js";
 
 function pickOrchestratorVars(env: Env): Record<string, string | undefined> {
   const vars: Record<string, string | undefined> = {};
