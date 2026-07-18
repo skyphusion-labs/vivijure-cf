@@ -146,3 +146,54 @@ describe("loadModels (cf#62 FE-4: the catalog is projected, so restores must not
     expect(sel.value).toBe("anthropic/claude-sonnet-5");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Found by DRIVING THE REAL PANEL during the cf#62 Lane C parity gate, not by inspection:
+// selectPlanningModel only STASHED the desired id, so a restore arriving AFTER the catalog
+// was already loaded (the common case -- switching projects mid-session) left the picker
+// BLANK and SILENT until the next loadModels(), which in normal use may never come. The
+// unit tests above all happened to set the pending value BEFORE a load, so they never saw it.
+describe("selectPlanningModel with the catalog ALREADY loaded (mid-session restore)", () => {
+  async function loaded() {
+    serveModels(MODELS);
+    await loadModels();
+    statusCalls = [];
+  }
+
+  it("a VALID id applies immediately, no reload required", async () => {
+    await loaded();
+    selectPlanningModel("anthropic/claude-sonnet-5");
+    expect(sel.value).toBe("anthropic/claude-sonnet-5"); // NOT "" pending a future load
+    expect(statusCalls).toEqual([]);
+  });
+
+  it("a STALE id resolves immediately and visibly -- never a blank, silent picker", () => {
+    return loaded().then(() => {
+      selectPlanningModel("anthropic/claude-opus-4-7-RETIRED");
+      expect(sel.value).toBe("anthropic/claude-opus-4-8"); // a REAL model, right now
+      expect(sel.value).not.toBe("");
+      expect(statusCalls.length).toBe(1);
+      expect(statusCalls[0].text).toContain("anthropic/claude-opus-4-7-RETIRED");
+      expect(statusCalls[0].kind).toBe("error");
+    });
+  });
+
+  it("resolving immediately clears the pending stash (no delayed second apply)", async () => {
+    await loaded();
+    selectPlanningModel("anthropic/claude-sonnet-5");
+    expect(sel.dataset.pendingValue).toBeUndefined();
+  });
+
+  it("placeholder-only pickers are NOT mistaken for a loaded catalog", async () => {
+    serveModels([]); // empty catalog: one disabled placeholder with an empty value
+    await loadModels();
+    statusCalls = [];
+    selectPlanningModel("anthropic/claude-sonnet-5");
+    // Must STASH (the catalog is not really loaded), not "resolve" against a placeholder.
+    expect(sel.dataset.pendingValue).toBe("anthropic/claude-sonnet-5");
+    expect(statusCalls).toEqual([]); // nothing was lost, so nothing is reported
+    serveModels(MODELS);
+    await loadModels();
+    expect(sel.value).toBe("anthropic/claude-sonnet-5");
+  });
+});

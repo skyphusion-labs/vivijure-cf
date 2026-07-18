@@ -22,8 +22,41 @@
 function selectPlanningModel(value) {
   const sel = $("#planner-model");
   if (!sel || !value) return;
-  sel.dataset.pendingValue = String(value);
-  sel.value = String(value);
+  const want = String(value);
+  const ids = realOptionIds(sel);
+  // The catalog is ALREADY loaded (the common case: switching projects mid-session).
+  // Resolve NOW rather than stashing: a stash would leave the picker blank and silent
+  // until the next loadModels(), which in normal use may never come.
+  if (ids.length) {
+    applyModelChoice(sel, want, ids);
+    return;
+  }
+  // The catalog has not arrived yet (session restore during init). Stash it; loadModels
+  // resolves it against the real ids the moment they exist.
+  sel.dataset.pendingValue = want;
+  sel.value = want;
+}
+
+// The selectable model ids currently in the picker: real projected models only, never the
+// "loading..." / "no planning models available" placeholders (those carry an empty value).
+function realOptionIds(sel) {
+  return Array.from(sel.options).map((o) => String(o.value)).filter(Boolean);
+}
+
+// Apply a desired model id against a known-good id list. A id the catalog no longer serves
+// drops VISIBLY -- the picker lands on a real model and says what was lost -- instead of
+// leaving the user with a blank picker and a preference they believe is still in effect.
+function applyModelChoice(sel, want, ids) {
+  delete sel.dataset.pendingValue;
+  if (ids.includes(want)) {
+    sel.value = want;
+    return;
+  }
+  sel.value = ids[0];
+  setStatus(
+    "saved planning model \"" + want + "\" is no longer available; using \"" + sel.value + "\" instead",
+    "error",
+  );
 }
 
 async function loadModels() {
@@ -59,20 +92,11 @@ async function loadModels() {
       select.appendChild(opt);
     }
     select.disabled = false;
+    // ONE resolver shared with selectPlanningModel, so an early restore and a mid-session
+    // restore cannot drift apart in what they do with a stale id.
     const ids = data.models.map((m) => String(m.id));
-    const want = ids.includes(pending) ? pending : ids.includes(prev) ? prev : "";
-    if (want) select.value = want;
-    // A saved model that the catalog no longer serves drops VISIBLY, never silently:
-    // the picker falls back to the first available model and says why, so the user is
-    // not left believing a stale preference is still in effect.
-    if (pending && !ids.includes(pending)) {
-      setStatus(
-        "saved planning model \"" + pending + "\" is no longer available; using \""
-          + select.value + "\" instead",
-        "error",
-      );
-    }
-    delete select.dataset.pendingValue;
+    if (pending) applyModelChoice(select, pending, ids);
+    else if (ids.includes(prev)) select.value = prev;
   } catch (err) {
     select.innerHTML = "";
     const opt = document.createElement("option");

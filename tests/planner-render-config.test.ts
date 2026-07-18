@@ -329,3 +329,33 @@ describe("renderTierPicker (cf#62: tiers are core-owned, never invented in the p
     expect(sel.value).toBe("draft");
   });
 });
+
+// Same defect class as the model picker, found in the same Lane C pass: selectTier only
+// STASHED, so a stale tier arriving after the projection had loaded BLANKED the control --
+// silently dropping qualityTier from the next submit while the user believed it was set.
+describe("selectTier with the projection ALREADY loaded (cf#62 Lane C)", () => {
+  it("a VALID tier applies immediately", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(PROJECTION);
+    mod.selectTier("draft");
+    expect(sel.value).toBe("draft");
+  });
+
+  it("a STALE tier KEEPS the current valid selection instead of blanking it", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(PROJECTION);
+    mod.selectTier("draft");
+    mod.selectTier("tier-this-deploy-no-longer-serves");
+    expect(sel.value).toBe("draft"); // NOT "" -- the submit still carries a real tier
+    expect(sel.value).not.toBe("");
+  });
+
+  it("still STASHES when only the unavailable placeholder is present", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker(undefined); // placeholder only, empty value
+    mod.selectTier("draft");
+    expect(sel.dataset.pendingValue).toBe("draft");
+    mod.renderTierPicker(PROJECTION);
+    expect(sel.value).toBe("draft");
+  });
+});

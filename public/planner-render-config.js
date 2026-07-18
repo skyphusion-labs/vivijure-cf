@@ -224,8 +224,29 @@
   function selectTier(value) {
     const sel = document.getElementById("planner-quality-tier");
     if (!sel || !value) return;
-    sel.dataset.pendingValue = value;
-    sel.value = value;
+    // Real projected tiers only: the "quality tiers unavailable" placeholder carries an
+    // empty value and must never be mistaken for a loaded projection.
+    const ids = Array.from(sel.options).map((o) => String(o.value)).filter(Boolean);
+    if (!ids.length) {
+      // Projection has not arrived yet -- stash for renderTierPicker.
+      sel.dataset.pendingValue = value;
+      sel.value = value;
+      return;
+    }
+    delete sel.dataset.pendingValue;
+    if (ids.indexOf(String(value)) !== -1) {
+      sel.value = String(value);
+      return;
+    }
+    // A tier this deploy no longer serves: KEEP the current valid selection rather than
+    // blanking the control, and say so. Blanking would silently drop qualityTier from the
+    // next submit while the user believed their saved tier was still set.
+    if (typeof global.setStatus === "function") {
+      global.setStatus(
+        "saved quality tier \"" + value + "\" is no longer available; keeping \"" + sel.value + "\"",
+        "error",
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
