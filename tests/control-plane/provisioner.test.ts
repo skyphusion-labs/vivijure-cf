@@ -19,7 +19,9 @@ import { sha256Hex } from "../../src/control-plane/crypto";
 import { decryptStudioToken } from "../../src/control-plane/token-crypto";
 import { MemoryStore, recordingStore } from "./memory-store";
 
-const MIGRATIONS = "CREATE TABLE IF NOT EXISTS projects (id TEXT);";
+const MIGRATIONS = [
+  { name: "0001_init.sql", sql: "CREATE TABLE IF NOT EXISTS projects (id TEXT);" },
+];
 
 let store: MemoryStore;
 let calls: string[];

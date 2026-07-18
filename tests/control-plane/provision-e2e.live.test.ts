@@ -50,8 +50,8 @@ let deps: ProvisionDeps;
 
 const migrations = LIVE
   ? readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort()
-      .map((f) => readFileSync(join("migrations", f), "utf8")).join("\n")
-  : "";
+      .map((f) => ({ name: f, sql: readFileSync(join("migrations", f), "utf8") }))
+  : [];
 
 beforeAll(async () => {
   if (!LIVE) return;

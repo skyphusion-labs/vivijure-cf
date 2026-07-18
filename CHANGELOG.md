@@ -3,6 +3,34 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.2.1 -- 2026-07-18
+
+**Provision survives an adopted D1 (#105).** PATCH: the hosted-tier finale hit a hard failure on
+the first provision that adopted an EXISTING tenant database; `d1_migrate` is now tracked rather
+than replayed.
+
+- **`d1_migrate` no longer replays every migration (cf#105).** `d1_create` is adopt-on-exists, but
+  the migration step applied the whole bundled set unconditionally, on the stated assumption that
+  the files are all `CREATE TABLE IF NOT EXISTS` and therefore safe to re-run. That assumption was
+  false: four of the ten bundled migrations are `ALTER TABLE ... ADD COLUMN`, which SQLite has no
+  `IF NOT EXISTS` form for. Provisioning against an already-migrated database failed at step 2 of 7
+  with `duplicate column name: voice_id: SQLITE_ERROR`, deterministically, blocking every retry and
+  re-provision. The tenant D1 now carries a `schema_migrations` table and the runner applies only
+  what is missing, recording each migration by filename as it goes.
+- **Adopted pre-tracking databases are reconciled, not re-migrated.** If the tracking table is
+  absent or empty but the database already carries studio tables (structural probe on
+  `cast_members`, created in `0001_init.sql`), the full bundled set is seeded as applied and
+  nothing is run. KNOWN LIMITATION, stated rather than hidden: a database sitting at an OLDER
+  migration level than the current release is mis-seeded as current. Acceptable today because every
+  adoptable database is at the current level, and self-healing for all future migrations now that
+  tracking exists. Tracked on #105 / #84.
+- **Replay safety is now gated by test.** `tests/control-plane/migrate.test.ts` runs the REAL
+  shipped migration set through a D1 fake that refuses a duplicate `ADD COLUMN` exactly as SQLite
+  does, including a control assertion that the fake can actually fail. Mutation-checked: with the
+  skip-check removed the gate reproduces the live `duplicate column name: voice_id` error. The old
+  step-machine tests faked `queryD1` as a no-op, which is why they proved ordering and custody but
+  never replay safety.
+
 ## v1.2.0 -- 2026-07-18
 
 **The hosted render bridge (#99).** MINOR: the last gap from the hosted-tier e2e burn -- a
