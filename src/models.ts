@@ -60,13 +60,12 @@ export interface ModelEntry {
 
 export const MODELS: ModelEntry[] = [
   // ---- Chat (text generation) ----
-  // Anthropic (Unified Billing via cf-aig-authorization, routed through AI Gateway)
-  // v0.13.0: streaming: true makes these eligible for POST /api/chat/stream.
-  { id: "anthropic/claude-opus-4-8",                    label: "Claude Opus 4.8 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
-  { id: "anthropic/claude-opus-4-7",                    label: "Claude Opus 4.7 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
-  { id: "anthropic/claude-opus-4-6",                    label: "Claude Opus 4.6 (Anthropic)",          group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
-  { id: "anthropic/claude-sonnet-4-6",                  label: "Claude Sonnet 4.6 (Anthropic)",        group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
-  { id: "anthropic/claude-haiku-4-5",                   label: "Claude Haiku 4.5 (Anthropic)",         group: "Chat \u00b7 Anthropic", type: "chat", capabilities: ["vision"], provider: "anthropic", streaming: true },
+  // The Anthropic rows were REMOVED in cf#62. Model names for planning are declared by the
+  // plan.enhance module and projected into the catalog (src/planning-models.ts); text chat
+  // (/api/chat, non-image) dispatches through that same module via chatComplete, so nothing reads
+  // an Anthropic row here any more. findModel() is consulted only to detect type === "image", and
+  // a text id that is absent falls through to the module path exactly as a present one did.
+  // Do NOT re-add model names here: the studio hardcodes none (bare-skeleton doctrine).
 
   // xAI / Grok (BYOK via Bearer auth or stored keys, routed through AI Gateway)
   { id: "xai/grok-4.3",                                 label: "Grok 4.3 (xAI)",                       group: "Chat \u00b7 xAI",       type: "chat", capabilities: ["vision"], provider: "xai", streaming: true },

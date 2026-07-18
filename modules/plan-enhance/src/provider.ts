@@ -26,18 +26,36 @@ export interface ProviderEnv {
   GATEWAY_ID?: string;
   CF_AIG_TOKEN?: string;
   ENHANCE_MODEL?: string;
+  // Dev-only mock gate (#411). Unset in prod. See mock.ts.
+  PLANNER_AI_MOCK?: string;
 }
 
 export type Provider = "opus" | "local";
 
-/** Use Opus only when BOTH the gateway id and the Unified-Billing token are configured; otherwise
- *  fall back to the free local model. Pure, so the selection is unit-tested. */
-export function pickProvider(env: ProviderEnv): Provider {
+/** True for a catalog id this module serves through the Anthropic gateway path. Accepts both the
+ *  catalog form ("anthropic/claude-opus-4-8") and a bare gateway slug ("claude-opus-4-8"). Pure. */
+function isAnthropicModelId(id: string): boolean {
+  const s = id.trim();
+  return s.startsWith("anthropic/") || s.startsWith("claude-");
+}
+
+/** Pick the provider for a call. A Workers AI id ("@cf/...") always routes local regardless of
+ *  gateway config; otherwise Opus only when BOTH the gateway id and the Unified-Billing token are
+ *  configured. Pure, so the selection is unit-tested. */
+export function pickProvider(env: ProviderEnv, modelId?: string): Provider {
+  if (modelId?.trim().startsWith("@cf/")) return "local";
   return env.GATEWAY_ID && env.CF_AIG_TOKEN ? "opus" : "local";
 }
 
-/** The Opus model id this deployment uses (env override, else the latest-Opus default). */
-export function opusModel(env: ProviderEnv): string {
+/** The Anthropic model slug for a call, in precedence order: an explicit per-call override from the
+ *  catalog (config.model), else the ENHANCE_MODEL deployment default, else the latest-Opus default.
+ *  The "anthropic/" catalog prefix is stripped -- the gateway wants the bare slug. A non-Anthropic
+ *  override is ignored here on purpose: pickProvider routes those to the local path instead. Pure. */
+export function opusModel(env: ProviderEnv, override?: string): string {
+  const fromConfig = override?.trim();
+  if (fromConfig && isAnthropicModelId(fromConfig)) {
+    return fromConfig.replace(/^anthropic\//, "");
+  }
   const m = env.ENHANCE_MODEL?.trim();
   return m && m.length > 0 ? m.replace(/^anthropic\//, "") : DEFAULT_OPUS_MODEL;
 }
@@ -75,7 +93,11 @@ export function extractAnthropicText(raw: unknown): string | null {
 
 /** Call Opus through the AI Gateway (Unified Billing: cf-aig-authorization only, never x-api-key).
  *  Throws on a missing token, a non-2xx, or an empty reply, so the caller can fall back. */
-export async function callOpus(env: ProviderEnv, messages: ChatMessage[]): Promise<string> {
+export async function callOpus(
+  env: ProviderEnv,
+  messages: ChatMessage[],
+  modelOverride?: string,
+): Promise<string> {
   if (!env.GATEWAY_ID || !env.CF_AIG_TOKEN) {
     throw new Error("opus requires GATEWAY_ID and CF_AIG_TOKEN");
   }
@@ -83,7 +105,7 @@ export async function callOpus(env: ProviderEnv, messages: ChatMessage[]): Promi
   const { system, messages: aMessages } = toAnthropic(messages);
 
   const body: Record<string, unknown> = {
-    model: opusModel(env),
+    model: opusModel(env, modelOverride),
     max_tokens: 4096,
     messages: aMessages,
   };
@@ -114,7 +136,9 @@ export async function callOpus(env: ProviderEnv, messages: ChatMessage[]): Promi
 export async function callLocal(
   env: ProviderEnv,
   messages: ChatMessage[],
+  modelId?: string,
 ): Promise<string | string[] | undefined> {
-  const res = await env.AI.run(LOCAL_MODEL, { messages });
+  const model = modelId?.trim() || LOCAL_MODEL;
+  const res = await env.AI.run(model, { messages });
   return res?.response;
 }

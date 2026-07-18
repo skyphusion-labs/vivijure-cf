@@ -93,6 +93,66 @@ A field may carry an optional `"scope"`:
 `scope` is additive: an unmarked field is a `"render"` field, so adding it broke nothing and bumped no
 contract version. See CONTRACT.md 4.1.1 / 4.1.2 for the full spec.
 
+### How a planning module advertises its models (`config_schema.model`, `plan.enhance`)
+
+The studio hardcodes **no model names**. `GET /api/storyboard/models` -- the planner's model picker --
+is PROJECTED from the modules installed against the `plan.enhance` hook. Conrad's ruling (2026-07-17):
+*"nothing should be providing model names but plan.enhance."* Anyone can write their own planning
+module because they want a different model, and the panel honors it per this contract.
+
+A planning module advertises its models by declaring an **enum field named `model`**:
+
+```jsonc
+{
+  "name": "acme-planner",
+  "api": "vivijure-module/2",
+  "hooks": ["plan.enhance"],
+  "provides": [{ "id": "acme", "label": "ACME Planning" }],
+  "config_schema": {
+    "model": {
+      "type": "enum",
+      "values": ["acme/planner-xl", "acme/planner-mini"],
+      "default": "acme/planner-xl",
+      "label": "model"
+    }
+  }
+}
+```
+
+The projection rules, in full:
+
+- A module declaring `config_schema.model` as an enum contributes **one catalog row per enum value**.
+  The row's `id` is the enum value **verbatim**, its `label` is `"<provides[0].label or name> · <id>"`,
+  and its `group` is `"Planning · <module name>"`. The emitted row is exactly
+  `{ id, label, group, type, capabilities }` -- the same shape vivijure-local emits, because the
+  panel that renders it is a verbatim-shared surface between the two hosts. Do not add host-only
+  fields here; land a shape change in local first, then port it.
+- A module serving `plan.enhance` with **no** `model` enum still appears, as **one row** under its own
+  name and label. Not declaring a model list is a valid choice, not an exclusion.
+- The chosen id **routes back to the module that declared it**, and is handed to that module as
+  `config.model` at invoke time -- so a module only ever receives an id it minted itself.
+- With no planning module installed the catalog is **empty**, and that is a correct answer, not an
+  error state. Nothing in the studio assumes any particular id exists.
+
+There is **no special-casing of the first-party `plan-enhance` module** anywhere on this path. A
+third-party planning module is discovered, listed, and dispatched to identically; the test suite
+installs a third-party-shaped module alongside the first-party one and asserts both that its models
+appear in `GET /api/storyboard/models` and that choosing one dispatches to **its** worker.
+
+A planning module also receives the planner's three entry points through `config.mode`:
+
+| `config.mode` | input | expected output |
+|---|---|---|
+| `"plan"`    | `config.message` (the brief + cast prompt) | `output.storyboard` -- a full storyboard |
+| `"refine"`  | `config.message` (one delta) + `input.storyboard` | `output.storyboard` -- the revised storyboard |
+| `"chat"`    | `config.message` | `output.notes` -- the reply text |
+| `"enhance"` (default) | `input.storyboard` | `output.storyboard` -- a director pass over the prompts |
+
+`config.system_message` carries the system prompt for the generative modes. A model MISS on
+`plan`/`refine` must degrade honestly (`ok: true`, the input storyboard passed through unchanged, and
+a `notes` entry naming what was skipped and why) rather than failing the chain; malformed I/O (a
+missing `config.message`) fails loud with `ok: false`.
+
 ## Invocation contract
 
 The core calls a module over a **service binding** (RPC) or HTTP. One entry point per module:

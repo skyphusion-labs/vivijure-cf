@@ -86,7 +86,7 @@ import {
   planStoryboard, refineStoryboard, chatComplete,
   type PlanStoryboardArgs, type RefineStoryboardArgs, type ChatCompleteArgs,
 } from "./planner";
-import { PLANNING_MODELS } from "./planner-catalog";
+import { planningModelsFromModules } from "./planning-models";
 import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-yaml";
 import { emitMarkers, type MarkersFormat } from "./markers";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
@@ -1302,7 +1302,14 @@ const hEnhance: Handler = async (req, env) => {
     notes: result.output?.notes ?? [],
   });
 };
-const hModels: Handler = async (_req, env) => json({ models: catalogForDeploy(env, PLANNING_MODELS) });
+// The planning catalog is PROJECTED from the installed plan.enhance modules (cf#62) -- the studio
+// hardcodes no model names. An empty list is a legitimate answer (no planning module installed).
+const hModels: Handler = async (_req, env) => {
+  const modules = await discoverModules(env as unknown as Record<string, unknown>, {
+    cacheTtlMs: 60_000,
+  });
+  return json({ models: catalogForDeploy(env, planningModelsFromModules(modules)) });
+};
 const hYaml: Handler = async (req) => {
   const a = await readBody<{ storyboard?: unknown }>(req);
   if (!a.storyboard) throw badRequest("storyboard required");
