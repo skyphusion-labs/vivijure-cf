@@ -83,7 +83,8 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
     release: STUDIO_RELEASE,
     tenantScriptName: (slug) => `tenant-${slug}-studio`,
     kek: STUDIO_TOKEN_KEK,
-    spendDailyCeiling: env.TENANT_SPEND_DAILY_CEILING ?? null,
+    // Always set a ceiling: a hosted tenant with no daily cap has no cost bound. Operator-tunable.
+    spendDailyCeiling: env.TENANT_SPEND_DAILY_CEILING ?? "25",
     // Prove SERVING at verify: dispatch straight to the tenant worker (bypassing the control-plane
     // status gate, which 503s a still-provisioning tenant) and report the status. A Bearer is
     // attached so an auth-gated root also answers; the static root needs none once ASSETS is bound.
