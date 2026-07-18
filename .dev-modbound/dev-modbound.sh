@@ -16,14 +16,38 @@
 #   crew token cannot edge-preview); module invoke backends; the 4 VPC finish services; tail consumer;
 #   ratelimits; crons; MODULE_DISPATCH.
 #
-# USAGE:  bash .dev-modbound/dev-modbound.sh [PORT]   (default 8790) -- run from repo root, needs npx+python3.
+# SCENARIOS (cf#62): the planning-model catalog is PROJECTED from installed plan.enhance modules, so
+# the interesting states are states of the INSTALLED SET. Pick one with SCENARIO=<name>:
+#
+#   default     (unset) every in-tree module. plan-enhance serves the planning catalog.
+#   empty       plan-enhance NOT bound -> GET /api/storyboard/models serves []. Exercises the
+#               authored empty state against a genuinely empty catalog, not a stubbed one.
+#   thirdparty  in-tree modules + acme-planner (declares its own enum) + bespoke-planner (declares
+#               NO model enum, so its MODULE NAME is the model id). Exercises third-party listing,
+#               third-party routing, and the byName branch through the real UI.
+#   staleid     thirdparty + legacy-planner, whose ids vanish in every other scenario. Save a
+#               project pref on a legacy/* id here, restart into `default`, and the saved id is
+#               REALLY gone -- the un-stubbable stale-id case.
+#
+# Switching scenario = restart. That is deliberate: a restart is a fresh isolate, which also clears
+# the core's per-isolate module-discovery cache (60s TTL), so the catalog change is immediate rather
+# than something you wait out and misread as a bug.
+#
+# USAGE:  SCENARIO=thirdparty bash .dev-modbound/dev-modbound.sh [PORT]   (default 8790)
+#         run from repo root, needs npx+python3.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 PORT="${1:-8790}"
+SCENARIO="${SCENARIO:-default}"
+case "$SCENARIO" in default|empty|thirdparty|staleid) ;; *)
+  echo "unknown SCENARIO '$SCENARIO' (default|empty|thirdparty|staleid)" >&2; exit 2 ;; esac
 D="$(pwd)/.dev-modbound"; mkdir -p "$D/mods"
+rm -f "$D"/mods/*.toml            # scenarios differ by which modules exist; never inherit a stale set
+echo "scenario: $SCENARIO"
 
-python3 - <<PY
-import pathlib
+python3 - "$SCENARIO" <<PY
+import pathlib, sys
+scenario = sys.argv[1]
 src = pathlib.Path("wrangler.toml.example").read_text().splitlines()
 drop = {"[[ratelimits]]","[triggers]","[[vpc_services]]","[[routes]]","[[migrations]]","[ai]"}
 out, skip = [], False
@@ -41,12 +65,40 @@ t = "\n".join(out)
 t = t.replace("\${D1_DATABASE_ID}","dev-local-modbound")
 t = t.replace("\${AUTH_MODE}","").replace("\${ACCESS_TEAM_DOMAIN}","").replace("\${ACCESS_AUD}","")
 t = t.replace("[vars]\n","[vars]\nALLOW_UNAUTHENTICATED = \"true\"\nPLANNER_AI_MOCK = \"true\"\n",1)
-pathlib.Path("wrangler.toml").write_text(t); print("rendered ./wrangler.toml")
+
+# The planning catalog is projected from the INSTALLED plan.enhance modules, so each scenario is
+# expressed as which module service bindings exist -- not as a flag the studio reads. That keeps the
+# harness honest: the studio behaves exactly as it would with these modules really installed.
+if scenario == "empty":
+    # Drop the MODULE_PLANENHANCE service binding entirely -> nothing serves plan.enhance.
+    lines, out2, i = t.splitlines(), [], 0
+    while i < len(lines):
+        if lines[i].strip() == "[[services]]" and i + 1 < len(lines) and 'MODULE_PLANENHANCE"' in lines[i+1]:
+            i += 2
+            while i < len(lines) and lines[i].strip() != "" and not lines[i].strip().startswith("["):
+                i += 1
+            continue
+        out2.append(lines[i]); i += 1
+    t = "\n".join(out2)
+
+FIXTURES = {
+    "thirdparty": [("MODULE_ACMEPLANNER", "acme-planner"), ("MODULE_BESPOKEPLANNER", "bespoke-planner")],
+    "staleid":    [("MODULE_ACMEPLANNER", "acme-planner"), ("MODULE_BESPOKEPLANNER", "bespoke-planner"),
+                   ("MODULE_LEGACYPLANNER", "legacy-planner")],
+}
+extra = "".join(
+    '\n[[services]]\nbinding = "%s"\nservice = "%s"\n' % (b, svc)
+    for b, svc in FIXTURES.get(scenario, [])
+)
+if extra:
+    t = t.rstrip() + "\n" + extra
+
+pathlib.Path("wrangler.toml").write_text(t); print("rendered ./wrangler.toml (scenario: %s)" % scenario)
 PY
 
-python3 - "$D" <<PY
+python3 - "$D" "$SCENARIO" <<PY
 import pathlib, re, sys
-D = pathlib.Path(sys.argv[1])
+D = pathlib.Path(sys.argv[1]); scenario = sys.argv[2]
 services = set(re.findall(r"^service = \"([^\"]+)\"", pathlib.Path("wrangler.toml").read_text(), re.M))
 made=[]
 for cfg in sorted(pathlib.Path("modules").glob("*/wrangler.toml")):
@@ -59,9 +111,44 @@ for cfg in sorted(pathlib.Path("modules").glob("*/wrangler.toml")):
     if cdate: lines.append(f"compatibility_date = \"{cdate.group(1)}\"")
     if cflags: lines.append(f"compatibility_flags = {cflags.group(1)}")
     lines.append("workers_dev = false")
+    # PLANNER_AI_MOCK moved from the CORE to the MODULE in cf#62: once the planner became a module
+    # invoker, every model call lives behind the module boundary, so the core's copy of this var no
+    # longer reaches any code path. Setting it on the core alone would leave #411's dev-parity flow
+    # silently dead -- the module would try a real AI call, and this fleet has no AI binding by
+    # design, so plan/refine would honest-degrade instead of driving the validator state machine.
+    # Still binding-free: a var is not a service/GPU/R2 binding, so the safety property holds.
+    lines.append('[vars]')
+    lines.append('PLANNER_AI_MOCK = "true"')
     (D/"mods"/(name.group(1)+".toml")).write_text("\n".join(lines)+"\n"); made.append(name.group(1))
+
+# Fixture planning modules (dev-only third parties). Same treatment: real manifest, real /invoke.
+FIXTURES = {
+    "thirdparty": ["acme-planner", "bespoke-planner"],
+    "staleid":    ["acme-planner", "bespoke-planner", "legacy-planner"],
+}
+for fx in FIXTURES.get(scenario, []):
+    main = (D/"fixtures"/(fx+".mjs")).resolve()
+    if not main.exists():
+        raise SystemExit(f"fixture worker missing: {main}")
+    (D/"mods"/(fx+".toml")).write_text(
+        f'name = "{fx}"\nmain = "{main}"\n'
+        'compatibility_date = "2026-06-01"\nworkers_dev = false\n'
+    )
+    made.append(fx)
 print(f"generated {len(made)} module dev configs")
 PY
+
+# DRY_RUN=1 renders the configs and stops. Lets you verify WHICH modules a scenario actually binds
+# before spending a fleet boot on it -- the scenario is the whole experiment, so a silent mis-render
+# would invalidate the run it is meant to support.
+if [ "${DRY_RUN:-}" = "1" ]; then
+  echo "DRY_RUN: rendered configs only, not launching."
+  echo "core plan.enhance service bindings:"
+  grep -B1 'service = "\(vivijure-module-plan-enhance\|acme-planner\|bespoke-planner\|legacy-planner\)"' wrangler.toml || echo "  (none)"
+  echo "module dev configs:"
+  for f in "$D"/mods/*.toml; do [ -e "$f" ] && echo "  $(basename "$f")"; done
+  exit 0
+fi
 
 npx wrangler d1 migrations apply DB --local >/dev/null 2>&1 || true
 FLAGS=""; for f in "$D"/mods/*.toml; do FLAGS="$FLAGS -c $f"; done

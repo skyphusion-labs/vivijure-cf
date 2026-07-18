@@ -25,6 +25,8 @@ the **real catalog** from each module static `GET /module.json` manifest.
 
 ```
 bash .dev-modbound/dev-modbound.sh [PORT]     # default port 8790
+SCENARIO=thirdparty bash .dev-modbound/dev-modbound.sh
+DRY_RUN=1 SCENARIO=empty bash .dev-modbound/dev-modbound.sh   # render + report, do not launch
 ```
 
 The script (idempotent) renders the core dev config from `wrangler.toml.example`, generates a minimal
@@ -34,10 +36,18 @@ fleet. Open `http://127.0.0.1:PORT/planner`.
 ## Plan-validator flow without a live model
 
 Workers AI is remote-only and a fully-local dev fleet has no AI binding, so the script sets
-`PLANNER_AI_MOCK="true"`. With it on, `planStoryboard` / `refineStoryboard` return deterministic canned
-completions (see `src/planner-ai-mock.ts`) that still run the **real** extract / parse / validate
-pipeline, so you can drive the whole submit -> validate -> re-prompt -> resubmit state machine. Steer the
-branch with a sentinel in the brief or refine instruction:
+`PLANNER_AI_MOCK="true"`.
+
+**The mock lives in the MODULE now (cf#62), not the core.** Once the planner became a module invoker,
+every model call moved behind the module boundary, so the core's copy of this var no longer reaches
+any code path; the script therefore sets it on each generated MODULE dev config (see
+`modules/plan-enhance/src/mock.ts`). Setting it only on the core would leave this flow silently dead:
+the module would attempt a real AI call, this fleet has no AI binding by design, and plan/refine would
+honest-degrade instead of driving the validator state machine.
+
+With it on, plan / refine return deterministic canned completions that still run the **real** parse /
+validate pipeline, so you can drive the whole submit -> validate -> re-prompt -> resubmit state
+machine. Steer the branch with a sentinel in the brief or refine instruction:
 
 - (no sentinel) -> a valid storyboard (the pass branch).
 - `#mock-fail` -> a storyboard that fails validation (the reject / re-prompt branch).
@@ -45,6 +55,31 @@ branch with a sentinel in the brief or refine instruction:
 
 `PLANNER_AI_MOCK` is unset in prod; the live provider path is unchanged. This mock is dev-only and is
 NOT a Workers AI stand-in.
+
+## Catalog scenarios (`SCENARIO=`, cf#62)
+
+The planning-model catalog is **projected from the installed plan.enhance modules**, so the states
+worth testing are states of the *installed set*, not flags the studio reads. Each scenario changes
+which module service bindings exist, so the studio behaves exactly as it would with those modules
+really installed.
+
+| `SCENARIO` | installed plan.enhance modules | what it exercises |
+|---|---|---|
+| `default` (unset) | `plan-enhance` | the normal catalog |
+| `empty` | *none* | `GET /api/storyboard/models` serves `[]`; the authored empty state against a genuinely empty catalog |
+| `thirdparty` | `plan-enhance`, `acme-planner`, `bespoke-planner` | third-party models listed + routed; `bespoke-planner` declares **no** model enum, so its module NAME is the model id (the `byName` branch) |
+| `staleid` | above + `legacy-planner` | ids that really disappear: save a project pref on a `legacy/*` id, restart into another scenario, and the saved id is genuinely gone |
+
+Fixture modules live in `.dev-modbound/fixtures/` and are dev-only -- never bound in a deployed
+environment. They serve real `vivijure-module/2` manifests and answer `POST /invoke` over the real
+hook, so only the far side of the module boundary is a stand-in; nothing about the studio is stubbed.
+Their manifests are conformance-tested in `tests/dev-fixtures.test.ts`, because a fixture whose
+manifest failed validation would be **skipped silently** by the registry and would look exactly like a
+backend defect during a parity run.
+
+**Switching scenario means restarting**, which is deliberate: a restart is a fresh isolate, so the
+core's per-isolate module-discovery cache (60s TTL) is cleared too and the catalog change is immediate
+rather than something you wait out and misread as a bug.
 
 ## What is stubbed, and why
 
