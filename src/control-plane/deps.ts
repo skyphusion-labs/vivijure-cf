@@ -11,7 +11,7 @@ import { CfApi } from "./cf-api";
 import type { ControlPlaneEnv } from "./env";
 import type { MailSender } from "./email";
 import { posternSender } from "./email";
-import { runProvisionJob, type ProvisionDeps } from "./provisioner";
+import { continueProvisionJob, runProvisionJob, type ProvisionDeps } from "./provisioner";
 import { createTenantEndpoints } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
 import { D1Store } from "./store-d1";
@@ -29,6 +29,12 @@ export const TENANT_RUNPOD_SECRET = "RUNPOD_API_KEY";
 export interface ProvisionerWiring {
   /** Run a provision job to completion or honest failure. Never throws; the job row is the record. */
   start(jobId: string, tenant: Tenant, runpodApiKey: string | null): Promise<void>;
+  /**
+   * Drive an unfinished job forward one invocation (#112). Called from the POLL route, so it has no
+   * key A and can only complete a job that already reached the studio upload; it refuses honestly
+   * otherwise. `stepsDone` comes from the job row the caller already read.
+   */
+  resume(jobId: string, tenant: Tenant, stepsDone: readonly string[]): Promise<void>;
   /** Install the VERIFIED invoke key as the tenant studio secret. Throws on API failure. */
   installInvokeKey(tenant: Tenant, key: string): Promise<void>;
 }
@@ -57,6 +63,13 @@ export function productionDeps(env: ControlPlaneEnv): ControlPlaneDeps {
     provisioner: provisionerWiring(env, store),
   };
 }
+
+/**
+ * Per-request ceiling on a dispatch to the tenant studio (#112). Small on purpose: every caller runs
+ * inside a provision job with a bounded execution budget, so a request that cannot answer quickly is
+ * more useful as an honest error than as a wait that outlives the invocation.
+ */
+const TENANT_STUDIO_FETCH_TIMEOUT_MS = 5_000;
 
 /** Exported for the wiring test: the same construction production takes. */
 export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore): ProvisionerWiring | undefined {
@@ -105,8 +118,17 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
       const stub = env.TENANT_DISPATCH.get(scriptName);
       const headers: Record<string, string> = { authorization: `Bearer ${init.studioApiToken}` };
       if (init.body !== undefined) headers["content-type"] = "application/json";
+      // EVERY dispatch to the tenant studio is time-bounded (#112). A hung studio fetch would
+      // otherwise block the provision job until the invocation is evicted, which strands the tenant
+      // at "provisioning" with no error rather than failing honestly. This is a defect in its own
+      // right: bounding a retry loop does nothing if one request inside it can hang forever.
       const res = await stub.fetch(
-        new Request(`https://tenant.internal${init.path}`, { method: init.method, headers, body: init.body }),
+        new Request(`https://tenant.internal${init.path}`, {
+          method: init.method,
+          headers,
+          body: init.body,
+          signal: AbortSignal.timeout(TENANT_STUDIO_FETCH_TIMEOUT_MS),
+        }),
       );
       return { status: res.status, text: await res.text() };
     },
@@ -117,7 +139,11 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
   return {
     async start(jobId, tenant, runpodApiKey) {
       // runProvisionJob records every outcome on the job row; the return value is the same fact.
+      // A "yielded" outcome is normal under #112: progress is persisted and the next poll resumes.
       await runProvisionJob(deps, jobId, tenant, runpodApiKey, STUDIO_MIGRATION_SET);
+    },
+    async resume(jobId, tenant, stepsDone) {
+      await continueProvisionJob(deps, jobId, tenant, stepsDone);
     },
     async installInvokeKey(tenant, key) {
       if (!tenant.script_name) throw new Error("tenant has no studio worker to install the key on");

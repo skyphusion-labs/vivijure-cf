@@ -3,6 +3,41 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.2.4 -- 2026-07-18
+
+**Provisioning survives its own execution budget (#112).** PATCH: a provision no longer has to fit in
+one invocation, and a lost driver can no longer strand a tenant forever.
+
+- **Poll-driven continuation (cf#112).** A provision job ran under a single `waitUntil`, whose
+  extension window is on the order of 30 seconds. Run 4 of the cf#99 finale spent ~22 of those
+  seconds before the module install even began; the runtime then cancelled the invocation mid-step.
+  Nothing wrote a terminal state, because the `catch` that writes one only runs if the function is
+  still running, so the job row said `running` forever and the tenant sat at `provisioning` with no
+  error and no retry path. `runProvisionJob` now works until a per-invocation budget (15s) is spent,
+  persists progress, and YIELDS. The poll route drives any unfinished job forward under its own fresh
+  invocation, so the client's normal polling cadence walks the provision to completion. Shortening
+  individual waits was rejected as a fix: it buys headroom, not correctness, and the next slow step
+  puts us back in the same hole.
+- **A yield is not a failure.** Progress is persisted and the job stays `running` with no error;
+  only a real fault writes a terminal failure.
+- **Continuation is bounded by credential custody, deliberately.** Key A is transient by design and a
+  poll-driven driver does not have it, so continuation can only complete a job that already reached
+  the studio upload (it needs just `endpoints_json` and the encrypted studio token). A job interrupted
+  earlier now fails honestly telling the tenant to provision again, rather than waiting forever for a
+  driver that could never succeed.
+- **Lease-guarded, because polls overlap.** Several polls are in flight at once; without arbitration
+  each would start its own driver and two drivers would double-mint credentials. `claimJob` is a
+  conditional UPDATE, so exactly one poll wins and the rest do nothing. The lease also stopped being
+  pushed 10 minutes into the future on every step, which under continuation would have kept a dead
+  job un-drivable for ten minutes -- the same bug wearing a lease.
+- **Lost invocations are declared, not tolerated.** A non-terminal job with no progress for over ten
+  minutes is marked `failed` with `invocation lost: no progress for over 10 minutes`. An eternal
+  spinner is a lie of omission: the tenant can neither wait it out nor retry.
+- **Every studio dispatch is time-bounded.** `AbortSignal.timeout` on `callTenantStudio` (probe and
+  installs alike): bounding a retry loop does nothing if one request inside it can hang forever.
+  The module-install probe deadline drops from 60s to 15s, sized against the invocation budget it
+  actually runs in rather than against wall-clock optimism.
+
 ## v1.2.3 -- 2026-07-18
 
 **Provision survives an adopted RunPod template (#83).** PATCH: the third and last adopt-path defect
