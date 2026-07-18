@@ -15,7 +15,7 @@ import { runProvisionJob, type ProvisionDeps } from "./provisioner";
 import { createTenantEndpoints } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
 import { D1Store } from "./store-d1";
-import { STUDIO_MIGRATIONS } from "./studio-migrations";
+import { STUDIO_MIGRATION_SET } from "./studio-migrations";
 import { CfTokenMinter } from "./token-minter";
 import { TENANT_MODULE_CATALOG, tenantModuleScriptName } from "./tenant-modules";
 
@@ -117,7 +117,7 @@ export function provisionerWiring(env: ControlPlaneEnv, store: ControlPlaneStore
   return {
     async start(jobId, tenant, runpodApiKey) {
       // runProvisionJob records every outcome on the job row; the return value is the same fact.
-      await runProvisionJob(deps, jobId, tenant, runpodApiKey, STUDIO_MIGRATIONS);
+      await runProvisionJob(deps, jobId, tenant, runpodApiKey, STUDIO_MIGRATION_SET);
     },
     async installInvokeKey(tenant, key) {
       if (!tenant.script_name) throw new Error("tenant has no studio worker to install the key on");

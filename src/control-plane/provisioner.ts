@@ -16,6 +16,7 @@
 
 import type { CfApi } from "./cf-api";
 import { CfApiError } from "./cf-api";
+import { applyStudioMigrations, type StudioMigration } from "./migrate";
 import { randomToken } from "./crypto";
 import type { TenantR2Creds } from "./runpod";
 import type { ControlPlaneStore, Tenant } from "./store";
@@ -169,7 +170,7 @@ export async function runProvisionJob(
   jobId: string,
   tenant: Tenant,
   runpodApiKey: string | null,
-  studioMigrations: string,
+  studioMigrations: readonly StudioMigration[],
 ): Promise<{ ok: true; status: "awaiting_invoke_key" } | { ok: false; step: ProvisionStep; message: string }> {
   const done: ProvisionStep[] = [];
   const mark = async (step: ProvisionStep) => {
@@ -186,9 +187,16 @@ export async function runProvisionJob(
     await deps.store.setTenantD1(tenant.id, db.uuid);
     await mark("d1_create");
 
-    // 2. Migrations: the SAME migration files the studio ships. Multi-statement in one call is
-    //    spike-proven, and the files are CREATE TABLE IF NOT EXISTS, so re-applying is a no-op.
-    await deps.cf.queryD1(db.uuid, studioMigrations);
+    // 2. Migrations: the SAME migration files the studio ships, applied only where missing and
+    //    recorded per-migration in the schema_migrations table of the tenant D1 (#105). This step
+    //    MUST tolerate an adopted, already-migrated D1: the previous unconditional replay assumed
+    //    the files were all CREATE TABLE IF NOT EXISTS, and died on the first ALTER TABLE.
+    const migrated = await applyStudioMigrations(deps.cf, db.uuid, studioMigrations);
+    deps.log("d1.migrate", {
+      tenant: tenant.id,
+      applied: migrated.applied,
+      seeded: migrated.seeded,
+    });
     await mark("d1_migrate");
 
     // 3. Bucket per tenant (not a prefix): satellite-visible R2 creds must reach ONLY this tenant.
