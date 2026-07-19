@@ -26,7 +26,7 @@ import {
   type KeyframeInput,
   type KeyframeOutput,
 } from "./contract";
-import { generateImage, type AiRun } from "./image-gen";
+import { generateImage, maxRefsForModel, type AiRun } from "./image-gen";
 import {
   gunzipBundle,
   extractTarText,
@@ -51,6 +51,9 @@ import {
   encodePoll,
   decodePoll,
   readOutput,
+  parseFilmRef,
+  planShotRefs,
+  FILM_REF_SLOT,
   type CloudKeyframeState,
   type ShotPlan,
 } from "./keyframe";
@@ -104,6 +107,10 @@ export const MANIFEST: ModuleManifest = {
     width: { type: "int", default: 1344, min: 512, max: 1536, label: "width" },
     height: { type: "int", default: 768, min: 512, max: 1536, label: "height" },
     refs_per_slot: { type: "int", default: 1, min: 1, max: 4, label: "reference images per character" },
+    // cp#32: one film-wide reference appended to EVERY shot (character-less shots included) to lock
+    // style/realism across the film. STRING not enum: the cast anchor <slot> is per-project and a
+    // static enum cannot carry it. Grammar: none | first_keyframe | cast:<slot>. Default none = no-op.
+    film_ref: { type: "string", default: "none", label: "film-wide reference lock (none | first_keyframe | cast:<slot>)" },
   },
   ui: { section: "keyframe", order: 20 },
 };
@@ -206,10 +213,21 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   // Stage each used slot's reference portrait(s), downscaled, as standalone R2 objects the per-shot
   // polls read. A used slot with no portrait in the bundle is a HARD FAIL: the shot names a character
   // we cannot render with identity.
+  const filmPlan = parseFilmRef(req.config.film_ref);
+  if (!filmPlan) {
+    return { ok: false, error: "cloud-keyframe: unknown film_ref (use none | first_keyframe | cast:<slot>)" };
+  }
+
   const job_id = crypto.randomUUID();
   const tarNames = listTarNames(tar);
   const slot_refs: Record<string, string[]> = {};
-  for (const slot of usedSlots(selected)) {
+  // Stage every used slot; for film_ref=cast:<slot> also stage the anchor slot even if no selected
+  // shot features it, so its portrait can seed the film-wide reference.
+  const slotsToStage = usedSlots(selected);
+  if (filmPlan.mode === "cast" && filmPlan.slot && !slotsToStage.includes(filmPlan.slot)) {
+    slotsToStage.push(filmPlan.slot);
+  }
+  for (const slot of slotsToStage) {
     const candidates: string[] = [];
     const reg = registry[slot];
     if (reg?.image) candidates.push(reg.image);
@@ -234,6 +252,13 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     slot_refs[slot] = keys;
   }
 
+  // cp#32: stage the one film-wide reference. cast:<slot> -> the anchor slot canonical portrait
+  // (the staging loop already hard-failed if it had none). first_keyframe -> deferred to poll,
+  // which captures the first rendered keyframe into __film__. none -> nothing.
+  if (filmPlan.mode === "cast" && filmPlan.slot) {
+    slot_refs[FILM_REF_SLOT] = [slot_refs[filmPlan.slot][0]];
+  }
+
   const shots: ShotPlan[] = selected.map((s) => ({
     shot_id: s.shot_id,
     prompt: composePrompt(stylePrefix, s.prompt, s.slots, registry),
@@ -250,6 +275,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     shots,
     done: [],
     total: shots.length,
+    film_ref: filmPlan,
   };
   try {
     await env.R2_RENDERS.put(stateKey(input.project, job_id), JSON.stringify(state), {
@@ -277,16 +303,20 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   for (let n = 0; n < PER_POLL && state.shots.length > 0; n++) {
     const shot = state.shots[0];
 
-    // Gather the staged reference portraits for this shot's characters.
+    // Gather this shot own character refs first, then the film-wide reference into the leftover
+    // capacity (cp#32). planShotRefs guarantees the film ref never evicts a character ref.
+    const { charKeys, filmKeys } = planShotRefs(state.slot_refs, shot.slots, maxRefsForModel(state.model));
     const refBlobs: Blob[] = [];
-    for (const slot of shot.slots) {
-      for (const key of state.slot_refs[slot] || []) {
-        const r = await env.R2_RENDERS.get(key);
-        if (r) refBlobs.push(await r.blob());
-      }
+    for (const key of charKeys) {
+      const r = await env.R2_RENDERS.get(key);
+      if (r) refBlobs.push(await r.blob());
     }
     if (shot.slots.length > 0 && refBlobs.length === 0) {
       return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " lost its staged references" };
+    }
+    for (const key of filmKeys) {
+      const r = await env.R2_RENDERS.get(key);
+      if (r) refBlobs.push(await r.blob());
     }
 
     let gen: { bytes: ArrayBuffer; mime: string };
@@ -311,6 +341,20 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     }
 
     state.done.push({ shot_id: shot.shot_id, keyframe_key: key });
+
+    // cp#32 first_keyframe: the first rendered keyframe becomes the film-wide reference for the rest.
+    // Downscaled + staged like a cast portrait so all refs stay uniformly <=512. Best-effort: a
+    // staging miss means the rest render without the lock (drift, not a broken keyframe).
+    if (state.film_ref?.mode === "first_keyframe" && !(state.slot_refs[FILM_REF_SLOT]?.length)) {
+      try {
+        const small = await downscaleRef(env.IMAGES, norm.bytes);
+        const frKey = stageRefKey(state.project, state.job_id, FILM_REF_SLOT, 1);
+        await env.R2_RENDERS.put(frKey, small, { httpMetadata: { contentType: "image/png" } });
+        state.slot_refs[FILM_REF_SLOT] = [frKey];
+      } catch (e) {
+        console.warn("cloud-keyframe: could not stage first_keyframe film ref: " + (e as Error).message);
+      }
+    }
     state.shots.shift();
   }
 

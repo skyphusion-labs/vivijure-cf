@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import worker from "../modules/cloud-keyframe/src/index";
 import { emitTar } from "@skyphusion-labs/vivijure-core/tar";
 import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { MANIFEST } from "../modules/cloud-keyframe/src/index";
@@ -16,6 +17,9 @@ import {
   encodePoll,
   decodePoll,
   readOutput,
+  parseFilmRef,
+  planShotRefs,
+  FILM_REF_SLOT,
   type CloudKeyframeState,
 } from "../modules/cloud-keyframe/src/keyframe";
 import {
@@ -35,6 +39,7 @@ import {
   extractProxiedImageUrl,
   nearestAspectRatio,
   proxiedParams,
+  maxRefsForModel,
 } from "../modules/cloud-keyframe/src/image-gen";
 
 // A storyboard.yaml in the exact deterministic shape the core's serializeStoryboardYaml emits.
@@ -263,5 +268,186 @@ describe("cloud-keyframe conformance (the contract is the law)", () => {
   it("a malformed keyframe output is rejected by conformance", () => {
     expect(checkHookOutput("keyframe", { project: "p", keyframes: [{ shot_id: "x" }] }).pass).toBe(false);
     expect(checkHookOutput("keyframe", { keyframes: [] }).pass).toBe(false);
+  });
+});
+
+// ---- cp#32: film-wide reference conditioning (integration, drives the real worker) --------------
+//
+// THE DRIFT: today the only film-wide element is the text style_prefix. Reference images are gathered
+// PER SHOT from that shot own slots, so a character-less shot (slots: []) draws from text alone and
+// drifts in style/realism across the film. This drives submit -> poll through the worker fetch handler
+// with generateImage SPIED, and asserts the character-less shot now receives the film-wide reference.
+//
+// RED on current code: the character-less shot gets 0 refs. GREEN after the fix: it gets the film ref.
+const { genCalls } = vi.hoisted(() => ({ genCalls: [] as { prompt: string; refCount: number }[] }));
+vi.mock("../modules/cloud-keyframe/src/image-gen", async (importActual) => {
+  const actual = await importActual<typeof import("../modules/cloud-keyframe/src/image-gen")>();
+  return {
+    ...actual,
+    // Record what refs reach the model per shot; return a tiny valid PNG so poll advances.
+    generateImage: vi.fn(async (_ai: unknown, _gw: unknown, _model: string, prompt: string, refBlobs: Blob[]) => {
+      genCalls.push({ prompt, refCount: refBlobs.length });
+      return { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).buffer as ArrayBuffer, mime: "image/png" };
+    }),
+  };
+});
+
+async function gzipBytes(bytes: Uint8Array): Promise<ArrayBuffer> {
+  const s = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  return await new Response(s).arrayBuffer();
+}
+
+function bundleTarGz(yaml: string = STORYBOARD_YAML, withPortraits = true): Promise<ArrayBuffer> {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  const files = [
+    { name: "storyboard.yaml", content: new TextEncoder().encode(yaml) },
+    { name: "characters/registry.json", content: new TextEncoder().encode(REGISTRY_JSON) },
+  ];
+  if (withPortraits) {
+    files.push({ name: "characters/char_A_Wren.png", content: png });
+    files.push({ name: "characters/char_B_Cass.png", content: png });
+  }
+  return gzipBytes(emitTar(files));
+}
+
+function fakeR2() {
+  const m = new Map<string, ArrayBuffer | string>();
+  return {
+    map: m,
+    async get(key: string) {
+      if (!m.has(key)) return null;
+      const v = m.get(key)!;
+      return {
+        async arrayBuffer() { return typeof v === "string" ? (new TextEncoder().encode(v).buffer as ArrayBuffer) : v; },
+        async text() { return typeof v === "string" ? v : new TextDecoder().decode(new Uint8Array(v)); },
+        async blob() { return new Blob([v]); },
+      };
+    },
+    async put(key: string, value: ArrayBuffer | string) { m.set(key, value); },
+  };
+}
+
+async function makeKeyframeEnv(yaml: string = STORYBOARD_YAML, withPortraits = true) {
+  const R2 = fakeR2();
+  await R2.put("bundles/neon.tar.gz", await bundleTarGz(yaml, withPortraits));
+  return { AI: { run: async () => ({}) }, R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
+}
+
+async function invokeKeyframe(env: Parameters<typeof worker.fetch>[1], config: Record<string, unknown>) {
+  const req = new Request("http://m/invoke", {
+    method: "POST",
+    body: JSON.stringify({
+      hook: "keyframe",
+      input: { project: "neon_film", bundle_key: "bundles/neon.tar.gz" },
+      config,
+      context: { project: "neon_film", job_id: "j" },
+    }),
+  });
+  return (await (await worker.fetch(req, env)).json()) as { ok: boolean; poll?: string; error?: string };
+}
+
+async function drainPolls(env: Parameters<typeof worker.fetch>[1], poll: string) {
+  let r: { ok: boolean; pending?: boolean; output?: unknown; error?: string } = { ok: true, pending: true };
+  for (let i = 0; i < 20 && r.pending; i++) {
+    const req = new Request("http://m/poll", { method: "POST", body: JSON.stringify({ poll }) });
+    r = (await (await worker.fetch(req, env)).json()) as typeof r;
+  }
+  return r;
+}
+
+describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
+  it("cast:<slot> conditions a CHARACTER-LESS shot with the film-wide reference", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, { film_ref: "cast:A" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+
+    // shot_03 has character_slots: [] -- on current code it draws from text alone (0 refs). With the
+    // film ref it must receive exactly the one film-wide reference.
+    const shot3 = genCalls.find((c) => c.prompt.includes("empty landscape"));
+    expect(shot3, "shot_03 was rendered").toBeDefined();
+    expect(shot3!.refCount).toBe(1);
+  });
+
+  it("film_ref=none is a true no-op: the character-less shot still draws from text alone", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    const shot3 = genCalls.find((c) => c.prompt.includes("empty landscape"));
+    expect(shot3!.refCount).toBe(0);
+  });
+
+  it("first_keyframe: the first shot is the source (no film ref), a later character-less shot gets it", async () => {
+    // Two character-less shots: the first renders from text and becomes the film ref; the second
+    // must receive exactly that one reference.
+    const twoEmpty = [
+      "scenes:",
+      "  - prompt: \"opening wasteland\"",
+      "    id: \"shot_a\"",
+      "    character_slots: []",
+      "  - prompt: \"closing wasteland\"",
+      "    id: \"shot_b\"",
+      "    character_slots: []",
+      "",
+    ].join("\n");
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv(twoEmpty, false);
+    const sub = await invokeKeyframe(env, { film_ref: "first_keyframe" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    expect(genCalls.length).toBe(2);
+    expect(genCalls[0].refCount).toBe(0); // the first shot is the source
+    expect(genCalls[1].refCount).toBe(1); // conditioned on the first keyframe
+  });
+});
+
+describe("cloud-keyframe film-wide reference (cp#32, pure logic)", () => {
+  it("parseFilmRef reads the grammar and rejects junk honestly", () => {
+    expect(parseFilmRef(undefined)).toEqual({ mode: "none" });
+    expect(parseFilmRef("")).toEqual({ mode: "none" });
+    expect(parseFilmRef("none")).toEqual({ mode: "none" });
+    expect(parseFilmRef("first_keyframe")).toEqual({ mode: "first_keyframe" });
+    expect(parseFilmRef("cast:A")).toEqual({ mode: "cast", slot: "A" });
+    expect(parseFilmRef("cast: B ")).toEqual({ mode: "cast", slot: "B" });
+    expect(parseFilmRef("cast:")).toBeNull();
+    expect(parseFilmRef("banana")).toBeNull();
+    expect(parseFilmRef(7)).toBeNull();
+  });
+
+  it("maxRefsForModel returns the per-model input cap", () => {
+    expect(maxRefsForModel("@cf/black-forest-labs/flux-2-klein-9b")).toBe(4);
+    expect(maxRefsForModel("google/nano-banana-pro")).toBe(3);
+    expect(maxRefsForModel("openai/gpt-image-1")).toBe(16);
+  });
+
+  it("planShotRefs appends the film ref to a CHARACTER-LESS shot", () => {
+    const slotRefs = { A: ["kA"], [FILM_REF_SLOT]: ["kFilm"] };
+    expect(planShotRefs(slotRefs, [], 4)).toEqual({ charKeys: [], filmKeys: ["kFilm"] });
+  });
+
+  it("planShotRefs is a no-op when there is no film ref (byte-identical to the old assembly)", () => {
+    const slotRefs = { A: ["kA1", "kA2"], B: ["kB"] };
+    expect(planShotRefs(slotRefs, ["A", "B"], 4)).toEqual({ charKeys: ["kA1", "kA2", "kB"], filmKeys: [] });
+  });
+
+  it("planShotRefs never evicts a shot own character refs: at the cap the film ref is dropped", () => {
+    const slotRefs = { A: ["k1", "k2", "k3"], B: ["k4"], [FILM_REF_SLOT]: ["kFilm"] };
+    // 4 character refs on a cap of 4 leaves no room; the film ref is dropped, the char refs stand.
+    expect(planShotRefs(slotRefs, ["A", "B"], 4)).toEqual({ charKeys: ["k1", "k2", "k3", "k4"], filmKeys: [] });
+  });
+
+  it("planShotRefs fills only the leftover capacity and dedups the film ref against char refs", () => {
+    // room = 4 - 2 = 2, but only one film key, and it is NOT a char key here, so it is appended.
+    const slotRefs = { A: ["kA"], B: ["kB"], [FILM_REF_SLOT]: ["kFilm"] };
+    expect(planShotRefs(slotRefs, ["A", "B"], 4)).toEqual({ charKeys: ["kA", "kB"], filmKeys: ["kFilm"] });
+    // when the film key IS one of the shot char keys (cast:A on a shot featuring A), it is not doubled.
+    const dup = { A: ["kA"], [FILM_REF_SLOT]: ["kA"] };
+    expect(planShotRefs(dup, ["A"], 4)).toEqual({ charKeys: ["kA"], filmKeys: [] });
   });
 });
