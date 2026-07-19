@@ -61,6 +61,70 @@ export function composePrompt(
   return `${lead}${scenePrompt.trim()}${idText}`;
 }
 
+// --- film-wide reference conditioning (cp#32) --------------------------------------------------
+//
+// The problem this closes: the ONLY film-wide element conditioning keyframes was the text style_prefix.
+// Reference IMAGES were gathered per shot from that shot own character slots, so a character-less shot
+// (slots: []) drew from text alone and drifted in style/realism across the film. A single film-wide
+// reference, appended to EVERY shot, locks the look.
+
+/** The reserved slot_refs key the film-wide reference is staged under. Not a real cast slot (the "__"
+ *  guard keeps it from ever colliding with a storyboard character_slot), so a shot own character refs
+ *  and the film ref never confuse each other. */
+export const FILM_REF_SLOT = "__film__";
+
+export type FilmRefMode = "none" | "first_keyframe" | "cast";
+
+/** The parsed film_ref config. `cast` carries the anchor `slot` whose portrait becomes the film ref. */
+export interface FilmRefPlan {
+  mode: FilmRefMode;
+  slot?: string;
+}
+
+/**
+ * Parse the film_ref config value. Grammar: `none` | `first_keyframe` | `cast:<slot>`.
+ *
+ * Modelled as a STRING (not a static enum) on purpose: the contract ConfigField enum needs fixed
+ * `values`, but the cast anchor `<slot>` is a per-project character slot the static manifest cannot
+ * enumerate. Returns null for a malformed value so the caller HARD-FAILS honestly (a producer stage
+ * does not silently ignore a config the operator set); absent / "" / "none" is the no-op default.
+ */
+export function parseFilmRef(v: unknown): FilmRefPlan | null {
+  if (v === undefined || v === null) return { mode: "none" };
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (s === "" || s === "none") return { mode: "none" };
+  if (s === "first_keyframe") return { mode: "first_keyframe" };
+  if (s.startsWith("cast:")) {
+    const slot = s.slice("cast:".length).trim();
+    return slot ? { mode: "cast", slot } : null;
+  }
+  return null;
+}
+
+/**
+ * Plan the reference keys for one shot: its OWN character refs first, then the film-wide reference
+ * filling only the leftover capacity under the model cap.
+ *
+ * PRECEDENCE, decided here and load-bearing: a shot own character refs are NEVER evicted by the film
+ * ref. The film ref is appended only if there is room (cap - charKeys.length), and is deduped against
+ * the character keys, so a `cast:A` anchor on a shot that already features A is not fed A twice. When
+ * there is no film ref (mode none, or first_keyframe before the first shot renders) this returns the
+ * character keys UNCHANGED -- a true no-op, byte-identical to the pre-cp#32 assembly.
+ */
+export function planShotRefs(
+  slotRefs: Record<string, string[]>,
+  shotSlots: string[],
+  cap: number,
+): { charKeys: string[]; filmKeys: string[] } {
+  const charKeys: string[] = [];
+  for (const slot of shotSlots) for (const k of slotRefs[slot] || []) charKeys.push(k);
+  const seen = new Set(charKeys);
+  const room = Math.max(0, cap - charKeys.length);
+  const filmKeys = (slotRefs[FILM_REF_SLOT] || []).filter((k) => !seen.has(k)).slice(0, room);
+  return { charKeys, filmKeys };
+}
+
 // --- R2 key conventions ------------------------------------------------------------------------
 
 /** The R2 key a generated keyframe lands under (the contract: renders/<project>/keyframes/<shot>.png). */
@@ -99,6 +163,8 @@ export interface CloudKeyframeState {
   shots: ShotPlan[];      // remaining shots to render
   done: KeyframeShot[];   // keyframes rendered + stored so far
   total: number;          // how many were requested (for progress)
+  /** cp#32: the film-wide reference plan; absent on pre-cp#32 state docs -> treated as {mode:none}. */
+  film_ref?: FilmRefPlan;
 }
 
 /** Select the scenes to render: the requested subset (`shot_ids`) or every scene in the bundle. */

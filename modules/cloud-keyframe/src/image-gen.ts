@@ -22,6 +22,15 @@ export function isFlux2(model: string): boolean {
   return model.startsWith("@cf/black-forest-labs/flux-2-");
 }
 
+/** The model hard cap on reference input images: FLUX-2 takes 4 (input_image_0..3), openai 16, and
+ *  the other proxied providers (nano-banana) 3. Exposed so the caller (cp#32) can size the film-wide
+ *  reference against a shot own character refs without duplicating the per-model numbers. */
+export function maxRefsForModel(model: string): number {
+  if (isFlux2(model)) return FLUX2_MAX_REFS;
+  if (model.startsWith("openai/")) return 16;
+  return PROXIED_MAX_REFS;
+}
+
 /** base64 -> bytes. FLUX-2 returns { image: "<base64>" }. */
 export function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
