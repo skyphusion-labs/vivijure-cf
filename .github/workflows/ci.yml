@@ -68,11 +68,38 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+  # SECURITY GATE (fc#859): a v* tag can point at ANY commit, including one that never merged.
+  # The org tag ruleset enforces deletion + non_fast_forward only, so `git tag v9.9.9 <unmerged>
+  # && git push origin v9.9.9` would deploy unreviewed code to prod, routing around branch
+  # protection. This refuses that. It runs on ubuntu-latest -- NOT the deploy job's
+  # node:22-alpine container, which ships without git -- so actions/checkout produces a real
+  # repository and merge-base can walk main. Same tag-only condition as `deploy`: this repo
+  # publishes ONLY on a v* tag (deploy is itself gated on refs/tags/v*), so there is no
+  # branch-dispatch publish path to guard.
+  assert-on-main:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Assert built commit is on main (no deploy of an unreviewed commit)
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          head="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$head" origin/main; then
+            echo "::error::commit ${head} is not on origin/main; refusing to deploy an unreviewed commit"
+            exit 1
+          fi
+          echo "commit ${head} is on origin/main; ancestry guard passed."
+
   deploy:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
     # (and no merge can bite an in-flight render). To release: push a SemVer tag vX.Y.Z.
-    needs: ci
+    needs: [ci, assert-on-main]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: node:22-alpine
