@@ -16,7 +16,23 @@ export interface Env {
 interface TailLog { timestamp?: number; level?: string; message?: unknown[]; }
 interface TailException { timestamp?: number; name?: string; message?: string; }
 interface TailEvent { request?: { url?: string; method?: string; path?: string }; response?: { status?: number }; cron?: string; scheduledTime?: number; }
-interface TailItem { scriptName?: string; outcome?: string; eventTimestamp?: number; event?: TailEvent; logs?: TailLog[]; exceptions?: TailException[]; }
+// Field names verified against the pinned @cloudflare/workers-types TraceItem, NOT guessed: the
+// public tail-worker docs page omits the timing fields entirely, so the type definition is the
+// authority here. All three are machine-generated (durations + a boolean), never user-derived.
+interface TailItem {
+  scriptName?: string;
+  outcome?: string;
+  eventTimestamp?: number;
+  event?: TailEvent;
+  logs?: TailLog[];
+  exceptions?: TailException[];
+  /** CPU milliseconds burned by the invocation. */
+  cpuTime?: number;
+  /** Elapsed milliseconds from invocation start until the runtime is done (incl. waitUntil). */
+  wallTime?: number;
+  /** True when the runtime DROPPED events from this trace. Without it an under-count reads as calm. */
+  truncated?: boolean;
+}
 
 interface Labels { worker: string; level: string; phase: string; module: string; }
 interface LokiStream { stream: Labels; values: [string, string][]; }
@@ -109,8 +125,23 @@ export function shapeEventsToLoki(events: TailItem[]): LokiStream[] {
       const oc = item.outcome || "ok";
       const ilevel: "info" | "warn" | "error" = oc === "ok" ? "info" : (oc === "exception" || oc === "exceededCpu" ? "error" : "warn");
       const idf = deriveFields(summary);
+      // Timing rides the invocation LINE, never a Loki label: these are unbounded numerics and
+      // would shatter stream cardinality (the same rule that keeps job_id out of the labels).
+      // Query them by unwrapping instead, e.g.
+      //   quantile_over_time(0.95, {worker="vivijure-studio"} | json | unwrap wall_ms [10m])
+      // Conditionally included: absent stays ABSENT rather than becoming 0, so "the runtime did not
+      // report it" and "it took no time" never collapse into the same value.
       add({ worker, level: ilevel, phase: idf.phase, module: idf.module }, nanos(item.eventTimestamp),
-        JSON.stringify({ msg: summary, kind: "invocation", outcome: oc, status: ev.response?.status, path: ev.request?.path }));
+        JSON.stringify({
+          msg: summary,
+          kind: "invocation",
+          outcome: oc,
+          status: ev.response?.status,
+          path: ev.request?.path,
+          cpu_ms: typeof item.cpuTime === "number" ? item.cpuTime : undefined,
+          wall_ms: typeof item.wallTime === "number" ? item.wallTime : undefined,
+          truncated: item.truncated === true ? true : undefined,
+        }));
     }
     for (const log of item.logs || []) {
       const text = flatten(log.message);

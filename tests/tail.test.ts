@@ -70,4 +70,73 @@ describe("vivijure-tail event -> Loki shaping", () => {
     const levels = [...new Set(streams.map((s) => s.stream.level))].sort();
     expect(levels).toEqual(["info", "warn"]);
   });
+  // --- per-invocation timing (cp#18 measurement input) ---
+
+  it("carries cpu_ms + wall_ms on the invocation summary line", () => {
+    const events = [{
+      scriptName: "vivijure-studio",
+      outcome: "ok",
+      eventTimestamp: 1_700_000_000_000,
+      event: { request: { method: "POST", path: "/api/film" }, response: { status: 200 } },
+      logs: [],
+      exceptions: [],
+      cpuTime: 12.5,
+      wallTime: 1843,
+    }];
+    const streams = shapeEventsToLoki(events);
+    const inv = streams
+      .flatMap((s) => s.values.map((v) => JSON.parse(v[1])))
+      .find((l) => l.kind === "invocation");
+    expect(inv).toBeTruthy();
+    expect(inv.cpu_ms).toBe(12.5);
+    expect(inv.wall_ms).toBe(1843);
+  });
+
+  it("keeps timing OUT of the stream labels (cardinality guard)", () => {
+    const events = [{
+      scriptName: "vivijure-studio", outcome: "ok", eventTimestamp: 1_700_000_000_000,
+      event: { request: { method: "GET", path: "/health" }, response: { status: 200 } },
+      logs: [], exceptions: [], cpuTime: 3, wallTime: 40,
+    }];
+    const streams = shapeEventsToLoki(events);
+    for (const s of streams) {
+      expect(Object.keys(s.stream).sort()).toEqual(["level", "module", "phase", "worker"]);
+    }
+  });
+
+  // NEGATIVE CONTROL. The bug this guards is specifically "absent silently became 0", which would
+  // make a Worker the runtime reported nothing for look like a Worker that used no CPU. The
+  // assertions above prove the fields ARRIVE, so this one cannot pass by the shaping being dead.
+  it("omits timing entirely when the runtime did not report it (absent != zero)", () => {
+    const events = [{
+      scriptName: "vivijure-studio", outcome: "ok", eventTimestamp: 1_700_000_000_000,
+      event: { request: { method: "GET", path: "/health" }, response: { status: 200 } },
+      logs: [], exceptions: [],
+    }];
+    const streams = shapeEventsToLoki(events);
+    const raw = streams.flatMap((s) => s.values.map((v) => v[1])).find((l) => l.includes('"invocation"'));
+    expect(raw).toBeTruthy();
+    const inv = JSON.parse(raw);
+    expect(inv.kind).toBe("invocation");
+    expect("cpu_ms" in inv).toBe(false);
+    expect("wall_ms" in inv).toBe(false);
+    expect(inv.cpu_ms).toBeUndefined();
+  });
+
+  it("surfaces truncated=true so a dropped-event trace cannot read as calm", () => {
+    const withT = shapeEventsToLoki([{
+      scriptName: "vivijure-studio", outcome: "ok", eventTimestamp: 1, logs: [], exceptions: [],
+      truncated: true,
+    }]);
+    const t = withT.flatMap((s) => s.values.map((v) => JSON.parse(v[1]))).find((l) => l.kind === "invocation");
+    expect(t.truncated).toBe(true);
+
+    // control: a non-truncated trace must NOT carry the key at all
+    const noT = shapeEventsToLoki([{
+      scriptName: "vivijure-studio", outcome: "ok", eventTimestamp: 1, logs: [], exceptions: [],
+      truncated: false,
+    }]);
+    const n = noT.flatMap((s) => s.values.map((v) => v[1])).find((l) => l.includes('"invocation"'));
+    expect("truncated" in JSON.parse(n)).toBe(false);
+  });
 });
