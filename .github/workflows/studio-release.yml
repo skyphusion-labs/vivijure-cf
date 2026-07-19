@@ -42,6 +42,27 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          # Full history so the ancestry guard can walk main to the built commit.
+          fetch-depth: 0
+
+      # SECURITY GATE (fc#859): every run of this workflow PUBLISHES (GitHub release + R2 mirror)
+      # the artifact built from a tag -- on push OR on a workflow_dispatch whose `tag` input names
+      # an existing tag. A tag can point at any commit, including one that never merged, so today it
+      # can publish an unreviewed commit as the authoritative studio release that every hosted
+      # tenant provisions. This refuses that. UNCONDITIONAL (there is no dry run; every run
+      # publishes) and it asserts the CHECKED-OUT commit -- git rev-parse HEAD = the
+      # `inputs.tag || github.ref` ref -- NOT $GITHUB_SHA, which on a dispatch is the launch
+      # branch, not the tag being built.
+      - name: Assert built commit is on main (no release of an unreviewed commit)
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          head="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$head" origin/main; then
+            echo "::error::commit ${head} is not on origin/main; refusing to publish an unreviewed release"
+            exit 1
+          fi
+          echo "commit ${head} is on origin/main; ancestry guard passed."
 
       - uses: actions/setup-node@v6
         with:
