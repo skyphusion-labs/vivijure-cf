@@ -49,6 +49,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
+    # numba (via librosa) ceiling — Dockerfile pins numpy==1.26.4; do not propose >=2.5.
+    ignore:
+      - dependency-name: "numpy"
+        versions: [">= 2.5"]
     groups:
       pip-minor-patch:
         patterns: ["*"]
@@ -97,13 +101,25 @@ updates:
       pip-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+  # numba-pinned CPU containers — python base pinned to 3.11; numba supports <3.14.
   - package-ecosystem: docker
     directories:
       - "/containers/audio-beat-sync"
-      - "/containers/audio-master"
-      - "/containers/audio-mix"
       - "/containers/image-prep"
       - "/containers/video-finish"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    ignore:
+      - dependency-name: "python"
+    groups:
+      docker-images:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directories:
+      - "/containers/audio-master"
+      - "/containers/audio-mix"
     schedule:
       interval: weekly
     commit-message:
