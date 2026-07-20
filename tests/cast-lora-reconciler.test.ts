@@ -8,10 +8,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@skyphusion-labs/vivijure-core/runpod-submit", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/runpod-submit")>();
-  return { ...actual, pollRenderJob: vi.fn() };
+  return { ...actual, pollCastLoraJob: vi.fn() };
 });
 
-import { pollRenderJob } from "@skyphusion-labs/vivijure-core/runpod-submit";
+import { pollCastLoraJob } from "@skyphusion-labs/vivijure-core/runpod-submit";
 import {
   refreshTrainingLora,
   decideStuckTraining,
@@ -24,7 +24,7 @@ import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
 
-const polled = vi.mocked(pollRenderJob);
+const polled = vi.mocked(pollCastLoraJob);
 
 // Mutable single-row fake D1: getCastById (SELECT ... RETURNING the row) and markLoraFailed
 // (UPDATE ... SET lora_status='failed' ... RETURNING). Tracks the row so a reconcile is observable.
