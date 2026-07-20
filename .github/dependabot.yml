@@ -49,10 +49,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
-    # numba (via librosa) ceiling — Dockerfile pins numpy==1.26.4; do not propose >=2.5.
+    # numba (via librosa) ceiling — Dockerfile pins numpy==1.26.4; do not propose >=2.0 (numba/librosa stack; pin 1.26.4).
     ignore:
       - dependency-name: "numpy"
-        versions: [">= 2.5"]
+        versions: [">= 2.0"]
     groups:
       pip-minor-patch:
         patterns: ["*"]
