@@ -63,6 +63,7 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/renders\/[^/]+\/animate-cloud$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-hybrid$/,
   /^\/api\/cast\/[^/]+\/train-lora$/,
+  /^\/api\/cast\/[^/]+\/train-wan-lora$/,
   /^\/api\/cast\/[^/]+\/generate-refs$/,
   /^\/api\/storyboard\/score-bed$/,
   /^\/api\/storyboard\/music-generate$/,
