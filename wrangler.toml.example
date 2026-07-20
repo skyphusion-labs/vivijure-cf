@@ -175,6 +175,13 @@ binding = "RUNPOD_ENDPOINT_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "BACKEND_RUNPOD_ENDPOINT_ID"
 
+# Dedicated Wan 2.2 A14B LoRA-training endpoint (cast /train-wan-lora, cf#29). OPTIONAL: a deploy
+# without Wan training omits it and handleCastTrainWanLora fails loud if the route is hit unset.
+[[secrets_store_secrets]]
+binding = "RUNPOD_WAN_TRAIN_ENDPOINT_ID"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID"
+
 [[secrets_store_secrets]]
 binding = "GATEWAY_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
