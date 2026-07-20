@@ -64,7 +64,7 @@ jobs:
           fi
           echo "commit ${head} is on origin/main; ancestry guard passed."
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
