@@ -50,6 +50,9 @@ export interface Env {
   // RunPod serverless render endpoint (runpod-submit.ts). Secrets.
   RUNPOD_API_KEY: SecretsStoreSecret | string;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret | string;
+  // Dedicated Wan 2.2 A14B LoRA-training endpoint (runpod-submit submitTrainWanLoraJob, cf#29). Optional
+  // so a deploy without Wan training still typechecks; handleCastTrainWanLora fails loud if it is unset.
+  RUNPOD_WAN_TRAIN_ENDPOINT_ID?: SecretsStoreSecret | string;
 
   // CPU container Durable Objects (off-GPU beat-sync, portrait prep, ffmpeg finish).
   VIDEO_FINISH_VPC: Fetcher; // Workers VPC -> always-on fleet video-finish (issue #83)
