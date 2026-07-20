@@ -3,6 +3,21 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.7.0 -- 2026-07-20
+
+MINOR: Wan cast LoRA train + render projection (cf#29 Phase B/C). Unblocks D2c e2e against the
+dedicated train endpoint.
+
+- **Phase B (#153):** migration `0012` adds cast Wan LoRA expert-key columns.
+- **Phase C Part 2 (#154):** Wan cast LoRA projection across render paths; studio route
+  `POST /api/cast/:id/train-wan-lora`; Secrets Store binding `RUNPOD_WAN_TRAIN_ENDPOINT_ID`
+  ← `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` (fail-closed; never falls back to the render EP).
+- **Deps / CI hygiene** since v1.6.0: dependabot bumps + `assert-on-main` deploy guard (#151).
+
+Requires a live Secrets Store seed of `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` (D2: `zqb7tougbqfkqa`)
+before Wan train submits succeed. Cast UI still posts `/train-lora` (SDXL); Wan path is API-only
+until `public/cast.js` is wired.
+
 ## v1.6.0 -- 2026-07-18
 
 MINOR: the module contract gains a credential-readiness endpoint, and stops lying about a credential
