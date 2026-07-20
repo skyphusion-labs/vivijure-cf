@@ -3,6 +3,16 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.7.1 -- 2026-07-20
+
+PATCH: Wan cast LoRA harvest writeback (cf#29). Bumps `@skyphusion-labs/vivijure-core` to ^1.2.1 so
+`/api/cast/:id/lora-status` polls the dedicated Wan train endpoint (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`)
+before the render endpoint, harvesting dual expert keys on COMPLETED. R2 reconcile backfills Wren-style
+rows when RunPod retention drops the job but both experts exist under `loras/lora-{slug}-*/A/`.
+
+Requires vivijure-core [PR #59](https://github.com/skyphusion-labs/vivijure-core/pull/59) published as
+`1.2.1` before deploy.
+
 ## v1.7.0 -- 2026-07-20
 
 MINOR: Wan cast LoRA train + render projection (cf#29 Phase B/C). Unblocks D2c e2e against the
