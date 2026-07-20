@@ -29,7 +29,7 @@ import {
   listCast, getCastById, createCast, updateCast, deleteCast,
   clearPortrait, getCastIdByPublicId, toPublicCast,
 } from "@skyphusion-labs/vivijure-core/cast-db";
-import { handleCastLoraStatus, handleCastTrainLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
+import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
 import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
 import {
@@ -91,6 +91,7 @@ import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-
 import { emitMarkers, type MarkersFormat } from "./markers";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
+import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
 import { getUserPrefs, setUserPrefs } from "./user-prefs";
 import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "@skyphusion-labs/vivijure-core/operator-config";
 import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
@@ -644,13 +645,18 @@ const hSubmitRender: Handler = async (req, env) => {
   // and one resolves to a not-ready row. Ready bindings are forwarded as pretrained_loras so the GPU
   // REUSES the banked adapter (the canonical cast-page Train LoRAs flow), and cast_loras lets the
   // orchestrator bank any freshly-trained adapter back onto the cast member. Mirrors the scatter path.
-  const { pretrained, castIds, skipped, skippedDetail } = await resolveCastLoras(env, b.castLoras);
+  const { pretrained, wanPretrained, castIds, skipped, skippedDetail } = await resolveCastLoras(env, b.castLoras);
   if (skipped.length) throw badRequest(untrainedCastMessage(skippedDetail));
 
   const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
   const motionBackend = b.keyframesOnly
     ? undefined
     : (b.motion_backend ?? mapped.motion_backend);
+  // Wan cast adapters -> alibaba-wan-lora motion config (the shared projection used by all three render
+  // paths). motionBackend is undefined on a keyframes-only preview, and non-Wan / no-Wan-cast renders
+  // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
+  // POST-clamp, keeps the JSON LoRA fields intact through startFilmJob.
+  await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
   const job = await startFilmJob(env, {
     project,
     bundle_key: b.bundleKey,
@@ -877,6 +883,18 @@ const hScatterRender: Handler = async (req, env) => {
   // -- never a silent drop to generic shards. Mirrors the hSubmitRender cast guard.
   const scatterCast = await resolveCastLoras(env, b.castLoras ?? {});
   if (scatterCast.skipped.length) throw badRequest(untrainedCastMessage(scatterCast.skippedDetail));
+  // SCATTER DIVERGENCE: unlike render/film, scatter builds NO motion_config at the door -- it forwards
+  // render_overrides RAW and resolves per-shard downstream (startScatterRender ->
+  // mapRenderOverridesToModuleConfigs -> validateConfig). So project the Wan cast adapters into the RAW
+  // override bag's alibaba-wan-lora config here: high_noise_loras / low_noise_loras are DECLARED string
+  // fields in the module schema, so they survive validateConfig and reach every shard. Without this a
+  // Wan cast scatter would render LoRA-less SILENTLY while render/film worked (the exact Phase C gap).
+  // scatterCast is the same resolveCastLoras result the readiness gate above used.
+  if (shouldProjectWanLoras(scatterBackend, scatterCast.wanPretrained)) {
+    const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
+    b.renderOverrides = injected.overrides;
+    await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
+  }
   try {
     const job = await startScatterRender(env, {
       project,
@@ -900,6 +918,8 @@ const hScatterRender: Handler = async (req, env) => {
 };
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
+const hTrainCastWanLora: Handler = async (req, env, _c, p) =>
+  handleCastTrainWanLora(req, env, await resolveCastId(env, p.id));
 const hCastLoraStatus: Handler = async (_req, env, _c, p) =>
   handleCastLoraStatus(env, await resolveCastId(env, p.id));
 const hAdoptRender: Handler = async (req, env) =>
@@ -1225,6 +1245,17 @@ const hStartFilm: Handler = async (req, env) => {
   // project is optional; default it from the bundle key (mirrors hSubmitRender) so a caller that
   // only has a bundle (e.g. the Slate bot) lands in the same project namespace the monolith uses.
   const project = a.project ?? deriveProjectFromBundleKey(a.bundle_key);
+  // Wan cast adapters -> alibaba-wan-lora motion config, in place, before the job starts. hStartFilm
+  // carries a.motion_config straight into startFilmJob unclamped, so the projected fields flow through.
+  // Guarded so a non-Wan film never materializes an empty motion_config.
+  if (shouldProjectWanLoras(a.motion_backend, resolvedLoras?.wanPretrained ?? {})) {
+    const filmMotionConfig: Record<string, unknown> =
+      a.motion_config && typeof a.motion_config === "object" && !Array.isArray(a.motion_config)
+        ? (a.motion_config as Record<string, unknown>)
+        : {};
+    await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras!.wanPretrained, filmMotionConfig);
+    a.motion_config = filmMotionConfig;
+  }
   const job = await startFilmJob(env, {
     project, bundle_key: a.bundle_key, scenes: a.scenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
@@ -1651,6 +1682,7 @@ const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/generate-refs",          handler: hGenerateCastRefs },
   { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        handler: hPollCastRefs },
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            handler: hCastLoraStatus },
   { method: "POST",   pattern: "/api/upload",                          handler: hUpload },
   { method: "GET",    pattern: "/api/artifact/*key",                   handler: hServeArtifact },
