@@ -104,6 +104,12 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     "PLAN_ENHANCE_CF_AIG_TOKEN",
     "LOCAL_BACKEND_URL",
     "LOCAL_BACKEND_TOKEN",
+    # The dedicated Wan-2.2 LoRA-training RunPod endpoint id (cf#154). OPERATOR-supplied, not installer-
+    # resolved: the installer stands up the four RENDER endpoints (RUNPOD_ENDPOINTS) only, never the
+    # ai-toolkit training endpoint, which the operator provisions out of band and supplies post-install.
+    # Seeded as a MARKED placeholder so the deploy resolves; alibaba-wan-lora's submitTrainWanLoraJob
+    # fails closed on the placeholder, so cast Wan-LoRA training stays off until the operator replaces it.
+    "BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID",
     # image-generate's per-function OpenAI BYOK key (cf#129). OPTIONAL in a way the others are not:
     # left unreplaced, gpt-image-1.5 falls back to the proxied path and returns an OPAQUE image
     # instead of a transparent PNG -- an honest degradation, not a failure. The module treats the
