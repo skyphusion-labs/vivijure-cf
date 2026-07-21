@@ -7,6 +7,13 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.7.5 -- 2026-07-21
+
+PATCH: fix tag deploy CI (fc#859 follow-up). Removes duplicate ancestry guard from the deploy job
+(`node:22-alpine` checkout has no `.git`, so `git fetch` always failed). The `assert-on-main` job
+already gates tag deploys on ubuntu-latest. **Redeploy vehicle for v1.7.4** (core 1.2.2 legacy finish
+order); prod did not deploy on v1.7.4 tag push.
+
 ## v1.7.4 -- 2026-07-21
 
 PATCH: MuseTalk finish-order fix (cf#29). Bumps `@skyphusion-labs/vivijure-core` to `^1.2.2` so
