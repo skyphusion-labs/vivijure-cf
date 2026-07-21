@@ -56,7 +56,8 @@ To self-host (service `vivijure-module-local-gpu`, bound into the core as `MODUL
 
 - **Env at deploy**: `CLOUDFLARE_ACCOUNT_ID` (account_id is injected, never hardcoded).
 - **Secrets** (Cloudflare Secrets Store): `LOCAL_BACKEND_URL` (the tunnel hostname terminating at your
-  homelab render box) and the optional `LOCAL_BACKEND_TOKEN` (a shared secret your server checks).
+  homelab render box; production fleet: `https://door-fatmike.skyphusion.org`) and the optional
+  `LOCAL_BACKEND_TOKEN` (a shared secret your server checks).
 - **Provision**: run `vivijure-local-12gb` on your box (LTX-Video on a 12GB card), expose it via a
   Cloudflare tunnel, and point `LOCAL_BACKEND_URL` at it. The backend shares the `vivijure` R2 bucket
   and does the clip I/O. No R2 binding on this worker.

@@ -22,8 +22,9 @@ workers_dev = false
 [observability]
 enabled = true
 
-# LOCAL_BACKEND_URL (the Cloudflare tunnel hostname terminating at the homelab box) and the optional
-# LOCAL_BACKEND_TOKEN (a shared secret the local server checks) are bound from the account-level
+# LOCAL_BACKEND_URL (the Cloudflare tunnel hostname terminating at the homelab box; production fleet:
+# https://door-fatmike.skyphusion.org) and the optional LOCAL_BACKEND_TOKEN (a shared secret the local
+# server checks) are bound from the account-level Secrets Store.
 # Cloudflare Secrets Store -- declarative config that every `wrangler deploy` re-establishes, so a
 # fresh-create can't start URL-less and silently fail. Seeded ONCE by the operator from the crew secret
 # store; values never touch CI/GitHub. Set store_id at cutover. See docs/DEPLOYMENT.md.

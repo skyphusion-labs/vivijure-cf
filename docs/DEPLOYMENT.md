@@ -545,7 +545,8 @@ exist before you deploy the core with the door enabled.
 so you cannot half-configure the door. Both values come from the door box: bring the
 `vivijure-local-12gb` / `-16gb` container up FIRST, then copy them from its startup banner (the door
 also keeps them in its own `.env`). `LOCAL_BACKEND_URL` is the Cloudflare tunnel URL that terminates at
-your door box; `LOCAL_BACKEND_TOKEN` is the shared token the door checks on each render call.
+your door box (production fleet: `https://door-fatmike.skyphusion.org`; see fleet-chezmoi rename CR
+2026-07-21); `LOCAL_BACKEND_TOKEN` is the shared token the door checks on each render call.
 `deploy.sh` seeds both into the Secrets Store and the `local-gpu` module binds them from there, which is
 why the door must be running before you deploy the studio with the door enabled: an unseeded binding
 hard-fails `wrangler deploy` (CF error 10182), and #534 makes `deploy.sh` catch a blank value up front
@@ -568,9 +569,11 @@ Two things to pin when you recreate the door container:
   auto-generates a fresh token on start, which no longer matches the value the studio has stored, so
   every render is rejected. Pin the token, and seed that SAME value into the studio's
   `LOCAL_BACKEND_TOKEN` secret.
-- **Restart only the backend service, not the whole stack,** to keep the door's quick-tunnel URL
-  stable. A full recreate can hand you a new URL, which then also has to be re-seeded into the studio's
-  `LOCAL_BACKEND_URL` secret.
+- **Restart only the backend service, not the whole stack,** to keep the door's tunnel URL stable.
+  A full recreate can hand you a new URL, which then also has to be re-seeded into the studio's
+  `LOCAL_BACKEND_URL` secret. Production fleet uses the standing named tunnel
+  `https://door-fatmike.skyphusion.org` (see fleet-chezmoi CR 2026-07-21 hostname rename); do not
+  push a live Secrets Store update without an explicit apply GO.
 
 **Failure signature (self-diagnosis).** If you moved a door but skipped the R2 re-wire, the film fails
 fast at the clips phase with a keyframe 404 even though the keyframe plainly exists in the studio's
