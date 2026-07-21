@@ -7,6 +7,11 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.7.6 -- 2026-07-21
+
+PATCH: bump `@skyphusion-labs/vivijure-core` to `^1.2.3` (#53 advanceFilmJob wedge fix, local#99
+`output_key` honesty). Ships core#64 + core#65.
+
 ## v1.7.5 -- 2026-07-21
 
 PATCH: fix tag deploy CI (fc#859 follow-up). Removes duplicate ancestry guard from the deploy job
