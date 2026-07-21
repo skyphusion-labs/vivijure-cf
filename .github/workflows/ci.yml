@@ -106,6 +106,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Assert commit is on main (no publish of an unreviewed release)
+        run: |
+          apk add --no-cache git
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::commit $GITHUB_SHA is not on origin/main; refusing to publish an unreviewed release"
+            exit 1
+          fi
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
