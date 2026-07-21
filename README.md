@@ -11,6 +11,9 @@ planner AI, auth, presign, and `public/`. Prefer a home PC or any cloud VM inste
 [`vivijure-local`](https://github.com/skyphusion-labs/vivijure-local). Drive either host from an
 agent with [`vivijure-mcp`](https://github.com/skyphusion-labs/vivijure-mcp).
 
+**Dual-panel parity:** hosted (this repo) and self-host ship the same studio features in the same
+release; see fleet memory `vivijure-hosted-parity-absolute.md`.
+
 The constellation map is [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure).
 
 **This repo is the studio, and only the studio.** You self-host it; nothing here asks you to run a
