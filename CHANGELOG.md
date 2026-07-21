@@ -3,15 +3,23 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## v1.7.1 -- 2026-07-20
+## v1.7.2 -- 2026-07-20
 
 PATCH: Wan cast LoRA harvest writeback (cf#29). Bumps `@skyphusion-labs/vivijure-core` to ^1.2.1 so
 `/api/cast/:id/lora-status` polls the dedicated Wan train endpoint (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`)
 before the render endpoint, harvesting dual expert keys on COMPLETED. R2 reconcile backfills Wren-style
 rows when RunPod retention drops the job but both experts exist under `loras/lora-{slug}-*/A/`.
 
+Ship tag `v1.7.2` on merge `9c0c3c9` (#171). The `v1.7.1` git tag was already consumed by image-prep
+rembg (#158); this release aligns the package version with the deployed tag.
+
 Requires vivijure-core [PR #59](https://github.com/skyphusion-labs/vivijure-core/pull/59) published as
 `1.2.1` before deploy.
+
+## v1.7.1 -- 2026-07-20
+
+PATCH: image-prep rembg 2.0.76 → 2.0.77 (#158). GHCR image-prep rebuilt; tag `v1.7.1` points at this
+commit, not the Wan writeback release (see v1.7.2).
 
 ## v1.7.0 -- 2026-07-20
 
