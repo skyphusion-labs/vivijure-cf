@@ -8,6 +8,8 @@ export interface CastMember {
   name?: string;
   lora_status?: string;
   lora_key?: string | null;
+  wan_lora_key_high?: string | null;
+  wan_lora_key_low?: string | null;
 }
 
 export interface UnreadyLoraSlot {
@@ -16,11 +18,21 @@ export interface UnreadyLoraSlot {
   name: string;
 }
 
-export function isCastLoraReady(cast: CastMember | null | undefined): boolean;
+export interface LoraPreflightOptions {
+  motionBackend?: string;
+}
+
+export function isCastLoraReady(
+  cast: CastMember | null | undefined,
+  options?: LoraPreflightOptions,
+): boolean;
 
 export function unreadyBoundLoraSlots(
   bindings: Record<string, string> | null | undefined,
   catalog: CastMember[] | null | undefined,
+  options?: LoraPreflightOptions,
 ): UnreadyLoraSlot[];
 
 export function loraSlotSignature(unready: UnreadyLoraSlot[] | null | undefined): string;
+
+export const WAN_LORA_BACKEND: string;

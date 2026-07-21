@@ -68,6 +68,16 @@ function showLoraPreflightWarning(unready) {
   el.hidden = false;
 }
 
+// Motion backend for the LoRA preflight gate: mirrors the render submit's backend
+// pick so Wan-ready cast (wan_lora_key_high/low, no lora_key) is not misread.
+function resolveMotionBackendForPreflight() {
+  const kfOnly = $("#planner-keyframes-only");
+  if (kfOnly && kfOnly.checked) return "";
+  const motionSel = $("#planner-motion-backend");
+  if (motionSel && motionSel.value) return motionSel.value;
+  return "";
+}
+
 // Returns true when the render may proceed, false when it should pause on a
 // freshly-shown warning. Re-fetches /api/cast so the readiness check is fresh.
 async function loraPreflightGate() {
@@ -81,7 +91,10 @@ async function loraPreflightGate() {
   // Refresh the catalog in place; loadCast swallows its own errors and leaves
   // the prior catalog on failure, which is an acceptable fall-back here.
   await loadCast();
-  const unready = window.loraPreflight.unreadyBoundLoraSlots(bindings, planState.castCatalog);
+  const motionBackend = resolveMotionBackendForPreflight();
+  const unready = window.loraPreflight.unreadyBoundLoraSlots(bindings, planState.castCatalog, {
+    motionBackend,
+  });
   if (unready.length === 0) {
     hideLoraPreflightWarning();
     loraPreflightAck = null;

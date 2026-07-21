@@ -18,25 +18,48 @@
     root.loraPreflight = api;
   }
 })(typeof self !== "undefined" ? self : this, function () {
+  var WAN_LORA_BACKEND = "alibaba-wan-lora";
+
   // A cast member's LoRA is reusable (the GPU skips training) only when the
-  // canonical training finished: lora_status === 'ready' AND a loras/ key
-  // exists. This mirrors the server's reuse gate (resolveCastLoras); anything
-  // short of it means the fail-safe inline retrain fires for that slot.
-  function isCastLoraReady(cast) {
-    return !!(cast && cast.lora_status === "ready" && cast.lora_key);
+  // canonical training finished: lora_status === 'ready' AND the adapter keys
+  // resolve for the chosen motion backend. This mirrors resolveCastLoras in core
+  // (cast-loras.ts): SDXL lora_key wins on any backend; Wan renders need both
+  // wan_lora_key_high and wan_lora_key_low when motion_backend is alibaba-wan-lora.
+  function isCastLoraReady(cast, options) {
+    if (!cast || cast.lora_status !== "ready") return false;
+    var motionBackend =
+      options && options.motionBackend ? String(options.motionBackend).trim() : "";
+    var sdxlKey =
+      cast.lora_key && String(cast.lora_key).indexOf("loras/") === 0 ? cast.lora_key : null;
+    var wanHigh =
+      cast.wan_lora_key_high && String(cast.wan_lora_key_high).indexOf("loras/") === 0
+        ? cast.wan_lora_key_high
+        : null;
+    var wanLow =
+      cast.wan_lora_key_low && String(cast.wan_lora_key_low).indexOf("loras/") === 0
+        ? cast.wan_lora_key_low
+        : null;
+    if (sdxlKey) return true;
+    if (motionBackend === WAN_LORA_BACKEND) {
+      return !!(wanHigh && wanLow);
+    }
+    return false;
   }
 
   // Given the planner's {slot: cast_id} bindings and the current cast catalog
-  // (rows from /api/cast, incl. lora_status + lora_key), return the bound slots
-  // whose LoRA is NOT ready -- i.e. the ones that will be retrained inline.
-  // Each entry is { slot, castId, name }, sorted by slot for a stable warning.
+  // (rows from /api/cast, incl. lora_status + lora_key + wan_lora_key_*), return
+  // the bound slots whose LoRA is NOT ready -- i.e. the ones that will be retrained
+  // inline. Each entry is { slot, castId, name }, sorted by slot for a stable warning.
   // Unknown cast ids (not in the catalog) are skipped: a deleted member is
   // reconciled out of the bindings elsewhere, so flagging it here would be noise.
   //
   // S9 (F13): a cast id is an opaque public id (UUID string), never a number.
   // Keys and binding values are compared as verbatim strings -- no Number()
   // coercion, which would map every UUID to NaN and silently empty the warning.
-  function unreadyBoundLoraSlots(bindings, catalog) {
+  //
+  // options.motionBackend: when alibaba-wan-lora, Wan dual keys satisfy readiness;
+  // otherwise SDXL lora_key is required (mirrors server resolveCastLoras).
+  function unreadyBoundLoraSlots(bindings, catalog, options) {
     const byId = new Map();
     for (const c of catalog || []) {
       if (c && c.id != null) byId.set(String(c.id), c);
@@ -48,7 +71,7 @@
       if (typeof id !== "string" || id.length === 0) continue;
       const cast = byId.get(id);
       if (!cast) continue;
-      if (!isCastLoraReady(cast)) {
+      if (!isCastLoraReady(cast, options)) {
         out.push({ slot, castId: id, name: (cast.name && String(cast.name)) || ("slot " + slot) });
       }
     }
@@ -66,5 +89,10 @@
       .join("|");
   }
 
-  return { isCastLoraReady, unreadyBoundLoraSlots, loraSlotSignature };
+  return {
+    isCastLoraReady,
+    unreadyBoundLoraSlots,
+    loraSlotSignature,
+    WAN_LORA_BACKEND,
+  };
 });

@@ -325,6 +325,7 @@
 
     // v0.57.0: render the LoRA training pane state.
     renderLoraPane(c);
+    renderWanLoraPane(c);
     if (c.lora_status === "training") {
       schedulePollLoraStatus(c.id);
     }
@@ -1248,6 +1249,8 @@
     // v0.57.0: standalone LoRA training.
     const loraBtn = $("#cast-lora-train-btn");
     if (loraBtn) loraBtn.addEventListener("click", trainLora);
+    const wanLoraBtn = $("#cast-wan-lora-train-btn");
+    if (wanLoraBtn) wanLoraBtn.addEventListener("click", trainWanLora);
 
     // v0.90.0: portrait-gen lives in a first-class <section> now (no
     // <details> wrapper), so populate the model picker eagerly. Same
@@ -1338,7 +1341,7 @@
     // flight. Retraining (status: ready / failed) is allowed.
     const ready = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
     btn.disabled = status === "training" || !ready;
-    btn.textContent = status === "ready" || status === "failed" ? "retrain LoRA" : "train LoRA";
+    btn.textContent = status === "ready" || status === "failed" ? "retrain SDXL LoRA" : "train SDXL LoRA";
     if (status === "ready" && c.lora_key) {
       dl.href = "/api/artifact/" + c.lora_key;
       dl.hidden = false;
@@ -1364,13 +1367,77 @@
     }
   }
 
+  function setWanLoraStatusText(text, kind) {
+    const el = $("#cast-wan-lora-status-text");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "cast-gen-status" + (kind ? " is-" + kind : "");
+  }
+
+  function renderWanLoraPane(c) {
+    const meta = $("#cast-wan-lora-meta");
+    const btn = $("#cast-wan-lora-train-btn");
+    const dlHigh = $("#cast-wan-lora-download-high");
+    const dlLow = $("#cast-wan-lora-download-low");
+    if (!meta || !btn || !dlHigh || !dlLow) return;
+    if (!c) {
+      meta.textContent = "";
+      btn.disabled = true;
+      dlHigh.hidden = true;
+      dlLow.hidden = true;
+      setWanLoraStatusText("");
+      return;
+    }
+    const status = c.lora_status || "idle";
+    const hasWan = !!(c.wan_lora_key_high && c.wan_lora_key_low);
+    if (hasWan && status === "ready") {
+      meta.textContent = "Wan experts ready (high + low noise)";
+    } else if (status === "training") {
+      meta.textContent = "training in progress (shared job slot)";
+    } else if (status === "failed" && c.lora_error) {
+      meta.textContent = c.lora_error.slice(0, 120) + (c.lora_error.length > 120 ? "…" : "");
+    } else {
+      meta.textContent = hasWan ? "partial Wan keys (retrain recommended)" : "";
+    }
+    const ready = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
+    btn.disabled = status === "training" || !ready;
+    btn.textContent = hasWan && status === "ready" ? "retrain Wan LoRA" : "train Wan LoRA";
+    if (status === "ready" && c.wan_lora_key_high && c.wan_lora_key_low) {
+      dlHigh.href = "/api/artifact/" + c.wan_lora_key_high;
+      dlLow.href = "/api/artifact/" + c.wan_lora_key_low;
+      dlHigh.hidden = false;
+      dlLow.hidden = false;
+    } else {
+      dlHigh.hidden = true;
+      dlLow.hidden = true;
+      dlHigh.href = "";
+      dlLow.href = "";
+    }
+    if (!ready) {
+      setWanLoraStatusText(
+        c.portrait_key
+          ? "add at least 4 training references before training"
+          : "save a portrait first",
+        "warn",
+      );
+    } else if (status === "training") {
+      setWanLoraStatusText("Wan training in progress, ~8-15 min on the GPU", "loading");
+    } else if (hasWan && status === "ready") {
+      setWanLoraStatusText("Wan LoRA ready for alibaba-wan-lora renders", "success");
+    } else if (status === "failed") {
+      setWanLoraStatusText("training failed; see meta above", "error");
+    } else {
+      setWanLoraStatusText("");
+    }
+  }
+
   async function trainLora() {
     const id = state.selectedId;
     if (!id) return;
     const c = findCast(id);
     if (!c) return;
     if (!window.confirm(
-      "Train LoRA for " + c.name + "?\n\n"
+      "Train SDXL LoRA for " + c.name + "?\n\n"
       + "This kicks off a standalone training job on the GPU. "
       + "Typical wall-clock: 8-15 minutes. Estimated cost: $0.50-$2 of GPU time.\n\n"
       + (c.lora_status === "ready"
@@ -1384,9 +1451,37 @@
       const idx = state.cast.findIndex((x) => x.id === id);
       if (idx >= 0) state.cast[idx] = data.cast;
       renderLoraPane(data.cast);
+      renderWanLoraPane(data.cast);
       schedulePollLoraStatus(id);
     } catch (e) {
       setLoraStatusText("submit failed: " + e.message, "error");
+    }
+  }
+
+  async function trainWanLora() {
+    const id = state.selectedId;
+    if (!id) return;
+    const c = findCast(id);
+    if (!c) return;
+    if (!window.confirm(
+      "Train Wan LoRA for " + c.name + "?\n\n"
+      + "This kicks off a standalone Wan 2.2 expert training job on the GPU. "
+      + "Typical wall-clock: 8-15 minutes. Estimated cost: $0.50-$2 of GPU time.\n\n"
+      + (c.wan_lora_key_high && c.wan_lora_key_low
+        ? "This will retrain (existing experts stay in storage until you delete them).\n\n"
+        : "")
+      + "Continue?"
+    )) return;
+    setWanLoraStatusText("submitting...", "loading");
+    try {
+      const data = await api("/api/cast/" + id + "/train-wan-lora", { method: "POST" });
+      const idx = state.cast.findIndex((x) => x.id === id);
+      if (idx >= 0) state.cast[idx] = data.cast;
+      renderLoraPane(data.cast);
+      renderWanLoraPane(data.cast);
+      schedulePollLoraStatus(id);
+    } catch (e) {
+      setWanLoraStatusText("submit failed: " + e.message, "error");
     }
   }
 
@@ -1413,6 +1508,7 @@
       if (idx >= 0) state.cast[idx] = data.cast;
       if (state.selectedId === id) {
         renderLoraPane(data.cast);
+        renderWanLoraPane(data.cast);
       }
       if (data.cast && data.cast.lora_status === "training") {
         schedulePollLoraStatus(id);

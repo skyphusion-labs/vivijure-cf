@@ -3,6 +3,17 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+**Dual-panel release gate:** every studio feature ships to vivijure-cf and vivijure-local in the
+same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
+`fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
+
+## v1.7.3 -- 2026-07-21
+
+PATCH: Wan LoRA UI + planner preflight parity (cf#29 follow-up). Implements existing dual-panel
+doctrine: Cast page trains Wan via `POST /train-wan-lora`; planner `lora-preflight.js` is
+motion-backend-aware (`wan_lora_key_high/low` on `alibaba-wan-lora`). Paired with vivijure-local
+v1.1.3; Laura test + propagandhi redeploy remain gated until both PRs merge + ops CR apply.
+
 ## v1.7.2 -- 2026-07-20
 
 PATCH: Wan cast LoRA harvest writeback (cf#29). Bumps `@skyphusion-labs/vivijure-core` to ^1.2.1 so

@@ -204,17 +204,33 @@
            bundle (Phase 3, follow-up PR). -->
       <section class="cast-lora-pane">
         <header class="cast-section-header">
-          <h3>LoRA training</h3>
-          <p class="cast-section-hint">train a character LoRA standalone (separate from rendering). takes ~8-15 minutes on the GPU; uses the portrait + training refs above. costs ~$0.50-$2 of GPU time per training run.</p>
+          <h3>SDXL LoRA training</h3>
+          <p class="cast-section-hint">train a character SDXL LoRA standalone (separate from rendering). takes ~8-15 minutes on the GPU; uses the portrait + training refs above. costs ~$0.50-$2 of GPU time per training run.</p>
         </header>
         <div id="cast-lora-status-row" class="cast-lora-status-row">
           <span id="cast-lora-badge" class="cast-lora-badge cast-lora-badge-idle">idle</span>
           <span id="cast-lora-meta" class="cast-lora-meta"></span>
         </div>
         <div class="cast-lora-actions">
-          <button id="cast-lora-train-btn" type="button" class="cast-save-btn" disabled>train LoRA</button>
+          <button id="cast-lora-train-btn" type="button" class="cast-save-btn" disabled>train SDXL LoRA</button>
           <a id="cast-lora-download" class="cast-secondary-btn cast-accent-outline" target="_blank" rel="noopener" hidden>download .safetensors</a>
           <span id="cast-lora-status-text" class="cast-gen-status"></span>
+        </div>
+      </section>
+
+      <section class="cast-lora-pane">
+        <header class="cast-section-header">
+          <h3>Wan LoRA training</h3>
+          <p class="cast-section-hint">train dual Wan 2.2 expert adapters for alibaba-wan-lora motion renders. same portrait + refs; ~8-15 minutes GPU; costs ~$0.50-$2 per run.</p>
+        </header>
+        <div id="cast-wan-lora-status-row" class="cast-lora-status-row">
+          <span id="cast-wan-lora-meta" class="cast-lora-meta"></span>
+        </div>
+        <div class="cast-lora-actions">
+          <button id="cast-wan-lora-train-btn" type="button" class="cast-save-btn" disabled>train Wan LoRA</button>
+          <a id="cast-wan-lora-download-high" class="cast-secondary-btn cast-accent-outline" target="_blank" rel="noopener" hidden>download high expert</a>
+          <a id="cast-wan-lora-download-low" class="cast-secondary-btn cast-accent-outline" target="_blank" rel="noopener" hidden>download low expert</a>
+          <span id="cast-wan-lora-status-text" class="cast-gen-status"></span>
         </div>
       </section>
 
