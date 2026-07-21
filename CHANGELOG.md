@@ -7,6 +7,13 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.7.4 -- 2026-07-21
+
+PATCH: MuseTalk finish-order fix (cf#29). Bumps `@skyphusion-labs/vivijure-core` to `^1.2.2` so
+dialogue shots default to legacy finish order (RIFE -> lipsync -> upscale). #584 reorder
+(lipsync -> RIFE -> upscale) is opt-in via `finish_config["finish-order"].dialogue_reorder`.
+Ships cf#179 + core#62.
+
 ## v1.7.3 -- 2026-07-21
 
 PATCH: Wan LoRA UI + planner preflight parity (cf#29 follow-up). Implements existing dual-panel
