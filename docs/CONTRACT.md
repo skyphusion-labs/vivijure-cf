@@ -963,11 +963,13 @@ Legend for the field tables: `?` after a field name = optional.
 ### 3.0.1 dispatchChain fold (how a chain hook runs)
 
 A `chain` hook folds every serving module in `ui.order`, each consuming the previous output. A failed
-module is skipped (recorded in `errors`), not fatal. The `finish` chain applies ONE per-shot exception:
-for a shot that has a dialogue line, a module declaring `finish_consumes_audio` (lip-sync) is hoisted to
-run FIRST (stable partition, `ui.order` preserved otherwise), so it lip-syncs the native-fps clip before
-any interpolation (vivijure #584); a shot with no line keeps the plain `ui.order`. The reorder changes
-each step INPUT clip, so the 3.3.1 `finishStepInputHash` differs across the two orderings on its own. A module that returns `ok:true` but reports a
+module is skipped (recorded in `errors`), not fatal. The `finish` chain applies ONE per-shot exception
+(cf#29, core >= 1.2.2): for a shot that has a dialogue line, the default is plain `ui.order` (legacy:
+rife -> lipsync -> upscale, matching the June showcase). Opt in to the #584 reorder (lip-sync FIRST on
+the native-fps clip before interpolation) via `finish_config["finish-order"].dialogue_reorder: true`.
+Explicit `dialogue_legacy: true` remains an alias for legacy order. A shot with no line always keeps
+plain `ui.order`. The reorder changes each step INPUT clip, so the 3.3.1 `finishStepInputHash` differs
+across the two orderings on its own. A module that returns `ok:true` but reports a
 soft-degrade (`output.degraded`) is recorded centrally in `degraded`. For `film.finish` the per-step
 `nextInput` presigns a FRESH GET (of the prior step's film) + PUT (to a new key) + sidecar PUT, so
 step N+1 reads what step N wrote (#14).
