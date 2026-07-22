@@ -9,13 +9,16 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
-- **feat(ui):** Stages + planner render panels sort hooks by `catalog[].order` from core 1.2.6
-  (core#54); drop hardcoded HOOK_ORDER / PANEL_ORDER.
-- **chore:** bump `@skyphusion-labs/vivijure-core` to `^1.2.6` (cf#110 film phase `from` + core#54).
+## v1.7.9 -- 2026-07-22
+
+PATCH: dual-panel with vivijure-local **v1.1.10** -- pin `@skyphusion-labs/vivijure-core` to `^1.2.5`
+(cf#110 film phase `from` recovery + core#54 `HookCatalogEntry.order`), and sort Stages / planner
+render panels by `catalog[].order` (drop hardcoded HOOK_ORDER / PANEL_ORDER).
+
 - **docs(release):** top-level PIN digest is studio-only; module bundles stay self-anchored (cf#147).
 - **ci:** `tsc -p tsconfig.tests.json` in `npm run typecheck` so tests/ cannot silently drift (cf#107).
 - **ci:** CodeQL now extracts `public/` (studio front-door JS); dropped from `paths-ignore` (cf#128).
-  Triage the next scheduled/PR CodeQL run before widening further (`modules/`, `scripts/`).
+- **ci:** adversarial security audit workflow on a schedule (`ADVERSARIAL_AUDIT_CF_API_TOKEN`).
 
 ## v1.7.8 -- 2026-07-22
 
