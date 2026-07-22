@@ -1,6 +1,6 @@
 // Vivijure studio core: module host, render API router, planner/cast UI server.
 
-import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, motionBackendPreflightError, motionConfigPreflightError, invokeModule, pollModule, resolveFetcher } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError, invokeModule, pollModule, resolveFetcher } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
@@ -668,6 +668,11 @@ const hSubmitRender: Handler = async (req, env) => {
   const motionBackend = b.keyframesOnly
     ? undefined
     : (b.motion_backend ?? mapped.motion_backend);
+  if (!b.keyframesOnly) {
+    // vivijure-local#153: local-gpu motion must not silently route keyframes through RunPod/cloud.
+    const kfErr = localGpuKeyframePreflightError(modules, motionBackend, mapped.keyframe_backend);
+    if (kfErr) throw badRequest(kfErr);
+  }
   // Wan cast adapters -> alibaba-wan-lora motion config (the shared projection used by all three render
   // paths). motionBackend is undefined on a keyframes-only preview, and non-Wan / no-Wan-cast renders
   // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
@@ -894,6 +899,13 @@ const hScatterRender: Handler = async (req, env) => {
   // across every shard before the motion phase would reject a bad config.
   const scatterCfgErr = motionConfigPreflightError(scatterModules, scatterBackend, scatterOverrides.config?.[(scatterBackend ?? "").trim()]);
   if (scatterCfgErr) throw badRequest(scatterCfgErr);
+  const scatterMapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, scatterModules);
+  const scatterKfErr = localGpuKeyframePreflightError(
+    scatterModules,
+    scatterBackend,
+    scatterMapped.keyframe_backend,
+  );
+  if (scatterKfErr) throw badRequest(scatterKfErr);
   // #739: castLoras is OPTIONAL on scatter (empty/absent -> generic shards, like the film/render paths),
   // but a PRESENT-but-not-ready binding fails hard at the door with the #738-symmetric untrained-cast 400
   // -- never a silent drop to generic shards. Mirrors the hSubmitRender cast guard.
@@ -1217,6 +1229,8 @@ const hStartFilm: Handler = async (req, env) => {
   // the provider ~17min of keyframes later (film-c9c44dcc).
   const filmCfgErr = motionConfigPreflightError(filmModules, a.motion_backend, a.motion_config);
   if (filmCfgErr) throw badRequest(filmCfgErr);
+  const filmKfErr = localGpuKeyframePreflightError(filmModules, a.motion_backend, a.keyframe_backend);
+  if (filmKfErr) throw badRequest(filmKfErr);
 
   // Bundle-only voicing (#313): when the caller passed NO explicit dialogue_lines, derive them from the
   // bundle storyboard's per-shot dialogue (round-tripped by #307), resolving each speaking slot's voice

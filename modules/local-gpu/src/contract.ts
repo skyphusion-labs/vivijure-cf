@@ -30,6 +30,8 @@ export interface ModuleManifest {
   ui?: ModuleUi;
   /** Advertise POST /cancel so the core can stop an in-flight job rather than orphan the GPU. */
   cancelable?: boolean;
+  /** OPTIONAL, additive: compact keyframe-stage label for the planner (#454). */
+  keyframe_label?: string;
   /** OPTIONAL, additive: a fixed duration grid (pinned fps + per-tier frame caps) RELAYED from the
    *  backend's /health, so core preflight can warn about duration clamping at storyboard time (#707).
    *  Omitted when the backend declares none or is unreachable -- absence is honest, never fabricated. */
@@ -99,4 +101,21 @@ export interface MotionBackendOutput {
   frames: number;
   /** When the local backend reports tier honesty (12gb final distilled:true, 16gb distilled:false). */
   distilled?: boolean;
+}
+
+/** keyframe hook payloads (dual-hook local-gpu; vivijure-local#153). */
+export interface KeyframeInput {
+  project: string;
+  bundle_key: string;
+  shot_ids?: string[];
+  pretrained_loras?: Record<string, string>;
+}
+export interface KeyframeShot {
+  shot_id: string;
+  keyframe_key: string;
+}
+export interface KeyframeOutput {
+  project: string;
+  keyframes: KeyframeShot[];
+  trained_loras?: Record<string, string>;
 }

@@ -17,6 +17,7 @@ import {
   readDurationGrid,
 } from "../modules/local-gpu/src/i2v";
 import { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
+import { buildPreviewBody, parseKeyframes } from "../modules/local-gpu/src/keyframe";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
 import type { ConfigField } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -210,10 +211,29 @@ describe("local-gpu manifest conformance", () => {
     expect(check.pass, check.detail).toBe(true);
   });
 
-  it("declares motion.backend, is cancelable, and targets vivijure-module/2", () => {
+  it("declares motion.backend + keyframe (dual-hook #153), is cancelable, and targets vivijure-module/2", () => {
     expect(MANIFEST.hooks).toContain("motion.backend");
+    expect(MANIFEST.hooks).toContain("keyframe");
     expect(MANIFEST.cancelable).toBe(true);
     expect(MANIFEST.api).toBe("vivijure-module/2");
+    expect(MANIFEST.keyframe_label).toMatch(/local/i);
+  });
+
+  it("builds action:preview for the local door keyframe hook (#153)", () => {
+    const body = buildPreviewBody(
+      { project: "film", bundle_key: "bundles/film.tar.gz", shot_ids: ["shot_01"] },
+      { quality_tier: "draft", width: 1024 },
+    );
+    expect(body.input).toMatchObject({
+      action: "preview",
+      project: "film",
+      bundle_key: "bundles/film.tar.gz",
+      quality_tier: "draft",
+      process_shot_ids: ["shot_01"],
+    });
+    expect(parseKeyframes({ keyframes: [{ shot_id: "shot_01", key: "renders/film/keyframes/shot_01.png" }] })).toEqual([
+      { shot_id: "shot_01", keyframe_key: "renders/film/keyframes/shot_01.png" },
+    ]);
   });
 
   it("declares honest two-door ui framing: local locality + cost + blurb + real limits (#379)", () => {

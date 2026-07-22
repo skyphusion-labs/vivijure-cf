@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { MANIFEST as KEYFRAME_MANIFEST } from "../modules/keyframe/src/index";
 import { MANIFEST as OWN_GPU_MANIFEST } from "../modules/own-gpu/src/index";
+import { MANIFEST as LOCAL_GPU_MANIFEST } from "../modules/local-gpu/src/index";
 import type { ConfigField, ModuleManifest } from "@skyphusion-labs/vivijure-core/modules/types";
 
 const CORE_TIERS = QUALITY_TIERS.map((t) => t.value).slice().sort();
@@ -34,6 +35,8 @@ function enumValues(manifest: ModuleManifest, field: string): string[] | null {
 const TIER_ENUMS: { name: string; manifest: ModuleManifest; field: string }[] = [
   { name: "keyframe.quality_tier", manifest: KEYFRAME_MANIFEST, field: "quality_tier" },
   { name: "own-gpu.quality", manifest: OWN_GPU_MANIFEST, field: "quality" },
+  { name: "local-gpu.quality", manifest: LOCAL_GPU_MANIFEST, field: "quality" },
+  { name: "local-gpu.quality_tier", manifest: LOCAL_GPU_MANIFEST, field: "quality_tier" },
 ];
 
 describe("quality-tier drift guard (#124)", () => {

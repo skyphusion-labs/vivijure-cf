@@ -154,6 +154,29 @@ describe("resolveModuleRenderConfigs", () => {
     expect(resolved.keyframe_backend).toBeUndefined();
   });
 
+  it("couples keyframe onto local-gpu when motion_backend is local-gpu (#153)", () => {
+    const localGpuMod = {
+      name: "local-gpu",
+      version: "0.2.0",
+      api: "vivijure-module/2" as const,
+      binding: "MODULE_LOCAL_GPU",
+      hooks: ["motion.backend" as const, "keyframe" as const],
+      config_schema: {
+        quality: { type: "enum" as const, values: ["draft", "standard", "final"], default: "standard" },
+        quality_tier: { type: "enum" as const, values: ["draft", "standard", "final"], default: "final" },
+      },
+      ui: { section: "motion", order: 4, locality: "local" as const },
+    } as unknown as RegisteredModule;
+    const resolved = resolveModuleRenderConfigs(
+      { motion_backend: "local-gpu" },
+      "draft",
+      [keyframeMod, cloudKeyframeMod, localGpuMod],
+    );
+    expect(resolved.motion_backend).toBe("local-gpu");
+    expect(resolved.keyframe_backend).toBe("local-gpu");
+    expect(resolved.keyframe_config).toMatchObject({ quality_tier: "draft" });
+  });
+
   it("resolves a submitted speech config (by module name) so the speech phase receives it, not just defaults", () => {
     const resolved = resolveModuleRenderConfigs(
       { config: { "speech-upscale": { enable: true, denoise: true } } },
