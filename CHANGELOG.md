@@ -7,6 +7,11 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+- **ci:** CodeQL now extracts `public/` (studio front-door JS); dropped from `paths-ignore` (cf#128).
+  Triage the next scheduled/PR CodeQL run before widening further (`modules/`, `scripts/`).
+
 ## v1.7.8 -- 2026-07-22
 
 PATCH: re-list `alibaba-wan-lora` in IaC after 2x2 Wan LoRA sign-off (cf#29 follow-up), and bump
