@@ -4,7 +4,7 @@
 // async poll token, the #141 gone-detection + grace, the #124 tier vocabulary, and -- the load-bearing
 // one -- that the MotionBackendOutput this module surfaces passes the core's checkHookOutput.
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   framesFor,
   buildI2vBody,
@@ -18,7 +18,7 @@ import {
   isSafeJobId,
   normalizeBackendUrl,
 } from "../modules/local-gpu/src/i2v";
-import { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
+import localGpuWorker, { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
 import { buildPreviewBody, parseKeyframes, encodeKeyframePoll, decodeKeyframePoll } from "../modules/local-gpu/src/keyframe";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
@@ -105,8 +105,14 @@ describe("local-gpu i2v pure logic", () => {
 
   it("encodePoll/decodePoll round-trip the async job state, including submittedAt (#141)", () => {
     const st = { jobId: "abc123", project: "My Proj", shotId: "shot_01", submittedAt: 1_700_000_000_000 };
-    expect(decodePoll(encodePoll(st))).toEqual(st);
-    const legacy = decodePoll(encodePoll({ jobId: "j", project: "p", shotId: "s" }));
+    expect(decodePoll(encodePoll(st))).toEqual({
+      jobId: "abc123",
+      project: undefined,
+      shotId: "shot_01",
+      submittedAt: 1_700_000_000_000,
+    });
+    const legacy = decodePoll(btoa(JSON.stringify({ jobId: "j", project: "p", shotId: "s" })));
+    expect(legacy?.project).toBe("p");
     expect(legacy?.submittedAt).toBeUndefined();
     expect(decodePoll("not-valid-token")).toBeNull();
   });
@@ -118,6 +124,8 @@ describe("local-gpu i2v pure logic", () => {
       JSON.stringify({ jobId: "abc123", project: "p", shotId: "s", kind: "keyframe" }),
     );
     expect(decodePoll(keyframeShaped)).toBeNull();
+    const unknownKind = btoa(JSON.stringify({ jobId: "abc123", shotId: "s", kind: "motion" }));
+    expect(decodePoll(unknownKind)).toBeNull();
   });
 
   it("isSafeJobId accepts uuid-like ids and rejects path/query payloads", () => {
@@ -130,9 +138,15 @@ describe("local-gpu i2v pure logic", () => {
   it("normalizeBackendUrl restricts to http(s) without credentials", () => {
     expect(normalizeBackendUrl("https://door.example/")).toBe("https://door.example");
     expect(normalizeBackendUrl("http://192.168.1.10:8790")).toBe("http://192.168.1.10:8790");
+    expect(normalizeBackendUrl("http://10.0.0.2:8000")).toBe("http://10.0.0.2:8000");
+    expect(normalizeBackendUrl("http://172.16.0.10:8000")).toBe("http://172.16.0.10:8000");
+    expect(normalizeBackendUrl("http://vivijure-local-16gb:8000")).toBe("http://vivijure-local-16gb:8000");
     expect(normalizeBackendUrl("file:///etc/passwd")).toBeNull();
     expect(normalizeBackendUrl("https://user:pass@door.example")).toBeNull();
     expect(normalizeBackendUrl("https://door.example/foo%2F..%2Fbar")).toBeNull();
+    expect(normalizeBackendUrl("http://169.254.169.254/latest/meta-data")).toBeNull();
+    expect(normalizeBackendUrl("http://169.254.170.2/creds")).toBeNull();
+    expect(normalizeBackendUrl("http://metadata.google.internal/computeMetadata/v1")).toBeNull();
   });
 });
 
@@ -151,6 +165,52 @@ describe("local-gpu keyframe poll token scoping (#153 audit)", () => {
       JSON.stringify({ jobId: "abc123", project: "p", shotId: "s", kind: "keyframe" }),
     );
     expect(decodeKeyframePoll(ambiguous)).toBeNull();
+  });
+});
+
+describe("local-gpu worker cancel + secret hardening (#153 audit)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const cancelReq = (poll: string) =>
+    new Request("https://module/cancel", { method: "POST", body: JSON.stringify({ poll }) });
+
+  it("cancel rejects tokens with an unexpected discriminator before calling the backend", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const bad = btoa(JSON.stringify({ jobId: "abc123", shotId: "shot_01", kind: "motion" }));
+    const res = await localGpuWorker.fetch(
+      cancelReq(bad),
+      { LOCAL_BACKEND_URL: "https://door.example", LOCAL_BACKEND_TOKEN: "tok" } as never,
+    );
+    expect(await res.json()).toEqual({ ok: false, error: "local-gpu: bad poll token" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("cancel revalidates a motion token job id and calls only the encoded id", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      seen.push(String(url));
+      return new Response("{}", { status: 200 });
+    }));
+    const res = await localGpuWorker.fetch(
+      cancelReq(encodePoll({ jobId: "abc123", shotId: "shot_01", submittedAt: 1 })),
+      { LOCAL_BACKEND_URL: "https://door.example", LOCAL_BACKEND_TOKEN: "tok" } as never,
+    );
+    expect(await res.json()).toEqual({ ok: true });
+    expect(seen).toEqual(["https://door.example/cancel/abc123"]);
+  });
+
+  it("surfaces LOCAL_BACKEND_URL secret read failures instead of falling back to an empty URL", async () => {
+    const res = await localGpuWorker.fetch(
+      cancelReq(encodePoll({ jobId: "abc123", shotId: "shot_01", submittedAt: 1 })),
+      {
+        LOCAL_BACKEND_URL: { get: async () => { throw new Error("denied"); } },
+        LOCAL_BACKEND_TOKEN: "tok",
+      } as never,
+    );
+    const body = await res.json() as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("LOCAL_BACKEND_URL secret read failed");
   });
 });
 

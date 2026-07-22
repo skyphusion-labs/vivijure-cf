@@ -134,16 +134,19 @@ export async function doorDurationGrid(
   return grid;
 }
 
-/** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
- *  Returns "" if unset/unreadable so the existing "not configured" guards still fire. */
-async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
-  if (typeof s === "string") return s;
-  if (!s) return "";
+/** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value. */
+async function secretValue(
+  name: "LOCAL_BACKEND_URL" | "LOCAL_BACKEND_TOKEN",
+  s: SecretsStoreSecret | string | undefined,
+): Promise<{ value: string; error?: string }> {
+  if (typeof s === "string") return { value: s };
+  if (!s) return { value: "" };
   try {
-    return await s.get();
+    return { value: await s.get() };
   } catch (e) {
-    console.warn("secrets-store get failed: " + (e as Error).message);
-    return "";
+    const error = `local-gpu: ${name} secret read failed: ${(e as Error).message}`;
+    console.warn(error);
+    return { value: "", error };
   }
 }
 
@@ -151,14 +154,15 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
  *  slash so the path joins below are unambiguous. */
 async function backendCfg(env: Env): Promise<{ baseUrl: string; token: string; urlError?: string }> {
   const [rawUrl, token] = await Promise.all([
-    secretValue(env.LOCAL_BACKEND_URL),
-    secretValue(env.LOCAL_BACKEND_TOKEN),
+    secretValue("LOCAL_BACKEND_URL", env.LOCAL_BACKEND_URL),
+    secretValue("LOCAL_BACKEND_TOKEN", env.LOCAL_BACKEND_TOKEN),
   ]);
-  const baseUrl = normalizeBackendUrl(rawUrl);
+  const baseUrl = normalizeBackendUrl(rawUrl.value);
+  const readError = rawUrl.error ?? token.error;
   return {
-    baseUrl: baseUrl ?? "",
-    token,
-    urlError: baseUrl ? undefined : "local-gpu: LOCAL_BACKEND_URL must be an absolute http(s) URL",
+    baseUrl: readError ? "" : (baseUrl ?? ""),
+    token: readError ? "" : token.value,
+    urlError: readError ?? (baseUrl ? undefined : "local-gpu: LOCAL_BACKEND_URL must be an absolute http(s) URL"),
   };
 }
 
@@ -188,7 +192,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
     return {
       ok: true,
       pending: true,
-      poll: encodePoll({ jobId, project: req.context.project, shotId: input.shot_id, submittedAt: Date.now() }),
+      poll: encodePoll({ jobId, shotId: input.shot_id, submittedAt: Date.now() }),
       jobId,
     };
   } catch (e) {
@@ -239,8 +243,15 @@ async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
   const motion = decodePoll(body.poll);
   const kf = decodeKeyframePoll(body.poll);
   if (motion && kf) return { ok: false, error: "local-gpu: ambiguous poll token" };
-  const jobId = kf?.jobId ?? motion?.jobId;
-  if (!jobId || !isSafeJobId(jobId)) return { ok: false, error: "local-gpu: bad poll token" };
+  let jobId: string | undefined;
+  if (kf) {
+    if (kf.kind !== "keyframe" || !isSafeJobId(kf.jobId)) return { ok: false, error: "local-gpu: bad poll token" };
+    jobId = kf.jobId;
+  } else if (motion) {
+    if (!isSafeJobId(motion.jobId)) return { ok: false, error: "local-gpu: bad poll token" };
+    jobId = motion.jobId;
+  }
+  if (!jobId) return { ok: false, error: "local-gpu: bad poll token" };
   const { baseUrl, token, urlError } = await backendCfg(env);
   if (!baseUrl) return { ok: false, error: urlError ?? "local-gpu: LOCAL_BACKEND_URL not configured" };
   try {
