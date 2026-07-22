@@ -9,6 +9,13 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.7.10 -- 2026-07-22
+
+PATCH: dual-panel with vivijure-local **v1.1.11**. Core pin unchanged (`^1.2.5`).
+
+- **fix(security):** validate cast image MIME on import/JSON media paths; sniff magic bytes; force safe content-type, `nosniff`, and `Content-Disposition: attachment` on `/api/artifact` (#193)
+- **ci:** adversarial security audit workflow
+
 ## v1.7.9 -- 2026-07-22
 
 PATCH: dual-panel with vivijure-local **v1.1.10** -- pin `@skyphusion-labs/vivijure-core` to `^1.2.5`
