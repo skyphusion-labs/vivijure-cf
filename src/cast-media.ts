@@ -22,6 +22,53 @@ class HttpError extends Error {
   }
 }
 
+/** Strict magic-byte sniff for cast images. Returns null when bytes are not png/jpeg/webp
+ *  (unlike module image-gen sniffers that default to image/png -- a default would launder HTML). */
+export function sniffCastImageMime(bytes: ArrayBuffer | Uint8Array): string | null {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    return "image/png";
+  }
+  if (
+    b.length >= 12 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+/** Allowlist + optional content sniff for cast portrait/ref/source MIME.
+ *  Rejects text/html and other non-image types (stored-XSS when /api/artifact serves the object).
+ *  When bytes are provided, magic must match the claimed type. Throws Error with a safe message. */
+export function resolveCastImageMime(claimed: string, bytes?: ArrayBuffer | Uint8Array): string {
+  const raw = (claimed || "").toLowerCase().split(";")[0].trim();
+  if (!CAST_IMAGE_MIME_RE.test(raw)) {
+    throw new Error(`mime ${raw || "<missing>"} not allowed (png/jpeg/webp only)`);
+  }
+  const mime = raw === "image/jpg" ? "image/jpeg" : raw;
+  if (bytes !== undefined) {
+    const sniffed = sniffCastImageMime(bytes);
+    if (!sniffed) {
+      throw new Error("bytes are not a recognizable png/jpeg/webp image");
+    }
+    if (sniffed !== mime) {
+      throw new Error(`claimed mime ${mime} does not match content (${sniffed})`);
+    }
+  }
+  return mime;
+}
+
+function requireCastImageMime(claimed: string, bytes?: ArrayBuffer | Uint8Array): string {
+  try {
+    return resolveCastImageMime(claimed, bytes);
+  } catch (e) {
+    throw new HttpError(400, (e as Error).message);
+  }
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -49,14 +96,11 @@ export async function copyChatArtifactToRenders(
 ): Promise<{ key: string; mime: string }> {
   const obj = await env.R2_RENDERS.get(srcKey);
   if (!obj) throw new HttpError(404, `source artifact not found: ${srcKey}`);
-  const mime = obj.httpMetadata?.contentType || "image/png";
-  if (!CAST_IMAGE_MIME_RE.test(mime)) {
-    throw new HttpError(400, `source mime ${mime} not allowed (png/jpeg/webp only)`);
-  }
   const bytes = new Uint8Array(await obj.arrayBuffer());
   if (bytes.length > CAST_MAX_BYTES) {
     throw new HttpError(413, "source image too large (16 MB max)");
   }
+  const mime = requireCastImageMime(obj.httpMetadata?.contentType || "", bytes);
   const key = `${destPrefix}.${extFromMime(mime)}`;
   await env.R2_RENDERS.put(key, bytes, {
     httpMetadata: { contentType: mime },
@@ -97,28 +141,24 @@ export async function handleCastPortraitUpload(
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
-      const row = await setPortrait(env, id, body.key, body.mime);
+      const mime = requireCastImageMime(body.mime);
+      const row = await setPortrait(env, id, body.key, mime);
       if (!row) throw new HttpError(404, "cast not found");
       return json({ cast: row ? toPublicCast(row) : null });
     }
 
-    if (!CAST_IMAGE_MIME_RE.test(contentType)) {
-      throw new HttpError(
-        400,
-        `content-type must be image/png, image/jpeg, or image/webp (got ${contentType || "<missing>"})`,
-      );
-    }
     const buf = await request.arrayBuffer();
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
     if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
+    const mime = requireCastImageMime(contentType, buf);
     if (cur.portrait_key) {
       try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
     }
-    const key = `cast/${id}/portrait.${extFromMime(contentType)}`;
+    const key = `cast/${id}/portrait.${extFromMime(mime)}`;
     await env.R2_RENDERS.put(key, new Uint8Array(buf), {
-      httpMetadata: { contentType },
+      httpMetadata: { contentType: mime },
     });
-    const row = await setPortrait(env, id, key, contentType);
+    const row = await setPortrait(env, id, key, mime);
     return json({ cast: row ? toPublicCast(row) : null });
   });
 }
@@ -153,22 +193,21 @@ export async function handleCastRefAdd(
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
-      const row = await addRef(env, id, { key: body.key, mime: body.mime });
+      const mime = requireCastImageMime(body.mime);
+      const row = await addRef(env, id, { key: body.key, mime });
       if (!row) throw new HttpError(404, "cast not found");
       return json({ cast: row ? toPublicCast(row) : null });
     }
 
-    if (!CAST_IMAGE_MIME_RE.test(contentType)) {
-      throw new HttpError(400, "content-type must be image/png, image/jpeg, or image/webp");
-    }
     const buf = await request.arrayBuffer();
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
     if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
-    const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(contentType)}`;
+    const mime = requireCastImageMime(contentType, buf);
+    const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(mime)}`;
     await env.R2_RENDERS.put(key, new Uint8Array(buf), {
-      httpMetadata: { contentType },
+      httpMetadata: { contentType: mime },
     });
-    const row = await addRef(env, id, { key, mime: contentType });
+    const row = await addRef(env, id, { key, mime });
     return json({ cast: row ? toPublicCast(row) : null });
   });
 }
@@ -215,22 +254,21 @@ export async function handleCastSourceAdd(
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
-      const row = await addSource(env, id, { key: body.key, mime: body.mime });
+      const mime = requireCastImageMime(body.mime);
+      const row = await addSource(env, id, { key: body.key, mime });
       if (!row) throw new HttpError(404, "cast not found");
       return json({ cast: row ? toPublicCast(row) : null });
     }
 
-    if (!CAST_IMAGE_MIME_RE.test(contentType)) {
-      throw new HttpError(400, "content-type must be image/png, image/jpeg, or image/webp");
-    }
     const buf = await request.arrayBuffer();
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
     if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
-    const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(contentType)}`;
+    const mime = requireCastImageMime(contentType, buf);
+    const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(mime)}`;
     await env.R2_RENDERS.put(key, new Uint8Array(buf), {
-      httpMetadata: { contentType },
+      httpMetadata: { contentType: mime },
     });
-    const row = await addSource(env, id, { key, mime: contentType });
+    const row = await addSource(env, id, { key, mime });
     return json({ cast: row ? toPublicCast(row) : null });
   });
 }

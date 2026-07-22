@@ -17,6 +17,7 @@ import { isValidVoiceId } from "@skyphusion-labs/vivijure-core/voices";
 import { emitTar, readTar } from "@skyphusion-labs/vivijure-core/tar";
 import type { Env } from "./env";
 import { extFromMime } from "./utils";
+import { resolveCastImageMime } from "./cast-media";
 
 export const CAST_BUNDLE_FORMAT = "vivijure-cast-bundle";
 export const CAST_BUNDLE_SCHEMA_VERSION = 1;
@@ -329,33 +330,45 @@ async function importInner(env: Env, body: Uint8Array): Promise<Response> {
     return data;
   };
 
+  // Pre-validate image asset MIME + magic bytes BEFORE createCast so a hostile
+  // text/html (or polyglot) .vvcast never leaves an orphan cast row.
+  const resolveImage = (a: CastBundleAssetRef, label: string): { bytes: Uint8Array; mime: string } => {
+    const bytes = resolve(a);
+    try {
+      return { bytes, mime: resolveCastImageMime(a.mime, bytes) };
+    } catch (e) {
+      throw new BundleError(400, `${label}: ${(e as Error).message}`);
+    }
+  };
+  const portrait = manifest.assets.portrait
+    ? resolveImage(manifest.assets.portrait, "bundle portrait")
+    : null;
+  const refsIn = manifest.assets.refs.map((a) => resolveImage(a, `bundle ref ${a.path}`));
+  const sourcesIn = manifest.assets.sources.map((a) => resolveImage(a, `bundle source ${a.path}`));
+
   const created = await createCast(env, { name: manifest.cast.name, bible: manifest.cast.bible });
   const id = created.id;
 
-  if (manifest.assets.portrait) {
-    const a = manifest.assets.portrait;
-    const bytes = resolve(a);
-    const key = `cast/${id}/portrait.${extFromMime(a.mime)}`;
-    await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: a.mime } });
-    await setPortrait(env, id, key, a.mime);
+  if (portrait) {
+    const key = `cast/${id}/portrait.${extFromMime(portrait.mime)}`;
+    await env.R2_RENDERS.put(key, portrait.bytes, { httpMetadata: { contentType: portrait.mime } });
+    await setPortrait(env, id, key, portrait.mime);
   }
 
-  if (manifest.assets.refs.length) {
+  if (refsIn.length) {
     const refs: CastRefImage[] = [];
-    for (const a of manifest.assets.refs) {
-      const bytes = resolve(a);
-      const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(a.mime)}`;
-      await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: a.mime } });
-      refs.push({ key, mime: a.mime });
+    for (const img of refsIn) {
+      const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(img.mime)}`;
+      await env.R2_RENDERS.put(key, img.bytes, { httpMetadata: { contentType: img.mime } });
+      refs.push({ key, mime: img.mime });
     }
     await addRefs(env, id, refs);
   }
 
-  for (const a of manifest.assets.sources) {
-    const bytes = resolve(a);
-    const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(a.mime)}`;
-    await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: a.mime } });
-    await addSource(env, id, { key, mime: a.mime });
+  for (const img of sourcesIn) {
+    const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(img.mime)}`;
+    await env.R2_RENDERS.put(key, img.bytes, { httpMetadata: { contentType: img.mime } });
+    await addSource(env, id, { key, mime: img.mime });
   }
 
   if (manifest.assets.lora) {

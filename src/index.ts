@@ -364,12 +364,28 @@ const ARTIFACT_PREFIXES = [
 // edge-cached, so an authenticated artifact never leaks into a shared cache); accept-ranges advertises
 // byte-range support; nosniff stops a stored content-type being MIME-sniffed into executable script in
 // the operator's authenticated origin (defense-in-depth alongside the upload mime allowlist).
-function artifactHeaders(contentType: string): Headers {
+// Content-Disposition: attachment forces a download on direct navigation so a legacy text/html object
+// cannot render as a document even if its stored content-type slipped past the allowlist. <img>/<video>
+// element loads ignore disposition. safeArtifactContentType remaps scriptable/unknown types to
+// application/octet-stream so a stored text/html never leaves this route as HTML.
+const ARTIFACT_SAFE_CT_RE =
+  /^(image\/(png|jpe?g|webp|gif)|video\/(mp4|webm|quicktime)|audio\/[\w.+-]+|application\/(octet-stream|json|x-tar|zip|safetensors))$/i;
+
+function safeArtifactContentType(contentType: string): string {
+  const t = (contentType || "").split(";")[0].trim();
+  if (ARTIFACT_SAFE_CT_RE.test(t)) return t === "image/jpg" ? "image/jpeg" : t;
+  return "application/octet-stream";
+}
+
+function artifactHeaders(contentType: string, key?: string): Headers {
   const h = new Headers();
-  h.set("content-type", contentType || "application/octet-stream");
+  h.set("content-type", safeArtifactContentType(contentType));
   h.set("cache-control", "private, max-age=300");
   h.set("accept-ranges", "bytes");
   h.set("x-content-type-options", "nosniff");
+  const base = (key || "artifact").split("/").pop() || "artifact";
+  const safeName = base.replace(/[^\w.\-]+/g, "_").slice(0, 180) || "artifact";
+  h.set("content-disposition", `attachment; filename="${safeName}"`);
   return h;
 }
 // #416: serve an artifact with HTTP byte-range support so browsers (Safari/iOS refuse to play media
@@ -404,13 +420,13 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
     const parsed = parseByteRange(rangeHeader, meta.size);
 
     if (parsed === "unsatisfiable") {
-      const h = artifactHeaders(ct);
+      const h = artifactHeaders(ct, key);
       h.set("content-range", `bytes */${meta.size}`);
       return new Response(null, { status: 416, headers: h });
     }
     if (parsed) {
       // Satisfiable single range -> 206. HEAD carries the same headers with no body.
-      const h = artifactHeaders(ct);
+      const h = artifactHeaders(ct, key);
       h.set("content-range", `bytes ${parsed.start}-${parsed.end}/${meta.size}`);
       h.set("content-length", String(parsed.length));
       if (isHead) return new Response(null, { status: 206, headers: h });
@@ -419,7 +435,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
       return new Response(obj.body, { status: 206, headers: h });
     }
     // No range (or one we ignore) -> full 200. HEAD carries the headers with no body.
-    const h = artifactHeaders(ct);
+    const h = artifactHeaders(ct, key);
     h.set("content-length", String(meta.size));
     if (isHead) return new Response(null, { status: 200, headers: h });
     const obj = await env.R2_RENDERS.get(key);
@@ -430,7 +446,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // Plain GET, no Range: stream the full body and advertise range support for the next seek.
   const obj = await env.R2_RENDERS.get(key);
   if (!obj) throw notFound("artifact");
-  const h = artifactHeaders(obj.httpMetadata?.contentType || "application/octet-stream");
+  const h = artifactHeaders(obj.httpMetadata?.contentType || "application/octet-stream", key);
   h.set("content-length", String(obj.size));
   return new Response(obj.body, { headers: h });
 };

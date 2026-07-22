@@ -140,8 +140,19 @@ async function bytesOf(res: Response): Promise<Uint8Array> {
 }
 
 const PORTRAIT = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
-const REF0 = new Uint8Array(40).fill(11);
-const SRC0 = new Uint8Array(24).fill(22);
+// Real magic bytes so import's content sniff accepts the round-tripped fixtures.
+const REF0 = (() => {
+  const b = new Uint8Array(40);
+  b.set([0x89, 0x50, 0x4e, 0x47]);
+  b.fill(11, 4);
+  return b;
+})();
+const SRC0 = (() => {
+  const b = new Uint8Array(24);
+  b.set([0xff, 0xd8, 0xff, 0xe0]);
+  b.fill(22, 4);
+  return b;
+})();
 const LORA = new Uint8Array(600).fill(0x5a);
 
 function seedFullCast(env: any) {
@@ -302,5 +313,51 @@ describe("cast bundle import -> malformed bundles fail loud", () => {
   it("rejects non-tar garbage", async () => {
     const res = await importCastBundle(makeEnv(), new Uint8Array(50).fill(0x41));
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a portrait with text/html mime (stored-XSS via artifact serve)", async () => {
+    const html = enc.encode("<script>alert(1)</script>");
+    const manifest = {
+      format: CAST_BUNDLE_FORMAT,
+      schema_version: CAST_BUNDLE_SCHEMA_VERSION,
+      cast: { name: "Evil", bible: null, voice_id: null, lora_status: "idle", lora_trained_at: null },
+      assets: {
+        portrait: { path: "assets/portrait.html", mime: "text/html" },
+        refs: [],
+        sources: [],
+        lora: null,
+      },
+    };
+    const tar = emitTar([
+      { name: "manifest.json", content: enc.encode(JSON.stringify(manifest)) },
+      { name: "assets/portrait.html", content: html },
+    ]);
+    const res = await importCastBundle(makeEnv(), tar);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error).toMatch(/not allowed|mime/i);
+    expect(store.map.size).toBe(0);
+  });
+
+  it("rejects a portrait claiming image/png whose bytes are HTML", async () => {
+    const html = enc.encode("<!DOCTYPE html><script>document.location='https://evil'</script>");
+    const manifest = {
+      format: CAST_BUNDLE_FORMAT,
+      schema_version: CAST_BUNDLE_SCHEMA_VERSION,
+      cast: { name: "Polyglot", bible: null, voice_id: null, lora_status: "idle", lora_trained_at: null },
+      assets: {
+        portrait: { path: "assets/portrait.png", mime: "image/png" },
+        refs: [],
+        sources: [],
+        lora: null,
+      },
+    };
+    const tar = emitTar([
+      { name: "manifest.json", content: enc.encode(JSON.stringify(manifest)) },
+      { name: "assets/portrait.png", content: html },
+    ]);
+    const res = await importCastBundle(makeEnv(), tar);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error).toMatch(/recognizable|match/i);
+    expect(store.map.size).toBe(0);
   });
 });
