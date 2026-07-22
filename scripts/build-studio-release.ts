@@ -255,9 +255,12 @@ function main(): void {
   const manifestJson = JSON.stringify(manifest, null, 2) + "\n";
   writeFileSync(join(outDir, "manifest.json"), manifestJson);
 
-  // The pin (#53): {tag, manifest_sha256}. The manifest carries worker.sha256 and every asset hash,
-  // so pinning THIS digest transitively pins every byte of the release -- which makes
-  // same-tag-different-bytes impossible rather than merely unlikely.
+  // The pin (#53): {tag, manifest_sha256}. This digest covers the STUDIO artifact only (worker,
+  // assets, migrations, required_vars) -- cf#147. Tenant module bundles under modules/<name>/ are
+  // intentionally self-anchored (each modules/<name>/manifest.json declares worker.sha256; the
+  // control plane re-checks that hash at provision). They are not chained into this top-level
+  // digest because a tenant may pin studio and modules to different releases (cf#103). Pinning
+  // THIS digest still makes same-tag-different-studio-bytes impossible rather than merely unlikely.
   const manifestSha256 = createHash("sha256").update(manifestJson).digest("hex");
 
   console.log(`tag:             ${tag}`);

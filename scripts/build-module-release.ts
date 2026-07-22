@@ -10,6 +10,11 @@
 //   studio-releases/<tag>/modules/<module>/worker.js
 // (the same release tree the studio bundle lives in: a tenant's studio and its modules ship as ONE tag).
 //
+// INTEGRITY ROOT (cf#147): each module's manifest.json `worker.sha256` is the intentional integrity
+// anchor for that bundle. It is NOT chained into the top-level studio PIN digest -- the control
+// plane re-verifies the per-module hash at provision, and tenants may pin modules to a different
+// release than the studio (cf#103).
+//
 // Reproducible by anyone: it reads no secrets and no account state. Module workers hold NO static
 // assets, so there is no asset leg -- just the worker + its compat config, read from the SAME config
 // the bundle was built from so they cannot disagree.
