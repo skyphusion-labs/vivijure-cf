@@ -15,9 +15,11 @@ import {
   classifyGoneState,
   JOB_NOTFOUND_GRACE_MS,
   readDurationGrid,
+  isSafeJobId,
+  normalizeBackendUrl,
 } from "../modules/local-gpu/src/i2v";
 import { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
-import { buildPreviewBody, parseKeyframes } from "../modules/local-gpu/src/keyframe";
+import { buildPreviewBody, parseKeyframes, encodeKeyframePoll, decodeKeyframePoll } from "../modules/local-gpu/src/keyframe";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
 import type { ConfigField } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -107,6 +109,48 @@ describe("local-gpu i2v pure logic", () => {
     const legacy = decodePoll(encodePoll({ jobId: "j", project: "p", shotId: "s" }));
     expect(legacy?.submittedAt).toBeUndefined();
     expect(decodePoll("not-valid-token")).toBeNull();
+  });
+
+  it("decodePoll rejects unsafe jobIds and keyframe-shaped tokens (#153 audit)", () => {
+    const unsafe = btoa(JSON.stringify({ jobId: "../etc/passwd", project: "p", shotId: "s" }));
+    expect(decodePoll(unsafe)).toBeNull();
+    const keyframeShaped = btoa(
+      JSON.stringify({ jobId: "abc123", project: "p", shotId: "s", kind: "keyframe" }),
+    );
+    expect(decodePoll(keyframeShaped)).toBeNull();
+  });
+
+  it("isSafeJobId accepts uuid-like ids and rejects path/query payloads", () => {
+    expect(isSafeJobId("a1b2c3d4e5f6")).toBe(true);
+    expect(isSafeJobId("")).toBe(false);
+    expect(isSafeJobId("job/../x")).toBe(false);
+    expect(isSafeJobId("job?id=1")).toBe(false);
+  });
+
+  it("normalizeBackendUrl restricts to http(s) without credentials", () => {
+    expect(normalizeBackendUrl("https://door.example/")).toBe("https://door.example");
+    expect(normalizeBackendUrl("http://192.168.1.10:8790")).toBe("http://192.168.1.10:8790");
+    expect(normalizeBackendUrl("file:///etc/passwd")).toBeNull();
+    expect(normalizeBackendUrl("https://user:pass@door.example")).toBeNull();
+    expect(normalizeBackendUrl("https://door.example/foo%2F..%2Fbar")).toBeNull();
+  });
+});
+
+describe("local-gpu keyframe poll token scoping (#153 audit)", () => {
+  it("encodeKeyframePoll/decodeKeyframePoll round-trip with kind discriminator", () => {
+    const st = { jobId: "kf123", project: "film", submittedAt: 1_700_000_000_000, kind: "keyframe" as const };
+    expect(decodeKeyframePoll(encodeKeyframePoll(st))).toEqual(st);
+  });
+
+  it("decodeKeyframePoll rejects motion-shaped tokens and unsafe jobIds", () => {
+    const motionShaped = btoa(JSON.stringify({ jobId: "abc123", project: "p", shotId: "s" }));
+    expect(decodeKeyframePoll(motionShaped)).toBeNull();
+    const unsafe = btoa(JSON.stringify({ jobId: "../x", project: "p", kind: "keyframe" }));
+    expect(decodeKeyframePoll(unsafe)).toBeNull();
+    const ambiguous = btoa(
+      JSON.stringify({ jobId: "abc123", project: "p", shotId: "s", kind: "keyframe" }),
+    );
+    expect(decodeKeyframePoll(ambiguous)).toBeNull();
   });
 });
 

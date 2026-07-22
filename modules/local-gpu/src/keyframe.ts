@@ -1,4 +1,5 @@
 import type { KeyframeInput } from "./contract";
+import { isSafeJobId } from "./i2v";
 
 const TIERS = ["draft", "standard", "final"] as const;
 type Tier = (typeof TIERS)[number];
@@ -92,8 +93,16 @@ export function encodeKeyframePoll(s: KeyframePollState): string {
 
 export function decodeKeyframePoll(token: string): KeyframePollState | null {
   try {
-    const o = JSON.parse(atob(token)) as KeyframePollState;
-    if (o && typeof o.jobId === "string" && typeof o.project === "string" && o.kind === "keyframe") {
+    const o = JSON.parse(atob(token)) as KeyframePollState & { shotId?: unknown };
+    // kind:"keyframe" discriminator keeps motion poll tokens from being treated as keyframe polls.
+    if (
+      o &&
+      typeof o.jobId === "string" &&
+      isSafeJobId(o.jobId) &&
+      typeof o.project === "string" &&
+      o.kind === "keyframe" &&
+      typeof o.shotId !== "string"
+    ) {
       return o;
     }
   } catch {

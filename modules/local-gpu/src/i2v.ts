@@ -112,8 +112,16 @@ export function encodePoll(s: PollState): string {
 
 export function decodePoll(token: string): PollState | null {
   try {
-    const o = JSON.parse(atob(token)) as PollState;
-    if (o && typeof o.jobId === "string" && typeof o.project === "string" && typeof o.shotId === "string") {
+    const o = JSON.parse(atob(token)) as PollState & { kind?: unknown };
+    // kind:"keyframe" tokens belong to the keyframe hook; shotId is the motion discriminator.
+    if (
+      o &&
+      typeof o.jobId === "string" &&
+      isSafeJobId(o.jobId) &&
+      typeof o.project === "string" &&
+      typeof o.shotId === "string" &&
+      o.kind !== "keyframe"
+    ) {
       return {
         jobId: o.jobId,
         project: o.project,
@@ -133,6 +141,31 @@ export function decodePoll(token: string): PollState | null {
 // race the registry write, so mirror the control plane's grace (150s, same as own-gpu/#141) before
 // failing the shot. Past the window a 404 is a real loss: fail honestly rather than poll a dead job.
 export const JOB_NOTFOUND_GRACE_MS = 150_000;
+
+/** Door job ids are uuid4.hex; the server route only accepts [A-Za-z0-9]+. Reject path/query
+ *  payloads in poll tokens before interpolating into `/status/{id}` / `/cancel/{id}` (#153 audit). */
+export const SAFE_JOB_ID = /^[A-Za-z0-9]{1,64}$/;
+
+export function isSafeJobId(id: string): boolean {
+  return SAFE_JOB_ID.test(id);
+}
+
+/** Operator-configured door URL: http(s) only, no userinfo, no path traversal tricks. Homelab
+ *  docker hostnames and private IPs are allowed (that is the point of the local door). */
+export function normalizeBackendUrl(raw: string): string | null {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+  let u: URL;
+  try {
+    u = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (u.username || u.password) return null;
+  if (u.pathname.includes("..")) return null;
+  return `${u.protocol}//${u.host}${u.pathname === "/" ? "" : u.pathname}`.replace(/\/+$/, "");
+}
 
 /** Pure: did the backend report this job as gone? A restarted / unknown job returns HTTP 404 with a
  *  body like {"status":404,"title":"Not Found","detail":"job not found"} -- where `status` is the
