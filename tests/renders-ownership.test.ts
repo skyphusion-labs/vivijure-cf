@@ -7,6 +7,7 @@ import {
   PHANTOM_GRACE_SECONDS,
 } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // Issue #9: render row access by id (studio-wide visibility) and the phantom-job
 // classifier (the source of the past cron phantom-fail).
@@ -46,22 +47,22 @@ function fakeEnv() {
 
 describe("render row access by id (issue #9)", () => {
   it("getRenderByIdForUser returns the row when the id exists", async () => {
-    const row = await getRenderByIdForUser(fakeEnv(), 7);
+    const row = await getRenderByIdForUser(orch(fakeEnv()), 7);
     expect(row?.id).toBe(7);
   });
 
   it("getRenderByIdForUser returns null for a wrong id", async () => {
-    expect(await getRenderByIdForUser(fakeEnv(), 999)).toBeNull();
+    expect(await getRenderByIdForUser(orch(fakeEnv()), 999)).toBeNull();
   });
 
   it("setRenderLabel updates by id", async () => {
-    expect(await setRenderLabel(fakeEnv(), 7, "keep")).toBe(true);
-    expect(await setRenderLabel(fakeEnv(), 999, "nope")).toBe(false);
+    expect(await setRenderLabel(orch(fakeEnv()), 7, "keep")).toBe(true);
+    expect(await setRenderLabel(orch(fakeEnv()), 999, "nope")).toBe(false);
   });
 
   it("deleteRenderRow removes by id", async () => {
-    expect(await deleteRenderRow(fakeEnv(), 7)).toBe(true);
-    expect(await deleteRenderRow(fakeEnv(), 999)).toBe(false);
+    expect(await deleteRenderRow(orch(fakeEnv()), 7)).toBe(true);
+    expect(await deleteRenderRow(orch(fakeEnv()), 999)).toBe(false);
   });
 });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { orch } from "./orchestrator-env";
 
 import { finalizeScatterSubmit, ensureScatterRenderRow } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
 import type { ScatterJob } from "@skyphusion-labs/vivijure-core/scatter-orchestrator-types";
@@ -83,7 +84,7 @@ const shardRows = [
 describe("finalizeScatterSubmit -- runnability-first (#289)", () => {
   it("writes the runnable R2 doc BEFORE any D1 row write", async () => {
     const { env, events } = fakeEnv();
-    await finalizeScatterSubmit(env, jobFixture(), shardRows);
+    await finalizeScatterSubmit(orch(env), jobFixture(), shardRows);
     expect(events[0]).toBe("R2PUT"); // the doc that makes the render runnable lands first
     const r2 = events.indexOf("R2PUT");
     const firstD1 = events.findIndex((e) => e === "INSERT" || e.startsWith("BATCH"));
@@ -96,7 +97,7 @@ describe("finalizeScatterSubmit -- runnability-first (#289)", () => {
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const { env, events } = fakeEnv({ failD1: true });
-      await expect(finalizeScatterSubmit(env, jobFixture(), shardRows)).resolves.toBeUndefined();
+      await expect(finalizeScatterSubmit(orch(env), jobFixture(), shardRows)).resolves.toBeUndefined();
       expect(events[0]).toBe("R2PUT"); // doc still written -> render runnable despite the D1 blip
       const lines = spy.mock.calls.map((c) => String(c[0]));
       const err = lines.filter((l) => l.includes('"ev":"d1.error"') && l.includes("scatter.submit.rows"));
@@ -112,7 +113,7 @@ describe("ensureScatterRenderRow -- self-heal a missing UI-list row (#289)", () 
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const { env, events } = fakeEnv({ rowExists: true });
-      await ensureScatterRenderRow(env, jobFixture());
+      await ensureScatterRenderRow(orch(env), jobFixture());
       expect(events).toEqual(["SELECT", "SELECT"]); // parent id lookup + shard children read
       const lines = spy.mock.calls.map((c) => String(c[0]));
       expect(lines.some((l) => l.includes('"ev":"scatter.selfheal.row"'))).toBe(false);
@@ -125,7 +126,7 @@ describe("ensureScatterRenderRow -- self-heal a missing UI-list row (#289)", () 
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const { env, events } = fakeEnv({ rowExists: false });
-      await ensureScatterRenderRow(env, jobFixture());
+      await ensureScatterRenderRow(orch(env), jobFixture());
       expect(events[0]).toBe("SELECT");
       expect(events).toContain("INSERT"); // missing -> reconstructed from the runnable doc
       const lines = spy.mock.calls.map((c) => String(c[0]));

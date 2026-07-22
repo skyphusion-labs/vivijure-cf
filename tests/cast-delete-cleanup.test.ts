@@ -29,6 +29,8 @@ const castFixture = (over: Partial<CastMember> = {}): CastMember => ({
   lora_error: null,
   lora_trained_at: "t",
   voice_id: null,
+  wan_lora_key_high: null,
+  wan_lora_key_low: null,
   ...over,
 });
 

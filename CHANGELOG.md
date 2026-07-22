@@ -9,6 +9,7 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+- **ci:** `tsc -p tsconfig.tests.json` in `npm run typecheck` so tests/ cannot silently drift (cf#107).
 - **ci:** CodeQL now extracts `public/` (studio front-door JS); dropped from `paths-ignore` (cf#128).
   Triage the next scheduled/PR CodeQL run before widening further (`modules/`, `scripts/`).
 

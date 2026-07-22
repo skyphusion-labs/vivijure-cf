@@ -25,7 +25,7 @@ function muxEnv(job: object, containerBody: unknown) {
     R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
     R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
   };
-  return { env: orch(env as Env), read: () => JSON.parse(stored) as FilmJob };
+  return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob };
 }
 
 const SILENT = "renders/film-mux-honesty/film-silent.mp4";

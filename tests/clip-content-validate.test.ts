@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { callVideoFinishInspect, contentValidateDoneClips, type ContentVerdict } from "@skyphusion-labs/vivijure-core/clip-content-validate";
 import type { ClipJob, ClipShot } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 function jr(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -18,20 +19,20 @@ const noVpc = (): Env => ({} as unknown as Env);
 
 describe("callVideoFinishInspect (container round-trip)", () => {
   it("returns null when the tier is not installed (self-host): never fails a render", async () => {
-    const r = await callVideoFinishInspect(noVpc(), { clipUrl: "https://r2/clip" });
+    const r = await callVideoFinishInspect(orch(noVpc()), { clipUrl: "https://r2/clip" });
     expect(r).toBeNull();
   });
   it("parses a verdict from the container", async () => {
-    const r = await callVideoFinishInspect(withVpc(async () => jr({ ok: true, verdict: "corrupt", reason: "no keyframe match" })), { clipUrl: "https://r2/clip" });
+    const r = await callVideoFinishInspect(orch(withVpc(async () => jr({ ok: true, verdict: "corrupt", reason: "no keyframe match" }))), { clipUrl: "https://r2/clip" });
     expect(r).toMatchObject({ ok: true, verdict: "corrupt" });
   });
   it("returns null on an unreachable container (fetch throws)", async () => {
-    const r = await callVideoFinishInspect(withVpc(async () => { throw new Error("down"); }), { clipUrl: "u" }, { retries: 2, backoffMs: 0 });
+    const r = await callVideoFinishInspect(orch(withVpc(async () => { throw new Error("down"); })), { clipUrl: "u" }, { retries: 2, backoffMs: 0 });
     expect(r).toBeNull();
   });
   it("retries the transient 503 then succeeds", async () => {
     let n = 0;
-    const r = await callVideoFinishInspect(withVpc(async () => (++n < 2 ? jr({}, 503) : jr({ ok: true, verdict: "ok" }))), { clipUrl: "u" }, { retries: 3, backoffMs: 0 });
+    const r = await callVideoFinishInspect(orch(withVpc(async () => (++n < 2 ? jr({}, 503) : jr({ ok: true, verdict: "ok" })))), { clipUrl: "u" }, { retries: 3, backoffMs: 0 });
     expect(n).toBe(2);
     expect(r).toMatchObject({ verdict: "ok" });
   });
@@ -42,7 +43,7 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
 
   it("no-op (false) when the video-finish tier is not installed", async () => {
     const j = job([doneShot("s1")]);
-    const changed = await contentValidateDoneClips(noVpc(), j);
+    const changed = await contentValidateDoneClips(orch(noVpc()), j);
     expect(changed).toBe(false);
     expect(j.shots[0].status).toBe("done");
   });
@@ -50,7 +51,7 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
   it("CORRUPT (keyframe mismatch) FAILS the shot before finish spend, with the real reason + cleared poll", async () => {
     const j = job([doneShot("s1", { poll: "tok" })]);
     const inspect = async (): Promise<ContentVerdict> => ({ verdict: "corrupt", reason: "first frame does not resemble its keyframe (similarity 0.020 < 0.2)", keyframe_similarity: 0.02 });
-    const changed = await contentValidateDoneClips(env, j, inspect);
+    const changed = await contentValidateDoneClips(orch(env), j, inspect);
     expect(changed).toBe(true);
     expect(j.shots[0].status).toBe("failed");
     expect(j.shots[0].content_validated).toBe("corrupt");
@@ -61,7 +62,7 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
   it("SUSPECT (chroma heuristic) DEGRADES (warn) but the shot stays done -- film still completes", async () => {
     const j = job([doneShot("s1")]);
     const inspect = async (): Promise<ContentVerdict> => ({ verdict: "suspect", reason: "chromatic-noise signature (chroma/structure ratio 5.6 > 4.0)" });
-    const changed = await contentValidateDoneClips(env, j, inspect);
+    const changed = await contentValidateDoneClips(orch(env), j, inspect);
     expect(changed).toBe(true);
     expect(j.shots[0].status).toBe("done");
     expect(j.shots[0].content_validated).toBe("suspect");
@@ -70,8 +71,8 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
 
   it("OK passes; SKIP (inspector down) leaves the shot untouched -- a down inspector never fails a render", async () => {
     const j = job([doneShot("ok1"), doneShot("skip1")]);
-    const inspect = async (_e: Env, k: string): Promise<ContentVerdict> => (k.includes("ok1") ? { verdict: "ok" } : { verdict: "skip", reason: "unreachable" });
-    const changed = await contentValidateDoneClips(env, j, inspect);
+    const inspect = async (_e: unknown, k: string): Promise<ContentVerdict> => (k.includes("ok1") ? { verdict: "ok" } : { verdict: "skip", reason: "unreachable" });
+    const changed = await contentValidateDoneClips(orch(env), j, inspect);
     expect(changed).toBe(false);
     expect(j.shots.every((s) => s.status === "done")).toBe(true);
     expect(j.shots[0].content_validated).toBe("ok");
@@ -83,8 +84,8 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
     const j = job([doneShot("s1")]);
     const inspect = vi.fn(async (): Promise<ContentVerdict> => ({ verdict: "ok" }));
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await contentValidateDoneClips(env, j, inspect);
-    await contentValidateDoneClips(env, j, inspect); // content_validated set -> skipped
+    await contentValidateDoneClips(orch(env), j, inspect);
+    await contentValidateDoneClips(orch(env), j, inspect); // content_validated set -> skipped
     const line = spy.mock.calls.map((c) => String(c[0])).find((l) => l.includes("clip.content_validate"));
     const emits = spy.mock.calls.filter((c) => String(c[0]).includes("clip.content_validate")).length;
     spy.mockRestore();

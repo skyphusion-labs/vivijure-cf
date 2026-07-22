@@ -125,6 +125,7 @@ let mod: {
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
   collect: () => { motion_backend?: string };
   restore: (o: unknown) => void;
+  selectTier: (tier: string) => void;
 };
 
 beforeAll(() => {

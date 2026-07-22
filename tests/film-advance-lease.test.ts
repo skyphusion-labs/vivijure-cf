@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { claimFilmAdvance, releaseFilmAdvance, FILM_ADVANCE_LEASE_TTL_SECONDS } from "@skyphusion-labs/vivijure-core/renders-db";
 import { advanceFilmJob, filmJobDocKey, type FilmJob, type FinishShot } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // S4: the film-advance lease. advanceFilmJob is driven concurrently by the 1-minute cron sweep
 // and every client status poll; both do an unlocked read-modify-write on the R2 film-job doc, so
@@ -72,11 +73,11 @@ describe("claimFilmAdvance / releaseFilmAdvance (win / lose / reset)", () => {
   it("first claim wins with a lease token; a concurrent second claim loses", async () => {
     const { DB } = leaseDb([id]);
     const env = { DB } as unknown as Env;
-    const a = await claimFilmAdvance(env, id, 1000);
+    const a = await claimFilmAdvance(orch(env), id, 1000);
     expect(a.won).toBe(true);
     expect(a.lease).toBe(1000 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000);
     expect(typeof a.token).toBe("string"); // #29: a unique per-claim leaseholder identity
-    const b = await claimFilmAdvance(env, id, 1001);
+    const b = await claimFilmAdvance(orch(env), id, 1001);
     expect(b.won).toBe(false);
     expect(b.lease).toBeUndefined();
     expect(b.token).toBeUndefined();
@@ -85,12 +86,12 @@ describe("claimFilmAdvance / releaseFilmAdvance (win / lose / reset)", () => {
   it("release (by token) makes the lease re-grantable; a stale token releases nothing", async () => {
     const { DB, rows } = leaseDb([id]);
     const env = { DB } as unknown as Env;
-    const a = await claimFilmAdvance(env, id, 1000);
-    await releaseFilmAdvance(env, id, "not-my-token"); // stale token: no-op
+    const a = await claimFilmAdvance(orch(env), id, 1000);
+    await releaseFilmAdvance(orch(env), id, "not-my-token"); // stale token: no-op
     expect(rows.get(id)?.advance_lease).toBe(a.lease);
-    await releaseFilmAdvance(env, id, a.token as string);
+    await releaseFilmAdvance(orch(env), id, a.token as string);
     expect(rows.get(id)?.advance_lease).toBeNull();
-    const b = await claimFilmAdvance(env, id, 2000);
+    const b = await claimFilmAdvance(orch(env), id, 2000);
     expect(b.won).toBe(true); // genuine retry after a released tick is never deadlocked
   });
 
@@ -125,7 +126,7 @@ describe("claimFilmAdvance / releaseFilmAdvance (win / lose / reset)", () => {
       },
     };
     const env = { DB } as unknown as Env;
-    const a = await claimFilmAdvance(env, id, 1000);
+    const a = await claimFilmAdvance(orch(env), id, 1000);
     expect(claimRuns).toBe(2);
     expect(a.won).toBe(true);
     expect(a.token).toBe(rows.get(id)?.advance_lease_token);
@@ -135,18 +136,18 @@ describe("claimFilmAdvance / releaseFilmAdvance (win / lose / reset)", () => {
     const { DB } = leaseDb([id]);
     const env = { DB } as unknown as Env;
     const t0 = 1000;
-    const a = await claimFilmAdvance(env, id, t0);
+    const a = await claimFilmAdvance(orch(env), id, t0);
     expect(a.won).toBe(true);
-    const before = await claimFilmAdvance(env, id, t0 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000 - 1);
+    const before = await claimFilmAdvance(orch(env), id, t0 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000 - 1);
     expect(before.won).toBe(false);
-    const after = await claimFilmAdvance(env, id, t0 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000 + 1);
+    const after = await claimFilmAdvance(orch(env), id, t0 + FILM_ADVANCE_LEASE_TTL_SECONDS * 1000 + 1);
     expect(after.won).toBe(true);
   });
 
   it("no renders row at all: wins UNGUARDED (no token) -- a legacy/untracked film must not deadlock", async () => {
     const { DB } = leaseDb([]);
     const env = { DB } as unknown as Env;
-    const a = await claimFilmAdvance(env, "film-no-row", 1000);
+    const a = await claimFilmAdvance(orch(env), "film-no-row", 1000);
     expect(a.won).toBe(true);
     expect(a.lease).toBeUndefined();
     expect(a.token).toBeUndefined();
@@ -200,7 +201,7 @@ describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission
 
   it("two CONCURRENT advances submit the lip-sync job exactly once; the loser still reports the job", async () => {
     const { env, calls, rows, read } = raceEnv(finishFilm());
-    const [a, b] = await Promise.all([advanceFilmJob(env, filmId), advanceFilmJob(env, filmId)]);
+    const [a, b] = await Promise.all([advanceFilmJob(orch(env), filmId), advanceFilmJob(orch(env), filmId)]);
     expect(calls.invoke).toBe(1);
     expect(a).not.toBeNull();
     expect(b).not.toBeNull();
@@ -210,8 +211,8 @@ describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission
 
   it("the released lease lets the NEXT tick advance (poll the parked job) -- no deadlock after a win", async () => {
     const { env, calls } = raceEnv(finishFilm());
-    await Promise.all([advanceFilmJob(env, filmId), advanceFilmJob(env, filmId)]);
-    await advanceFilmJob(env, filmId);
+    await Promise.all([advanceFilmJob(orch(env), filmId), advanceFilmJob(orch(env), filmId)]);
+    await advanceFilmJob(orch(env), filmId);
     expect(calls.invoke).toBe(1);
     expect(calls.poll).toBe(1);
   });
@@ -219,11 +220,11 @@ describe("advanceFilmJob under the lease: two concurrent drivers, ONE submission
   it("the LOSER writes nothing (its stale doc state can never clobber the winner's)", async () => {
     const { env, putCount } = raceEnv(finishFilm());
     const before = putCount();
-    const results = await Promise.all([advanceFilmJob(env, filmId), advanceFilmJob(env, filmId)]);
+    const results = await Promise.all([advanceFilmJob(orch(env), filmId), advanceFilmJob(orch(env), filmId)]);
     expect(results.every((r) => r !== null)).toBe(true);
     const winnerWrites = putCount() - before;
     const { env: soloEnv, putCount: soloPuts } = raceEnv(finishFilm());
-    await advanceFilmJob(soloEnv, filmId);
+    await advanceFilmJob(orch(soloEnv), filmId);
     expect(winnerWrites).toBe(soloPuts());
   });
 });

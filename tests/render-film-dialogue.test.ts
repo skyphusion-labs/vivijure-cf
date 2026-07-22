@@ -234,6 +234,7 @@ describe("#738 hStartFilm rejects a bound-but-untrained cast_loras (symmetry wit
     // Before #738 hStartFilm ignored that and shipped a generic film; now it must 400 like hSubmitRender.
     vi.mocked(resolveCastLoras).mockResolvedValueOnce({
       pretrained: {},
+      wanPretrained: {},
       voices: {},
       castIds: { A: 4 },
       skipped: ["A"],
@@ -269,6 +270,7 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
     h.captured = null;
     vi.mocked(resolveCastLoras).mockResolvedValueOnce({
       pretrained: { A: "loras/wren.safetensors", B: "loras/salvage-robot.safetensors" },
+      wanPretrained: {},
       voices: {},
       castIds: { A: 4, B: 7 },
       skipped: [],

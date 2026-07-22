@@ -1,3 +1,4 @@
+import { orch } from "./orchestrator-env";
 // #767 regression: cross-render clip-adoption contamination (same project namespace).
 //
 // Three films off the SAME bundle derive the SAME project namespace + SAME shot_ids. A second render that
@@ -80,7 +81,7 @@ describe("#767 clip-adoption provenance: a different-backend render never adopts
     await stampFor(env, seed, "renders/proj/clips/shot_01_seedance.mp4", "seedance", { steps: 30 });
 
     const cj = pendingJob("kling", { steps: 40 }); // switched backend + config
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
 
     expect(adopted).toBe(0);
     expect(cj.shots[0].status).toBe("pending"); // must re-render its own clip, never adopt seedance's
@@ -94,7 +95,7 @@ describe("#767 clip-adoption provenance: a different-backend render never adopts
     await stampFor(env, seed, "renders/proj/clips/shot_01_kling.mp4", "kling", { steps: 40 });
 
     const cj = pendingJob("kling", { steps: 40 });
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
 
     expect(adopted).toBe(1);
     expect(cj.shots[0].status).toBe("done");
@@ -107,7 +108,7 @@ describe("#767 clip-adoption provenance: a different-backend render never adopts
     await stampFor(env, seed, "renders/proj/clips/shot_01_kling.mp4", "kling", { steps: 40 });
 
     const cj = pendingJob("kling", { steps: 40 }); // same backend + config as the stamped clip
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
 
     expect(adopted).toBe(1);
     expect(cj.shots[0].clip_key).toBe("renders/proj/clips/shot_01_kling.mp4");
@@ -120,7 +121,7 @@ describe("#767 clip-adoption provenance: a different-backend render never adopts
     seed("renders/proj/clips/shot_01_kling.mp4", { uploaded: NOW + 1_000, etag: "et-own" });
 
     const cj = pendingJob("kling", { steps: 40 });
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
 
     expect(adopted).toBe(1);
     expect(cj.shots[0].clip_key).toBe("renders/proj/clips/shot_01_kling.mp4");
@@ -135,7 +136,7 @@ describe("#767 clip-adoption provenance: a different-backend render never adopts
     seed("renders/proj/clips/shot_01_kling.mp4", { uploaded: NOW + 1_000, etag: "et-b" });
 
     const cj = pendingJob("kling", { steps: 40 });
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
 
     expect(adopted).toBe(0);
     expect(cj.shots[0].status).toBe("pending"); // cannot prove which is ours -> re-render, never guess

@@ -78,11 +78,11 @@ describe("#739 startScatterRender: castLoras is OPTIONAL (empty/absent allowed)"
   it("does NOT reject with the old 'castLoras required for scatter' -- it proceeds past the cast guard", async () => {
     // Empty cast: on main this throws 'castLoras required for scatter' at the guard; on the fix it passes
     // the guard and reaches readBundleScenes (the stubbed BUNDLE_STUB_REACHED throw).
-    await expect(startScatterRender(env(), { ...ORCH_ARGS, cast_loras: {} }))
+    await expect(startScatterRender(orch(env()), { ...ORCH_ARGS, cast_loras: {} }))
       .rejects.toThrow("BUNDLE_STUB_REACHED");
   });
   it("a PRESENT-but-untrained binding still throws the untrained-cast message (the split)", async () => {
-    await expect(startScatterRender(env(), { ...ORCH_ARGS, cast_loras: { A: "untrained" } }))
+    await expect(startScatterRender(orch(env()), { ...ORCH_ARGS, cast_loras: { A: "untrained" } }))
       .rejects.toThrow(/no trained LoRA/);
   });
 });

@@ -7,6 +7,7 @@ import {
 import { validateDoneClips } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // --- Minimal synthetic-mp4 builder (big-endian ISO-BMFF boxes). Only the fields the structural gate
 // reads are populated; everything else is zero-filled to the right length. This is the "valid clip
@@ -144,12 +145,12 @@ describe("judgeClip (pure verdict matrix)", () => {
 
 describe("validateClipArtifact (bounded R2 reads -> verdict)", () => {
   it("passes a valid faststart mp4", async () => {
-    const r = await validateClipArtifact(fakeR2(buildMp4({ faststart: true })), "renders/p/clips/shot_01_i2v.mp4", 4);
+    const r = await validateClipArtifact(orch(fakeR2(buildMp4({ faststart: true }))), "renders/p/clips/shot_01_i2v.mp4", 4);
     expect(r.verdict).toBe("pass");
     expect(r.checks).toMatchObject({ container: true, video_track: true, frames: 48, width: 512, height: 512 });
   });
   it("passes a valid mp4 whose moov is AFTER mdat (seek path)", async () => {
-    const r = await validateClipArtifact(fakeR2(buildMp4({ faststart: false })), "k", 4);
+    const r = await validateClipArtifact(orch(fakeR2(buildMp4({ faststart: false }))), "k", 4);
     expect(r.verdict).toBe("pass");
     expect(r.checks.duration_s).toBeCloseTo(3.0, 5);
   });
@@ -157,31 +158,31 @@ describe("validateClipArtifact (bounded R2 reads -> verdict)", () => {
     // The local-16gb#35 corruption is valid mp4 structure with garbage pixels. Byte content is opaque to
     // the in-Worker gate by design; this test pins the documented boundary so nobody assumes it is caught.
     const noise = buildMp4({ mdatBytes: 411000 }); // same shape as the #35 411KB noise clip, valid header
-    const r = await validateClipArtifact(fakeR2(noise), "k", 3);
+    const r = await validateClipArtifact(orch(fakeR2(noise)), "k", 3);
     expect(r.verdict).toBe("pass");
   });
   it("fails a truncated/tiny body under the byte floor", async () => {
-    const r = await validateClipArtifact(fakeR2(new Uint8Array(ftyp())), "k", 4);
+    const r = await validateClipArtifact(orch(fakeR2(new Uint8Array(ftyp()))), "k", 4);
     expect(r.verdict).toBe("fail");
     expect(r.reason).toContain("bytes");
   });
   it("fails a non-mp4 body (no ftyp)", async () => {
     const junk = new Uint8Array(3000).fill(0x41); // 'AAAA...' -- not a box tree
-    const r = await validateClipArtifact(fakeR2(junk), "k", 4);
+    const r = await validateClipArtifact(orch(fakeR2(junk)), "k", 4);
     expect(r.verdict).toBe("fail");
     expect(r.checks.container).toBe(false);
   });
   it("fails a zero-frame clip", async () => {
-    const r = await validateClipArtifact(fakeR2(buildMp4({ frames: 0 })), "k", 4);
+    const r = await validateClipArtifact(orch(fakeR2(buildMp4({ frames: 0 }))), "k", 4);
     expect(r.verdict).toBe("fail");
     expect(r.reason).toContain("zero frames");
   });
   it("fails a zero-duration clip", async () => {
-    const r = await validateClipArtifact(fakeR2(buildMp4({ duration: 0 })), "k", 4);
+    const r = await validateClipArtifact(orch(fakeR2(buildMp4({ duration: 0 }))), "k", 4);
     expect(r.verdict).toBe("fail");
   });
   it("SKIPS (never fails) when the artifact is unreadable -- an I/O blip must not reject a real render", async () => {
-    const r = await validateClipArtifact(fakeR2(null), "k", 4);
+    const r = await validateClipArtifact(orch(fakeR2(null)), "k", 4);
     expect(r.verdict).toBe("skip");
   });
 });
@@ -196,7 +197,7 @@ describe("validateDoneClips (the clip-job seam)", () => {
   it("flips a structurally-corrupt done clip to FAILED with a real reason (honest failure) + clears poll", async () => {
     const job = jobWith("renders/p/clips/shot_01_i2v.mp4");
     job.shots[0].poll = "tok";
-    const changed = await validateDoneClips(fakeR2(buildMp4({ frames: 0 })), job);
+    const changed = await validateDoneClips(orch(fakeR2(buildMp4({ frames: 0 }))), job);
     expect(changed).toBe(true);
     expect(job.shots[0].status).toBe("failed");
     expect(job.shots[0].validated).toBe("fail");
@@ -205,7 +206,7 @@ describe("validateDoneClips (the clip-job seam)", () => {
   });
   it("passes a valid clip: stays done, validated=pass, no change", async () => {
     const job = jobWith("k");
-    const changed = await validateDoneClips(fakeR2(buildMp4()), job);
+    const changed = await validateDoneClips(orch(fakeR2(buildMp4())), job);
     expect(changed).toBe(false);
     expect(job.shots[0].status).toBe("done");
     expect(job.shots[0].validated).toBe("pass");
@@ -214,8 +215,8 @@ describe("validateDoneClips (the clip-job seam)", () => {
     const job = jobWith("k");
     const env = fakeR2(buildMp4());
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await validateDoneClips(env, job);
-    await validateDoneClips(env, job); // validated already set -> skipped
+    await validateDoneClips(orch(env), job);
+    await validateDoneClips(orch(env), job); // validated already set -> skipped
     const emits = spy.mock.calls.filter((c) => String(c[0]).includes("clip.validate")).length;
     spy.mockRestore();
     expect(emits).toBe(1);
@@ -223,7 +224,7 @@ describe("validateDoneClips (the clip-job seam)", () => {
   it("emits a clip.validate structured event (smoke tests assert on the event, not prose)", async () => {
     const job = jobWith("k");
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await validateDoneClips(fakeR2(buildMp4()), job);
+    await validateDoneClips(orch(fakeR2(buildMp4())), job);
     const line = spy.mock.calls.map((c) => String(c[0])).find((l) => l.includes("clip.validate"));
     spy.mockRestore();
     expect(line).toBeDefined();
@@ -233,7 +234,7 @@ describe("validateDoneClips (the clip-job seam)", () => {
   });
   it("leaves a shot untouched on skip (unreadable artifact)", async () => {
     const job = jobWith("k");
-    const changed = await validateDoneClips(fakeR2(null), job);
+    const changed = await validateDoneClips(orch(fakeR2(null)), job);
     expect(changed).toBe(false);
     expect(job.shots[0].status).toBe("done");
     expect(job.shots[0].validated).toBe("skip");

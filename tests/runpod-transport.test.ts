@@ -6,6 +6,7 @@ import {
   type RunpodTransportOpts,
 } from "@skyphusion-labs/vivijure-core/runpod-submit";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // Issue #13: the shared RunPod transport (retry + timeout). These tests drive a
 // MOCK fetch + a no-op sleep so the retry/backoff logic runs with zero network
@@ -53,7 +54,7 @@ const spec = { method: "POST" as const, url: "https://api.runpod.ai/v2/ep/run", 
 describe("runpodRequest retry/timeout transport", () => {
   it("succeeds on the first try with no retry", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse(okEnvelope)]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.view.jobId).toBe("job-1");
     expect(calls.length).toBe(1);
@@ -64,7 +65,7 @@ describe("runpodRequest retry/timeout transport", () => {
       () => jsonResponse({ error: "upstream" }, 503),
       () => jsonResponse(okEnvelope),
     ]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(true);
     expect(calls.length).toBe(2);
   });
@@ -74,7 +75,7 @@ describe("runpodRequest retry/timeout transport", () => {
       () => jsonResponse({ error: "rate limited" }, 429),
       () => jsonResponse(okEnvelope),
     ]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(true);
     expect(calls.length).toBe(2);
   });
@@ -84,14 +85,14 @@ describe("runpodRequest retry/timeout transport", () => {
       () => { throw new Error("ECONNRESET"); },
       () => jsonResponse(okEnvelope),
     ]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(true);
     expect(calls.length).toBe(2);
   });
 
   it("gives up after maxAttempts on a persistent 5xx, surfacing the status", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse({ error: "server exploded" }, 500)]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(3); // default RUNPOD_MAX_ATTEMPTS
     if (!r.ok) {
@@ -102,7 +103,7 @@ describe("runpodRequest retry/timeout transport", () => {
 
   it("gives up after maxAttempts on a persistent network error", async () => {
     const { fn, calls } = mockFetch([() => { throw new Error("ETIMEDOUT"); }]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(3);
     if (!r.ok) {
@@ -114,14 +115,14 @@ describe("runpodRequest retry/timeout transport", () => {
 
   it("honors a custom maxAttempts", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse({ error: "nope" }, 502)]);
-    const r = await runpodRequest(env, spec, fastOpts(fn, { maxAttempts: 2 }));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn, { maxAttempts: 2 }));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(2);
   });
 
   it("does NOT retry a terminal 4xx", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse({ error: "bad request" }, 400)]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(1); // one shot, no retry
     if (!r.ok) {
@@ -132,21 +133,21 @@ describe("runpodRequest retry/timeout transport", () => {
 
   it("does NOT retry a 401 auth failure", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse({ error: "unauthorized" }, 401)]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(1);
   });
 
   it("passes an AbortSignal (the per-attempt timeout) on every fetch", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse(okEnvelope)]);
-    await runpodRequest(env, spec, fastOpts(fn));
+    await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("returns a config error without fetching when secrets are unset", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse(okEnvelope)]);
     const bad = { RUNPOD_API_KEY: "", RUNPOD_ENDPOINT_ID: "" } as unknown as Env;
-    const r = await runpodRequest(bad, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(bad), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(0);
     if (!r.ok) expect(r.error).toContain("RUNPOD_API_KEY");
@@ -156,7 +157,7 @@ describe("runpodRequest retry/timeout transport", () => {
     const { fn, calls } = mockFetch([
       () => new Response("<html>nope</html>", { status: 200 }),
     ]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     expect(calls.length).toBe(1);
     if (!r.ok) expect(r.error).toContain("non-JSON");
@@ -164,7 +165,7 @@ describe("runpodRequest retry/timeout transport", () => {
 
   it("rejects an unrecognized envelope shape", async () => {
     const { fn } = mockFetch([() => jsonResponse({ not: "a job" })]);
-    const r = await runpodRequest(env, spec, fastOpts(fn));
+    const r = await runpodRequest(orch(env), spec, fastOpts(fn));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("unrecognized envelope");
   });
@@ -173,7 +174,7 @@ describe("runpodRequest retry/timeout transport", () => {
 describe("public submitters wire through the shared transport", () => {
   it("submitRenderJob posts to /run with the built payload and 'submit' label", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse({ error: "boom" }, 500)]);
-    const r = await submitRenderJob(env, { bundleKey: "bundles/myfilm.tar.gz" }, fastOpts(fn));
+    const r = await submitRenderJob(orch(env), { bundleKey: "bundles/myfilm.tar.gz" }, fastOpts(fn));
     expect(calls[0].url).toBe("https://api.runpod.ai/v2/ep/run");
     expect(calls[0].init?.method).toBe("POST");
     const body = JSON.parse(String(calls[0].init?.body));
@@ -184,7 +185,7 @@ describe("public submitters wire through the shared transport", () => {
 
   it("pollRenderJob does a GET to /status with no body or content-type", async () => {
     const { fn, calls } = mockFetch([() => jsonResponse({ id: "j", status: "COMPLETED" })]);
-    const r = await pollRenderJob(env, "job-1", fastOpts(fn));
+    const r = await pollRenderJob(orch(env), "job-1", fastOpts(fn));
     expect(calls[0].url).toBe("https://api.runpod.ai/v2/ep/status/job-1");
     expect(calls[0].init?.method).toBe("GET");
     expect(calls[0].init?.body).toBeUndefined();
