@@ -7,6 +7,13 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.7.8 -- 2026-07-22
+
+PATCH: re-list `alibaba-wan-lora` in IaC after 2x2 Wan LoRA sign-off (cf#29 follow-up), and bump
+`sharp` to 0.35.3 (GHSA-f88m-g3jw-g9cj / cf#178 Dependabot residue). Uncomments
+`MODULE_ALIBABA_WAN_LORA` in `wrangler.toml.example` and clears the CI deploy `EXCLUDE` so the next
+tag deploy keeps the live binding. Local panel already carries the module via compose profile.
+
 ## v1.7.7 -- 2026-07-22
 
 MINOR: pre-submit RunPod idle workersMax reconcile (cf#61). Bumps `@skyphusion-labs/vivijure-core`
