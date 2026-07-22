@@ -9,6 +9,10 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+- **feat(ui):** Stages + planner render panels sort hooks by `catalog[].order` from core 1.2.6
+  (core#54); drop hardcoded HOOK_ORDER / PANEL_ORDER.
+- **chore:** bump `@skyphusion-labs/vivijure-core` to `^1.2.6` (cf#110 film phase `from` + core#54).
+- **docs(release):** top-level PIN digest is studio-only; module bundles stay self-anchored (cf#147).
 - **ci:** `tsc -p tsconfig.tests.json` in `npm run typecheck` so tests/ cannot silently drift (cf#107).
 - **ci:** CodeQL now extracts `public/` (studio front-door JS); dropped from `paths-ignore` (cf#128).
   Triage the next scheduled/PR CodeQL run before widening further (`modules/`, `scripts/`).
@@ -237,7 +241,7 @@ without reaching back into this one.
   `tsconfig` never typechecked `tests/` and vitest transpiles without checking. Type-level only; no
   behaviour change.
 
-## v1.2.5 -- 2026-07-18
+## v1.2.6 -- 2026-07-18
 
 **The tenant studio gets the env its own code requires (#116).** PATCH: the fifth and last defect of
 the "a value known at provision time never reaches one of its consumers" family.

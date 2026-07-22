@@ -21,21 +21,19 @@
     "notify",
   ]);
 
-  // Display order for the panel only (pipeline order: keyframe -> motion -> dialogue -> speech ->
-  // finish, then the film-level audio master and the post-mux film.finish cards). This is a
-  // presentation preference; the SET of hooks and their cardinality come from the catalog, and any
-  // catalog hook not named here still renders (appended in catalog order) so nothing silently drops.
-  const PANEL_ORDER = ["keyframe", "motion.backend", "speech", "finish", "master", "film.finish"];
+  // Hook SET and cardinality come from the catalog; display order from catalog[].order (core#54).
+  // PANEL_SKIP_HOOKS still hides planner-irrelevant hooks from this panel.
 
   function panelHooks(catalog) {
-    const rank = (name) => {
-      const i = PANEL_ORDER.indexOf(name);
-      return i === -1 ? PANEL_ORDER.length : i;
-    };
     return (Array.isArray(catalog) ? catalog : [])
       .filter((h) => h && h.name && !PANEL_SKIP_HOOKS.has(h.name))
-      .map((h, i) => ({ hook: h.name, pickOne: h.cardinality === "pick_one", _i: i }))
-      .sort((a, b) => rank(a.hook) - rank(b.hook) || a._i - b._i)
+      .map((h, i) => ({
+        hook: h.name,
+        pickOne: h.cardinality === "pick_one",
+        order: typeof h.order === "number" ? h.order : 1e9,
+        _i: i,
+      }))
+      .sort((a, b) => a.order - b.order || a._i - b._i)
       .map(({ hook, pickOne }) => ({ hook, pickOne }));
   }
 

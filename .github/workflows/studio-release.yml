@@ -193,9 +193,9 @@ jobs:
       - run: tar -czf studio-release-${{ github.event.inputs.tag || github.ref_name }}.tar.gz -C dist-release .
 
       # PUBLIC source of truth. Immutability is enforced by the pin ({tag, manifest_sha256}), not
-      # trusted: the manifest carries worker.sha256 + every asset hash, so pinning its digest
-      # transitively pins every byte, and a mutated tag fails loud at provision instead of silently
-      # giving two tenants different code while both report the same release.
+      # trusted: that digest covers the STUDIO artifact only (worker + assets + migrations +
+      # required_vars). Module bundles are self-anchored beside the studio tree (cf#147) and may
+      # track a different release pin (cf#103). A mutated studio tag fails loud at provision.
       - name: Publish to the GitHub release (public source of truth)
         env:
           GH_TOKEN: ${{ github.token }}

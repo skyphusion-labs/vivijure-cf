@@ -22,7 +22,9 @@ function makeEnv(opts: {
   const inWindow = opts.inWindow ?? [];
   const stranded = opts.stranded ?? [];
   const docs = new Set(opts.docsInR2 ?? []);
-  const advanced: string[] = []; // film ids whose doc advanceFilmJob actually read
+  // Count putFilm persists, not R2 gets: core 1.2.5+ putFilm re-gets the doc for
+  // phase-from recovery on a cold isolate (cf#110), so get-count ≠ drive-count.
+  const advanced: string[] = [];
 
   // The two list queries are distinguished by their SQL text; updateRenderFromView's
   // own queries (first/run) are harmless no-ops here.
@@ -44,11 +46,13 @@ function makeEnv(opts: {
       get: async (key: string) => {
         const id = filmIdFromDocKey(key);
         if (!docs.has(id)) return null;
-        advanced.push(id);
         // phase "done" -> advanceFilmJob returns immediately, no external calls.
         return { text: async () => JSON.stringify({ film_id: id, project: "p", scenes: [], phase: "done" }) };
       },
-      put: async () => {},
+      put: async (key: string) => {
+        const id = filmIdFromDocKey(key);
+        if (docs.has(id)) advanced.push(id);
+      },
     },
   } as unknown as Env;
   return { env, advanced };
@@ -83,8 +87,9 @@ describe("sweepUnresolvedJobs (stranded post-clips self-heal)", () => {
       stranded: [{ job_id: id }],
       docsInR2: [id],
     });
-    await sweepUnresolvedJobs(orch(env));
-    expect(advanced.filter((x) => x === id)).toHaveLength(1); // pass-1 wins; pass-2 de-dups
+    const n = await sweepUnresolvedJobs(orch(env));
+    expect(n).toBe(1); // pass-1 wins; pass-2 de-dups
+    expect(advanced.filter((x) => x === id)).toHaveLength(1);
   });
 
   it("verifies the doc key the sweep checks matches filmJobDocKey", () => {

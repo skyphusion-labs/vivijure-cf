@@ -12,17 +12,8 @@ const el = (tag, cls, text) => {
   return n;
 };
 
-// Logical render order (independent of HOOK_NAMES in the contract). Hooks without an installed
-// module render as empty stages; any catalog hook not listed here is appended at the end.
-const HOOK_ORDER = [
-  "plan.enhance",
-  "cast.image",
-  "keyframe",
-  "motion.backend",
-  "finish",
-  "score",
-  "notify",
-];
+// Pipeline stage order comes from catalog[].order (core HookCatalogEntry / HOOK_DISPLAY_ORDER).
+// Panels must not hardcode hook name lists (core#54).
 
 const CARDINALITY_LABEL = { pick_one: "single module", chain: "chain" };
 
@@ -181,8 +172,10 @@ function renderPipeline(catalog, serving, modules) {
   root.replaceChildren();
   const byHook = Object.fromEntries(catalog.map((h) => [h.name, h]));
   const byName = Object.fromEntries(modules.map((m) => [m.name, m]));
-  const order = [...HOOK_ORDER.filter((n) => byHook[n]),
-    ...catalog.map((h) => h.name).filter((n) => !HOOK_ORDER.includes(n))];
+  // Prefer catalog.order (core >= 1.2.5); fall back to catalog array order on older pins.
+  const order = [...catalog]
+    .sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || String(a.name).localeCompare(String(b.name)))
+    .map((h) => h.name);
   order.forEach((name, i) => {
     root.append(stageCard(byHook[name], i + 1, serving[name] || [], byName));
   });
