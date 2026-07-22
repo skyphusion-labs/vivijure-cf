@@ -30,3 +30,7 @@ secret_name = "RUNPOD_API_KEY"
 binding = "RUNPOD_ENDPOINT_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "BACKEND_RUNPOD_ENDPOINT_ID"
+
+[vars]
+# cf#61: expected workersMax for pre-submit idle reconcile (prod backend: 4).
+RUNPOD_WORKERS_MAX = "4"

@@ -22,12 +22,14 @@ import {
   type KeyframeOutput,
 } from "./contract";
 import { buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./keyframe";
+import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
   // The vivijure-backend RunPod endpoint id. A SECRET (not hardcoded) so the public repo never
   // exposes the specific endpoint -- same rule as push-secrets.sh (#38).
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
+  RUNPOD_WORKERS_MAX?: string;
 }
 
 const endpoint = (endpointId: string) => "https://api.runpod.ai/v2/" + endpointId;
@@ -139,6 +141,18 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   const credProblem = credentialProblem(apiKey, endpointId);
   if (credProblem) {
     return { ok: false, error: "keyframe: " + credProblem };
+  }
+  const workersMax = Number(env.RUNPOD_WORKERS_MAX);
+  if (Number.isFinite(workersMax) && workersMax > 0) {
+    const rec = await reconcileRunpodEndpointWorkersMax({
+      apiKey,
+      endpointId,
+      spec: { workersMax: Math.floor(workersMax) },
+    });
+    if (!rec.ok) {
+      const msg = rec.guidance ? `${rec.error}. ${rec.guidance}` : rec.error;
+      return { ok: false, error: "keyframe: " + msg };
+    }
   }
   try {
     const r = await fetch(endpoint(endpointId) + "/run", {

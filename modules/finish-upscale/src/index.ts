@@ -27,10 +27,12 @@ import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
 } from "./finish";
+import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
+  RUNPOD_WORKERS_MAX?: string;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -155,6 +157,19 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   if (!apiKey || !endpointId) {
     // Degrade, but say WHICH: absent-key-with-endpoint is propagation, not misconfiguration (cf#114).
     return passthrough(input, credentialDegradeReason(apiKey, endpointId) ?? "no-runpod-secrets");
+  }
+
+  const workersMax = Number(env.RUNPOD_WORKERS_MAX);
+  if (Number.isFinite(workersMax) && workersMax > 0) {
+    const rec = await reconcileRunpodEndpointWorkersMax({
+      apiKey,
+      endpointId,
+      spec: { workersMax: Math.floor(workersMax) },
+    });
+    if (!rec.ok) {
+      const msg = rec.guidance ? `${rec.error}. ${rec.guidance}` : rec.error;
+      return { ok: false, error: "finish-upscale: " + msg };
+    }
   }
 
   const cfg = coerceConfig(req.config);
