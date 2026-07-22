@@ -32,13 +32,28 @@ const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown
 const url = (path: string) => `https://studio.example${path}`;
 
 describe("F4: /api/artifact serve scoping", () => {
-  it("serves a real artifact under a known prefix, with nosniff", async () => {
+  it("serves a real artifact under a known prefix, with nosniff + attachment", async () => {
     const { env, r2 } = makeEnv();
     r2.set("renders/abc.png", { bytes: new Uint8Array([1, 2, 3]), mime: "image/png" });
     const res = await worker.fetch(new Request(url("/api/artifact/renders/abc.png")), env, ctx);
     expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("content-disposition")).toMatch(/attachment/);
+    expect(res.headers.get("content-disposition")).toContain("abc.png");
+  });
+
+  it("forces a safe content-type for a legacy text/html object (never serves HTML)", async () => {
+    const { env, r2 } = makeEnv();
+    r2.set("cast/1/portrait.html", {
+      bytes: new TextEncoder().encode("<script>alert(1)</script>"),
+      mime: "text/html",
+    });
+    const res = await worker.fetch(new Request(url("/api/artifact/cast/1/portrait.html")), env, ctx);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-disposition")).toMatch(/attachment/);
   });
 
   it("404s a key outside the known artifact prefixes (no arbitrary-object serve)", async () => {
