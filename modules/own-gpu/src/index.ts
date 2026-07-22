@@ -23,10 +23,13 @@ import {
   type MotionBackendOutput,
 } from "./contract";
 import { buildI2vBody, readOutput, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./i2v";
+import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
+  /** Expected workersMax for idle reconcile (cf#61). Plain-text module var. */
+  RUNPOD_WORKERS_MAX?: string;
 }
 
 // Exported so the core's tier-drift guard (tests/quality-tier-drift.test.ts, issue #124) can assert
@@ -122,6 +125,18 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
   const { apiKey, endpointId } = await runpodCreds(env);
   const credProblem = credentialProblem(apiKey, endpointId);
   if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
+  const workersMax = Number(env.RUNPOD_WORKERS_MAX);
+  if (Number.isFinite(workersMax) && workersMax > 0) {
+    const rec = await reconcileRunpodEndpointWorkersMax({
+      apiKey,
+      endpointId,
+      spec: { workersMax: Math.floor(workersMax) },
+    });
+    if (!rec.ok) {
+      const msg = rec.guidance ? `${rec.error}. ${rec.guidance}` : rec.error;
+      return { ok: false, error: "own-gpu: " + msg };
+    }
+  }
   try {
     const r = await fetch(endpoint(endpointId) + "/run", {
       method: "POST",

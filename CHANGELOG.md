@@ -7,6 +7,14 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.7.7 -- 2026-07-22
+
+MINOR: pre-submit RunPod idle workersMax reconcile (cf#61). Bumps `@skyphusion-labs/vivijure-core`
+to `^1.2.4`. All RunPod module workers (`own-gpu`, `keyframe`, finish satellites, `speech-upscale`)
+reconcile `workersMax` via REST PATCH before `/run` when `RUNPOD_WORKERS_MAX` is set; operator batch
+script `scripts/reconcile-runpod-endpoints.ts` for management keys. Scoped invoke keys get honest
+idle-scale-down guidance instead of cryptic cold-start failures.
+
 ## v1.7.6 -- 2026-07-21
 
 PATCH: bump `@skyphusion-labs/vivijure-core` to `^1.2.3` (#53 advanceFilmJob wedge fix, local#99
