@@ -2,10 +2,10 @@ name: vivijure-cf
 paths:
   - src
   - tests
+  - public
 paths-ignore:
   - containers
   - modules
-  - public
   - migrations
   - deploy
   - docs
