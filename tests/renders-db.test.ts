@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { updateRenderFromView, getRenderByIdForUser } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
 import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-submit";
+import { orch } from "./orchestrator-env";
 
 // Issue #15: on a terminal poll, the best-effort per-render log write must run via
 // ctx.waitUntil (off the poll hot path) when an ExecutionContext is supplied, and
@@ -42,21 +43,21 @@ describe("updateRenderFromView log write (issue #15: waitUntil off the hot path)
     // poll hot path.
     const { env, putCalls } = makeEnv({ hangPut: true });
     const { ctx, scheduled } = makeCtx();
-    await updateRenderFromView(env, terminalView, ctx);
+    await updateRenderFromView(orch(env), terminalView, ctx);
     expect(scheduled.length).toBe(1);   // the log task went to waitUntil
     expect(putCalls).toEqual(["renders/logs/job-1.txt"]); // and it did start (in the background)
   });
 
   it("awaits the log write inline when no ctx is supplied (no waitUntil)", async () => {
     const { env, putCalls } = makeEnv();
-    await updateRenderFromView(env, terminalView);
+    await updateRenderFromView(orch(env), terminalView);
     expect(putCalls).toEqual(["renders/logs/job-1.txt"]); // completed before return
   });
 
   it("writes no log for a non-terminal status", async () => {
     const { env, putCalls } = makeEnv();
     const { ctx, scheduled } = makeCtx();
-    await updateRenderFromView(env, { jobId: "job-2", status: "IN_PROGRESS", statusRaw: "IN_PROGRESS" }, ctx);
+    await updateRenderFromView(orch(env), { jobId: "job-2", status: "IN_PROGRESS", statusRaw: "IN_PROGRESS" }, ctx);
     expect(scheduled.length).toBe(0);
     expect(putCalls.length).toBe(0);
   });
@@ -66,7 +67,7 @@ describe("updateRenderFromView log write (issue #15: waitUntil off the hot path)
     // single-tenant behind CF Access), so the write runs on terminal status alone.
     const { env, putCalls } = makeEnv();
     const { ctx, scheduled } = makeCtx();
-    await updateRenderFromView(env, terminalView, ctx);
+    await updateRenderFromView(orch(env), terminalView, ctx);
     await Promise.all(scheduled);
     expect(putCalls).toEqual(["renders/logs/job-1.txt"]);
   });
@@ -101,7 +102,7 @@ describe("normalizeRow SQL-NULL coercion (#411)", () => {
       submitted_at: 1000,
       updated_at: 1000,
     });
-    const r = await getRenderByIdForUser(env, 7);
+    const r = await getRenderByIdForUser(orch(env), 7);
     expect(r).not.toBeNull();
     expect(r!.project).toBe("");
     expect(r!.bundle_key).toBe("");
@@ -125,7 +126,7 @@ describe("normalizeRow SQL-NULL coercion (#411)", () => {
       submitted_at: 2000,
       updated_at: 2000,
     });
-    const r = await getRenderByIdForUser(env, 8);
+    const r = await getRenderByIdForUser(orch(env), 8);
     expect(r!.project).toBe("my-film");
     expect(r!.bundle_key).toBe("bundles/my-film/abc.tar");
     expect(r!.quality_tier).toBe("full");

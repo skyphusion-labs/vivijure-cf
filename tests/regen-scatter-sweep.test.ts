@@ -3,11 +3,12 @@ import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { filmPhaseToShardStatus } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { scatterJobToPollView } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
 import { scatterShards } from "@skyphusion-labs/vivijure-core/scatter";
+import { orch } from "./orchestrator-env";
 
 describe("resolveCastLoras", () => {
   it("returns empty when castLoras is missing", async () => {
     const env = {} as import("../src/env").Env;
-    const r = await resolveCastLoras(env, undefined);
+    const r = await resolveCastLoras(orch(env), undefined);
     expect(r.pretrained).toEqual({});
     expect(r.skipped).toEqual([]);
   });

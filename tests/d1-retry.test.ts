@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { orch } from "./orchestrator-env";
 
 import { isTransientD1Error, withD1Retry } from "@skyphusion-labs/vivijure-core/d1-retry";
 import { updateRenderFromView } from "@skyphusion-labs/vivijure-core/renders-db";
@@ -92,7 +93,7 @@ describe("updateRenderFromView under transient D1 error", () => {
 
   it("completes after the D1 op fails twice then succeeds", async () => {
     const { env, runCalls } = fakeEnv(2);
-    await expect(updateRenderFromView(env, view)).resolves.toBeUndefined();
+    await expect(updateRenderFromView(orch(env), view)).resolves.toBeUndefined();
     expect(runCalls()).toBe(3); // 2 transient failures + 1 success
   });
 });

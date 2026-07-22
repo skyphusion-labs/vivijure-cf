@@ -1,3 +1,4 @@
+import { orch } from "./orchestrator-env";
 // #767 regression (keyframe leg): keyframes are project-scoped and motion-backend-agnostic (SDXL), so two
 // renders that differ only in motion backend legitimately SHARE them. But a render with a DIFFERENT keyframe
 // config must NOT adopt another config's keyframe. The keyframe provenance sidecar gates listProjectKeyframes
@@ -38,28 +39,28 @@ describe("#767 keyframe-adoption provenance", () => {
   it("does NOT adopt a keyframe a different-keyframe-config render wrote", async () => {
     const { env, seed } = memR2();
     await stamp(seed, KF, { quality_tier: "draft" });
-    const kfs = await listProjectKeyframes(env, "proj", SCENES, NOW, { quality_tier: "final" });
+    const kfs = await listProjectKeyframes(orch(env), "proj", SCENES, NOW, { quality_tier: "final" });
     expect(kfs.length).toBe(0); // mismatch -> regenerate, never adopt the draft keyframe for a final render
   });
 
   it("adopts a keyframe stamped with the SAME keyframe config (legit cross-backend share preserved)", async () => {
     const { env, seed } = memR2();
     await stamp(seed, KF, { quality_tier: "final" });
-    const kfs = await listProjectKeyframes(env, "proj", SCENES, NOW, { quality_tier: "final" });
+    const kfs = await listProjectKeyframes(orch(env), "proj", SCENES, NOW, { quality_tier: "final" });
     expect(kfs).toEqual([{ shot_id: "shot_01", keyframe_key: KF }]);
   });
 
   it("adopts an UNSTAMPED legacy keyframe (absent sidecar -> #661 freshness path, back-compat)", async () => {
     const { env, seed } = memR2();
     seed(KF); // no .prov sidecar
-    const kfs = await listProjectKeyframes(env, "proj", SCENES, NOW, { quality_tier: "final" });
+    const kfs = await listProjectKeyframes(orch(env), "proj", SCENES, NOW, { quality_tier: "final" });
     expect(kfs).toEqual([{ shot_id: "shot_01", keyframe_key: KF }]);
   });
 
   it("no keyframeConfig passed -> ungated (back-compat with existing callers)", async () => {
     const { env, seed } = memR2();
     await stamp(seed, KF, { quality_tier: "draft" });
-    const kfs = await listProjectKeyframes(env, "proj", SCENES, NOW); // no config arg
+    const kfs = await listProjectKeyframes(orch(env), "proj", SCENES, NOW); // no config arg
     expect(kfs).toEqual([{ shot_id: "shot_01", keyframe_key: KF }]);
   });
 });

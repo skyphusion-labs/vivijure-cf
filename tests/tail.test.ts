@@ -116,7 +116,7 @@ describe("vivijure-tail event -> Loki shaping", () => {
     const streams = shapeEventsToLoki(events);
     const raw = streams.flatMap((s) => s.values.map((v) => v[1])).find((l) => l.includes('"invocation"'));
     expect(raw).toBeTruthy();
-    const inv = JSON.parse(raw);
+    const inv = JSON.parse(raw!);
     expect(inv.kind).toBe("invocation");
     expect("cpu_ms" in inv).toBe(false);
     expect("wall_ms" in inv).toBe(false);
@@ -137,6 +137,7 @@ describe("vivijure-tail event -> Loki shaping", () => {
       truncated: false,
     }]);
     const n = noT.flatMap((s) => s.values.map((v) => v[1])).find((l) => l.includes('"invocation"'));
-    expect("truncated" in JSON.parse(n)).toBe(false);
+    expect(n).toBeTruthy();
+    expect("truncated" in JSON.parse(n!)).toBe(false);
   });
 });

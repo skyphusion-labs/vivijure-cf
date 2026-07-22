@@ -5,6 +5,7 @@ import { getCastIdByPublicId } from "@skyphusion-labs/vivijure-core/cast-db";
 import { getProjectIdByPublicId } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import { getRenderIdByPublicId } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // S9 (F13): the externally-addressable resources (cast / projects / renders) expose an opaque
 // UUID-v4 public id, never their sequential integer PK. These tests pin the two guarantees:
@@ -93,7 +94,7 @@ describe("db resolvers: public id -> internal int (or null)", () => {
     const { env } = fakeEnv();
     // The fake resolves any WHERE public_id = KNOWN regardless of table, so a match returns the int.
     expect(await getProjectIdByPublicId(env, KNOWN)).toBe(1);
-    expect(await getRenderIdByPublicId(env, KNOWN)).toBe(1);
+    expect(await getRenderIdByPublicId(orch(env), KNOWN)).toBe(1);
     expect(await getProjectIdByPublicId(env, "11111111-1111-4111-8111-111111111111")).toBeNull();
   });
 });

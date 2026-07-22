@@ -3,6 +3,7 @@ import { summarizeJob, describeClipFailures, applyPoll, classifyTransientFailure
 import type { ClipJob, ClipShot } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 const job = (statuses: ClipShot["status"][]): ClipJob => ({
   job_id: "j", project: "p", motion_backend: "seedance", binding: "MODULE_SEEDANCE", created_at: 0,
@@ -172,13 +173,13 @@ describe("listClipsByShotId ignores .hash param-hash sidecars (#583, mirror of t
       "renders/p/clips/shot_01_finished.mp4.hash", // the param-hash sidecar must never be adopted as the clip
       "renders/p/clips/shot_01_finished.mp4",
     ]);
-    const found = await listClipsByShotId(env, "p", ["shot_01"], finishedClipFileMatchesShot);
+    const found = await listClipsByShotId(orch(env), "p", ["shot_01"], finishedClipFileMatchesShot);
     expect(found.get("shot_01")).toBe("renders/p/clips/shot_01_finished.mp4");
   });
 
   it("a shot with ONLY a sidecar (no clip) is absent, never poisoned", async () => {
     const env = listEnv(["renders/p/clips/shot_01_finished.mp4.hash"]);
-    const found = await listClipsByShotId(env, "p", ["shot_01"], finishedClipFileMatchesShot);
+    const found = await listClipsByShotId(orch(env), "p", ["shot_01"], finishedClipFileMatchesShot);
     expect(found.has("shot_01")).toBe(false);
   });
 });
@@ -216,7 +217,7 @@ describe("listClipsByShotId (#141 R2 presence lookup)", () => {
         }),
       },
     } as unknown as Env;
-    const m = await listClipsByShotId(env, "neon", ["shot_01", "shot_10", "shot_99"]);
+    const m = await listClipsByShotId(orch(env), "neon", ["shot_01", "shot_10", "shot_99"]);
     expect(m.get("shot_01")).toBe("renders/neon/clips/shot_01_i2v.mp4"); // not the _finished one
     expect(m.get("shot_10")).toBe("renders/neon/clips/shot_10_i2v.mp4");
     expect(m.has("shot_99")).toBe(false);
@@ -230,7 +231,7 @@ describe("advanceClipJob fail-time R2 reclaim (#141: R2 presence beats a module 
     cj.shots[0].shot_id = "shot_01"; cj.shots[0].poll = "phantom";
     // The module fast-fails the poll (RunPod 404 past grace) -- but the clip is already in R2.
     const { env, read } = clipEnv(cj, ["renders/neon/clips/shot_01_i2v.mp4"], { ok: false, error: "own-gpu job not found on RunPod (#141)" });
-    const out = await advanceClipJob(env, "clips-reclaim");
+    const out = await advanceClipJob(orch(env), "clips-reclaim");
     expect(out?.shots[0].status).toBe("done"); // reclaimed, not failed
     expect(out?.shots[0].clip_key).toBe("renders/neon/clips/shot_01_i2v.mp4");
     expect(out?.shots[0].error).toBeUndefined(); // premature failure cleared
@@ -243,7 +244,7 @@ describe("advanceClipJob fail-time R2 reclaim (#141: R2 presence beats a module 
     cj.job_id = "clips-genuine-fail"; cj.project = "neon";
     cj.shots[0].shot_id = "shot_01"; cj.shots[0].poll = "phantom";
     const { env } = clipEnv(cj, [], { ok: false, error: "real failure" }); // nothing in R2
-    const out = await advanceClipJob(env, "clips-genuine-fail");
+    const out = await advanceClipJob(orch(env), "clips-genuine-fail");
     expect(out?.shots[0].status).toBe("failed");
     expect(out?.shots[0].error).toBe("real failure");
   });
@@ -298,7 +299,7 @@ const failingShot = (jobId: string): ClipJob => ({
 describe("#536 best-effort remote cancel when a clip shot is marked failed (zombie-GPU guard)", () => {
   it("fires a cancel via the module and records cancel_sent when the shot fails and the module is cancelable", async () => {
     const { env, read, cancelCalls } = cancelClipEnv(failingShot("clips-536a"), { cancelable: true, pollResp: { ok: false, error: "Too many subrequests" } });
-    const out = await advanceClipJob(env, "clips-536a");
+    const out = await advanceClipJob(orch(env), "clips-536a");
     expect(out?.shots[0].status).toBe("failed");
     expect(cancelCalls.length).toBe(1);           // the in-flight RunPod job was cancelled
     expect(out?.shots[0].cancel_sent).toBe(true);
@@ -307,7 +308,7 @@ describe("#536 best-effort remote cancel when a clip shot is marked failed (zomb
 
   it("does NOT call cancel but still records cancel_sent (honest orphan) when the module is not cancelable", async () => {
     const { env, cancelCalls } = cancelClipEnv(failingShot("clips-536b"), { cancelable: false, pollResp: { ok: false, error: "boom" } });
-    const out = await advanceClipJob(env, "clips-536b");
+    const out = await advanceClipJob(orch(env), "clips-536b");
     expect(out?.shots[0].status).toBe("failed");
     expect(cancelCalls.length).toBe(0);           // no /cancel primitive -> logged orphan, not a crash
     expect(out?.shots[0].cancel_sent).toBe(true); // best-effort attempted once
@@ -315,14 +316,14 @@ describe("#536 best-effort remote cancel when a clip shot is marked failed (zomb
 
   it("does not re-fire the cancel on a later tick (cancel_sent gates it)", async () => {
     const { env, cancelCalls } = cancelClipEnv(failingShot("clips-536c"), { cancelable: true, pollResp: { ok: false, error: "boom" } });
-    await advanceClipJob(env, "clips-536c");
-    await advanceClipJob(env, "clips-536c"); // second tick: shot already failed + cancel_sent
+    await advanceClipJob(orch(env), "clips-536c");
+    await advanceClipJob(orch(env), "clips-536c"); // second tick: shot already failed + cancel_sent
     expect(cancelCalls.length).toBe(1);
   });
 
   it("does NOT cancel a shot whose clip actually landed in R2 (reclaim to done wins over cancel)", async () => {
     const { env, cancelCalls } = cancelClipEnv(failingShot("clips-536d"), { cancelable: true, pollResp: { ok: false, error: "poll blip" }, clipKeys: ["renders/neon/clips/shot_01_i2v.mp4"] });
-    const out = await advanceClipJob(env, "clips-536d");
+    const out = await advanceClipJob(orch(env), "clips-536d");
     expect(out?.shots[0].status).toBe("done"); // reclaimed
     expect(cancelCalls.length).toBe(0);        // nothing to cancel; the job completed
   });
@@ -331,7 +332,7 @@ describe("#536 best-effort remote cancel when a clip shot is marked failed (zomb
     const cj = failingShot("clips-536e");
     cj.shots[0].status = "pending"; // still in flight
     const { env, read, cancelCalls } = cancelClipEnv(cj, { cancelable: true, pollResp: { ok: true, pending: true } });
-    await cancelInFlightClips(env, "clips-536e");
+    await cancelInFlightClips(orch(env), "clips-536e");
     expect(cancelCalls.length).toBe(1);
     expect(read().shots[0].cancel_sent).toBe(true);
   });
@@ -345,7 +346,7 @@ describe("#535 clip tick reuses the threaded registry (no per-tick module.json f
       provides: [{ id: "seedance", label: "Seedance" }], config_schema: {}, ui: { section: "motion.backend", order: 10 },
       cancelable: true, binding: "MODULE_SEEDANCE",
     }] as unknown as RegisteredModule[];
-    const out = await advanceClipJob(env, "clips-535a", modules);
+    const out = await advanceClipJob(orch(env), "clips-535a", modules);
     expect(out?.shots[0].status).toBe("failed");
     expect(cancelCalls.length).toBe(1);   // cancel still fires, using the threaded registry
     expect(manifestHits()).toBe(0);       // NO discovery fan-out -- the module.json was never fetched
@@ -358,7 +359,7 @@ describe("#535 clip tick reuses the threaded registry (no per-tick module.json f
       cancelable: true, binding: "MODULE_SEEDANCE",
     }] as unknown as RegisteredModule[];
     const { env, manifestHits } = cancelClipEnv(failingShot("clips-535b"), { cancelable: true, pollResp: { ok: true, pending: true }, invokeResp: { ok: true, pending: true, poll: "tok9", jobId: "rp-xyz" } });
-    const job = await startClipJob(env, { project: "neon", shots: [{ shot_id: "shot_01", keyframe_url: "u", prompt: "x", seconds: 5 }], motion_backend: "seedance" }, modules);
+    const job = await startClipJob(orch(env), { project: "neon", shots: [{ shot_id: "shot_01", keyframe_url: "u", prompt: "x", seconds: 5 }], motion_backend: "seedance" }, modules);
     expect(job.shots[0].poll).toBe("tok9");
     expect(job.shots[0].runpod_job_id).toBe("rp-xyz"); // #536: retained for cancel/accounting
     expect(manifestHits()).toBe(0);                    // #535: threaded registry, no discovery fan-out
@@ -386,14 +387,14 @@ describe("listClipsByShotId freshness floor (#661)", () => {
       { key: "renders/p/clips/shot_01_i2v.mp4", uploadedMs: RUN_START - 4 * 86_400_000 }, // stale leftover
       { key: "renders/p/clips/shot_02_i2v.mp4", uploadedMs: RUN_START + 5_000 },          // this run own clip
     ]);
-    const m = await listClipsByShotId(env, "p", ["shot_01", "shot_02"], clipFileMatchesShot, RUN_START);
+    const m = await listClipsByShotId(orch(env), "p", ["shot_01", "shot_02"], clipFileMatchesShot, RUN_START);
     expect(m.has("shot_01")).toBe(false);
     expect(m.get("shot_02")).toBe("renders/p/clips/shot_02_i2v.mp4");
   });
 
   it("floor 0 (default) keeps every clip regardless of age (back-compat)", async () => {
     const env = listEnv([{ key: "renders/p/clips/shot_01_i2v.mp4", uploadedMs: 1 }]);
-    const m = await listClipsByShotId(env, "p", ["shot_01"]);
+    const m = await listClipsByShotId(orch(env), "p", ["shot_01"]);
     expect(m.get("shot_01")).toBe("renders/p/clips/shot_01_i2v.mp4");
   });
 });
@@ -411,7 +412,7 @@ describe("reclaimClipsFromR2 freshness (#661): a prior render clip is never sile
         }),
       },
     } as unknown as Env;
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
     expect(adopted).toBe(0);
     expect(cj.shots[0].status).toBe("pending"); // left for a genuine render, not silently stale-adopted
   });
@@ -428,7 +429,7 @@ describe("reclaimClipsFromR2 freshness (#661): a prior render clip is never sile
         }),
       },
     } as unknown as Env;
-    const adopted = await reclaimClipsFromR2(env, cj);
+    const adopted = await reclaimClipsFromR2(orch(env), cj);
     expect(adopted).toBe(1);
     expect(cj.shots[0].status).toBe("done");
     expect(cj.shots[0].clip_key).toBe("renders/neon/clips/shot_01_i2v.mp4");

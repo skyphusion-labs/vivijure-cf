@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // The cron sweep must self-heal a film job that rendered all its clips but stalled
 // before "done" and then aged past SWEEP_MAX_AGE_SECONDS -- the remaining work is the
@@ -62,7 +63,7 @@ describe("sweepUnresolvedJobs (stranded post-clips self-heal)", () => {
   it("re-drives a stranded post-clips film job whose R2 doc still exists", async () => {
     const id = "film-stranded-1";
     const { env, advanced } = makeEnv({ stranded: [{ job_id: id }], docsInR2: [id] });
-    const n = await sweepUnresolvedJobs(env);
+    const n = await sweepUnresolvedJobs(orch(env));
     expect(advanced).toContain(id); // the sweep loaded + advanced it
     expect(n).toBe(1);
   });
@@ -70,7 +71,7 @@ describe("sweepUnresolvedJobs (stranded post-clips self-heal)", () => {
   it("skips a stranded film job whose R2 doc was swept (clips gone -- nothing to assemble)", async () => {
     const id = "film-stranded-2";
     const { env, advanced } = makeEnv({ stranded: [{ job_id: id }], docsInR2: [] });
-    const n = await sweepUnresolvedJobs(env);
+    const n = await sweepUnresolvedJobs(orch(env));
     expect(advanced).not.toContain(id);
     expect(n).toBe(0);
   });
@@ -82,7 +83,7 @@ describe("sweepUnresolvedJobs (stranded post-clips self-heal)", () => {
       stranded: [{ job_id: id }],
       docsInR2: [id],
     });
-    await sweepUnresolvedJobs(env);
+    await sweepUnresolvedJobs(orch(env));
     expect(advanced.filter((x) => x === id)).toHaveLength(1); // pass-1 wins; pass-2 de-dups
   });
 

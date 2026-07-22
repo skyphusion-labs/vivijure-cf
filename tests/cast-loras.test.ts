@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { orch } from "./orchestrator-env";
 
 import { resolveCastLoras, untrainedCastMessage, type SkippedCast } from "@skyphusion-labs/vivijure-core/cast-loras";
 import type { Env } from "../src/env";
@@ -61,7 +62,7 @@ const NOT_READY: FakeRow = { id: 2, public_id: PUB_NOT_READY, name: "Bob", lora_
 describe("resolveCastLoras gate (fail-hard inputs)", () => {
   it("resolves a ready cast LoRA (by opaque id) to a pretrained key with nothing skipped", async () => {
     const env = fakeEnv([READY]);
-    const r = await resolveCastLoras(env, { A: PUB_READY });
+    const r = await resolveCastLoras(orch(env), { A: PUB_READY });
     expect(r.pretrained).toEqual({ A: "loras/jane.safetensors" });
     // castIds stays the INTERNAL int (the LoRA bank-back keys off it) -- never leaves the core.
     expect(r.castIds).toEqual({ A: 1 });
@@ -71,7 +72,7 @@ describe("resolveCastLoras gate (fail-hard inputs)", () => {
 
   it("skips a bound-but-untrained character, naming it with a reason", async () => {
     const env = fakeEnv([READY, NOT_READY]);
-    const r = await resolveCastLoras(env, { A: PUB_READY, B: PUB_NOT_READY });
+    const r = await resolveCastLoras(orch(env), { A: PUB_READY, B: PUB_NOT_READY });
     expect(r.pretrained).toEqual({ A: "loras/jane.safetensors" });
     expect(r.skipped).toEqual(["B"]);
     expect(r.skippedDetail).toEqual<SkippedCast[]>([
@@ -83,7 +84,7 @@ describe("resolveCastLoras gate (fail-hard inputs)", () => {
     const env = fakeEnv([READY, NOT_READY]);
     // Ints and non-UUID junk both fail the opaque-id shape gate BEFORE any lookup, so a caller cannot
     // count 1,2,3 and harvest names/LoRA status from the skip reasons.
-    const r = await resolveCastLoras(env, { A: 1, B: 2, C: 0, D: "nope", E: "99" } as unknown as Record<string, unknown>);
+    const r = await resolveCastLoras(orch(env), { A: 1, B: 2, C: 0, D: "nope", E: "99" } as unknown as Record<string, unknown>);
     expect(r.pretrained).toEqual({});
     expect(r.castIds).toEqual({});
     expect(r.skippedDetail).toEqual<SkippedCast[]>([
@@ -97,7 +98,7 @@ describe("resolveCastLoras gate (fail-hard inputs)", () => {
 
   it("a well-formed opaque id with no row is 'cast member not found' (also nameless)", async () => {
     const env = fakeEnv([READY]);
-    const r = await resolveCastLoras(env, { A: PUB_READY, B: PUB_UNKNOWN });
+    const r = await resolveCastLoras(orch(env), { A: PUB_READY, B: PUB_UNKNOWN });
     expect(r.pretrained).toEqual({ A: "loras/jane.safetensors" });
     expect(r.skipped).toEqual(["B"]);
     expect(r.skippedDetail).toEqual<SkippedCast[]>([
@@ -108,7 +109,7 @@ describe("resolveCastLoras gate (fail-hard inputs)", () => {
   it("does not gate a render with no cast bindings (no characters needing a LoRA)", async () => {
     const env = fakeEnv([]);
     for (const castLoras of [undefined, {}]) {
-      const r = await resolveCastLoras(env, castLoras);
+      const r = await resolveCastLoras(orch(env), castLoras);
       expect(r.skipped).toEqual([]);
       expect(r.skippedDetail).toEqual([]);
       expect(r.pretrained).toEqual({});

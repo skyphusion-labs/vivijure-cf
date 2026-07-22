@@ -342,7 +342,7 @@ describe("clipKeysFromFilmJob: no raw-clip substitution for a failed finish (#24
     } as unknown as FilmJob;
     let touchedRawClipJob = false;
     const env = { R2_RENDERS: { get: async () => { touchedRawClipJob = true; return null; } } } as unknown as Env;
-    const keys = await clipKeysFromFilmJob(env, job);
+    const keys = await clipKeysFromFilmJob(orch(env), job);
     expect(touchedRawClipJob).toBe(false);                                  // never fell through to raw
     expect(keys.get("shot_01")).toBe("renders/neon/clips/shot_01_ls.mp4");  // the finished clip
     expect(keys.has("shot_02")).toBe(false);                               // failed shot NOT raw-substituted
@@ -352,7 +352,7 @@ describe("clipKeysFromFilmJob: no raw-clip substitution for a failed finish (#24
     const job = { film_id: "film-y", project: "neon", clip_job_id: "clips-y", finish_shots: [] } as unknown as FilmJob;
     const clipJob = { shots: [{ shot_id: "shot_01", clip_key: "renders/neon/clips/shot_01_wan.mp4", status: "done" }] };
     const env = { R2_RENDERS: { get: async () => ({ text: async () => JSON.stringify(clipJob) }) } } as unknown as Env;
-    const keys = await clipKeysFromFilmJob(env, job);
+    const keys = await clipKeysFromFilmJob(orch(env), job);
     expect(keys.get("shot_01")).toBe("renders/neon/clips/shot_01_wan.mp4"); // raw clip used (no finish)
   });
 });
@@ -840,14 +840,14 @@ describe("listProjectKeyframes (#129 R2 adoption)", () => {
       "renders/neon/keyframes/shot_02.png",
       "renders/neon/keyframes/shot_99.png", // stale from an older render -- must be dropped
     ]);
-    const out = await listProjectKeyframes(env, "neon", sc, 0);
+    const out = await listProjectKeyframes(orch(env), "neon", sc, 0);
     expect(out).toEqual([
       { shot_id: "shot_01", keyframe_key: "renders/neon/keyframes/shot_01.png" },
       { shot_id: "shot_02", keyframe_key: "renders/neon/keyframes/shot_02.png" },
     ]);
   });
   it("returns empty when no keyframes are in R2 yet", async () => {
-    expect(await listProjectKeyframes(r2ListEnv([]), "neon", sc, 0)).toEqual([]);
+    expect(await listProjectKeyframes(orch(r2ListEnv([])), "neon", sc, 0)).toEqual([]);
   });
   it("ignores .hash param-hash sidecars (backend #112): the PNG wins, never the sidecar (#578)", async () => {
     // .hash sorts BEFORE .png lexicographically; pre-#578 the first-seen dedupe adopted the sidecar
@@ -858,7 +858,7 @@ describe("listProjectKeyframes (#129 R2 adoption)", () => {
       "renders/neon/keyframes/shot_02.hash",
       "renders/neon/keyframes/shot_02.png",
     ]);
-    const out = await listProjectKeyframes(env, "neon", sc, 0);
+    const out = await listProjectKeyframes(orch(env), "neon", sc, 0);
     expect(out).toEqual([
       { shot_id: "shot_01", keyframe_key: "renders/neon/keyframes/shot_01.png" },
       { shot_id: "shot_02", keyframe_key: "renders/neon/keyframes/shot_02.png" },
@@ -869,7 +869,7 @@ describe("listProjectKeyframes (#129 R2 adoption)", () => {
       "renders/neon/keyframes/shot_01.hash",
       "renders/neon/keyframes/shot_02.png",
     ]);
-    const out = await listProjectKeyframes(env, "neon", sc, 0);
+    const out = await listProjectKeyframes(orch(env), "neon", sc, 0);
     expect(out).toEqual([
       { shot_id: "shot_02", keyframe_key: "renders/neon/keyframes/shot_02.png" },
     ]);
@@ -879,7 +879,7 @@ describe("listProjectKeyframes (#129 R2 adoption)", () => {
       "renders/neon/keyframes/shot_01.JPG",
       "renders/neon/keyframes/shot_02.webp",
     ]);
-    const out = await listProjectKeyframes(env, "neon", sc, 0);
+    const out = await listProjectKeyframes(orch(env), "neon", sc, 0);
     expect(out).toEqual([
       { shot_id: "shot_01", keyframe_key: "renders/neon/keyframes/shot_01.JPG" },
       { shot_id: "shot_02", keyframe_key: "renders/neon/keyframes/shot_02.webp" },
@@ -891,7 +891,7 @@ describe("listProjectKeyframes (#129 R2 adoption)", () => {
       { key: "renders/neon/keyframes/shot_01.png", uploadedMs: RUN_START - 4 * 86_400_000 }, // 4d-old leftover
       { key: "renders/neon/keyframes/shot_02.png", uploadedMs: RUN_START - 4 * 86_400_000 },
     ]);
-    expect(await listProjectKeyframes(env, "neon", sc, RUN_START)).toEqual([]);
+    expect(await listProjectKeyframes(orch(env), "neon", sc, RUN_START)).toEqual([]);
   });
   it("#661: adopts this run own orphans uploaded AFTER the job started (legit #129 recovery survives)", async () => {
     const RUN_START = 2_000_000;
@@ -899,7 +899,7 @@ describe("listProjectKeyframes (#129 R2 adoption)", () => {
       { key: "renders/neon/keyframes/shot_01.png", uploadedMs: RUN_START + 5_000 },
       { key: "renders/neon/keyframes/shot_02.png", uploadedMs: RUN_START + 5_000 },
     ]);
-    expect(await listProjectKeyframes(env, "neon", sc, RUN_START)).toEqual([
+    expect(await listProjectKeyframes(orch(env), "neon", sc, RUN_START)).toEqual([
       { shot_id: "shot_01", keyframe_key: "renders/neon/keyframes/shot_01.png" },
       { shot_id: "shot_02", keyframe_key: "renders/neon/keyframes/shot_02.png" },
     ]);
@@ -921,18 +921,18 @@ describe("keyframeSetCompleteInR2 (pending-poll adoption guard)", () => {
       "renders/neon/keyframes/shot_02.png",
       "renders/neon/keyframes/shot_03.png",
     ]);
-    expect(await keyframeSetCompleteInR2(env, job(sc))).toBe(true);
+    expect(await keyframeSetCompleteInR2(orch(env), job(sc))).toBe(true);
   });
   it("false on a PARTIAL set (mid-generation -> must NOT advance early)", async () => {
     const env = r2ListEnv([
       "renders/neon/keyframes/shot_01.png",
       "renders/neon/keyframes/shot_02.png",
     ]);
-    expect(await keyframeSetCompleteInR2(env, job(sc))).toBe(false);
+    expect(await keyframeSetCompleteInR2(orch(env), job(sc))).toBe(false);
   });
   it("false when none are in R2 and false for an empty storyboard", async () => {
-    expect(await keyframeSetCompleteInR2(r2ListEnv([]), job(sc))).toBe(false);
-    expect(await keyframeSetCompleteInR2(r2ListEnv([]), job([]))).toBe(false);
+    expect(await keyframeSetCompleteInR2(orch(r2ListEnv([])), job(sc))).toBe(false);
+    expect(await keyframeSetCompleteInR2(orch(r2ListEnv([])), job([]))).toBe(false);
   });
   it("#661: a stale FULL set (uploaded before the run) does NOT count as complete", async () => {
     const RUN_START = 2_000_000;
@@ -942,7 +942,7 @@ describe("keyframeSetCompleteInR2 (pending-poll adoption guard)", () => {
       { key: "renders/neon/keyframes/shot_02.png", uploadedMs: RUN_START - 86_400_000 },
       { key: "renders/neon/keyframes/shot_03.png", uploadedMs: RUN_START - 86_400_000 },
     ]);
-    expect(await keyframeSetCompleteInR2(env, staleJob)).toBe(false);
+    expect(await keyframeSetCompleteInR2(orch(env), staleJob)).toBe(false);
   });
 });
 
@@ -1253,14 +1253,14 @@ describe("listProjectClips (#139 R2 adoption)", () => {
       "renders/neon/clips/shot_10_i2v.mp4",
       "renders/neon/clips/shot_99_i2v.mp4",      // not in storyboard -- dropped
     ]);
-    const out = await listProjectClips(env, "neon", sc, 0);
+    const out = await listProjectClips(orch(env), "neon", sc, 0);
     expect(out).toEqual([
       { shot_id: "shot_01", clip_key: "renders/neon/clips/shot_01_i2v.mp4" },
       { shot_id: "shot_10", clip_key: "renders/neon/clips/shot_10_i2v.mp4" },
     ]);
   });
   it("returns empty when no clips are in R2", async () => {
-    expect(await listProjectClips(r2ListEnv([]), "neon", sc, 0)).toEqual([]);
+    expect(await listProjectClips(orch(r2ListEnv([])), "neon", sc, 0)).toEqual([]);
   });
   it("#661: drops a stale clip uploaded BEFORE this run started, keeps a fresh one", async () => {
     const RUN_START = 2_000_000;
@@ -1268,7 +1268,7 @@ describe("listProjectClips (#139 R2 adoption)", () => {
       { key: "renders/neon/clips/shot_01_i2v.mp4", uploadedMs: RUN_START - 4 * 86_400_000 }, // stale leftover
       { key: "renders/neon/clips/shot_10_i2v.mp4", uploadedMs: RUN_START + 5_000 },          // this run own clip
     ]);
-    const out = await listProjectClips(env, "neon", sc, RUN_START);
+    const out = await listProjectClips(orch(env), "neon", sc, RUN_START);
     expect(out).toEqual([
       { shot_id: "shot_10", clip_key: "renders/neon/clips/shot_10_i2v.mp4" },
     ]);
@@ -1709,7 +1709,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
         },
       };
     }
-    return { env: orch(env as Env), read: () => JSON.parse(stored) as FilmJob };
+    return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob };
   }
 
   const muxJob = (over: object = {}) => ({
@@ -2053,7 +2053,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
       R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
       R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
     };
-    return { env: orch(env as Env), read: () => JSON.parse(stored) as FilmJob, pollCount: () => polls };
+    return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob, pollCount: () => polls };
   }
 
   it("submits on tick 1 (NOT finalized), persists the poll token, resumes next tick", async () => {
@@ -2795,7 +2795,7 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
       const { status = 200, body = { ok: true } } = opts.vpc;
       env.VIDEO_FINISH_VPC = { fetch: async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }) };
     }
-    return { env: orch(env as Env), read: () => JSON.parse(stored) as FilmJob };
+    return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob };
   }
 
   const asmJob = (over: object = {}) => ({

@@ -4,6 +4,7 @@ import { cancelInFlightKeyframe, cancelFilmJob, filmJobDocKey, type FilmJob } fr
 import type { Env } from "../src/env";
 import kfWorker, { MANIFEST } from "../modules/keyframe/src/index";
 import { encodePoll } from "../modules/keyframe/src/keyframe";
+import { orch } from "./orchestrator-env";
 
 // A service-binding-shaped fake module worker: answers GET /module.json with the given manifest and
 // records every POST /cancel it receives. Lets us assert the orchestrator actually issues a cancel.
@@ -101,27 +102,27 @@ describe("cancelInFlightKeyframe (the #327/#328 fix: stop the GPU, never orphan)
   it("issues a cancel for the in-flight keyframe job when the module is cancelable", async () => {
     const { fetcher, calls } = fakeModule(KF_MANIFEST());
     const env = { MODULE_KEYFRAME: fetcher } as unknown as Env;
-    await cancelInFlightKeyframe(env, filmJob({ keyframe_poll: "tok-77" }));
+    await cancelInFlightKeyframe(orch(env), filmJob({ keyframe_poll: "tok-77" }));
     expect(calls.cancel).toEqual(["tok-77"]);
   });
   it("does NOT cancel (and does not crash) when the module is not cancelable -- honest-degrade path", async () => {
     const { fetcher, calls } = fakeModule(KF_MANIFEST({ cancelable: false }));
     const env = { MODULE_KEYFRAME: fetcher } as unknown as Env;
-    await cancelInFlightKeyframe(env, filmJob());
+    await cancelInFlightKeyframe(orch(env), filmJob());
     expect(calls.cancel).toEqual([]);
   });
   it("is a no-op when there is no in-flight keyframe job (wrong phase / no poll token)", async () => {
     const { fetcher, calls } = fakeModule(KF_MANIFEST());
     const env = { MODULE_KEYFRAME: fetcher } as unknown as Env;
-    await cancelInFlightKeyframe(env, filmJob({ phase: "clips" }));
-    await cancelInFlightKeyframe(env, filmJob({ keyframe_poll: undefined }));
+    await cancelInFlightKeyframe(orch(env), filmJob({ phase: "clips" }));
+    await cancelInFlightKeyframe(orch(env), filmJob({ keyframe_poll: undefined }));
     expect(calls.cancel).toEqual([]);
   });
   it("NAMES the orphaned RunPod job id in the honest-degrade WARN (so an operator can kill it by hand)", async () => {
     const { fetcher } = fakeModule(KF_MANIFEST({ cancelable: false }));
     const env = { MODULE_KEYFRAME: fetcher } as unknown as Env;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await cancelInFlightKeyframe(env, filmJob({ keyframe_job_id: "job-xyz-e1" }));
+    await cancelInFlightKeyframe(orch(env), filmJob({ keyframe_job_id: "job-xyz-e1" }));
     expect(warn.mock.calls.flat().join(" ")).toContain("job-xyz-e1");
     warn.mockRestore();
   });
@@ -140,7 +141,7 @@ describe("cancelFilmJob (DELETE /api/storyboard/render/:id) propagates cancel to
       },
     } as unknown as Env;
 
-    const out = await cancelFilmJob(env, job.film_id);
+    const out = await cancelFilmJob(orch(env), job.film_id);
     expect(calls.cancel).toEqual(["tok-del"]); // the GPU was actually told to stop, not just the studio state
     expect(out?.cancelled).toBe(true);
     expect(out?.phase).toBe("failed");
@@ -156,7 +157,7 @@ describe("cancelFilmJob (DELETE /api/storyboard/render/:id) propagates cancel to
       MODULE_KEYFRAME: fetcher,
       R2_RENDERS: { get: async (k: string) => { const v = store.get(k); return v === undefined ? null : { text: async () => v }; }, put: async () => {} },
     } as unknown as Env;
-    await cancelFilmJob(env, job.film_id);
+    await cancelFilmJob(orch(env), job.film_id);
     expect(calls.cancel).toEqual([]);
   });
 });

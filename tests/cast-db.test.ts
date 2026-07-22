@@ -3,6 +3,7 @@ import { addRef, addRefs, removeRef, listCast } from "@skyphusion-labs/vivijure-
 import { listProjects } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import { listUserTags } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { Env } from "../src/env";
+import { orch } from "./orchestrator-env";
 
 // Issue #12: addRef/removeRef/addSource/removeSource were read-modify-write on a JSON-array column,
 // so two concurrent writers clobbered each other. They now use a value-CAS with retry. The fake D1
@@ -156,7 +157,7 @@ describe("bounded list queries (issue #12)", () => {
 
   it("listUserTags scans only the most recent tagged renders (ORDER BY + LIMIT)", async () => {
     const { env, captured } = captureAll();
-    await listUserTags(env);
+    await listUserTags(orch(env));
     expect(captured.sql).toMatch(/ORDER BY submitted_at DESC/);
     expect(captured.sql).toMatch(/LIMIT \?/);
     expect(captured.bound).toEqual([500]);
