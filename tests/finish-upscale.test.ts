@@ -50,8 +50,9 @@ describe("finish-upscale: upscaledKey", () => {
 });
 
 describe("finish-upscale: buildRunPodBody", () => {
-  it("emits clip_key, the derived output_key, scale and model (R2 mode -- no action field)", () => {
-    const { input } = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ scale: 4, model: "RealESRGAN_x4plus" }));
+  it("emits project, clip_key, the derived output_key, scale and model (R2 mode -- no action field)", () => {
+    const { input } = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ scale: 4, model: "RealESRGAN_x4plus" }), "neon");
+    expect(input.project).toBe("neon");
     expect(input.clip_key).toBe(SAMPLE_INPUT.clip_key);
     expect(input.output_key).toBe("renders/neon/clips/shot_01_seedance_up.mp4");
     expect(input.scale).toBe(4);
@@ -59,10 +60,17 @@ describe("finish-upscale: buildRunPodBody", () => {
     expect(input.action).toBeUndefined();  // dedicated endpoint, not a vivijure-backend action
   });
 
+  it("threads the caller project into the body, not a hardcoded placeholder", () => {
+    const a = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}), "project_a");
+    const b = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}), "project_b");
+    expect(a.input.project).toBe("project_a");
+    expect(b.input.project).toBe("project_b");
+  });
+
   it("forwards output_hash verbatim when present, omits it when absent (#583 sidecar stamp)", () => {
-    const withHash = buildRunPodBody({ ...SAMPLE_INPUT, output_hash: "abc123" }, coerceConfig({}));
+    const withHash = buildRunPodBody({ ...SAMPLE_INPUT, output_hash: "abc123" }, coerceConfig({}), "neon");
     expect(withHash.input.output_hash).toBe("abc123");
-    const without = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}));
+    const without = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}), "neon");
     expect("output_hash" in without.input).toBe(false);
   });
 });

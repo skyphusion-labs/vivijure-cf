@@ -177,7 +177,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
     const r = await fetch(runpodBase(endpointId) + "/run", {
       method: "POST",
       headers: { ...auth(apiKey), "content-type": "application/json" },
-      body: JSON.stringify(buildRunPodBody(input, cfg)),
+      body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
     });
     if (!r.ok) return passthrough(input, "runpod-run-failed", { detail: "HTTP " + r.status });
     const jobId = ((await r.json()) as { id?: string }).id;

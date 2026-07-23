@@ -59,9 +59,10 @@ export function upscaledKey(clipKey: string): string {
 
 /** The RunPod /run body for the dedicated vivijure-upscale endpoint (R2 mode: it reads `clip_key`
  *  and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does for finish). */
-export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig): { input: Record<string, unknown> } {
+export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project: string): { input: Record<string, unknown> } {
   return {
     input: {
+      project,
       clip_key: input.clip_key,
       output_key: upscaledKey(input.clip_key),
       scale: cfg.scale,
