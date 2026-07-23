@@ -1447,7 +1447,11 @@
     )) return;
     setLoraStatusText("submitting...", "loading");
     try {
-      const data = await api("/api/cast/" + id + "/train-lora", { method: "POST" });
+      const data = await api("/api/cast/" + id + "/train-lora", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model_family: "sdxl" }),
+      });
       const idx = state.cast.findIndex((x) => x.id === id);
       if (idx >= 0) state.cast[idx] = data.cast;
       renderLoraPane(data.cast);
@@ -1474,7 +1478,7 @@
     )) return;
     setWanLoraStatusText("submitting...", "loading");
     try {
-      const data = await api("/api/cast/" + id + "/train-wan-lora", { method: "POST" });
+      const data = await api("/api/cast/" + id + "/train-lora", { method: "POST" });
       const idx = state.cast.findIndex((x) => x.id === id);
       if (idx >= 0) state.cast[idx] = data.cast;
       renderLoraPane(data.cast);

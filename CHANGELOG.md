@@ -9,6 +9,12 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.7.12 -- 2026-07-23
+
+PATCH: Wan cast train default (cf#29 Phase E). Bumps `@skyphusion-labs/vivijure-core` to `^1.2.8`.
+Cast UI: Wan button POSTs `/train-lora` (core defaults to Wan train EP); SDXL escape hatch sends
+`model_family:"sdxl"`.
+
 ## v1.7.11 -- 2026-07-22
 
 PATCH: dual-panel with vivijure-local **v1.1.12** -- local-GPU film keyframes (#153). Pins
