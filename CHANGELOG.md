@@ -9,6 +9,11 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.7.14 -- 2026-07-23
+
+PATCH: dual-panel with vivijure-local **v1.1.16** (K3 security closeout). Pins
+`@skyphusion-labs/vivijure-core` to `^1.2.12`.
+
 ## v1.7.12 -- 2026-07-23
 
 PATCH: Wan cast train default (cf#29 Phase E). Bumps `@skyphusion-labs/vivijure-core` to `^1.2.8`.
