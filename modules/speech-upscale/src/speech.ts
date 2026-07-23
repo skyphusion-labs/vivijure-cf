@@ -48,9 +48,10 @@ export function enhancedAudioKey(audioKey: string): string {
 /** The RunPod /run body for the dedicated vivijure-audio-upscale endpoint (R2 mode: it reads
  *  `audio_key` and writes `output_key` in the shared bucket itself). `audio_key` is guaranteed present
  *  by the caller (submit rejects malformed input). */
-export function buildRunPodBody(input: SpeechInput, cfg: SpeechUpscaleConfig): { input: Record<string, unknown> } {
+export function buildRunPodBody(input: SpeechInput, cfg: SpeechUpscaleConfig, project: string): { input: Record<string, unknown> } {
   return {
     input: {
+      project,
       audio_key: input.audio_key,
       output_key: enhancedAudioKey(input.audio_key),
       denoise: cfg.denoise,

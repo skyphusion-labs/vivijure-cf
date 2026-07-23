@@ -46,11 +46,19 @@ describe("speech-upscale: enhancedAudioKey", () => {
 });
 
 describe("speech-upscale: buildRunPodBody (R2 mode on audio_key)", () => {
-  it("emits audio_key, the derived output_key, and denoise", () => {
-    const { input } = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ enable: true, denoise: true }));
+  it("emits project, audio_key, the derived output_key, and denoise", () => {
+    const { input } = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ enable: true, denoise: true }), "neon");
+    expect(input.project).toBe("neon");
     expect(input.audio_key).toBe(SAMPLE_INPUT.audio_key);
     expect(input.output_key).toBe("renders/neon/dialogue/shot_01_enh.wav");
     expect(input.denoise).toBe(true);
+  });
+
+  it("threads the caller project into the body, not a hardcoded placeholder", () => {
+    const a = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ enable: true }), "project_a");
+    const b = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ enable: true }), "project_b");
+    expect(a.input.project).toBe("project_a");
+    expect(b.input.project).toBe("project_b");
   });
 });
 
