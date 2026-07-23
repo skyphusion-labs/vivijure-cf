@@ -16,3 +16,8 @@ Documented dismissals for adversarial-audit (K2.7/K3) findings that are not acti
 | --- | --- | --- | --- |
 | 2026-07-23 | K3 repo | deploy.sh sed without escaping | Operator-controlled deploy env |
 | 2026-07-23 | K3 repo | Demo gallery arbitrary video URLs | Demo queue rows; operator-configured artifact origin |
+| 2026-07-23 | K3 verify ~18:04 | Demo mode opens ALL GET endpoints | AUTH_MODE=demo homelab gallery; operator-controlled |
+| 2026-07-23 | K3 verify ~18:04 | Staged-key path skips magic-byte validation | JSON {key,mime} path trusts operator-staged R2 keys |
+| 2026-07-23 | K3 verify ~18:04 | Spend rate limiter omits planner/chat | Best-effort spend cap; CF Access + account auth at edge |
+| 2026-07-23 | K3 verify ~18:04 | Demo render jobId client-supplied | Demo mode; capped queue rows |
+| 2026-07-23 | K3 verify ~18:04 | deploy.sh strip_val / STORE_ID grep | Operator deploy script |
