@@ -55,9 +55,10 @@ export function lipsyncedKey(clipKey: string): string {
 /** The RunPod /run body for the dedicated vivijure-musetalk endpoint (R2 mode: it reads `clip_key` +
  *  `audio_key` and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does
  *  for finish). Caller guarantees `audio_key` is present (no-dialogue shots no-op before submit). */
-export function buildRunPodBody(input: FinishInput, cfg: LipsyncConfig): { input: Record<string, unknown> } {
+export function buildRunPodBody(input: FinishInput, cfg: LipsyncConfig, project: string): { input: Record<string, unknown> } {
   return {
     input: {
+      project,
       clip_key: input.clip_key,
       audio_key: input.audio_key,
       output_key: lipsyncedKey(input.clip_key),

@@ -63,10 +63,18 @@ describe("finish-lipsync: softDegradeInFailedEnvelope (#565)", () => {
 });
 
 describe("finish-lipsync: buildRunPodBody (#583 sidecar stamp)", () => {
+  it("forwards project for R2 tenancy plus clip/audio keys and derived output_key", () => {
+    const { input } = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}), "lighthouse");
+    expect(input.project).toBe("lighthouse");
+    expect(input.clip_key).toBe(SAMPLE_INPUT.clip_key);
+    expect(input.audio_key).toBe(SAMPLE_INPUT.audio_key);
+    expect(input.output_key).toBe("renders/lighthouse/clips/shot_01_seedance_ls.mp4");
+  });
+
   it("forwards output_hash verbatim when present, omits it when absent", () => {
-    const withHash = buildRunPodBody({ ...SAMPLE_INPUT, audio_key: "renders/neon/dialogue/shot_01.wav", output_hash: "abc123" }, coerceConfig({}));
+    const withHash = buildRunPodBody({ ...SAMPLE_INPUT, audio_key: "renders/neon/dialogue/shot_01.wav", output_hash: "abc123" }, coerceConfig({}), "neon");
     expect(withHash.input.output_hash).toBe("abc123");
-    const without = buildRunPodBody({ ...SAMPLE_INPUT, audio_key: "renders/neon/dialogue/shot_01.wav" }, coerceConfig({}));
+    const without = buildRunPodBody({ ...SAMPLE_INPUT, audio_key: "renders/neon/dialogue/shot_01.wav" }, coerceConfig({}), "neon");
     expect("output_hash" in without.input).toBe(false);
   });
 });
