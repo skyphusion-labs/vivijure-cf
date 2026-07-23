@@ -194,6 +194,15 @@ export async function bumpCounter(db: D1Like, bucket: string, day: string): Prom
   return row?.count ?? 1;
 }
 
+/** Read current counter without incrementing (K3: check-before-bump on global caps). */
+export async function peekCounter(db: D1Like, bucket: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT count FROM demo_counter WHERE bucket = ?")
+    .bind(bucket)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 // --- orchestration ------------------------------------------------------------------------------
 
 export interface DemoRenderDeps {

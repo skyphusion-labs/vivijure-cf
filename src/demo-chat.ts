@@ -14,7 +14,7 @@
 // Env-free + the model call is an injected seam, so the cap logic + prompt shaping unit-test without a
 // Worker runtime or a token spend.
 
-import { bumpCounter, utcDay, type D1Like } from "./demo-render";
+import { bumpCounter, peekCounter, utcDay, type D1Like } from "./demo-render";
 
 /** The injected model runner (real: a thin wrapper over env.AI.run through the demo gateway). Returns
  *  the assistant text, or throws -- the caller degrades a throw to an honest error, never a silent blank. */
@@ -66,6 +66,9 @@ export async function runDemoChat(deps: DemoChatDeps, input: { ip: string; messa
     return { ok: false, reason: "too-long", message: "that message is too long for the demo assistant" };
   }
   const day = utcDay(deps.now);
+  if (await peekCounter(deps.db, `chat:global:${day}`) >= deps.caps.globalDaily) {
+    return { ok: false, reason: "exhausted", message: "the free demo assistant is out of capacity for today -- browse keeps working, and you can run your own studio for the full brain." };
+  }
   const ipCount = await bumpCounter(deps.db, `chat:ip:${input.ip}:${day}`, day);
   if (ipCount > deps.caps.perIpDaily) {
     return { ok: false, reason: "exhausted", message: "you have used your demo assistant messages for today -- browse the catalog, or run your own studio for the full brain. Resets at UTC midnight." };

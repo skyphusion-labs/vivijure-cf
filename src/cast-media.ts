@@ -12,6 +12,7 @@ import {
 import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "@skyphusion-labs/vivijure-core/cast-db";
 import { extFromMime } from "./utils";
+import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 
 export const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
 export const CAST_MAX_BYTES = 16 * 1024 * 1024;
@@ -67,6 +68,15 @@ function requireCastImageMime(claimed: string, bytes?: ArrayBuffer | Uint8Array)
   } catch (e) {
     throw new HttpError(400, (e as Error).message);
   }
+}
+
+/** JSON upload path: key must be a safe R2 path under this cast member. */
+function requireCastStagedKey(castId: number, key: string): string {
+  const prefix = `cast/${castId}/`;
+  if (!isSafeRelKey(key) || !key.startsWith(prefix) || key.length <= prefix.length) {
+    throw new HttpError(400, "key must be a safe staged path under this cast member");
+  }
+  return key;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -142,7 +152,8 @@ export async function handleCastPortraitUpload(
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
-      const row = await setPortrait(env, id, body.key, mime);
+      const key = requireCastStagedKey(id, body.key);
+      const row = await setPortrait(env, id, key, mime);
       if (!row) throw new HttpError(404, "cast not found");
       return json({ cast: row ? toPublicCast(row) : null });
     }
@@ -194,7 +205,8 @@ export async function handleCastRefAdd(
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
-      const row = await addRef(env, id, { key: body.key, mime });
+      const key = requireCastStagedKey(id, body.key);
+      const row = await addRef(env, id, { key, mime });
       if (!row) throw new HttpError(404, "cast not found");
       return json({ cast: row ? toPublicCast(row) : null });
     }
@@ -255,7 +267,8 @@ export async function handleCastSourceAdd(
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
-      const row = await addSource(env, id, { key: body.key, mime });
+      const key = requireCastStagedKey(id, body.key);
+      const row = await addSource(env, id, { key, mime });
       if (!row) throw new HttpError(404, "cast not found");
       return json({ cast: row ? toPublicCast(row) : null });
     }
