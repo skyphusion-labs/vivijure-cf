@@ -7,7 +7,7 @@
 // (the browser), so the same file serves both with no build step.
 //
 // Why this exists: a bound character whose LoRA is not trained-and-ready gets
-// its LoRA RETRAINED inline (~20 min) on EVERY render via the server fail-safe.
+// its LoRA RETRAINED inline (~15-25 min) on EVERY render via the server fail-safe.
 // That used to fire silently. The preflight reads FRESH cast state right before
 // submit and warns when any bound slot will trigger the retrain tax.
 (function (root, factory) {

@@ -24,7 +24,7 @@ function showRenderStage() {
 // ---------- LoRA training preflight (v0.221.0) ----------
 //
 // A bound character whose LoRA is not trained-and-ready gets its LoRA RETRAINED
-// inline (~20 min) on EVERY render via the server fail-safe (resolveCastLoras).
+// inline (~15-25 min) on EVERY render via the server fail-safe (resolveCastLoras).
 // That used to fire with no visible signal -- the bug this closes. Right before
 // a render submit we re-read FRESH cast state and, if any bound slot will
 // trigger the retrain tax, show a visible, actionable warning. It is NOT a hard
@@ -56,7 +56,7 @@ function showLoraPreflightWarning(unready) {
   msg.className = "planner-lora-preflight-msg";
   msg.textContent =
     "Warning: these characters have no trained LoRA and will be retrained inline " +
-    "(~20 min each) during this render: " + names + ". Train them on the Cast page " +
+    "(~15-25 min each) during this render: " + names + ". Train them on the Cast page " +
     "first for instant reuse. Click render again to proceed anyway.";
   const link = document.createElement("a");
   link.href = "/cast";
