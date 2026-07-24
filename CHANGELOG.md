@@ -9,6 +9,10 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+- **ci(cf#197):** finish satellite module workers (`finish-rife`, `finish-upscale`, `finish-lipsync`,
+  `speech-upscale`) deploy on every studio tag even when `CORE_ONLY_DEPLOY=1`; canonical list in
+  `scripts/finish-satellite-modules.txt`. Tenant release bundles now include `finish-rife`.
+
 ## v1.7.14 -- 2026-07-23
 
 PATCH: dual-panel with vivijure-local **v1.1.16** (K3 security closeout). Pins
