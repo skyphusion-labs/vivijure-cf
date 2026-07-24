@@ -44,7 +44,7 @@ import { exportCastBundle, importCastBundle } from "./cast-bundle";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
 import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
-import { aiRun } from "./ai-binding";
+import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
 import {
   submitDemoRender, pollDemoRender, listRenderables, DEFAULT_DEMO_RENDER_CAPS,
   type DemoRenderDeps, type DemoRenderCaps, type DemoBackend, type D1Like,
@@ -1823,6 +1823,15 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
       // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
       // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
       const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
+      // ONE availability computation, used by BOTH the hook report and the demo assistant gate
+      // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
+      // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
+      // gate rather than adding a second mechanism is the point: one answer to "can this host serve
+      // an AI-Gateway hook", consumed everywhere that question is asked.
+      const aiReady = await aiGatewayReady(env);
+      // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
+      // reason the panel prints verbatim.
+      const hooksUnavailable = aiReady ? undefined : { "plan.enhance": PLANNER_UNAVAILABLE_REASON };
       // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
       // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
       // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
@@ -1831,13 +1840,16 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
       return json(
         modulesResponse(modules, renderConfigProjection(), {
           dispatch: !!env.MODULE_DISPATCH,
+          ...(hooksUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
           ...(isDemoMode(env)
             ? {
                 readonly: true,
                 render: { available: demoRenderEnabled(env) },
-                // Assistant capability only when the AI binding is present (Phase B provisioned); a
-                // Phase-A demo (no AI) simply omits it, so the UI never advertises a chat it cannot serve.
-                ...((env as { AI?: unknown }).AI ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
+                // Assistant capability only when the host can actually reach the gateway. This used
+                // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
+                // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
+                // hook report asks, so the two can never disagree.
+                ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
               }
             : {}),
         }),

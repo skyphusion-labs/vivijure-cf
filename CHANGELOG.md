@@ -9,6 +9,21 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### fix(planner): the host reports hooks it cannot serve (cf#98)
+
+- `GET /api/modules` now emits `host.hooks_unavailable` (core 1.2.14) naming any hook this deploy
+  cannot serve, with a tenant-readable reason the panel prints verbatim. First entry:
+  `plan.enhance`, when the AI Gateway is not configured.
+- **The AI gate is HOISTED, not duplicated.** `aiGatewayReady()` is one answer to "can this host
+  serve an AI-Gateway hook", consumed by both the hook report and the demo `assistant` emission.
+  That gating already existed but only inside the demo branch, so a non-demo deploy missing the
+  gateway advertised capability it could not serve.
+- It RESOLVES `GATEWAY_ID` rather than checking the binding exists: a bound-but-empty gateway id
+  fails at call time exactly like an absent one, and the old `env.AI`-only test said yes to it.
+- Core pin `^1.2.14`.
+
+## Unreleased
+
 ## v1.7.16 -- 2026-07-24
 
 PATCH: honest Wan LoRA train-time copy (measured). #213 set the Wan train-time copy to
