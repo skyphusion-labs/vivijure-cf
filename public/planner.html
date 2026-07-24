@@ -94,7 +94,7 @@
 
       <label class="planner-field">
         <span>model</span>
-        <select id="planner-model"></select>
+        <select id="planner-model" data-hook="plan.enhance"></select>
       </label>
 
       <label class="planner-field">
@@ -112,7 +112,7 @@
 
       <div class="planner-actions">
         <span id="planner-status" class="planner-status"></span>
-        <button id="planner-plan" type="button" class="planner-primary">plan</button>
+        <button id="planner-plan" type="button" class="planner-primary" data-hook="plan.enhance">plan</button>
       </div>
     </section>
 
@@ -164,7 +164,7 @@
           <option value="medium" selected>medium</option>
           <option value="bold">bold</option>
         </select>
-        <button id="planner-autodirect" type="button" class="planner-accent-btn" title="rewrite every shot with cinematic direction via the installed plan.enhance module" hidden>auto-direct shots</button>
+        <button id="planner-autodirect" type="button" class="planner-accent-btn" title="rewrite every shot with cinematic direction via the installed plan.enhance module" data-hook="plan.enhance" hidden>auto-direct shots</button>
         <span class="planner-toolbar-spacer"></span>
         <select id="planner-markers-format" class="planner-toolbar-select" title="NLE marker format">
           <option value="premiere_csv">Premiere CSV</option>
@@ -553,7 +553,7 @@
         <ul id="planner-refine-turns" class="planner-refine-turns"></ul>
         <div class="planner-refine-input-row">
           <textarea id="planner-refine-input" class="planner-refine-input" rows="2" placeholder="describe the change..."></textarea>
-          <button id="planner-refine-send" type="button" class="planner-primary">send</button>
+          <button id="planner-refine-send" type="button" class="planner-primary" data-hook="plan.enhance">send</button>
         </div>
         <p class="sw-refine-input-hint">Describe the change; Enter to send, Shift+Enter for a new line.</p>
       </section>
@@ -566,6 +566,8 @@
   <script src="demo-steer.js"></script>
   <script src="studio-chrome.js"></script>
   <script src="topbar.js"></script>
+  <script src="hook-availability-checks.js"></script>
+  <script src="hook-availability.js"></script>
   <script src="model-catalog.js"></script>
   <script src="planner-registry.js"></script>
   <script src="planner-render-config.js"></script>
