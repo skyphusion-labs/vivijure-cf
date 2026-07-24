@@ -56,7 +56,15 @@ const MANIFEST: ModuleManifest = {
   version: "0.2.1",
   api: MODULE_API,
   hooks: ["score"],
-  provides: [{ id: "minimax-speech", label: "MiniMax Speech 02 HD (RunPod)" }],
+  // Tier-honest identity + knob labels (cf#211): this manifest is canonical + drift-locked (synced
+  // into vivijure-local/dev/manifests/ by scripts/sync-module-manifests.ts, checked by
+  // check-module-manifest-drift.sh), so it has to read true on BOTH panels. Hosted (vivijure-cf)
+  // always has RUNPOD_API_KEY configured, so MiniMax HD is the tier that actually runs here; the
+  // local panel's default install has no RunPod (local#202) and instead runs Deepgram Aura-1 on CF
+  // AI, with MiniMax HD as the opt-in high-fidelity tier when RUNPOD_API_KEY is set. The label below
+  // names both tiers rather than asserting the RunPod one is universal; local's runtime /module.json
+  // override (narrationManifestView, same string) becomes a same-value no-op once this ships.
+  provides: [{ id: "minimax-speech", label: "Narration (Deepgram Aura on Cloudflare; MiniMax HD with RunPod)" }],
   config_schema: {
     text: {
       type: "string",
@@ -72,12 +80,12 @@ const MANIFEST: ModuleManifest = {
       type: "enum",
       values: [...EMOTIONS],
       default: "neutral",
-      label: "emotion",
+      label: "emotion (MiniMax HD only)",
     },
     format: { type: "enum", values: [...FORMATS], default: "mp3", label: "audio format" },
-    pitch: { type: "int", default: 0, min: -12, max: 12, label: "pitch" },
-    speed: { type: "float", default: 1, min: 0.5, max: 2, label: "speed" },
-    volume: { type: "float", default: 1, min: 0, max: 10, label: "volume" },
+    pitch: { type: "int", default: 0, min: -12, max: 12, label: "pitch (MiniMax HD only)" },
+    speed: { type: "float", default: 1, min: 0.5, max: 2, label: "speed (MiniMax HD only)" },
+    volume: { type: "float", default: 1, min: 0, max: 10, label: "volume (MiniMax HD only)" },
     sample_rate: {
       type: "enum",
       values: SAMPLE_RATES.map(String),
