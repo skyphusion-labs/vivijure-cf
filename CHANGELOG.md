@@ -9,6 +9,20 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.7.16 -- 2026-07-24
+
+PATCH: honest Wan LoRA train-time copy (measured). #213 set the Wan train-time copy to
+~1h45m-2h, measured on the pre-fix image (train-0.1.2); #216 corrects it to ~35-45 min after a
+worker-side fix shipped and was output-verified on the prod endpoint (dev-2, job
+`e142243d-23db-4de4-b1ed-c1a9f38af1d5-e1`, executionTime 2356038 ms / 39.3 min, 2000 steps / 10
+refs, image `train-0.1.3`). Pins `@skyphusion-labs/vivijure-core` to `^1.2.13` (core#92 reconciler
+observability fix; pairs with local v1.2.0).
+
+Known deferred: cf#211, tracked open, low priority. The canonical `narration-gen.json` manifest
+still describes MiniMax-only knobs following the local#202 two-tier engine split (MiniMax-HD on
+RunPod opt-in vs Deepgram Aura-1 creds-free default); the local panel runtime-overrides the served
+module.json to stay honest in the meantime. No behavior change intended when it lands.
+
 ## v1.7.15 -- 2026-07-24
 
 PATCH: finish satellite deploy parity (cf#197). On every studio tag, CI deploys
