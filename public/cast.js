@@ -1470,7 +1470,7 @@
     if (!window.confirm(
       "Train Wan LoRA for " + c.name + "?\n\n"
       + "This kicks off a standalone Wan 2.2 expert training job on the GPU. "
-      + "Typical wall-clock: ~35-45 minutes at 2000 steps (a cold worker adds image-download startup). Estimated cost: $0.50-$2 of GPU time.\n\n"
+      + "Typical wall-clock: ~35-45 minutes at 2000 steps (a cold worker adds image-download startup). Estimated cost: ~$2-$4 of GPU time (measured; cf#214).\n\n"
       + (c.wan_lora_key_high && c.wan_lora_key_low
         ? "This will retrain (existing experts stay in storage until you delete them).\n\n"
         : "")
