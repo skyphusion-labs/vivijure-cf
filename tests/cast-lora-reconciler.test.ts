@@ -19,6 +19,7 @@ import {
   sqliteUtcToMs,
   LORA_TRAIN_404_GRACE_SECONDS,
   LORA_TRAIN_MAX_AGE_SECONDS,
+  LORA_TRAIN_OBSERVED_MAX_AGE_SECONDS,
 } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { Env } from "../src/env";
@@ -101,10 +102,14 @@ describe("decideStuckTraining (pure)", () => {
     expect(d.reconcile).toBe(true);
     expect(d.reason).toMatch(/404|not found/i);
   });
-  it("reconciles any row past the max-age ceiling (backstop, even without a 404)", () => {
-    const d = decideStuckTraining({ ok: true }, LORA_TRAIN_MAX_AGE_SECONDS + 1);
+  it("reconciles an UNOBSERVABLE row past the 1h backstop (transport error, no 404)", () => {
+    const d = decideStuckTraining({ ok: false }, LORA_TRAIN_MAX_AGE_SECONDS + 1);
     expect(d.reconcile).toBe(true);
     expect(d.reason).toMatch(/max age/i);
+  });
+  it("does NOT age-fail an OBSERVED-running row at 1h; the 3h observed ceiling still fires (#92)", () => {
+    expect(decideStuckTraining({ ok: true }, LORA_TRAIN_MAX_AGE_SECONDS + 1).reconcile).toBe(false);
+    expect(decideStuckTraining({ ok: true }, LORA_TRAIN_OBSERVED_MAX_AGE_SECONDS + 1).reconcile).toBe(true);
   });
   it("does NOT reconcile a healthy in-progress poll inside the ceiling", () => {
     expect(decideStuckTraining({ ok: true }, 300).reconcile).toBe(false);
@@ -134,13 +139,23 @@ describe("refreshTrainingLora reconciles a wedged row (D1 fixture, #295)", () =>
     expect(result?.lora_status).toBe("training");
   });
 
-  it("a row past the max-age ceiling reconciles even while the poll still says in-progress", async () => {
+  it("an OBSERVED in-progress row at T+90min STAYS training (no false-fail; #92)", async () => {
     polled.mockResolvedValue({
       ok: true,
       view: { jobId: "01fd7d02-aged-e2", status: "IN_PROGRESS", statusRaw: "IN_PROGRESS" },
     });
     const { env } = fakeEnv(trainingRow("2026-06-24 00:00:00"));
     const result = await refreshTrainingLora(env, cast(), base + 90 * 60 * 1000); // 90 min later
+    expect(result?.lora_status).toBe("training");
+  });
+
+  it("an OBSERVED in-progress row past the 3h observed ceiling reconciles (#92)", async () => {
+    polled.mockResolvedValue({
+      ok: true,
+      view: { jobId: "01fd7d02-aged-e2", status: "IN_PROGRESS", statusRaw: "IN_PROGRESS" },
+    });
+    const { env } = fakeEnv(trainingRow("2026-06-24 00:00:00"));
+    const result = await refreshTrainingLora(env, cast(), base + (3 * 60 + 1) * 60 * 1000); // past 3h
     expect(result?.lora_status).toBe("failed");
     expect(String(result?.lora_error)).toMatch(/max age/i);
   });
