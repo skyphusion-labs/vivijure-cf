@@ -1421,7 +1421,7 @@
         "warn",
       );
     } else if (status === "training") {
-      setWanLoraStatusText("Wan training in progress, ~1h45m-2h on the GPU", "loading");
+      setWanLoraStatusText("Wan training in progress, ~35-45 min on the GPU", "loading");
     } else if (hasWan && status === "ready") {
       setWanLoraStatusText("Wan LoRA ready for alibaba-wan-lora renders", "success");
     } else if (status === "failed") {
@@ -1470,7 +1470,7 @@
     if (!window.confirm(
       "Train Wan LoRA for " + c.name + "?\n\n"
       + "This kicks off a standalone Wan 2.2 expert training job on the GPU. "
-      + "Typical wall-clock: ~1h45m-2h at 2000 steps (a cold worker adds startup). Estimated cost: $0.50-$2 of GPU time.\n\n"
+      + "Typical wall-clock: ~35-45 minutes at 2000 steps (a cold worker adds image-download startup). Estimated cost: $0.50-$2 of GPU time.\n\n"
       + (c.wan_lora_key_high && c.wan_lora_key_low
         ? "This will retrain (existing experts stay in storage until you delete them).\n\n"
         : "")
