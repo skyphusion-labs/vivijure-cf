@@ -1332,3 +1332,18 @@ body.demo-steer-active #planner-history { display: none !important; }
 .demo-film-title { font-weight: 700; font-size: 14px; color: var(--ink); }
 .demo-film-video { width: 100%; max-width: 100%; border-radius: 8px; background: #000; display: block; }
 .demo-film-meta { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Hook availability (cf#98). A control whose hook the host cannot serve is dimmed
+ * and carries the operator's own reason as text, not just a tooltip: a disabled
+ * control with no stated cause is the same dead end as a control that throws. */
+.hook-unavailable {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hook-unavailable-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warn, #f2c14e);
+  max-width: 60ch;
+}
