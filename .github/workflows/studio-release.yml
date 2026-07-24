@@ -127,7 +127,10 @@ jobs:
       - name: Bundle + assemble the tenant module workers (cf#99)
         run: |
           set -euo pipefail
-          for m in keyframe own-gpu finish-upscale finish-lipsync speech-upscale; do
+          # Tenant bundle modules: core GPU hooks + finish satellites (cf#197). Single list in
+          # scripts/finish-satellite-modules.txt so release artifacts cannot omit finish-rife.
+          TENANT_MODULES="keyframe own-gpu $(grep -v '^[[:space:]]*$' scripts/finish-satellite-modules.txt | tr '\n' ' ')"
+          for m in $TENANT_MODULES; do
             ( cd "modules/$m" && npx wrangler deploy --dry-run --outdir="$GITHUB_WORKSPACE/module-out/$m" )
             node scripts/build-module-release.ts \
               --bundle "module-out/$m/index.js" \
@@ -175,7 +178,8 @@ jobs:
       - name: Verify the module artifacts before publishing (cf#99)
         run: |
           set -euo pipefail
-          for m in keyframe own-gpu finish-upscale finish-lipsync speech-upscale; do
+          TENANT_MODULES="keyframe own-gpu $(grep -v '^[[:space:]]*$' scripts/finish-satellite-modules.txt | tr '\n' ' ')"
+          for m in $TENANT_MODULES; do
             test -s "dist-release/modules/$m/worker.js"
             test -s "dist-release/modules/$m/manifest.json"
             node -e "
@@ -228,7 +232,8 @@ jobs:
           for f in dist-release/assets/*; do
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/assets/$(basename "$f")" --file "$f" --remote
           done
-          for m in keyframe own-gpu finish-upscale finish-lipsync speech-upscale; do
+          TENANT_MODULES="keyframe own-gpu $(grep -v '^[[:space:]]*$' scripts/finish-satellite-modules.txt | tr '\n' ' ')"
+          for m in $TENANT_MODULES; do
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/manifest.json" --file "dist-release/modules/$m/manifest.json" --remote
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/worker.js" --file "dist-release/modules/$m/worker.js" --remote
           done
