@@ -205,7 +205,7 @@
       <section class="cast-lora-pane">
         <header class="cast-section-header">
           <h3>SDXL LoRA training</h3>
-          <p class="cast-section-hint">train a character SDXL LoRA standalone (separate from rendering). takes ~8-15 minutes on the GPU; uses the portrait + training refs above. costs ~$0.50-$2 of GPU time per training run.</p>
+          <p class="cast-section-hint">train a character SDXL LoRA standalone (separate from rendering). takes ~15-25 minutes on the GPU with a full 10-image reference set (fewer refs train faster); uses the portrait + training refs above. costs ~$0.50-$2 of GPU time per training run.</p>
         </header>
         <div id="cast-lora-status-row" class="cast-lora-status-row">
           <span id="cast-lora-badge" class="cast-lora-badge cast-lora-badge-idle">idle</span>
@@ -221,7 +221,7 @@
       <section class="cast-lora-pane">
         <header class="cast-section-header">
           <h3>Wan LoRA training</h3>
-          <p class="cast-section-hint">train dual Wan 2.2 expert adapters for alibaba-wan-lora motion renders. same portrait + refs; ~8-15 minutes GPU; costs ~$0.50-$2 per run.</p>
+          <p class="cast-section-hint">train dual Wan 2.2 expert adapters for alibaba-wan-lora motion renders. same portrait + refs; ~1h45m-2h GPU at 2000 steps with a full 10-ref set (a cold worker adds startup time); costs ~$0.50-$2 per run.</p>
         </header>
         <div id="cast-wan-lora-status-row" class="cast-lora-status-row">
           <span id="cast-wan-lora-meta" class="cast-lora-meta"></span>
