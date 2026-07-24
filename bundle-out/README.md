@@ -1,0 +1,1 @@
+This folder contains the built output assets for the worker "vivijure-studio" generated at 2026-07-24T22:25:01.138Z.
