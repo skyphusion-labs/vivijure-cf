@@ -1,0 +1,47 @@
+# vivijure-tail -- wrangler config.
+#
+# Recovered from the LIVE deployed Worker (cf#148: this config had never been committed; the
+# Worker's settings existed only on the deployed instance, so a delete of it would have meant
+# reverse-engineering the shape from a system that no longer runs). Follows the same
+# tracked-example / gitignored-real-file pattern as the core (docs/deploy-config-injection.md):
+# edit this file, render your own wrangler.toml, never commit the real one.
+#
+# account_id is NOT hardcoded; read from CLOUDFLARE_ACCOUNT_ID same as the core.
+#
+# NOTE: unlike the core's wrangler.toml.example, this file is not yet wired into deploy.sh /
+# ci.yml's render step -- vivijure-tail predates that automation and has so far been deployed by
+# hand. Adding it here fixes the reproducibility gap (the config is now readable and re-creatable
+# from source); wiring it into the automated render/deploy pipeline is a separate follow-up.
+
+name = "vivijure-tail"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+usage_model = "standard"
+workers_dev = false
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+
+logpush = false
+
+# Not itself a tail_consumers producer -- it IS the tail consumer for vivijure-studio's core (see
+# the tail_consumers entry in the root wrangler.toml.example).
+
+# Workers VPC -> the self-hosted Loki on biafra (fed the studio core's render logs; see
+# docs/observability.md). The service id is an account-internal identifier, not a credential, but
+# per this repo's convention (docs/deploy-config-injection.md) it still does not get inlined here.
+# Recorded in the private store (fleet-chezmoi); not reproducible from a documented CF API today
+# (the Workers VPC services surface is not in Cloudflare's public OpenAPI spec as of this writing).
+[[vpc_services]]
+binding = "LOKI_VPC"
+service_id = "${LOKI_VPC_ID}"
+remote = true
