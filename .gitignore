@@ -51,3 +51,8 @@ report.[0-9]*.json
 
 # Rendered demo-scoped local-gpu worker config (#631); rendered from its .example, holds no secrets.
 /modules/local-gpu/wrangler.demo.toml
+
+# vivijure-tail's wrangler config is likewise RENDERED from tail/wrangler.toml.example (the
+# LOKI_VPC Workers-VPC service id injected; the id itself lives in the private store, not here).
+# Edit the .example; render locally to deploy. (cf#148)
+/tail/wrangler.toml
