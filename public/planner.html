@@ -383,7 +383,14 @@
            (film-titles) cannot derive. Its presentation knobs (font / color / durations) project
            into the module panel above from config_schema; this carries FilmTitleSpec{text,subtitle}
            + FilmCreditSpec{lines}. Empty -> no card (the film.finish chain no-ops), matching today.
-           Applied on a full render; keyframes-only previews skip the film.finish chain. -->
+           Applied on a full render; keyframes-only previews skip the film.finish chain.
+
+           cf#234(a): the three fields below declare data-hook="film.finish" so the cf#98 gate
+           disables them, with the host reason, on a studio that cannot run that chain. This was the
+           WORST case of the cf#118 family: when the video-finish tier is absent the assemble degrade
+           bypasses transitionToDone, so film.finish never runs AT ALL (absent, not degraded) and a
+           typed-in title card silently never rendered. Unlike the mux buttons it did not even 422.
+           Inert until the host reports the hook (correct default), so it is safe ahead of that. -->
       <details class="planner-overrides-details planner-film-titles">
         <summary class="planner-overrides-summary">title + credit cards (optional)</summary>
         <div class="planner-overrides-fields">
@@ -392,15 +399,15 @@
           </p>
           <label class="planner-field">
             <span>film title</span>
-            <input id="planner-film-title" type="text" placeholder="(no title card)" />
+            <input id="planner-film-title" type="text" placeholder="(no title card)" data-hook="film.finish" />
           </label>
           <label class="planner-field">
             <span>subtitle (optional)</span>
-            <input id="planner-film-subtitle" type="text" placeholder="second line, needs a title" />
+            <input id="planner-film-subtitle" type="text" placeholder="second line, needs a title" data-hook="film.finish" />
           </label>
           <label class="planner-field">
             <span>credits (one per line)</span>
-            <textarea id="planner-film-credits" rows="3" placeholder="Directed by ...&#10;Music by ..." spellcheck="false"></textarea>
+            <textarea id="planner-film-credits" rows="3" placeholder="Directed by ...&#10;Music by ..." spellcheck="false" data-hook="film.finish"></textarea>
           </label>
         </div>
       </details>
