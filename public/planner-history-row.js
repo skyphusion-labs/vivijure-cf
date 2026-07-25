@@ -402,11 +402,16 @@ function buildHistoryRow(r, childrenByParent) {
     addAudio.className = "planner-history-action";
     addAudio.textContent = "add audio";
     addAudio.title = "mux an audio file onto this finished video (CPU container, no GPU)";
-    // cf#118: declare the hook this control drives so the cf#98 availability gate can
-    // disable it, with the reason, on a studio that cannot serve it. Before this, a hosted
-    // tenant with no video-finish tier was shown the button and got a 422 on click. ONE
-    // attribute is the entire contract; nothing here knows what the hook means.
-    addAudio.dataset.hook = "score";
+    // cf#118: declare what this control needs so the cf#98 availability gate can disable it,
+    // with the reason, on a studio that cannot serve it. Before this, a hosted tenant with no
+    // video-finish tier was shown the button and got a 422 on click. ONE attribute is the
+    // entire contract; nothing here knows what the key means.
+    //
+    // cf#229: that key USED to be "score", which was behaviour-correct and semantically wrong.
+    // This button does not need the score hook (no bed is generated here); it needs the
+    // video-finish container, because all it does is mux. Declaring the capability instead of a
+    // hook that merely depends on it is what lets bed GENERATION stay live on this same studio.
+    addAudio.dataset.hook = "capability:video-finish";
     addAudio.addEventListener("click", () => addAudioToRender(r, addAudio));
     actions.appendChild(addAudio);
 
@@ -420,7 +425,10 @@ function buildHistoryRow(r, childrenByParent) {
       narrate.className = "planner-history-action";
       narrate.textContent = "narrate";
       narrate.title = "synthesize narration with the installed score module and mux it onto this video";
-      narrate.dataset.hook = "score"; // cf#118, same gate as add audio: it ends in the same mux
+      // cf#118/#229: narration GENERATES a bed (score) and then muxes it. The generate leg works
+      // on a VPC-less studio; the mux leg cannot, and a compound action is dead if any leg is.
+      // So it declares the mux capability, same as add-audio -- the hook it also drives is fine.
+      narrate.dataset.hook = "capability:video-finish";
       narrate.addEventListener("click", () => addNarrationToRender(r, narrate));
       actions.appendChild(narrate);
     }

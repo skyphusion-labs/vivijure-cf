@@ -1383,3 +1383,15 @@ body.demo-steer-active #planner-history { display: none !important; }
   color: var(--warn, #f2c14e);
   max-width: 60ch;
 }
+
+/* cf#229: an ADVISORY note sits under a control that WORKS but whose product this studio
+ * cannot deliver (a music bed that generates fine and can never be muxed onto a film). It
+ * is deliberately quieter than .hook-unavailable-note and carries no dimming: the control
+ * is live, and dressing it up as dead would be the same dishonesty pointed the other way. */
+.hook-advisory-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.8;
+  max-width: 60ch;
+}
