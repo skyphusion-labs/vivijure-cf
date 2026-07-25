@@ -89,6 +89,7 @@ import {
 import { planningModelsFromModules } from "./planning-models";
 import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-yaml";
 import { emitMarkers, type MarkersFormat } from "./markers";
+import { abuseReportUrl } from "./abuse-contact";
 import { videoFinishHooksUnavailable } from "./video-finish-availability";
 import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
@@ -1845,6 +1846,7 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         ...videoFinishHooksUnavailable(env),
       };
       const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
+      const abuseUrl = abuseReportUrl(env);
       // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
       // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
       // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
@@ -1854,6 +1856,10 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         modulesResponse(modules, renderConfigProjection(), {
           dispatch: !!env.MODULE_DISPATCH,
           ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
+          // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
+          // operator set it, because the same bundle self-hosts and must never advertise an address
+          // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
+          ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
           ...(isDemoMode(env)
             ? {
                 readonly: true,

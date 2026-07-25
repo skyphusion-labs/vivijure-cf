@@ -1395,3 +1395,14 @@ body.demo-steer-active #planner-history { display: none !important; }
   opacity: 0.8;
   max-width: 60ch;
 }
+
+/* control-plane#130: the abuse-report link, appended by abuse-link.js only when the host reports an
+   address. Quiet by design: a reporting path has to be findable, not prominent, and it must not
+   compete with the render controls. Absent entirely on a studio whose host reports nothing. */
+.studio-foot {
+  padding: 18px 20px 28px;
+  text-align: right;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.studio-foot a { color: inherit; }

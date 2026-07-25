@@ -7,6 +7,31 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+### feat(abuse): the studio panel can carry an abuse-report link, projected not hardcoded (control-plane#130)
+
+- Enforcement on the hosted tier is report-driven by ruling, so a findable intake path is part of
+  the product and the panel is where a render is actually seen. The hosted front door got a public
+  report page (control-plane#138); this is the studio half.
+- **`ABUSE_REPORT_URL` is an optional operator var**, surfaced as `host.abuse_report_url` on
+  `GET /api/modules` and rendered by `public/abuse-link.js` as a quiet footer link. Absent var means
+  absent field, no link, and no address anywhere in the shipped bundle.
+- **That absence is the point, not a default.** This bundle is what a self-hoster installs, and we
+  are not the provider for a self-hosted studio: we cannot see it and cannot switch it off, so
+  advertising our address inside it would send a reporter to someone who can do nothing. There is
+  deliberately NO fallback address and NO "am I hosted" branch; a self-hoster who wants their own
+  contact published sets the same var and the panel shows theirs.
+- **Refuses rather than passes through, in both places, defending different things.** The host side
+  drops a value that is not an absolute http(s) URL and logs why (a silent no-op is how an operator
+  concludes a feature is broken). The panel side refuses it again on the way into an `href`, because
+  a payload string reaching an `href` is a DOM boundary and a panel can talk to an older core.
+- Tests include a PARITY guard: no shipped studio asset may contain our abuse address or the hosted
+  report URL, with a control asserting the asset sweep is non-empty, plus a guard that the gate has
+  no fallback address to fall back to. Both watched FAILING against a planted default before being
+  trusted.
+- **Inert until a studio is actually provisioned with the var set,** and that is stated rather than
+  left to be discovered: no studio sets it today, so this ships reaching nobody. The hosted front
+  door page (control-plane#138) is the reachable path in the meantime.
+
 ### fix(hosted): the unreachable-studio sentence stops promising "not yet" (cf#229 / cf#234, swap)
 
 > **Shipped, but not yet reachable.** The sentence is in the tree; the STATE it belongs to is not
