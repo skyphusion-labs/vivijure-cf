@@ -80,8 +80,12 @@ import type { Env } from "./env";
 export type VideoFinishState = "available" | "provisionable" | "unprovisionable";
 
 /**
- * The key for the BINDING, not for a hook (cf#229). Namespaced with a colon so it can never collide
- * with a hook name (hooks use dots) or be read as a capability some module provides.
+ * KEY NAMESPACE RULE for `hooks_unavailable`, and it is the contract for anyone adding a key here:
+ * HOOK keys use DOTS (`film.finish`, `motion.backend`, `plan.enhance`); CAPABILITY keys use the
+ * `capability:` COLON PREFIX. The two spaces never overlap, so a capability can never collide with
+ * a hook name or be read as something a module provides. Asserted in the tests, both panels.
+ *
+ * This key is the video-finish BINDING itself, not a hook (cf#229).
  */
 export const VIDEO_FINISH_CAPABILITY_KEY = "capability:video-finish";
 
@@ -148,6 +152,8 @@ export function videoFinishHooksUnavailable(env: VideoFinishEnv): Record<string,
   const state = videoFinishState(env);
   const reason = videoFinishReason(state);
   if (!reason) return {};
+  // One channel, two key namespaces: capability keys carry the `capability:` prefix, hook keys are
+  // bare dotted hook names. See the KEY NAMESPACE RULE above before adding a key.
   return Object.fromEntries(
     [VIDEO_FINISH_CAPABILITY_KEY, ...VIDEO_FINISH_GATED_HOOKS].map((k) => [k, reason]),
   );

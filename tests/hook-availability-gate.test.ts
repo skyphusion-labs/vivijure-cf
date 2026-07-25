@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import checks from "../public/hook-availability-checks.js";
+import { VIDEO_FINISH_UNAVAILABLE_REASON } from "../src/video-finish-availability";
 
 // THE SHARED cf#98 GATE'S TWO NEW RELATIONSHIPS (cf#229 advisory, cf#234 container scope).
 //
@@ -89,7 +90,10 @@ class El {
 }
 
 const SRC = readFileSync("public/hook-availability.js", "utf8");
-const REASON = "Video finishing is not yet provisioned for this studio; finished renders deliver as per-shot clips.";
+// Read from the module, never hand-copied: a fixture with its own copy of the sentence is a place
+// a copy-swap silently fails to reach, and on the local twin it is where the wrong panel's wording
+// would hide (local#226).
+const REASON = VIDEO_FINISH_UNAVAILABLE_REASON;
 
 function fixture(): { doc: El; get: (id: string) => El } {
   const el = (tag: string, attrs: Attrs = {}, kids: El[] = []) => new El(tag, attrs, kids);
@@ -177,6 +181,20 @@ describe("cf#229: ADVISORY states the limit and disables NOTHING", () => {
     const note = block.nextElementSibling;
     expect(note?.className).toBe("hook-advisory-note");
     expect(note?.textContent).toBe(REASON);
+  });
+
+  it("the advisory note obeys THIS panel's reader properties, never a pinned sentence", async () => {
+    // Same doctrine as the required note (#239): guard the property, not the wording. What must
+    // hold for an advisory note on the HOSTED panel under any rewrite: it exists and is readable,
+    // it never tells a tenant to set a host environment variable, and it still says what they DO
+    // get. The local twin asserts its own reader's properties, which are deliberately different.
+    const { get } = await runGate(UNAVAILABLE);
+    const note = get("music-block").nextElementSibling;
+    expect(note?.className).toBe("hook-advisory-note");
+    const text = String(note?.textContent ?? "");
+    expect(text.trim().length, "an advisory that says nothing is not a disclosure").toBeGreaterThan(0);
+    expect(text).not.toMatch(/VIDEO_FINISH_URL|Set [A-Z_]+/);
+    expect(text).toMatch(/clips/);
   });
 
   it("a REQUIRED declaration on the same capability still disables", async () => {
