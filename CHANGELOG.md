@@ -9,9 +9,10 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ### fix(hosted): the unreachable-studio sentence stops promising "not yet" (cf#229 / cf#234, swap)
 
-> **HELD, not shipped.** This entry is on a branch behind control-plane#136: nothing writes
-> `VIDEO_FINISH_TIER_STATE`, so the sentence below cannot be displayed by any studio until the plane
-> decides who sets it. Do not fold this into a release before that lands.
+> **Shipped, but not yet reachable.** The sentence is in the tree; the STATE it belongs to is not
+> reachable, because nothing writes `VIDEO_FINISH_TIER_STATE` (control-plane#136) and the only live
+> tenant runs a bundle that predates the reader. No studio can display it today, so do not count
+> this as a change any tenant will see.
 
 
 - v1.9.0 shipped the three-state resolver with the copy PINNED: `provisionable` and
