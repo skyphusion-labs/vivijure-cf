@@ -132,6 +132,12 @@ export const VIDEO_FINISH_UNAVAILABLE_REASON =
  * person cannot act either, and being sent to someone who must say no is worse than being told
  * plainly. What it keeps is the half that matters to a person mid-render: what they DO get.
  *
+ * HELD BEHIND control-plane#136 (cf#243 ruling). Nothing writes `VIDEO_FINISH_TIER_STATE`, so this
+ * sentence cannot be displayed by any studio: the plane must first decide who sets that var and
+ * when. The words and the mechanism that makes them reachable land together, which is why this
+ * constant sits on a branch rather than in a release. cp#136 carries the acceptance criteria,
+ * including a live studio in the state so the sentence is READ once by a real reader.
+ *
  * The swap is ONE constant on purpose. Everything deciding WHEN a studio is in this state lives in
  * the plane, so this file only has to be right about what to say.
  */
