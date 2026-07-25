@@ -402,6 +402,11 @@ function buildHistoryRow(r, childrenByParent) {
     addAudio.className = "planner-history-action";
     addAudio.textContent = "add audio";
     addAudio.title = "mux an audio file onto this finished video (CPU container, no GPU)";
+    // cf#118: declare the hook this control drives so the cf#98 availability gate can
+    // disable it, with the reason, on a studio that cannot serve it. Before this, a hosted
+    // tenant with no video-finish tier was shown the button and got a 422 on click. ONE
+    // attribute is the entire contract; nothing here knows what the hook means.
+    addAudio.dataset.hook = "score";
     addAudio.addEventListener("click", () => addAudioToRender(r, addAudio));
     actions.appendChild(addAudio);
 
@@ -415,6 +420,7 @@ function buildHistoryRow(r, childrenByParent) {
       narrate.className = "planner-history-action";
       narrate.textContent = "narrate";
       narrate.title = "synthesize narration with the installed score module and mux it onto this video";
+      narrate.dataset.hook = "score"; // cf#118, same gate as add audio: it ends in the same mux
       narrate.addEventListener("click", () => addNarrationToRender(r, narrate));
       actions.appendChild(narrate);
     }
