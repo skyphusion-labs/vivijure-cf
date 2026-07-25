@@ -7,6 +7,51 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+### fix(hosted): name the capability that is absent, not four hooks that depend on it (cf#229)
+
+- `score` was in the `hooks_unavailable` set for a VPC-less studio, which claims more than the
+  truth. Bed GENERATION (`POST /api/storyboard/score-bed`, `src/score-bed.ts`) references no VPC
+  binding and the film path never calls the score hook at all; only the MUX, which lays that bed
+  onto a finished MP4, needs the video-finish container. Reporting the hook unservable would have
+  greyed out a working generator the moment anyone correctly declared the hook it drives -- cf#98's
+  own defect, pointed the other way (under-promising instead of over-promising).
+- The set is now `capability:video-finish` plus `master`, `film.finish`, `notify`, read off the
+  execution paths: `enterMasterOrMux` runs after an assemble that degrades, and film.finish/notify
+  are driven from `transitionToDone`, which the degrade bypasses. Those three genuinely never run.
+- `capability:video-finish` names the BINDING. The colon namespace is deliberate: hook names use
+  dots, so a capability key can never collide with one or be read as something a module provides.
+  No core contract change: `hooks_unavailable` is `Record<string,string>` on the wire and the panel
+  has always treated its keys as opaque.
+- The two mux buttons ("add audio", "narrate") now declare that capability instead of `score`
+  (supersedes the declaration recorded in the cf#118 entry below). Same behaviour, honest reason.
+
+### feat(planner): declare what a control NEEDS versus what it cannot DELIVER (cf#229, cf#234)
+
+- The shared cf#98 gate grew two relationships beside the existing required one, so per-feature
+  judgement stays in one attribute per control and none of it leaks into the gate:
+  - `data-hook-advisory="<key>"` -- the control RUNS; its product cannot be delivered here. Noted,
+    never disabled, never dimmed. The music and narration bed blocks declare this: on a studio with
+    no video-finish tier they produce a real bed that simply cannot reach a film.
+  - `data-hook-scope="container"` -- a required declaration on a SECTION: disables every form
+    control inside it and states the reason ONCE (cf#234 option (b); tagging each generated field
+    buried the panel in repeated sentences).
+- `renderModuleSection` now tags each projected module panel with the hook it was rendered under,
+  in container scope, so `master`, `film.finish`, and any hook added later gate generically with
+  zero per-feature branches. The panel stays a projection of the registry.
+- **The notification TOGGLE stays ungated, deliberately** (cf#234). `#planner-notify-toggle` is the
+  browser Notification API and works perfectly with no video-finish tier; the `notify` HOOK never
+  firing there is a separate, true fact. A guard test forbids a `data-hook` on that element so the
+  grep-and-tag reflex cannot quietly break a working feature.
+- Third state, MECHANISM ONLY (cf#240 lane D, input cp#112): `videoFinishState` resolves
+  available / provisionable / unprovisionable, with the copy swap gated on the cp#112 re-upload
+  path landing. Both absent-states resolve to the same shipped sentence today; the swap is one
+  documented constant. Reason guards stay property-based (never names a host env var, always says
+  what the tenant DOES get), so they survive the rewrite instead of blocking it.
+- Tests: exact key set both directions with a positive control, the advisory/required pair proven
+  opposite on the SAME key, container disabling proven over the real shipped IIFE, and declaration
+  guards over the shipped assets. Every new guard was failed on purpose first (score folded back
+  into the set; the advisory path made to disable) and each was caught by the intended assertion.
+
 ### fix(planner): gate the audio-mux controls on the hook they drive (cf#118)
 
 - "add audio" and "narrate" on a completed render both end in the video-finish container

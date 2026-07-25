@@ -132,9 +132,23 @@
     return label;
   }
 
-  function renderModuleSection(mod) {
+  // cf#234: availability gating for the projected module panels is GENERIC, and it lives here
+  // because this is the one place that already knows every hook the catalog carries. The section
+  // declares the hook it was rendered under, in CONTAINER scope, so the shared cf#98 gate disables
+  // its fields and states the reason ONCE. That covers master, film.finish, and any hook added
+  // later with zero per-feature branches -- the same principle the panel is built on ("a feature
+  // the UI must know about is a module, not a hardcoded section") applied to availability.
+  //
+  // The hook is passed in rather than read off mod.hooks[0]: a module can provide several hooks,
+  // and the honest key for THIS section is the one it is being rendered under. Reading hooks[0]
+  // would gate a section on a sibling capability it does not use.
+  function renderModuleSection(mod, hook) {
     const details = document.createElement("details");
     details.className = "planner-overrides-domain";
+    if (hook) {
+      details.dataset.hook = hook;
+      details.dataset.hookScope = "container";
+    }
     details.open = mod.hooks && mod.hooks[0] === "keyframe";
     const summary = document.createElement("summary");
     summary.className = "planner-overrides-summary";
@@ -571,8 +585,12 @@
       if (h.hook === "motion.backend") {
         if (renderBackendSelector(mods, motionWrap)) motionShown = true;
       }
-      for (const mod of mods) root.appendChild(renderModuleSection(mod));
+      for (const mod of mods) root.appendChild(renderModuleSection(mod, h.hook));
     }
+    // The sections are built AFTER the gate's own /api/modules read has resolved, so nothing
+    // would apply the determination to them without this. Same call the history list makes for
+    // its dynamically built rows; apply() is idempotent and inert when nothing is unavailable.
+    if (global.hookAvailability) global.hookAvailability.apply(root);
     if (motionWrap && !motionShown && !motionWrap.querySelector(".planner-backend-selector")) {
       motionWrap.hidden = true;
     }

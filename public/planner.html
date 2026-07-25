@@ -201,7 +201,12 @@
         <button id="planner-audio-clear" type="button" class="planner-secondary">clear</button>
       </div>
 
-      <details id="planner-music-gen-block" class="planner-audio-block" hidden>
+      <!-- cf#229: ADVISORY, not required. A music bed generates fine with no video-finish tier
+             (POST /api/storyboard/score-bed touches no VPC binding); what it cannot do on such a
+             studio is reach the film, because the mux is the only path in. data-hook-advisory
+             notes exactly that and disables nothing. Declaring data-hook="score" here instead
+             would grey out a control that works, which is the cf#229 defect itself. -->
+      <details id="planner-music-gen-block" class="planner-audio-block" data-hook-advisory="capability:video-finish" hidden>
         <summary id="planner-music-gen-summary">generate music</summary>
         <label id="planner-music-module-wrap" class="planner-field" hidden>
           <span class="planner-field-label">score module</span>
@@ -216,7 +221,9 @@
         </div>
       </details>
 
-      <details id="planner-narration-gen-block" class="planner-audio-block" hidden>
+      <!-- cf#229: same as the music block above. Narration synthesis is real work that
+             succeeds here; only its delivery into a finished film needs the tier. -->
+      <details id="planner-narration-gen-block" class="planner-audio-block" data-hook-advisory="capability:video-finish" hidden>
         <summary id="planner-narration-gen-summary">generate narration</summary>
         <label id="planner-narration-module-wrap" class="planner-field" hidden>
           <span class="planner-field-label">score module</span>
