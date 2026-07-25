@@ -22,6 +22,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(HERE, "..", "public");
 const readAsset = (name: string) => readFileSync(join(PUBLIC_DIR, name), "utf8");
 
+// THE EXAMPLE VALUE IS THE CONTROL-PLANE HOST, NOT THE MARKETING SITE (Strummer, cp#130). The page
+// this points at ships in the control plane, whose live config is CONTROL_PLANE_HOST =
+// studio.vivijure.com; vivijure.com is a different repo and a different deploy. A test example is
+// the thing people copy, so a wrong host here would propagate into the var somebody actually sets.
 describe("abuseReportUrl (the host side: what the core advertises about itself)", () => {
   it("advertises nothing when no operator set an address", () => {
     // The self-host default, and the shipped behaviour of every deploy that does not opt in.
@@ -31,8 +35,8 @@ describe("abuseReportUrl (the host side: what the core advertises about itself)"
   });
 
   it("passes through an operator address, http or https", () => {
-    expect(abuseReportUrl({ ABUSE_REPORT_URL: "https://vivijure.com/report-abuse.html" })).toBe(
-      "https://vivijure.com/report-abuse.html",
+    expect(abuseReportUrl({ ABUSE_REPORT_URL: "https://studio.vivijure.com/report-abuse.html" })).toBe(
+      "https://studio.vivijure.com/report-abuse.html",
     );
     // A self-hoster on a LAN is a real reader of this field, not a hypothetical.
     expect(abuseReportUrl({ ABUSE_REPORT_URL: "http://studio.lan/abuse" })).toBe("http://studio.lan/abuse");
@@ -67,8 +71,8 @@ describe("abuseLink (the panel side: what actually reaches an href)", () => {
   });
 
   it("renders the link the host reported", () => {
-    const spec = abuseLink(payload({ abuse_report_url: "https://vivijure.com/report-abuse.html" }));
-    expect(spec).toEqual({ href: "https://vivijure.com/report-abuse.html", label: "Report abuse" });
+    const spec = abuseLink(payload({ abuse_report_url: "https://studio.vivijure.com/report-abuse.html" }));
+    expect(spec).toEqual({ href: "https://studio.vivijure.com/report-abuse.html", label: "Report abuse" });
   });
 
   it("REFUSES a javascript: href even though the server already refused it", () => {
@@ -138,8 +142,8 @@ describe("the route actually carries the field (control-plane#130)", () => {
   });
 
   it("carries the operator address when one is set", async () => {
-    const host = await hostOf(env({ ABUSE_REPORT_URL: "https://vivijure.com/report-abuse.html" }));
-    expect(host.abuse_report_url).toBe("https://vivijure.com/report-abuse.html");
+    const host = await hostOf(env({ ABUSE_REPORT_URL: "https://studio.vivijure.com/report-abuse.html" }));
+    expect(host.abuse_report_url).toBe("https://studio.vivijure.com/report-abuse.html");
   });
 
   it("omits a refused address rather than advertising a broken or dangerous link", async () => {

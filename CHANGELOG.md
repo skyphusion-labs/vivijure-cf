@@ -28,6 +28,9 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
   report URL, with a control asserting the asset sweep is non-empty, plus a guard that the gate has
   no fallback address to fall back to. Both watched FAILING against a planted default before being
   trusted.
+- **Inert until a studio is actually provisioned with the var set,** and that is stated rather than
+  left to be discovered: no studio sets it today, so this ships reaching nobody. The hosted front
+  door page (control-plane#138) is the reachable path in the meantime.
 
 ### fix(hosted): the unreachable-studio sentence stops promising "not yet" (cf#229 / cf#234, swap)
 
