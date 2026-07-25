@@ -55,28 +55,37 @@ describe("videoFinishHooksUnavailable", () => {
   });
 });
 
-describe("the reason addresses THIS panel's reader (local#226, mirrored)", () => {
-  // local#226 established that parity is the SET and the BIAS, never the BYTES: the two panels
-  // deliberately word this differently because the reader is a different person. vivijure-local's
-  // copy of this file guards its own side (it must NAME the operator's knob, VIDEO_FINISH_URL, and
-  // must NOT say "ask whoever operates this studio"). This is the missing mirror.
-  //
-  // WHY THIS DIRECTION IS THE DANGEROUS ONE. The local string is the more informative of the two,
-  // so the natural future tidy-up is to copy it HERE, to "make the panels consistent". Local's
-  // guard would pass unchanged (local is untouched) and, without this assertion, nothing on the
-  // hosted side would object -- so a paying TENANT would be told to set VIDEO_FINISH_URL, an
-  // environment variable on a host they have no access to. That is exactly the defect local#226
-  // fixed, pointed at the other panel.
-  //
-  // The assertion is deliberately NEGATIVE and pattern-based rather than a byte-for-byte pin: the
-  // wording here is still an open design question (bundled with cf#229 / cf#234, on whether this
-  // panel's convention should also name the tenant's action). Pinning the exact string would make
-  // this test fail the very decision it is waiting for -- the failure mode that made local#236's
-  // identity pin defend a bug. This forbids the one thing that is wrong under any of those
-  // outcomes: telling a hosted tenant to set a host environment variable.
-  it("never instructs a hosted tenant to set a host environment variable", () => {
-    expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/VIDEO_FINISH_URL|Set [A-Z_]+/);
+describe("the reason addresses THIS host's reader (local#226, guarded symmetrically)", () => {
+  // WHY THIS EXISTS, and it is not symmetry for its own sake. The self-host panel's copy of this
+  // reason names VIDEO_FINISH_URL, because there the reader OWNS the machine. Its test pins that,
+  // and pins the tenant phrasing ABSENT. This side had no reader assertion at all, which made the
+  // guard one-sided in the dangerous direction: someone "harmonising" the two panels would most
+  // naturally copy the LOCAL string here (it is the more informative one), local's test would still
+  // pass untouched, and nothing on this side would object -- leaving a hosted TENANT told to set an
+  // env var they have no access to. That is the local#226 defect mirrored, and the undefended
+  // direction was the one that fails silently. Caught by Joan reading the two suites side by side.
+  it("names NO host env var: a hosted tenant has no host to configure", () => {
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/VIDEO_FINISH_URL/);
+    // Any "Set FOO_BAR" instruction is the same defect wearing a different variable name.
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/\bSet [A-Z][A-Z0-9_]+/);
   });
+
+  it("still says what the tenant DOES get, so 'unavailable' cannot read as 'broken'", () => {
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).toMatch(/per-shot clips/);
+  });
+
+  // NOT asserted here, deliberately: a positive /Ask whoever operates this studio/ match, which is
+  // the convention cf's plan.enhance reason follows. This string carries no action clause today,
+  // and whether it should is a COPY decision on a pinned string rather than a test decision --
+  // raised with the lead rather than changed under a test. If it gains one, this is where the
+  // positive assertion belongs, and the guard closes from both ends instead of only blocking the
+  // wrong string.
+  //
+  // WHY NEGATIVE AND PATTERN-BASED RATHER THAN A BYTE-FOR-BYTE PIN (the local#236 lesson): the
+  // wording above is still an open design question, bundled with cf#229 / cf#234. A pin on the
+  // exact string would make this test FAIL the very decision it is waiting for, which is precisely
+  // how local#236's identity pin ended up defending a bug instead of catching it. A guard should
+  // forbid the failure, not fix the wording.
 });
 
 describe("GET /api/modules projection", () => {
