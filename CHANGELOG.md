@@ -7,6 +7,10 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.9.0 -- 2026-07-25
+
+MINOR: hooks truthfulness bundle (cf#229 + cf#234), third-state mechanism. Twin: vivijure-local v1.3.0 (same window).
+
 ### fix(hosted): name the capability that is absent, not four hooks that depend on it (cf#229)
 
 - `score` was in the `hooks_unavailable` set for a VPC-less studio, which claims more than the
