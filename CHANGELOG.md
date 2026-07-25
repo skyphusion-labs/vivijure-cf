@@ -7,6 +7,29 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+### fix(planner): gate the audio-mux controls on the hook they drive (cf#118)
+
+- "add audio" and "narrate" on a completed render both end in the video-finish container
+  (`muxAudioOntoRender`). On a hosted tenant with no video-finish tier the backend refused
+  honestly with a 422, and the panel rendered both buttons unconditionally anyway. Clicking them
+  was the only way to find out: the exact broken-button shape cf#98 was built to kill, on a
+  different capability.
+- Both controls now declare `data-hook="score"`, so the existing cf#98 gate disables them and
+  prints the host reason. ONE attribute is the whole contract; nothing in the planner learns what
+  the hook means, and the set of unavailable hooks is never hardcoded here, so a backend change to
+  the reported set cannot break this.
+- **The gate was INERT for every dynamically-built control, and that is the load-bearing half of
+  this fix.** `hook-availability.js` applies on load and on DOMContentLoaded only; every history
+  row is built after that. The gate documents the remedy in its own header ("controls rendered
+  later just call apply() again") and no caller ever did. `renderHistoryList` now re-applies it
+  over the rows it just built. Proven load-bearing: with the attributes declared and the host
+  reporting the hook unservable, removing ONLY the re-apply leaves both buttons fully clickable
+  with no note.
+- Verified in a real browser against the shipped assets, both directions: host reports the hook
+  unservable -> both controls disabled, `aria-disabled`, reason rendered VERBATIM, and sibling
+  row controls (view / re-render / delete) untouched; host omits the key -> both enabled, no note,
+  hand-written titles preserved.
+
 ## v1.8.0 -- 2026-07-25
 
 MINOR: the cf#98 honest-hooks projection is feature-class (#221 feat + #222 fix ship together).

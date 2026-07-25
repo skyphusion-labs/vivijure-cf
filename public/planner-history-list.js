@@ -498,6 +498,13 @@ function renderHistoryList(rows, totalRows) {
     }
     list.appendChild(buildHistoryRow(r, childrenByParent));
   }
+
+  // cf#118: re-apply the cf#98 hook-availability gate over the rows we just built.
+  // hook-availability.js applies on load and on DOMContentLoaded only, and EVERY history
+  // row is built dynamically after that, so a [data-hook] control in a row was never gated.
+  // The gate documents this ("controls rendered later just call apply() again") and no
+  // caller did it. Guarded so a missing script can never throw here.
+  if (window.hookAvailability) window.hookAvailability.apply(list);
 }
 
 // v0.129.0: download filename for a per-shot SDXL still. "<project>-<shot>.png".
