@@ -89,6 +89,7 @@ import {
 import { planningModelsFromModules } from "./planning-models";
 import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-yaml";
 import { emitMarkers, type MarkersFormat } from "./markers";
+import { videoFinishHooksUnavailable } from "./video-finish-availability";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
@@ -1831,7 +1832,14 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
       const aiReady = await aiGatewayReady(env);
       // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
       // reason the panel prints verbatim.
-      const hooksUnavailable = aiReady ? undefined : { "plan.enhance": PLANNER_UNAVAILABLE_REASON };
+      // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
+      // through the SAME channel rather than growing a parallel one -- that is the whole point of
+      // cf#98. Merged, so a host missing both reports both.
+      const hooksUnavailable = {
+        ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
+        ...videoFinishHooksUnavailable(env),
+      };
+      const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
       // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
       // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
       // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
@@ -1840,7 +1848,7 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
       return json(
         modulesResponse(modules, renderConfigProjection(), {
           dispatch: !!env.MODULE_DISPATCH,
-          ...(hooksUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
+          ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
           ...(isDemoMode(env)
             ? {
                 readonly: true,
