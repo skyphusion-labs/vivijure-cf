@@ -62,6 +62,13 @@ export interface Env {
   // "provisionable". Nothing sets this today; the plane-side half is a control-plane decision.
   // A bound tier always wins over this var: see videoFinishState (an observation beats a label).
   VIDEO_FINISH_TIER_STATE?: string;
+
+  // OPTIONAL var (control-plane#130), NOT a binding: where a reporter should be sent to report
+  // abuse of THIS studio. The hosted plane sets it on tenant studios; a self-host install leaves it
+  // unset and the panel then advertises nothing at all, which is correct, because we are not the
+  // provider for a self-hosted studio and cannot act on its content. A self-hoster who wants their
+  // own contact published sets this to their own URL. See src/abuse-contact.ts.
+  ABUSE_REPORT_URL?: string;
   IMAGE_PREP_VPC: Fetcher; // Workers VPC -> always-on fleet image-prep (issue #83)
   AUDIO_BEAT_SYNC_VPC: Fetcher; // Workers VPC -> always-on fleet audio-beat-sync (issue #83)
   // OPTIONAL (#231): Workers VPC -> always-on fleet audio-mix container (/mix: multi-track duck +
