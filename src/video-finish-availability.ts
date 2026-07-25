@@ -68,14 +68,24 @@ import type { Env } from "./env";
  *
  *   provisionable    the tier can be attached to this studio (a self-host operator binds it; a
  *                    hosted tenant's operator provisions it). "Not yet" is a promise that can be kept.
- *   unprovisionable  this studio was provisioned before the tier existed and the plane has no
- *                    re-upload path, so no operator action reaches it. "Not yet" would be a promise
+ *   unprovisionable  no operator action reaches this studio, so "not yet" would be a promise
  *                    nobody can keep.
  *
- * MECHANISM ONLY, BY DESIGN. Both states currently resolve to the SAME sentence: the copy swap is
- * gated on cp#112 (lane A) landing, because a re-upload path collapses `unprovisionable` back into
- * `provisionable` and writing the divergent sentence first would be writing copy for a world that
- * changes next sprint. When lane A lands, the swap is the one constant marked SWAP POINT below.
+ * WHAT `unprovisionable` MEANS NOW, WHICH IS NOT WHAT IT MEANT WHEN THIS SHIPPED (cf#243).
+ *
+ * It was written for the cp#112 population: studios provisioned before the tier existed, which the
+ * plane had no path to reach. cp#112 then SHIPPED that path (`refresh-studio-bindings`, control
+ * plane v1.8.0, bindings-only), which collapses exactly that population back into `provisionable`,
+ * the collapse the held SWAP POINT predicted. So the state no longer describes "an old studio". It
+ * describes a studio the PLANE has declared unreachable, and only the plane can say that.
+ *
+ * WHO READS THE SENTENCE BELOW TODAY: nobody, and that is stated rather than implied. Census taken
+ * 2026-07-25 (CF-side through a third credential, D1-side through the admin surface, both agreeing):
+ * binding+channel 0, channel-only 0, neither 1, and that one is the `rollins-e2e` testbed, whose
+ * bindings were refreshed and whose studio bytes move separately. The estate becomes honest through
+ * that refresh and that bytes move, NOT through this constant. This swap ships as correctness for
+ * future tenants and for after the bytes move; and since nothing sets `VIDEO_FINISH_TIER_STATE`
+ * yet, the state is not reachable in production at all until the plane decides who writes it.
  */
 export type VideoFinishState = "available" | "provisionable" | "unprovisionable";
 
@@ -113,13 +123,21 @@ export const VIDEO_FINISH_UNAVAILABLE_REASON =
   "Video finishing is not yet provisioned for this studio; finished renders deliver as per-shot clips.";
 
 /**
- * SWAP POINT (cf#240 lane D). The sentence for a studio no operator action can reach.
+ * SWAPPED (cf#243, was the SWAP POINT held identical in cf#240 lane D). The sentence for a studio
+ * no operator action can reach.
  *
- * Deliberately IDENTICAL to the sentence above today: shipping the divergence before cp#112 is
- * answered would tell today's tenants something that stops being true the moment lane A lands. The
- * mechanism is here so the swap is one constant, reviewed on its own, rather than a re-plumbing.
+ * It differs from the sentence above in the words that were the whole argument. "Not yet" is a
+ * promise of future availability, and for a studio nobody can reach it is a promise nobody can
+ * keep. It also does not send the reader to whoever operates the studio, because in this state that
+ * person cannot act either, and being sent to someone who must say no is worse than being told
+ * plainly. What it keeps is the half that matters to a person mid-render: what they DO get.
+ *
+ * The swap is ONE constant on purpose. Everything deciding WHEN a studio is in this state lives in
+ * the plane, so this file only has to be right about what to say.
  */
-export const VIDEO_FINISH_UNPROVISIONABLE_REASON = VIDEO_FINISH_UNAVAILABLE_REASON;
+export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
+  "Video finishing is not available for this studio and cannot be turned on for it; finished " +
+  "renders deliver as per-shot clips.";
 
 /**
  * Optional operator/plane signal naming which absent-state this studio is in. Absent -> the

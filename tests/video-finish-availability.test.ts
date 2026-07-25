@@ -158,11 +158,13 @@ describe("GET /api/modules projection", () => {
   });
 });
 
-describe("the third state (cf#240 lane D, input cp#112)", () => {
-  // cp#112 established that the tier reaches studios provisioned AFTER the knob is set and nobody
-  // else, so "not yet provisioned" is a promise the plane cannot keep for today's tenants while no
-  // re-upload path exists. That is a THIRD state, not a binary, and the mechanism ships now while
-  // the COPY waits on lane A -- see the SWAP POINT in the module.
+describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", () => {
+  // cp#112 established that the tier reached studios provisioned AFTER the knob was set and nobody
+  // else, which is why "not yet provisioned" was a promise the plane could not keep for them and
+  // why this is a THIRD state rather than a binary. cp#112 then SHIPPED the re-upload path
+  // (refresh-studio-bindings, plane v1.8.0), collapsing that population back into `provisionable`,
+  // so what `unprovisionable` now names is a studio the PLANE declares unreachable. The copy is
+  // swapped as of cf#243; the sentences and their properties are asserted at the bottom.
   it("a bound tier is available, and available has no sentence at all", () => {
     expect(videoFinishState({ VIDEO_FINISH_VPC: {} as never })).toBe("available");
     expect(videoFinishReason("available")).toBeNull();
@@ -204,9 +206,25 @@ describe("the third state (cf#240 lane D, input cp#112)", () => {
     }
   });
 
-  it("MECHANISM ONLY: the copy has not moved yet, and that is deliberate", () => {
-    // Asserts the CURRENT gating decision, and is expected to be edited BY the copy swap once lane A
-    // lands. Named so nobody mistakes the identical strings for an accident.
-    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+  it("the two sentences DIVERGE now, and the unreachable one makes no promise nobody can keep", () => {
+    // The swap this replaced (cf#243). It was held identical while cp#112 was open, because a
+    // re-upload path collapses `unprovisionable` back into `provisionable`; cp#112 shipped exactly
+    // that path, so what is left in this state is a studio the PLANE declares unreachable.
+    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).not.toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+    // "not yet" is the promise word: correct where somebody can keep it, wrong where nobody can.
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).toMatch(/not yet/i);
+    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).not.toMatch(/not yet/i);
+    // and it must not send the reader to an operator who cannot act either.
+    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).not.toMatch(/ask |operator|whoever operates/i);
+  });
+
+  it("the swap reaches NOBODY until the plane writes the var, and nothing writes it yet", () => {
+    // Census 2026-07-25 (CF-side third credential, D1-side admin surface, agreeing): binding+channel
+    // 0, channel-only 0, neither 1 (the rollins-e2e testbed, refreshed + bytes move queued). Every
+    // studio with no binding and no var resolves to `provisionable`, so this asserts the sentence
+    // above is unreachable in production rather than merely unused. The panel is honest either way;
+    // what makes the estate honest is the bindings refresh and the bytes move, not this constant.
+    expect(videoFinishState({ VIDEO_FINISH_VPC: undefined } as never)).toBe("provisionable");
+    expect(videoFinishReason("provisionable")).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
   });
 });
