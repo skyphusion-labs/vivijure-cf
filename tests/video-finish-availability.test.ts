@@ -82,3 +82,30 @@ describe("GET /api/modules projection", () => {
     );
   });
 });
+
+describe("the reason addresses THIS host's reader (local#226, guarded symmetrically)", () => {
+  // WHY THIS EXISTS, and it is not symmetry for its own sake. The self-host panel's copy of this
+  // reason names VIDEO_FINISH_URL, because there the reader OWNS the machine. Its test pins that,
+  // and pins the tenant phrasing ABSENT. This side had no reader assertion at all, which made the
+  // guard one-sided in the dangerous direction: someone "harmonising" the two panels would most
+  // naturally copy the LOCAL string here (it is the more informative one), local's test would still
+  // pass untouched, and nothing on this side would object -- leaving a hosted TENANT told to set an
+  // env var they have no access to. That is the local#226 defect mirrored, and the undefended
+  // direction was the one that fails silently. Caught by Joan reading the two suites side by side.
+  it("names NO host env var: a hosted tenant has no host to configure", () => {
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/VIDEO_FINISH_URL/);
+    // Any "Set FOO_BAR" instruction is the same defect wearing a different variable name.
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/\bSet [A-Z][A-Z0-9_]+/);
+  });
+
+  it("still says what the tenant DOES get, so 'unavailable' cannot read as 'broken'", () => {
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).toMatch(/per-shot clips/);
+  });
+
+  // NOT asserted here, deliberately: a positive /Ask whoever operates this studio/ match, which is
+  // the convention cf's plan.enhance reason follows. This string carries no action clause today,
+  // and whether it should is a COPY decision on a pinned string rather than a test decision --
+  // raised with the lead rather than changed under a test. If it gains one, this is where the
+  // positive assertion belongs, and the guard closes from both ends instead of only blocking the
+  // wrong string.
+});
