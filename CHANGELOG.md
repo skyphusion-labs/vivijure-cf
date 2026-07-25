@@ -7,7 +7,12 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
-## Unreleased
+## v1.8.0 -- 2026-07-25
+
+MINOR: the cf#98 honest-hooks projection is feature-class (#221 feat + #222 fix ship together).
+Also: honest measured Wan LoRA train cost estimate (#218, cf#214); docs: tier-honest
+narration-gen manifest label + knobs (#219, cf#211), vivijure-tail wrangler config
+committed (#220, cf#148).
 
 ### fix(planner): the host reports hooks it cannot serve (cf#98)
 
@@ -21,8 +26,6 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 - It RESOLVES `GATEWAY_ID` rather than checking the binding exists: a bound-but-empty gateway id
   fails at call time exactly like an absent one, and the old `env.AI`-only test said yes to it.
 - Core pin `^1.2.14`.
-
-## Unreleased
 
 ## v1.7.16 -- 2026-07-24
 
