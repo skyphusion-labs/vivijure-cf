@@ -55,6 +55,30 @@ describe("videoFinishHooksUnavailable", () => {
   });
 });
 
+describe("the reason addresses THIS panel's reader (local#226, mirrored)", () => {
+  // local#226 established that parity is the SET and the BIAS, never the BYTES: the two panels
+  // deliberately word this differently because the reader is a different person. vivijure-local's
+  // copy of this file guards its own side (it must NAME the operator's knob, VIDEO_FINISH_URL, and
+  // must NOT say "ask whoever operates this studio"). This is the missing mirror.
+  //
+  // WHY THIS DIRECTION IS THE DANGEROUS ONE. The local string is the more informative of the two,
+  // so the natural future tidy-up is to copy it HERE, to "make the panels consistent". Local's
+  // guard would pass unchanged (local is untouched) and, without this assertion, nothing on the
+  // hosted side would object -- so a paying TENANT would be told to set VIDEO_FINISH_URL, an
+  // environment variable on a host they have no access to. That is exactly the defect local#226
+  // fixed, pointed at the other panel.
+  //
+  // The assertion is deliberately NEGATIVE and pattern-based rather than a byte-for-byte pin: the
+  // wording here is still an open design question (bundled with cf#229 / cf#234, on whether this
+  // panel's convention should also name the tenant's action). Pinning the exact string would make
+  // this test fail the very decision it is waiting for -- the failure mode that made local#236's
+  // identity pin defend a bug. This forbids the one thing that is wrong under any of those
+  // outcomes: telling a hosted tenant to set a host environment variable.
+  it("never instructs a hosted tenant to set a host environment variable", () => {
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/VIDEO_FINISH_URL|Set [A-Z_]+/);
+  });
+});
+
 describe("GET /api/modules projection", () => {
   it("carries the reason VERBATIM for every gated hook when the tier is unbound", async () => {
     const body = await modulesBody(env());
