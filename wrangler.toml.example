@@ -13,8 +13,16 @@ preview_urls = false
 
 # workers.dev route DISABLED (security F1): the *.workers.dev hostname is NOT covered by CF Access
 # (Access reliably gates only custom/zone-proxied domains), so leaving it on exposed the entire /api
-# UNAUTHENTICATED. Legit access is vivijure.skyphusion.org behind Access. Conrad confirmed the route
-# is not needed. Re-enabling requires an in-Worker auth gate that does not depend on the edge Access app.
+# UNAUTHENTICATED back when the deploy leaned on an edge Access app. Legit access is the zone-proxied
+# custom hostname (vivijure.skyphusion.org on the flagship). Conrad confirmed the route is not needed.
+#
+# STALE-COMMENT CORRECTION (cf#224): do NOT read the above as "the custom hostname sits behind CF
+# Access". The v0.12.0 flip RETIRED the whole-hostname Access app in favour of the in-Worker gate
+# (AUTH_MODE, below; the flagship injects "token" at deploy, see docs/deploy-config-injection.md).
+# The live posture is a PUBLIC static shell with a token-gated /api/*, and that is the DESIGNED state,
+# not a gap: verified against the v1.8.0 deploy, "/" and /planner.html return 200 while /api/modules
+# returns 403. Re-enabling workers.dev would still be gated on the in-Worker auth gate holding there
+# too, which is the durable version of the original requirement.
 workers_dev = false
 
 # The studio frontend (public/) served via Workers Assets.
