@@ -473,6 +473,10 @@
             <a id="planner-render-download" href="#" class="planner-primary" download>download silent MP4</a>
             <a id="planner-render-open" href="#" target="_blank" rel="noopener" class="planner-render-link">open in new tab</a>
           </div>
+          <!-- cf#118: finishing-degrade disclosure. Populated by planner-render.js from
+               output.finish_unavailable; hidden (and emptied) whenever there is nothing to
+               disclose, so a note can never outlive the render that produced it. -->
+          <div id="planner-render-degrade" class="render-degrade" role="note" hidden></div>
         </div>
       </div>
     </section>
@@ -573,6 +577,7 @@
   <script src="planner-render-config.js"></script>
   <script src="lora-preflight.js"></script>
   <script src="render-eta.js"></script>
+  <script src="finish-degrade.js"></script>
   <!-- Planner UI, split out of the former monolithic planner.js. Plain classic
        scripts sharing one global scope; load order is significant -- top-level
        declarations are visible across files only in this order. Do not reorder. -->

@@ -721,7 +721,12 @@ function finalizeRenderPoll(data) {
     : "";
 
   if (data.status === "COMPLETED") {
-    setRenderStatus("completed" + elapsed, "success");
+    const out = data.output;
+    // cf#118: the video-finish tier can be unavailable (VIDEO_FINISH_VPC unbound on a
+    // hosted tenant). The orchestrator then degrades honestly and SAYS SO in the payload;
+    // the panel used to drop that on the floor and paint a plain green "completed".
+    const degrade = window.finishDegrade ? window.finishDegrade.degradeFrom(out) : null;
+    setRenderStatus((degrade ? "completed with limits" : "completed") + elapsed, degrade ? "warn" : "success");
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
     $("#planner-render-output-content").textContent = JSON.stringify(
@@ -729,16 +734,7 @@ function finalizeRenderPoll(data) {
       null,
       2,
     );
-    // Surface the silent MP4 link if present in the assembler output.
-    const out = data.output;
-    if (out && typeof out.output_key === "string") {
-      const url = "/api/artifact/" + out.output_key;
-      const download = $("#planner-render-download");
-      download.href = url;
-      download.download = (out.project || "silent") + ".mp4";
-      const open = $("#planner-render-open");
-      open.href = url;
-    }
+    renderDeliverable(out, degrade);
     return;
   }
 
@@ -747,6 +743,90 @@ function finalizeRenderPoll(data) {
   const outpan = $("#planner-render-output");
   outpan.hidden = false;
   $("#planner-render-output-content").textContent = JSON.stringify(data.output || {}, null, 2);
+  renderDeliverable(null, null);
+}
+
+// cf#118: paint the download affordances from what the render ACTUALLY delivered, and
+// disclose any finishing degrade in prose.
+//
+// The stale-link half is a correctness fix, not cosmetics. The assemble degrade leaves
+// `output_key` UNDEFINED (core film-output-key.js), and the old code only ever ASSIGNED
+// the anchors, inside `if (typeof out.output_key === "string")`. Nothing reset them, so a
+// degraded render following a good one in the same session left "download silent MP4"
+// pointing at the PREVIOUS render, handing the user the wrong film labelled as this one.
+// Every branch here now writes the anchors, including the empty case.
+function renderDeliverable(out, degrade) {
+  const fd = window.finishDegrade;
+  const deliv = fd ? fd.deliverable(out) : { kind: (out && typeof out.output_key === "string") ? "film" : "none", key: (out && out.output_key) || null, clips: [] };
+  const download = $("#planner-render-download");
+  const open = $("#planner-render-open");
+
+  if (deliv.kind === "film") {
+    const url = "/api/artifact/" + deliv.key;
+    download.href = url;
+    download.download = ((out && out.project) || "silent") + ".mp4";
+    download.hidden = false;
+    open.href = url;
+    open.hidden = false;
+  } else {
+    // No assembled film. CLEAR the links rather than leaving a stale target.
+    download.removeAttribute("href");
+    download.removeAttribute("download");
+    download.hidden = true;
+    open.removeAttribute("href");
+    open.hidden = true;
+  }
+
+  renderDegradeNote(degrade, deliv, out);
+}
+
+// The disclosure block: our structural sentence, the studio reason VERBATIM, and the
+// per-shot clips as real links when they are what was delivered. Rebuilt from scratch on
+// every call so a stale note can never outlive the render that produced it.
+function renderDegradeNote(degrade, deliv, out) {
+  const host = $("#planner-render-degrade");
+  if (!host) return;
+  while (host.firstChild) host.removeChild(host.firstChild);
+  if (!degrade) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+
+  const fd = window.finishDegrade;
+  const summary = fd ? fd.deliveredSummary(degrade) : null;
+  if (summary) {
+    const p = document.createElement("p");
+    p.className = "render-degrade-summary";
+    p.textContent = summary;
+    host.appendChild(p);
+  }
+
+  // Rendered verbatim. The studio wrote the truest available description of why the step
+  // is dead; paraphrasing it here would lose information the reader needs.
+  const why = document.createElement("p");
+  why.className = "render-degrade-reason";
+  why.textContent = degrade.reason;
+  host.appendChild(why);
+
+  if (deliv.kind === "clips" && deliv.clips.length) {
+    const h = document.createElement("h5");
+    h.textContent = "delivered clips";
+    host.appendChild(h);
+    const ul = document.createElement("ul");
+    ul.className = "render-degrade-clips";
+    for (let i = 0; i < deliv.clips.length; i++) {
+      const c = deliv.clips[i];
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = "/api/artifact/" + c.key;
+      a.textContent = c.shot_id;
+      a.download = ((out && out.project) || "clip") + "-" + c.shot_id + ".mp4";
+      li.appendChild(a);
+      ul.appendChild(li);
+    }
+    host.appendChild(ul);
+  }
 }
 
 function setJobStatusBadge(status) {

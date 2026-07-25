@@ -1340,6 +1340,42 @@ body.demo-steer-active #planner-history { display: none !important; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* cf#118: the finishing-degrade disclosure on a completed render. Warn-toned, not
+   error-toned: the render SUCCEEDED, it just delivered less than a full finish. */
+.render-degrade {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--warn, #f2c14e);
+  background: rgba(242, 193, 78, 0.07);
+  max-width: 70ch;
+}
+.render-degrade-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--warn, #f2c14e);
+}
+.render-degrade-reason {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+.render-degrade h5 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+.render-degrade-clips {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.planner-status-warn { color: var(--warn, #f2c14e); }
+
 .hook-unavailable-note {
   margin: 4px 0 0;
   font-size: 12px;
