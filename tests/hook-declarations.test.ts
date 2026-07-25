@@ -24,8 +24,41 @@ const renderConfig = readFileSync("public/planner-render-config.js", "utf8");
 // discuss the wrong declaration in order to explain why it is wrong (that is the point of the
 // comments), and a naive text match reads those as the defect they warn about -- caught by this
 // suite on its first run. Strip comments, then assert against what actually ships to the browser.
+//
+// SCANNED, NOT REGEX-REPLACED, and the reason is the same defect one door down. A single-pass
+// `replace(/<!--[\s\S]*?-->/g, "")` can leave a residual `<!--` behind (CodeQL
+// js/incomplete-multi-character-sanitization, raised HIGH on the first version of this file), and a
+// comment fragment that survives stripping can still satisfy or mask an assertion here -- which is
+// exactly the failure this whole helper exists to prevent. A scanner cannot leave residue: it walks
+// the text and copies only what is outside a comment.
+//
+// UNTERMINATED comment: everything after it is treated as comment and dropped. That direction is
+// deliberate. It can only ever REMOVE text, never invent it, so the risk it carries is a negative
+// assertion passing on an over-stripped file -- and the CONTROL describe below fails loudly on
+// exactly that, because it asserts the declarations that DO ship are still found.
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const open = src.indexOf("<!--", i);
+    if (open < 0) return out + src.slice(i);
+    out += src.slice(i, open);
+    const close = src.indexOf("-->", open + 4);
+    if (close < 0) return out;
+    i = close + 3;
+  }
+}
+
+/** Whole-line `//` comments. Line-scoped, so there is no multi-character delimiter to half-remove. */
+function stripLineComments(src: string): string {
+  return src
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+}
+
 function code(src: string): string {
-  return src.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\/\/.*$/gm, "");
+  return stripLineComments(stripHtmlComments(src));
 }
 
 const CAPABILITY = "capability:video-finish";
@@ -39,6 +72,46 @@ function openingTag(source: string, id: string): string {
   expect(end).toBeGreaterThan(start);
   return source.slice(start, end + 1);
 }
+
+describe("the comment stripper itself, because every assertion here trusts it", () => {
+  // A sanitizer nobody tests is a sanitizer nobody knows the shape of. These are the inputs that
+  // broke the regex version.
+  it("leaves NO residual comment OPENER, even on nested and adjacent markers", () => {
+    // The CodeQL finding is a surviving `<!--`: an un-stripped opener can hide shipped text from
+    // the assertions below, or let commented text be read as shipped. That is what must be zero.
+    //
+    // A trailing `-->` DOES survive here, and it should. HTML comments do not nest: the browser
+    // ends this comment at the FIRST `-->`, so the trailing ` -->` is literal document text, not a
+    // comment fragment. This helper answers "what ships to the browser", so it has to agree with
+    // the browser. My first version of this assertion forbade any surviving delimiter and failed on
+    // that input -- the assertion was wrong, not the scanner, and it is written down here because
+    // the next person will have the same instinct.
+    const nasty = '<!-- <!-- data-hook="score" --> --><input id="a" data-hook="keyframe" />';
+    const out = code(nasty);
+    expect(out, "a surviving <!-- is the CodeQL finding").not.toContain("<!--");
+    expect(out, "commented-out declarations must not survive").not.toContain('data-hook="score"');
+    expect(out, "and real markup after the comment still ships").toContain('data-hook="keyframe"');
+  });
+
+  it("removes what is INSIDE a comment and keeps what ships", () => {
+    const src = '<!-- data-hook="score" is wrong here --><input id="real" data-hook="film.finish" />';
+    expect(code(src)).not.toContain('data-hook="score"');
+    expect(code(src)).toContain('data-hook="film.finish"');
+  });
+
+  it("drops whole-line // comments without touching code on its own line", () => {
+    const src = '  // el.dataset.hook = "score";\nel.dataset.hook = "capability:video-finish";';
+    expect(code(src)).not.toContain('"score"');
+    expect(code(src)).toContain("capability:video-finish");
+  });
+
+  it("an UNTERMINATED comment drops the rest rather than leaking a fragment", () => {
+    const out = code('<input id="kept" /><!-- data-hook="score" and no close');
+    expect(out).toContain('id="kept"');
+    expect(out).not.toContain("<!--");
+    expect(out).not.toContain('data-hook="score"');
+  });
+});
 
 describe("CONTROL: the reader actually finds declarations where they exist", () => {
   // Without this, every "does not declare" assertion below would pass on an empty string.
