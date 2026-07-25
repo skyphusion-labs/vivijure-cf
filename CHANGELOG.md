@@ -27,6 +27,29 @@ committed (#220, cf#148).
   fails at call time exactly like an absent one, and the old `env.AI`-only test said yes to it.
 - Core pin `^1.2.14`.
 
+### fix(planner): the panel discloses a finishing degrade instead of a green "completed" (cf#118)
+
+- When the video-finish tier is unavailable (`VIDEO_FINISH_VPC` unbound, the hosted-tenant case) the
+  orchestrator degrades honestly: per-shot clips at assemble, the silent film at mux, with a reason.
+  The poll payload has carried all of it since the degrade shipped (`output.finish_unavailable`
+  plus `output.clips`, core `film-render-bridge.js`) and the panel dropped it on the floor. The
+  render read `completed`, in green, with the fact buried in a JSON blob.
+- The panel now reads `completed with limits`, states structurally what was handed over, prints the
+  studio reason **VERBATIM** (never reworded or softened, same rule as the cf#98 hook gate), and
+  lists the delivered per-shot clips as real download links, because those clips ARE the render.
+- **Correctness, not cosmetics: the stale download link is fixed.** The assemble degrade leaves
+  `output_key` UNDEFINED (core `film-output-key.js`), and the old completed-branch only ever
+  ASSIGNED the anchors, inside `if (typeof out.output_key === "string")`. Nothing reset them, so a
+  degraded render following a good one in the same session left "download silent MP4" pointing at
+  the PREVIOUS render: the wrong film, handed over as this one. Reproduced in a real browser on the
+  pre-fix asset, then re-run against the fix. Every branch now writes the anchors, including the
+  empty case, which is why `deliverable()` returns `film` / `clips` / `none` rather than a boolean.
+- New `public/finish-degrade.js`: pure, DOM-free, unit-tested under Node, same UMD-ish house shape
+  as `hook-availability-checks.js`. Junk resolves to "no degrade", never to a scary banner on a
+  render that is fine, the mirror of the cf#98 gate's bias.
+- Parity: the identical change rides vivijure-local in the same window (`finalizeRenderPoll` was
+  byte-identical across both panels).
+
 ## v1.7.16 -- 2026-07-24
 
 PATCH: honest Wan LoRA train-time copy (measured). #213 set the Wan train-time copy to
