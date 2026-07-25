@@ -58,7 +58,16 @@ describe("GET /api/modules host.hooks_unavailable", () => {
   });
 
   it("OMITS the block entirely when the host can serve everything -- absence means available", async () => {
-    const res = await worker.fetch(req("/api/modules"), envWith({ AI, GATEWAY_ID: "gw-1" }), ctx);
+    // "Serves everything" grew a second requirement in cf#118: a host with no VIDEO_FINISH_VPC
+    // cannot deliver score / master / film.finish / notify, so it is no longer a host that serves
+    // everything. Binding the tier here keeps this test asserting what it was written to assert
+    // (the block is OMITTED, not emptied) instead of quietly becoming a test that the video-finish
+    // report does not exist.
+    const res = await worker.fetch(
+      req("/api/modules"),
+      envWith({ AI, GATEWAY_ID: "gw-1", VIDEO_FINISH_VPC: { fetch: async () => new Response("ok") } }),
+      ctx,
+    );
     const body = (await res.json()) as { host?: { hooks_unavailable?: unknown } };
     expect(body.host?.hooks_unavailable).toBeUndefined();
   });
