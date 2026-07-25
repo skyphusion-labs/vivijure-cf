@@ -12,7 +12,7 @@ Documented dismissals for adversarial-audit (K2.7/K3) findings that are not acti
 
 ## Control-plane bound InvokeContext
 
-`InvokeRequest.context.project` is set by the authenticated control plane from the render job row (`vivijure-module/2` `InvokeContext`), not from untrusted module HTTP clients. Module workers are internal service bindings; CF Access gates the studio edge. Forwarding `context.project` into RunPod bodies **enables** backend R2 tenancy (`check_scoped_job_key` in vivijure-backend), it does not bypass it. Chain `clip_key` / `audio_key` values are produced by upstream stages under the same job; the GPU worker re-validates them against `project` before any store I/O.
+`InvokeRequest.context.project` is set by the authenticated control plane from the render job row (`vivijure-module/2` `InvokeContext`), not from untrusted module HTTP clients. Module workers are internal service bindings; the studio edge is gated in-Worker (AUTH_MODE=token since v0.12.0, formerly CF Access -- re-validated 2026-07-25: the gate NAME changed, the authenticated-edge property the disposition rests on did not). Forwarding `context.project` into RunPod bodies **enables** backend R2 tenancy (`check_scoped_job_key` in vivijure-backend), it does not bypass it. Chain `clip_key` / `audio_key` values are produced by upstream stages under the same job; the GPU worker re-validates them against `project` before any store I/O.
 
 ## Record
 
@@ -22,7 +22,8 @@ Documented dismissals for adversarial-audit (K2.7/K3) findings that are not acti
 | 2026-07-23 | K3 repo | Demo gallery arbitrary video URLs | Demo queue rows; operator-configured artifact origin |
 | 2026-07-23 | K3 verify ~18:04 | Demo mode opens ALL GET endpoints | AUTH_MODE=demo homelab gallery; operator-controlled |
 | 2026-07-23 | K3 verify ~18:04 | Staged-key path skips magic-byte validation | JSON {key,mime} path trusts operator-staged R2 keys |
-| 2026-07-23 | K3 verify ~18:04 | Spend rate limiter omits planner/chat | Best-effort spend cap; CF Access + account auth at edge |
+| 2026-07-23 | K3 verify ~18:04 | Spend rate limiter omits planner/chat | Best-effort spend cap; authenticated edge (token gate since v0.12.0, was CF Access) |
+| 2026-07-25 | Token-mode re-validation | Two dispositions cited "CF Access" as the edge gate post-retirement | Re-derived under AUTH_MODE=token: both hold; the edge remains authenticated in-Worker, rationale wording updated (flagged by joan-cf224b in cf#231's sweep) |
 | 2026-07-23 | K3 verify ~18:04 | Demo render jobId client-supplied | Demo mode; capped queue rows |
 | 2026-07-23 | K3 verify ~18:04 | deploy.sh strip_val / STORE_ID grep | Operator deploy script |
 | 2026-07-23 | K2.7 PR #205 | Unvalidated project forwarded (finish-upscale/lipsync) | Control-plane bound `InvokeContext.project`; enables backend tenancy binding |
