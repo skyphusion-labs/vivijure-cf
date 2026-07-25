@@ -29,6 +29,40 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
   no fallback address to fall back to. Both watched FAILING against a planted default before being
   trusted.
 
+### fix(hosted): the unreachable-studio sentence stops promising "not yet" (cf#229 / cf#234, swap)
+
+> **Shipped, but not yet reachable.** The sentence is in the tree; the STATE it belongs to is not
+> reachable, because nothing writes `VIDEO_FINISH_TIER_STATE` (control-plane#136) and the only live
+> tenant runs a bundle that predates the reader. No studio can display it today, so do not count
+> this as a change any tenant will see.
+
+
+- v1.9.0 shipped the three-state resolver with the copy PINNED: `provisionable` and
+  `unprovisionable` resolved to the same sentence, because cp#112 was open and a re-upload path
+  would collapse one state into the other. cp#112 then shipped that path
+  (`refresh-studio-bindings`, control plane v1.8.0), so the swap is now decidable and this is it.
+- `VIDEO_FINISH_UNPROVISIONABLE_REASON` now reads "Video finishing is not available for this studio
+  and cannot be turned on for it; finished renders deliver as per-shot clips." It drops the promise
+  ("not yet" is a promise of future availability, and nobody can keep it for a studio no operator
+  action reaches), it does not send the reader to an operator who cannot act either, and it keeps
+  the half that matters mid-render: what they DO get. The `provisionable` sentence is unchanged.
+- **What `unprovisionable` means now:** not "an old studio" (cp#112 reaches those), but a studio the
+  PLANE declares unreachable. Only the plane can say that, and nothing writes
+  `VIDEO_FINISH_TIER_STATE` yet, so the state is not reachable in production at all until it does.
+- **This reaches ZERO live tenants today, and does not claim otherwise.** Census 2026-07-25, taken
+  two ways that agree (CF-side through a third credential, D1-side through the admin surface):
+  binding+channel 0, channel-only 0, neither 1, and that one is the `rollins-e2e` testbed, whose
+  bindings were refreshed and whose studio bytes move separately. The estate becomes honest through
+  that refresh and that bytes move; this constant is correctness for future tenants and for after
+  the move.
+- Tests assert the two sentences DIVERGE, that only the keepable promise carries "not yet", and that
+  every studio still resolves to `provisionable` today (so the new sentence is unreachable, not
+  merely unused). The property guard from #239 (never name a host env var, always say what they get)
+  covers both sentences unchanged.
+- **No vivijure-local twin, deliberately:** local has no third state by design (the reader IS the
+  operator, every absent tier there is one they can configure), which its own module records.
+  Parity is the SET and the BIAS, never the bytes (local#226).
+
 ## v1.9.0 -- 2026-07-25
 
 MINOR: hooks truthfulness bundle (cf#229 + cf#234), third-state mechanism. Twin: vivijure-local v1.3.0 (same window).
