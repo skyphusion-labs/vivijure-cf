@@ -86,6 +86,15 @@ import type { Env } from "./env";
  * that refresh and that bytes move, NOT through this constant. This swap ships as correctness for
  * future tenants and for after the bytes move; and since nothing sets `VIDEO_FINISH_TIER_STATE`
  * yet, the state is not reachable in production at all until the plane decides who writes it.
+ *
+ * A FOURTH COMBINATION, which that census did not enumerate and which cp#112 creates (Strummer,
+ * evidence on control-plane#112). Binding and channel do NOT travel together: a bindings refresh
+ * adds `VIDEO_FINISH_VPC` without touching studio bytes, so a studio can be binding-WITHOUT-channel.
+ * The live tenant is exactly that (18 -> 19 bindings, bytes byte-identical before and after).
+ * Followed through the resolver it lands right: an ABSENT `hooks_unavailable` reads as available,
+ * and for a studio that genuinely HAS the binding that optimism is TRUE. The silent-and-optimistic
+ * case for the one live tenant was not fixed by better wording; it was fixed by making the optimism
+ * true. No sentence in this file would have reached it either way.
  */
 export type VideoFinishState = "available" | "provisionable" | "unprovisionable";
 
@@ -132,11 +141,16 @@ export const VIDEO_FINISH_UNAVAILABLE_REASON =
  * person cannot act either, and being sent to someone who must say no is worse than being told
  * plainly. What it keeps is the half that matters to a person mid-render: what they DO get.
  *
- * HELD BEHIND control-plane#136 (cf#243 ruling). Nothing writes `VIDEO_FINISH_TIER_STATE`, so this
- * sentence cannot be displayed by any studio: the plane must first decide who sets that var and
- * when. The words and the mechanism that makes them reachable land together, which is why this
- * constant sits on a branch rather than in a release. cp#136 carries the acceptance criteria,
- * including a live studio in the state so the sentence is READ once by a real reader.
+ * WHAT IS STILL GATED, NOW THAT THIS SHIPPED. The sentence is in the release; the STATE it belongs
+ * to is not reachable, and control-plane#136 is where that is being decided. Nothing writes
+ * `VIDEO_FINISH_TIER_STATE`, so no studio resolves to `unprovisionable` and no reader can see these
+ * words today. Do not read the presence of this constant as evidence the state works.
+ *
+ * SECOND, INDEPENDENT reason it is unreachable (Strummer, control-plane#112): the only live tenant
+ * runs a v1.6.0 studio bundle, and the reader for this var first shipped in v1.9.0, so that studio
+ * would not observe the var even if the plane set it. Corroborated from this repo history rather
+ * than taken on trust: the reader landed in ba61789, first tagged v1.9.0. The consequence for
+ * whoever answers cp#136: setting the var on a studio that predates the reader is a silent no-op.
  *
  * The swap is ONE constant on purpose. Everything deciding WHEN a studio is in this state lives in
  * the plane, so this file only has to be right about what to say.
