@@ -77,6 +77,26 @@ describe("the reason addresses THIS panel's reader (local#226, mirrored)", () =>
   it("never instructs a hosted tenant to set a host environment variable", () => {
     expect(VIDEO_FINISH_UNAVAILABLE_REASON).not.toMatch(/VIDEO_FINISH_URL|Set [A-Z_]+/);
   });
+
+  // ROLLINS' PROPERTY, restored from the closed #236: the guard was one-sided in a second way.
+  // It blocked the string becoming WRONG for this reader, and said nothing about it becoming
+  // USELESS. Without this, "Video finishing is not yet provisioned for this studio; finished
+  // renders deliver as per-shot clips." can be shortened to "Video finishing is not available."
+  // and nothing objects -- which is exactly "unavailable" degrading into something that reads as
+  // "broken". The honest-degrade doctrine lives on the difference between "you got less" and "it
+  // failed", and nothing was guarding it.
+  //
+  // ASSERTS THE PROPERTY, NOT THE PHRASE, deliberately, and this is a correction to the version
+  // in #236 rather than a copy of it. #236 matched the literal /per-shot clips/. The wording here
+  // is an open design question (cf#229 / cf#234, now with cp#112 as an input: a THIRD state exists
+  // for tenants who can never get the tier without a re-upload path, so this sentence is likely to
+  // be rewritten). Checked against plausible rewordings: the literal phrase fails two of three
+  // ("individual shot clips", "separate clips, one per shot"), while every one of them still names
+  // the clips. Pinning the phrase would make this test fail the decision it is waiting for -- the
+  // same trap as local#236's identity pin. A guard should forbid the failure, not fix the wording.
+  it("still says what the tenant DOES get, so 'unavailable' cannot read as 'broken'", () => {
+    expect(VIDEO_FINISH_UNAVAILABLE_REASON).toMatch(/clips/);
+  });
 });
 
 describe("GET /api/modules projection", () => {
