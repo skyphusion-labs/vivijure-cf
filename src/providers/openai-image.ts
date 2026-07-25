@@ -45,10 +45,16 @@ export async function generateOpenAIImage(
   });
 
   if (!resp.ok) {
+    // cf#223: the provider MESSAGE is not ours and is not content-free. A moderation refusal from
+    // this API quotes the prompt back ("Your request was rejected... your prompt may contain..."),
+    // so interpolating it verbatim put a USER PROMPT into an exception message -- which reaches the
+    // caller, any log sink, and the Exceptions channel. The machine-readable `code`/`type` say what
+    // happened and are drawn from the provider's own enumerated set; the prose is dropped.
     let detail = "";
     try {
-      const e = (await resp.json()) as { error?: { message?: string } };
-      detail = e?.error?.message ? `: ${e.error.message}` : "";
+      const e = (await resp.json()) as { error?: { code?: string; type?: string } };
+      const reason = e?.error?.code ?? e?.error?.type;
+      detail = reason ? ` (${reason})` : "";
     } catch {
       /* non-JSON error body; status alone is enough */
     }

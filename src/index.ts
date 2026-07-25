@@ -89,6 +89,7 @@ import {
 import { planningModelsFromModules } from "./planning-models";
 import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-yaml";
 import { emitMarkers, type MarkersFormat } from "./markers";
+import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
@@ -157,7 +158,9 @@ function match(routes: Route[], method: string, pathname: string) {
       else if (pp[i][0] === ":") p[pp[i].slice(1)] = decodeURIComponent(sp[i]);
       else if (pp[i] !== sp[i]) { ok = false; break; }
     }
-    if (ok) return { handler: r.handler, params: p };
+    // The PATTERN travels with the match (cf#223): the router error line logs the route template
+    // instead of the raw pathname, and it can only do that if the matcher says which template won.
+    if (ok) return { handler: r.handler, params: p, pattern: r.pattern };
   }
   return null;
 }
@@ -1172,7 +1175,9 @@ async function insertRenderBestEffort(env: StudioEnv, row: NewRenderRow): Promis
       ev: "render.bookkeeping_deferred",
       op: "insertRender",
       job_id: row.jobId,
-      project: row.project,
+      // cf#223: the PROJECT NAME used to be here. It is user content -- the customer types it -- and
+      // job_id already identifies the row uniquely, so the name bought nothing a join could not.
+      project_label: keyLabel(row.project),
       reason: e instanceof Error ? e.message : String(e),
     }));
   }
@@ -1881,7 +1886,15 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         return await hit.handler(request, env, ctx, hit.params);
       } catch (e) {
         if (e instanceof HttpError) return json({ error: e.message }, e.status);
-        console.error("router error", url.pathname, e);
+        // cf#223: the ROUTE TEMPLATE, never the raw pathname. A pathname carries the artifact key
+        // (`/api/artifact/renders/<project>/...`) and every other :id in the URL, so logging it puts
+        // user content in the one line that fires when something is already going wrong.
+        console.error(JSON.stringify({
+          ev: "router.error",
+          route: hit.pattern,
+          method: request.method,
+          reason: e instanceof Error ? e.message : String(e),
+        }));
         return json({ error: "internal error" }, 500);
       }
     }
