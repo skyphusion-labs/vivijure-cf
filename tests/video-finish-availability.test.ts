@@ -12,9 +12,14 @@
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 import {
+  VIDEO_FINISH_ADVISORY_HOOKS,
+  VIDEO_FINISH_CAPABILITY_KEY,
   VIDEO_FINISH_GATED_HOOKS,
   VIDEO_FINISH_UNAVAILABLE_REASON,
+  VIDEO_FINISH_UNPROVISIONABLE_REASON,
   videoFinishHooksUnavailable,
+  videoFinishReason,
+  videoFinishState,
 } from "../src/video-finish-availability";
 
 const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
@@ -33,14 +38,40 @@ async function modulesBody(e: Parameters<typeof worker.fetch>[1]): Promise<Recor
 }
 
 describe("videoFinishHooksUnavailable", () => {
-  it("names EXACTLY the hooks the execution paths take down, no more", () => {
-    // score + master: their product (the audio bed) can only reach the film through the mux, which
-    // is downstream of an assemble that degrades. film.finish + notify: both are driven from
-    // transitionToDone, which degradeAssembleUnavailable bypasses -- they never run at all.
+  it("names EXACTLY what is unavailable, no more (cf#229: score is NOT)", () => {
+    // master: enterMasterOrMux runs AFTER assemble, and assemble degrades to done, so it never
+    // runs. film.finish + notify: both driven from transitionToDone, which degradeAssembleUnavailable
+    // bypasses -- they never run either. capability:video-finish: the binding itself, which is the
+    // thing actually absent and the only honest key for a control that does nothing but mux.
+    //
+    // score is ABSENT from this set on purpose and that is the whole of cf#229: bed generation
+    // (src/score-bed.ts) touches no VPC binding and the film path never calls the score hook at all,
+    // so reporting it unavailable claims more than the truth and would grey out a working control.
     expect(Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_VPC: undefined } as never)).sort()).toEqual(
-      ["film.finish", "master", "notify", "score"],
+      ["capability:video-finish", "film.finish", "master", "notify"],
     );
-    expect([...VIDEO_FINISH_GATED_HOOKS].sort()).toEqual(["film.finish", "master", "notify", "score"]);
+    expect([...VIDEO_FINISH_GATED_HOOKS].sort()).toEqual(["film.finish", "master", "notify"]);
+  });
+
+  it("REGRESSION GUARD (cf#229): score is never reported unavailable", () => {
+    // The named failure, not a wording: a studio that can generate a bed must never be told it
+    // cannot serve score. This is the assertion that fails if someone folds the advisory hooks back
+    // into the gated set to simplify them.
+    const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_VPC: undefined } as never));
+    for (const advisory of VIDEO_FINISH_ADVISORY_HOOKS) {
+      expect(named, advisory + " RUNS on a VPC-less studio; only its delivery is dead").not.toContain(advisory);
+    }
+    expect([...VIDEO_FINISH_ADVISORY_HOOKS]).toEqual(["score"]);
+  });
+
+  it("the capability key can never be mistaken for a hook name", () => {
+    // Hook names use dots (film.finish, motion.backend, plan.enhance). The capability namespace uses
+    // a colon precisely so no module can ever declare it and no reader can mistake it for something
+    // a module provides. If this fails, the two namespaces have started to collide.
+    expect(VIDEO_FINISH_CAPABILITY_KEY).toMatch(/^capability:/);
+    for (const hook of [...VIDEO_FINISH_GATED_HOOKS, ...VIDEO_FINISH_ADVISORY_HOOKS]) {
+      expect(hook).not.toContain(":");
+    }
   });
 
   it("does NOT name the per-shot hooks, which are exactly what a VPC-less host still delivers", () => {
@@ -104,16 +135,16 @@ describe("GET /api/modules projection", () => {
     const body = await modulesBody(env());
     const host = body.host as { hooks_unavailable?: Record<string, string> };
     expect(host?.hooks_unavailable, JSON.stringify(body.host)).toBeDefined();
-    for (const hook of VIDEO_FINISH_GATED_HOOKS) {
-      expect(host.hooks_unavailable![hook]).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+    for (const key of [VIDEO_FINISH_CAPABILITY_KEY, ...VIDEO_FINISH_GATED_HOOKS]) {
+      expect(host.hooks_unavailable![key]).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
     }
   });
 
   it("POSITIVE CONTROL: a host that BINDS the tier reports no video-finish hook at all", async () => {
     const body = await modulesBody(env({ VIDEO_FINISH_VPC: { fetch: async () => new Response("ok") } }));
     const host = body.host as { hooks_unavailable?: Record<string, string> };
-    for (const hook of VIDEO_FINISH_GATED_HOOKS) {
-      expect(host?.hooks_unavailable?.[hook], `${hook} must not be reported on a bound host`).toBeUndefined();
+    for (const key of [VIDEO_FINISH_CAPABILITY_KEY, ...VIDEO_FINISH_GATED_HOOKS]) {
+      expect(host?.hooks_unavailable?.[key], key + " must not be reported on a bound host").toBeUndefined();
     }
   });
 
@@ -122,7 +153,60 @@ describe("GET /api/modules projection", () => {
     const body = await modulesBody(env());
     const host = body.host as { hooks_unavailable?: Record<string, string> };
     expect(Object.keys(host.hooks_unavailable ?? {}).sort()).toEqual(
-      ["film.finish", "master", "notify", "plan.enhance", "score"],
+      ["capability:video-finish", "film.finish", "master", "notify", "plan.enhance"],
     );
+  });
+});
+
+describe("the third state (cf#240 lane D, input cp#112)", () => {
+  // cp#112 established that the tier reaches studios provisioned AFTER the knob is set and nobody
+  // else, so "not yet provisioned" is a promise the plane cannot keep for today's tenants while no
+  // re-upload path exists. That is a THIRD state, not a binary, and the mechanism ships now while
+  // the COPY waits on lane A -- see the SWAP POINT in the module.
+  it("a bound tier is available, and available has no sentence at all", () => {
+    expect(videoFinishState({ VIDEO_FINISH_VPC: {} as never })).toBe("available");
+    expect(videoFinishReason("available")).toBeNull();
+  });
+
+  it("an unbound tier defaults to provisionable, which is what lane A makes true for everyone", () => {
+    expect(videoFinishState({ VIDEO_FINISH_VPC: undefined } as never)).toBe("provisionable");
+  });
+
+  it("an operator/plane can declare the studio unreachable by any operator action", () => {
+    expect(
+      videoFinishState({ VIDEO_FINISH_VPC: undefined, VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
+    ).toBe("unprovisionable");
+  });
+
+  it("an OBSERVATION beats a label: a bound tier is available whatever the var says", () => {
+    // The failure this forbids is a stale var outliving the provisioning it described, with the
+    // panel then telling a studio that HAS a working tier that it has none.
+    expect(
+      videoFinishState({ VIDEO_FINISH_VPC: {} as never, VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
+    ).toBe("available");
+  });
+
+  it("an unrecognised var value falls back to the default rather than inventing a state", () => {
+    expect(
+      videoFinishState({ VIDEO_FINISH_VPC: undefined, VIDEO_FINISH_TIER_STATE: "banana" } as never),
+    ).toBe("provisionable");
+  });
+
+  it("EVERY state's sentence obeys the tenant-reader properties, not just today's", () => {
+    // Property, never phrase (#239): the copy swap is coming, and a guard that pinned bytes would
+    // fail the very decision it is waiting for. What must hold under ANY rewrite: never instruct a
+    // tenant to set a host env var, and always say what they DO get.
+    for (const state of ["provisionable", "unprovisionable"] as const) {
+      const reason = videoFinishReason(state);
+      expect(reason, state).toBeTruthy();
+      expect(reason!, state).not.toMatch(/VIDEO_FINISH_URL|Set [A-Z_]+/);
+      expect(reason!, state).toMatch(/clips/);
+    }
+  });
+
+  it("MECHANISM ONLY: the copy has not moved yet, and that is deliberate", () => {
+    // Asserts the CURRENT gating decision, and is expected to be edited BY the copy swap once lane A
+    // lands. Named so nobody mistakes the identical strings for an accident.
+    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
   });
 });

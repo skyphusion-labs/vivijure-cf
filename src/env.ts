@@ -56,6 +56,12 @@ export interface Env {
 
   // CPU container Durable Objects (off-GPU beat-sync, portrait prep, ffmpeg finish).
   VIDEO_FINISH_VPC: Fetcher; // Workers VPC -> always-on fleet video-finish (issue #83)
+  // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
+  // VIDEO_FINISH_VPC is unbound. "unprovisionable" = provisioned before the tier existed, with no
+  // operator action that can reach it (the cp#112 population). Absent -> the conservative default,
+  // "provisionable". Nothing sets this today; the plane-side half is a control-plane decision.
+  // A bound tier always wins over this var: see videoFinishState (an observation beats a label).
+  VIDEO_FINISH_TIER_STATE?: string;
   IMAGE_PREP_VPC: Fetcher; // Workers VPC -> always-on fleet image-prep (issue #83)
   AUDIO_BEAT_SYNC_VPC: Fetcher; // Workers VPC -> always-on fleet audio-beat-sync (issue #83)
   // OPTIONAL (#231): Workers VPC -> always-on fleet audio-mix container (/mix: multi-track duck +
