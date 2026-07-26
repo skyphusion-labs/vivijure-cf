@@ -113,6 +113,19 @@ function fixture(): { doc: El; get: (id: string) => El } {
     ]),
     // a control that needs the missing capability outright
     el("button", { id: "add-audio", "data-hook": "capability:video-finish" }),
+    // the module-host page's stage projection (cf#234). Two things the planner fixture cannot
+    // stand in for: the card is an ARTICLE, not a <details>, and its fields sit two levels down
+    // inside the chain list. `notify` is the hook under test because the stage projection is the
+    // ONLY surface in the studio that can disclose it (no planner control exists, and the
+    // notification TOGGLE is a different thing entirely).
+    el("article", { id: "stage-notify", "data-hook": "notify", "data-hook-scope": "container" }, [
+      el("div", { id: "stage-notify-head" }),
+      el("ol", {}, [el("li", {}, [el("div", {}, [el("input", { id: "stage-notify-retries" })])])]),
+    ]),
+    // a stage whose hook the host serves, so the fixture can tell gating from blanket dimming
+    el("article", { id: "stage-speech", "data-hook": "speech", "data-hook-scope": "container" }, [
+      el("select", { id: "stage-speech-voice" }),
+    ]),
     // a control that WORKS but cannot deliver into a film
     el("details", { id: "music-block", "data-hook-advisory": "capability:video-finish" }, [
       el("textarea", { id: "music-prompt" }),
@@ -173,6 +186,36 @@ describe("cf#234: container scope disables a whole projected section, and says w
   });
 });
 
+describe("cf#234: the module-host stage projection gates like any other section", () => {
+  it("reaches fields nested inside the card and states the reason once, on the card", async () => {
+    const { get } = await runGate(UNAVAILABLE);
+    const card = get("stage-notify");
+    expect(card.classList.contains("hook-unavailable")).toBe(true);
+    expect(
+      get("stage-notify-retries").disabled,
+      "container scope must reach a field nested in the chain list, not just direct children",
+    ).toBe(true);
+    expect(card.nextElementSibling?.className).toBe("hook-unavailable-note");
+    expect(card.nextElementSibling?.textContent).toBe(REASON);
+    expect(card.descendants().filter((e) => e.className === "hook-unavailable-note").length).toBe(0);
+  });
+
+  it("is the ONLY surface that can disclose notify, and it does", async () => {
+    // notify is skipped from the planner panel by design and has no control of its own anywhere
+    // else. If this stage card did not gate, an unservable notify would be reported by the host
+    // and shown by nothing.
+    const { get } = await runGate(UNAVAILABLE);
+    expect(get("stage-notify").nextElementSibling?.textContent).toBe(REASON);
+  });
+
+  it("leaves a stage the host DOES serve completely alone", async () => {
+    const { get } = await runGate(UNAVAILABLE);
+    expect(get("stage-speech").classList.contains("hook-unavailable")).toBe(false);
+    expect(get("stage-speech-voice").disabled).toBe(false);
+    expect(get("stage-speech").nextElementSibling?.className ?? "").not.toContain("note");
+  });
+});
+
 describe("cf#229: ADVISORY states the limit and disables NOTHING", () => {
   it("annotates the bed generator without touching a single control", async () => {
     const { get } = await runGate(UNAVAILABLE);
@@ -215,7 +258,7 @@ describe("POSITIVE CONTROL: the gate is inert when the host reports nothing", ()
   it("a fully provisioned host leaves every control live and unannotated", async () => {
     // Without this, every assertion above could be measuring the fixture rather than the map.
     const { get, doc } = await runGate(null);
-    for (const id of ["master-lufs", "master-format", "keyframe-steps", "music-prompt", "music-gen", "add-audio"]) {
+    for (const id of ["master-lufs", "master-format", "keyframe-steps", "music-prompt", "music-gen", "add-audio", "stage-notify-retries", "stage-speech-voice"]) {
       expect(get(id).disabled, id).toBe(false);
     }
     expect(doc.descendants().filter((e) => e.className.includes("note")).length).toBe(0);

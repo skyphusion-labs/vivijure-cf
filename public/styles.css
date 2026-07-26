@@ -1384,6 +1384,16 @@ body.demo-steer-active #planner-history { display: none !important; }
   max-width: 60ch;
 }
 
+/* cf#234: the gate writes its note as the declaring element's next SIBLING. Inside the
+ * .pipeline-stages GRID that makes the note a grid item of its own, reading as a loose sentence
+ * floating between two stage cards rather than as the reason THIS stage cannot run. Pull it back
+ * under the card it belongs to, and give it the warn rule the card cannot carry itself. */
+.pipeline-stages > .stage + .hook-unavailable-note {
+  margin: -4px 0 2px;
+  padding: 0 0 0 14px;
+  border-left: 3px solid var(--warn, #f2c14e);
+}
+
 /* cf#229: an ADVISORY note sits under a control that WORKS but whose product this studio
  * cannot deliver (a music bed that generates fine and can never be muxed onto a film). It
  * is deliberately quieter than .hook-unavailable-note and carries no dimming: the control

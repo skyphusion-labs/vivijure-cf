@@ -73,6 +73,16 @@
     <script src="demo-steer.js"></script>
     <script src="studio-chrome.js"></script>
     <script src="topbar.js"></script>
+    <!-- cf#234: the module-host page is the studio surface whose ENTIRE job is to say what this
+         host can do, and it was the one surface the cf#98 availability gate never ran on. Every
+         stage card app.js projects already declares its hook; without these two the declarations
+         sat inert, so a studio with no video-finish tier showed `master`, `film.finish` and
+         `notify` as ordinary live stages. `notify` in particular has no other surface anywhere:
+         it is deliberately skipped from the planner panel, and the "enable notifications" toggle
+         is NOT it (that is the browser Notification API). Loaded before app.js so the gate is on
+         window before the module boots. -->
+    <script src="hook-availability-checks.js"></script>
+    <script src="hook-availability.js"></script>
     <script src="app.js" type="module"></script>
   </body>
 </html>

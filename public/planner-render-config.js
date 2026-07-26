@@ -9,7 +9,13 @@
   //   score        -> the audio-bed stage (music / narration / beat-sync)
   //   dialogue     -> per-shot dialogue lines (scene editor) + per-cast-member voice (cast page)
   //   cast.image   -> the cast-prep page
-  //   notify       -> the "enable notifications" render-step toggle
+  //   notify       -> the module-host stage projection (modules.html), and ONLY there. It is a
+  //                   HOST-side hook, fired from transitionToDone, with no planner control at
+  //                   all. It is NOT the "enable notifications" toggle: that control is the
+  //                   browser Notification API (planner-init.js), purely client-side, and it
+  //                   works fine on a host that can never fire this hook. Tagging it here
+  //                   because the names match would grey out a working feature -- cf#234 item
+  //                   1, guarded in tests/hook-declarations.test.ts.
   // Net panel hooks: keyframe, motion.backend, speech, finish, master, film.finish -- all six
   // projected from the catalog, none hardcoded. A new backend chain / pick_one hook outside the
   // skip set surfaces here automatically (no frontend change needed).
