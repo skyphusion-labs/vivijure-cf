@@ -95,6 +95,10 @@ function envWith(module: unknown, separateChatBucket = false) {
   return {
     env: {
       ALLOW_UNAUTHENTICATED: "true",
+      // cf#256: /api/chat is a spend route now, and the default posture is fail-closed, so a test
+      // that drives it through worker.fetch must model a HEALTHY deploy (wrangler.toml.example
+      // binds this) or it measures the limiter instead of the thing under test.
+      SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
       ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
       R2_RENDERS: served.bucket,
       R2: chat.bucket,

@@ -7,6 +7,39 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+### fix(spend): the planner and chat routes are metered paid AI now, not an open faucet (cf#256)
+
+- `SPEND_PATTERNS` (src/rate-limit.ts) declared itself "the POST routes that submit GPU jobs or paid
+  AI work" and listed only the GPU/render/train/music routes. Every route that dispatches the
+  `plan.enhance` hook sat outside the burst limiter AND outside `SPEND_DAILY_CEILING`.
+- **What that meant:** the planner takes a caller-supplied `system_message` + `message` and runs it
+  on the module model enum default (a frontier model, 4096 max_tokens per call, keyless on Unified
+  Billing through the AI Gateway). Unmetered, a studio token was a general-purpose AI proxy billed
+  to the operator. Auth-gated is not the same thing as metered.
+- **Now metered:** `POST /api/storyboard/plan`, `/api/storyboard/refine`, `/api/storyboard/enhance`,
+  and `/api/chat`. The four were enumerated from the route table (hPlan, hRefine, hEnhance, hChat),
+  not from the report. `/api/chat` covers both of its branches, the text planner and the image
+  branch, which is paid image generation and belongs on the meter just as much.
+- **Same audit closed three more holes:** `renders/:id/regen-shot` (a keyframe GPU submit),
+  `renders/:id/finalize` (the same submit path as `animate-cloud` / `animate-hybrid`, both already
+  metered), and `renders/:id/add-narration` (the same path as `score-bed` / `music-generate`, both
+  already metered). Two of the three were the unmetered sibling of a route already on the list.
+- **Deliberately still free:** `/api/demo/chat` runs a Workers AI OSS model behind its own per-IP and
+  global D1 caps and holds no gateway credential; `renders/:id/add-audio` muxes an artifact that
+  already exists and dispatches nothing. Both are asserted as controls, not left implicit.
+- No new machinery and no new operator knob: these routes ride the existing fail-closed middleware,
+  so a broken limiter denies them 503 exactly as it denies a render. Sizing note for operators, the
+  daily ceiling counts SUBMISSIONS, so planner calls and renders now share one budget.
+- Tests pin the pattern and the WIRING separately, because a route can match a regex the middleware
+  never consults: the new middleware suite drives the real `worker.fetch` entrypoint per route. Every
+  guard was watched FAILING against the pre-fix file, with the two free-route controls green in the
+  same run.
+- **Parity disposition (no vivijure-local twin):** the self-host panel has no spend-limit surface at
+  all to extend, and the primitive this rides (the Cloudflare native Rate Limiting binding) does not
+  exist off Workers. A local operator spends their own GPU, which is the whole shape of that door.
+  Inventing a second limiter there was out of scope for this fix; recorded here so the absence is a
+  stated call and not an oversight.
+
 ## v1.10.0 -- 2026-07-26
 
 MINOR: the abuse-report link (control-plane#130) and the unreachable-studio sentence that can finally be READ (cf#229 / cf#234). Twin: vivijure-local v1.4.0 (same window, per the parity promise).
