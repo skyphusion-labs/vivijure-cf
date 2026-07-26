@@ -141,16 +141,26 @@ export const VIDEO_FINISH_UNAVAILABLE_REASON =
  * person cannot act either, and being sent to someone who must say no is worse than being told
  * plainly. What it keeps is the half that matters to a person mid-render: what they DO get.
  *
- * WHAT IS STILL GATED, NOW THAT THIS SHIPPED. The sentence is in the release; the STATE it belongs
- * to is not reachable, and control-plane#136 is where that is being decided. Nothing writes
- * `VIDEO_FINISH_TIER_STATE`, so no studio resolves to `unprovisionable` and no reader can see these
- * words today. Do not read the presence of this constant as evidence the state works.
+ * WHAT WAS GATED, AND WHAT NOW IS NOT (updated 2026-07-26; the paragraph this replaces said the
+ * state was unreachable from both ends, which was true when it was written and is not now).
  *
- * SECOND, INDEPENDENT reason it is unreachable (Strummer, control-plane#112): the only live tenant
- * runs a v1.6.0 studio bundle, and the reader for this var first shipped in v1.9.0, so that studio
- * would not observe the var even if the plane set it. Corroborated from this repo history rather
- * than taken on trust: the reader landed in ba61789, first tagged v1.9.0. The consequence for
- * whoever answers cp#136: setting the var on a studio that predates the reader is a silent no-op.
+ * Both halves moved:
+ *
+ *   the WRITER   control-plane#136 shipped one. The plane records a declaration on the tenant row
+ *                and PROJECTS it into `VIDEO_FINISH_TIER_STATE` at every write to the studio, so
+ *                this state can now occur in production. The plane decides WHEN a studio is in it;
+ *                this file still only has to be right about what to SAY.
+ *   the READER   the live tenant no longer predates it. That studio was moved v1.6.0 -> v1.9.0 in
+ *                place by cf#248, and the reader landed in ba61789, first tagged v1.9.0, so the
+ *                bundle running there observes the var. (The earlier note recorded the opposite,
+ *                measured by Strummer in the deployed bytes before that move.)
+ *
+ * WHAT IS STILL TRUE, and it is the part to keep: setting the var on a studio that predates the
+ * reader is a silent no-op, which is why the plane route REFUSES rather than writes when the target
+ * studio does not serve `capability:video-finish`. And a studio that HAS the tier bound cannot
+ * display these words at all, by construction: `videoFinishState` checks the binding first, so an
+ * observation beats a label. Do not read the presence of this constant as evidence any particular
+ * studio is displaying it.
  *
  * The swap is ONE constant on purpose. Everything deciding WHEN a studio is in this state lives in
  * the plane, so this file only has to be right about what to say.
