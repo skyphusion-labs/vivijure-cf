@@ -70,6 +70,15 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/render-from-keyframes$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-cloud$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-hybrid$/,
+  // Found while auditing this list for cf#256, same defect class, fixed in the same pass: three
+  // more GPU/paid submits were escaping the meter. regen-shot calls startFilmJob (a keyframe GPU
+  // submit); finalize goes through animateFromPreview, the SAME submit path as animate-cloud and
+  // animate-hybrid two lines up; add-narration calls startScoreBedGenerate, the SAME path as
+  // score-bed and music-generate below. add-audio is deliberately NOT here: it only muxes an
+  // existing artifact and dispatches nothing.
+  /^\/api\/storyboard\/renders\/[^/]+\/regen-shot$/,
+  /^\/api\/storyboard\/renders\/[^/]+\/finalize$/,
+  /^\/api\/storyboard\/renders\/[^/]+\/add-narration$/,
   /^\/api\/cast\/[^/]+\/train-lora$/,
   /^\/api\/cast\/[^/]+\/train-wan-lora$/,
   /^\/api\/cast\/[^/]+\/generate-refs$/,

@@ -21,6 +21,9 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
       "/api/storyboard/render-from-keyframes",
       "/api/storyboard/renders/abc-123/animate-cloud",
       "/api/storyboard/renders/abc-123/animate-hybrid",
+      "/api/storyboard/renders/abc-123/regen-shot",
+      "/api/storyboard/renders/abc-123/finalize",
+      "/api/storyboard/renders/abc-123/add-narration",
       "/api/cast/7/train-lora",
       "/api/cast/7/generate-refs",
       "/api/storyboard/score-bed",
@@ -39,7 +42,10 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
     expect(isSpendRoute("POST", "/api/upload")).toBe(false);
     expect(isSpendRoute("GET", "/api/render/film/abc")).toBe(false);
     expect(isSpendRoute("POST", "/api/storyboard/render-plan")).toBe(false); // dry-run, no GPU
+    // add-audio muxes an artifact that already exists: no module dispatch, no spend. It is the
+    // control that separates the render-child routes that DO submit work from the ones that do not.
     expect(isSpendRoute("POST", "/api/storyboard/renders/7/add-audio")).toBe(false);
+    expect(isSpendRoute("GET", "/api/storyboard/renders/7/finalize")).toBe(false);
   });
 });
 

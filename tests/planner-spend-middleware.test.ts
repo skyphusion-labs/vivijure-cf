@@ -87,3 +87,34 @@ describe("planner spend limiting through the real middleware (cf#256)", () => {
     expect(res.status).not.toBe(429);
   });
 });
+
+// Fix-forward, found while auditing SPEND_PATTERNS for cf#256: three render-child POST routes
+// submit GPU/paid work (regen-shot -> startFilmJob, finalize -> animateFromPreview, add-narration
+// -> startScoreBedGenerate) and were outside the meter. Same defect class as the planner gap, so
+// the same wiring proof: the wildcard :id form must reach the limiter through the real entrypoint.
+describe("render-child GPU submits are metered too (cf#256 fix-forward)", () => {
+  const ROUTES = [
+    "/api/storyboard/renders/abc-123/regen-shot",
+    "/api/storyboard/renders/abc-123/finalize",
+    "/api/storyboard/renders/abc-123/add-narration",
+  ];
+
+  it("an over-limit verdict 429s before the handler can submit anything", async () => {
+    for (const path of ROUTES) {
+      const { env, keys } = makeEnv(0);
+      const res = await worker.fetch(post(path), env, ctx);
+      expect(res.status).toBe(429);
+      expect(res.headers.get("retry-after")).toBe(String(SPEND_RETRY_AFTER_SECONDS));
+      expect(keys).toEqual(["203.0.113.7"]);
+    }
+  });
+
+  // CONTROL: the sibling that dispatches nothing stays free, so the assertion above is about the
+  // route list and not about every render-child path 429ing.
+  it("add-audio (a pure mux, no dispatch) is NOT metered", async () => {
+    const { env, keys } = makeEnv(0);
+    const res = await worker.fetch(post("/api/storyboard/renders/abc-123/add-audio"), env, ctx);
+    expect(keys).toEqual([]);
+    expect(res.status).not.toBe(429);
+  });
+});
