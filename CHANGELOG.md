@@ -7,6 +7,10 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.10.0 -- 2026-07-26
+
+MINOR: the abuse-report link (control-plane#130) and the unreachable-studio sentence that can finally be READ (cf#229 / cf#234). Twin: vivijure-local v1.4.0 (same window, per the parity promise).
+
 ### feat(abuse): the studio panel can carry an abuse-report link, projected not hardcoded (control-plane#130)
 
 - Enforcement on the hosted tier is report-driven by ruling, so a findable intake path is part of
