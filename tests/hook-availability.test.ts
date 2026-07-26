@@ -10,6 +10,12 @@ import { describe, it, expect } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
 import { aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "../src/ai-binding";
+import {
+  VIDEO_FINISH_CAPABILITY_KEY,
+  VIDEO_FINISH_GATED_HOOKS,
+  VIDEO_FINISH_UNAVAILABLE_REASON,
+  VIDEO_FINISH_UNPROVISIONABLE_REASON,
+} from "../src/video-finish-availability";
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 const req = (path: string) => new Request(`https://studio.example${path}`, { method: "GET" });
@@ -80,5 +86,54 @@ describe("GET /api/modules host.hooks_unavailable", () => {
     expect(PLANNER_UNAVAILABLE_REASON).toMatch(/unavailable/i);
     // ...while still naming the knob, so an operator reading the same string can act on it.
     expect(PLANNER_UNAVAILABLE_REASON).toMatch(/GATEWAY_ID/);
+  });
+});
+
+// control-plane#136: the READER half of the newly-writable state, verified through the ROUTE.
+//
+// WHY THIS IS NOT COVERED BY tests/video-finish-availability.test.ts. That file proves the RESOLVER
+// picks the right sentence for a given env. It does not prove the sentence reaches the wire, and the
+// wire is what the panel reads. The plane now writes VIDEO_FINISH_TIER_STATE on a tenant studio
+// (control-plane#136), so the contract that matters end to end is: var set -> GET /api/modules
+// carries the unprovisionable sentence on every key the tier gates. Until that var could be written
+// at all, this path was unreachable in production and untested at this level.
+describe("GET /api/modules with VIDEO_FINISH_TIER_STATE set (control-plane#136)", () => {
+  const modulesHost = async (over: Record<string, unknown>) => {
+    const res = await worker.fetch(req("/api/modules"), envWith(over), ctx);
+    const body = (await res.json()) as { host?: { hooks_unavailable?: Record<string, string> } };
+    return body.host?.hooks_unavailable ?? {};
+  };
+
+  it("serves the UNPROVISIONABLE sentence on every gated key when the plane declared it", async () => {
+    const map = await modulesHost({ VIDEO_FINISH_TIER_STATE: "unprovisionable" });
+    for (const key of [VIDEO_FINISH_CAPABILITY_KEY, ...VIDEO_FINISH_GATED_HOOKS]) {
+      expect(map[key], "missing " + key).toBe(VIDEO_FINISH_UNPROVISIONABLE_REASON);
+    }
+  });
+
+  it("CONTROL: the same studio with NO var serves the provisionable sentence instead", async () => {
+    // The discriminating half. Without it, the assertion above could pass on a host that serves one
+    // sentence for both states, which is precisely the bug the two sentences exist to fix.
+    const map = await modulesHost({});
+    expect(map[VIDEO_FINISH_CAPABILITY_KEY]).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).not.toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+  });
+
+  it("an OBSERVED tier beats the label: a bound studio reports nothing at all", async () => {
+    // The plane can set the var on a studio that later gets the binding. The panel must not then
+    // tell a tenant a working capability can never be turned on for them.
+    const map = await modulesHost({
+      VIDEO_FINISH_TIER_STATE: "unprovisionable",
+      VIDEO_FINISH_VPC: { fetch: async () => new Response("ok") },
+    });
+    expect(map[VIDEO_FINISH_CAPABILITY_KEY]).toBeUndefined();
+  });
+
+  it("an unrecognised value falls back to the CONSERVATIVE sentence, never to silence", async () => {
+    // A typo or a future value the plane has not taught this bundle about must not read as
+    // available: silence is what a WORKING tier reports, and claiming that would be the worst
+    // possible direction to fail in.
+    const map = await modulesHost({ VIDEO_FINISH_TIER_STATE: "unreachable-ish" });
+    expect(map[VIDEO_FINISH_CAPABILITY_KEY]).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
   });
 });

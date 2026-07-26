@@ -2,7 +2,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import checks from "../public/hook-availability-checks.js";
-import { VIDEO_FINISH_UNAVAILABLE_REASON } from "../src/video-finish-availability";
+import {
+  VIDEO_FINISH_UNAVAILABLE_REASON,
+  VIDEO_FINISH_UNPROVISIONABLE_REASON,
+} from "../src/video-finish-availability";
 
 // THE SHARED cf#98 GATE'S TWO NEW RELATIONSHIPS (cf#229 advisory, cf#234 container scope).
 //
@@ -216,5 +219,51 @@ describe("POSITIVE CONTROL: the gate is inert when the host reports nothing", ()
       expect(get(id).disabled, id).toBe(false);
     }
     expect(doc.descendants().filter((e) => e.className.includes("note")).length).toBe(0);
+  });
+});
+
+// control-plane#136: the panel prints whatever the host says, including the sentence for the state
+// that has only now become reachable.
+//
+// WHY THIS EARNS ITS PLACE rather than restating the tests above: the plane can now put a studio in
+// the `unprovisionable` state, and the whole panel-side design is that the reason string is OPAQUE
+// to the gate. This is the test that fails if anyone ever branches on WHICH sentence arrived --
+// a per-state branch in the panel is exactly the hardcoded, non-projected shape this repo refuses,
+// and it would strand the next state the plane learns to write.
+describe("control-plane#136: the gate is copy-AGNOSTIC, so a new host sentence needs no panel change", () => {
+  const UNPROVISIONABLE = {
+    "capability:video-finish": VIDEO_FINISH_UNPROVISIONABLE_REASON,
+    master: VIDEO_FINISH_UNPROVISIONABLE_REASON,
+    "film.finish": VIDEO_FINISH_UNPROVISIONABLE_REASON,
+    notify: VIDEO_FINISH_UNPROVISIONABLE_REASON,
+  };
+
+  it("renders the unprovisionable sentence VERBATIM, required and advisory alike", async () => {
+    const { get } = await runGate(UNPROVISIONABLE);
+    expect(get("sec-master").nextElementSibling?.textContent).toBe(VIDEO_FINISH_UNPROVISIONABLE_REASON);
+    expect(get("music-block").nextElementSibling?.textContent).toBe(VIDEO_FINISH_UNPROVISIONABLE_REASON);
+    // The sentences differ, so this is not the same assertion as the provisionable one above.
+    expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).not.toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+  });
+
+  it("gates identically in both states: same controls disabled, same advisory left alone", async () => {
+    const { get } = await runGate(UNPROVISIONABLE);
+    // Which controls die is a property of the CAPABILITY, never of the words explaining it.
+    expect(get("sec-master").classList.contains("hook-unavailable")).toBe(true);
+    expect(get("master-lufs").disabled).toBe(true);
+    expect(get("add-audio").disabled).toBe(true);
+    expect(get("music-prompt").disabled, "an advisory control is never disabled").toBe(false);
+  });
+
+  it("the unprovisionable sentence keeps this panel READER properties", async () => {
+    // Same doctrine as the notes above: guard the properties, not the wording. For a hosted TENANT
+    // the sentence must never name a host env var they cannot set, and must still say what they DO
+    // get. It must also not promise future availability, which is the entire point of this state.
+    const { get } = await runGate(UNPROVISIONABLE);
+    const text = String(get("sec-master").nextElementSibling?.textContent ?? "");
+    expect(text.trim().length).toBeGreaterThan(0);
+    expect(text).not.toMatch(/VIDEO_FINISH_URL|Set [A-Z_]+/);
+    expect(text).toMatch(/clips/);
+    expect(text, "this state must not promise the tier is coming").not.toMatch(/not yet/i);
   });
 });
