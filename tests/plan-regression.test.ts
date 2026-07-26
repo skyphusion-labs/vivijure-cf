@@ -11,6 +11,10 @@ import type { Env } from "../src/env";
 function makeEnv() {
   return {
     ALLOW_UNAUTHENTICATED: "true",
+    // cf#256: /api/storyboard/plan is a spend route now and the default posture is fail-closed, so
+    // a test driving it through worker.fetch must model a HEALTHY deploy (wrangler.toml.example
+    // binds this) or it measures the limiter instead of the regression under test.
+    SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
     ASSETS: {
       fetch: async () => new Response("ASSET", { status: 200 }),
     },

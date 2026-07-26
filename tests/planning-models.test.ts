@@ -252,6 +252,8 @@ describe("GET /api/storyboard/models -- projected over the wire (acceptance crit
     const theirs = fakeModuleWorker(thirdParty, VALID_STORYBOARD);
     const env = {
       ALLOW_UNAUTHENTICATED: "true",
+      // cf#256: this env drives POST /api/chat, a spend route now; model a healthy limiter binding.
+      SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
       MODULE_PLANENHANCE: mine.binding,
       MODULE_ACMEPLANNER: theirs.binding,
       ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
