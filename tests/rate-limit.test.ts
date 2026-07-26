@@ -114,6 +114,45 @@ describe("enforceSpendLimit -- denial-of-wallet guard", () => {
   });
 });
 
+// ---------------------------------------------------------------- cf#256: the PLANNER spend surface
+
+describe("isSpendRoute -- the planner/chat surface (cf#256)", () => {
+  // Every POST route in src/index.ts that dispatches the plan.enhance hook, enumerated from the
+  // route table (hPlan, hRefine, hChat, hEnhance) rather than from the issue text. An unmetered
+  // planner route is an operator-billed frontier model any token holder can loop.
+  const planner = [
+    "/api/storyboard/plan",
+    "/api/storyboard/refine",
+    "/api/storyboard/enhance",
+    "/api/chat",
+  ];
+
+  it("matches every planner POST route", () => {
+    for (const p of planner) expect(isSpendRoute("POST", p)).toBe(true);
+  });
+
+  it("does NOT match them under GET (a read is free)", () => {
+    for (const p of planner) expect(isSpendRoute("GET", p)).toBe(false);
+  });
+
+  it("matches EXACTLY, so a lookalike path cannot be crafted around the limiter", () => {
+    expect(isSpendRoute("POST", "/api/storyboard/plan/")).toBe(false);
+    expect(isSpendRoute("POST", "/api/storyboard/planx")).toBe(false);
+    expect(isSpendRoute("POST", "/api/chat/stream")).toBe(false);
+  });
+
+  it("leaves the free planner-adjacent routes alone (they dispatch no model)", () => {
+    // Projection + validation + serialization: no module dispatch, no spend.
+    expect(isSpendRoute("POST", "/api/storyboard/preflight")).toBe(false);
+    expect(isSpendRoute("POST", "/api/storyboard/yaml")).toBe(false);
+    expect(isSpendRoute("POST", "/api/storyboard/markers")).toBe(false);
+    expect(isSpendRoute("POST", "/api/storyboard/bundle")).toBe(false);
+    // The demo assistant is deliberately NOT here: it runs a Workers AI OSS model behind its own
+    // per-IP + global D1 caps (src/demo-chat.ts) and holds no gateway credential.
+    expect(isSpendRoute("POST", "/api/demo/chat")).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------- S4: fail-closed posture
 
 describe("enforceSpendLimit -- SPEND_LIMIT_FAIL_CLOSED", () => {

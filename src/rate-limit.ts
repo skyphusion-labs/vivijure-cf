@@ -54,7 +54,15 @@ export const SPEND_RETRY_AFTER_SECONDS = 60;
 
 // The POST routes that submit GPU jobs or paid AI work. Kept as explicit regexes (not a dependency on
 // the router) so the spend surface is auditable in one place; :id / child segments are wildcarded.
+//
+// cf#256: the PLANNER entry points are spend routes in exactly the sense this list means, and were
+// missing. Every route below that dispatches the plan.enhance hook runs an operator-billed frontier
+// model (the module model enum defaults to Opus, 4096 max_tokens per call, keyless on Unified
+// Billing) with a caller-supplied system_message + message. Unmetered, that is a general-purpose AI
+// proxy for anyone holding a studio token. The file claimed this surface was auditable in one
+// place; until now that claim was false.
 const SPEND_PATTERNS: RegExp[] = [
+  // GPU submits: render / animate / train / audio generation.
   /^\/api\/storyboard\/render$/,
   /^\/api\/render\/clips$/,
   /^\/api\/render\/film$/,
@@ -67,6 +75,13 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/cast\/[^/]+\/generate-refs$/,
   /^\/api\/storyboard\/score-bed$/,
   /^\/api\/storyboard\/music-generate$/,
+  // Paid-AI submits (cf#256): the four POST routes that dispatch the plan.enhance hook. /api/chat
+  // covers BOTH of its branches -- the text planner (chatComplete) and the image branch
+  // (chatImageViaModule), which is paid image generation and belongs here just as much.
+  /^\/api\/storyboard\/plan$/,
+  /^\/api\/storyboard\/refine$/,
+  /^\/api\/storyboard\/enhance$/,
+  /^\/api\/chat$/,
 ];
 
 // True for a request that triggers GPU/paid spend and so must pass the limiter.
