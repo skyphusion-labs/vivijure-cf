@@ -4,6 +4,10 @@
 // slots into the hook(s) it serves and renders its OWN config_schema as live
 // controls. Bind a module, its stage lights up and brings its settings; bind
 // none and you get an honest, empty pipeline. Vanilla JS, no build (house style).
+//
+// Installed is not servable (cf#98): a stage can have a module bound and still be unable to run on
+// this host. The projection says so through the shared availability gate rather than any check of
+// its own -- see stageCard / applyHookGate below.
 
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -108,7 +112,15 @@ function renderModuleConfig(host, mod) {
 
 function stageCard(hook, step, servingNames, byName) {
   const card = el("article", "stage");
+  // The stage card has declared its hook since this page was written; cf#234 makes the
+  // declaration mean something here by loading the shared cf#98 gate (modules.html). Container
+  // scope, exactly as renderModuleSection uses it in the planner: a hook the host reports it
+  // cannot serve NEVER RUNS, so every knob in the card belongs to a stage that will not execute
+  // on this studio. One note for the card, and its fields go disabled rather than inviting a
+  // user to tune a stage that is not there. Nothing is hidden: the module names, the chain, the
+  // blurb and the field labels all stay readable, which is the whole point of this page.
   card.dataset.hook = hook.name;
+  card.dataset.hookScope = "container";
 
   const head = el("div", "stage-head");
   head.append(el("span", "stage-step", String(step)));
@@ -179,6 +191,20 @@ function renderPipeline(catalog, serving, modules) {
   order.forEach((name, i) => {
     root.append(stageCard(byHook[name], i + 1, serving[name] || [], byName));
   });
+  applyHookGate(root);
+}
+
+// The gate sweeps the document once when ITS OWN /api/modules read resolves, and these cards are
+// built after an await, so which of the two lands first is a race. Hanging the sweep off
+// `ready` settles it in both directions: if the gate resolved first this runs on the next
+// microtask, and if it resolves later its own document sweep covers the cards anyway. A bare
+// apply() here would silently do nothing on the ordering where the map is not populated yet --
+// the same "built dynamically, never gated" defect planner-history-list.js records.
+function applyHookGate(root) {
+  const gate = window.hookAvailability;
+  if (!gate) return; // no gate on the page -> inert, exactly like a host that reports nothing
+  if (gate.ready && typeof gate.ready.then === "function") gate.ready.then(() => gate.apply(root));
+  else gate.apply(root);
 }
 
 // --- installed-modules summary -------------------------------------------
