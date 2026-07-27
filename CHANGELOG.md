@@ -7,6 +7,41 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.11.0
+
+### feat(quota): the storage ceiling, R2_STORAGE_QUOTA_BYTES (vivijure-core#52, lane cf#56)
+
+MINOR. Ships in the same parity wave as vivijure-core v1.3.0 and vivijure-local; the knob, the
+accounting, and the reconcile all live in core, and this panel wires them. Hosted sets the var per
+tenant; a self-hoster caps their own R2 bill with the identical feature.
+
+- **`R2_STORAGE_QUOTA_BYTES`** -- unset / `0` / non-integer = OFF (a no-op that never touches D1). A
+  positive integer = a byte ceiling enforced at SUBMIT, before the spend, with an honest **507**
+  carrying the real numbers (`N bytes stored of the M-byte ceiling`). Never a truncation, never a
+  partial render, never a quota discovered halfway through a film. Reads, deletes, the planner and
+  chat keep working, so the operator can go delete something.
+- **Fail CLOSED on a broken check (503):** a quota that is SET but cannot be read (no DB, query
+  throws) denies rather than allows. Same posture as `SPEND_DAILY_CEILING`, for the same reason: a
+  novice self-funds the bill.
+- **Usage is accounted at write time in D1** (migration `0013_storage_usage.sql`, carrying core's
+  `STORAGE_USAGE_DDL` verbatim), never read from the R2 usage API. That read is Cloudflare-specific
+  and would break the Node/MinIO host, which is a parity break for a parity feature.
+- **One seam:** `studioEnv` wraps `R2_RENDERS` in core's metering proxy, so every write in this
+  Worker (route handlers and core orchestration alike) is accounted without touching ~30 call sites.
+  The wrap is idempotent, which matters because `studioEnv` runs per request against the same
+  isolate-level env object.
+- **Operator surface:** `GET /api/storage/usage` (used, objects, quota, over) and
+  `POST /api/storage/reconcile`, which rebuilds the ledger from the bucket. The reconcile is the
+  one-time backfill for a studio that predates accounting (artifact sizes are not derivable from D1,
+  so the counter starts at 0 and the docs say so) and the repair for lifecycle-expiry drift.
+- `R2_STORAGE_QUOTA_BYTES` joins `ORCHESTRATOR_VAR_KEYS`, so it lands in the release manifest's
+  `required_vars` census and the hosted control plane can bind it per tenant. A knob hosted cannot
+  set is a knob hosted does not have.
+- Tests assert the PRODUCTION wiring, not just the logic: the real `studioEnv` seam meters the real
+  binding (with a negative control that the raw binding is not metered), a second `studioEnv` call
+  does not double count, migration 0013 still matches core's DDL byte for byte, and every gated
+  pattern still matches a POST route this Worker serves.
+
 ### fix(spend): the planner and chat routes are metered paid AI now, not an open faucet (cf#256)
 
 - `SPEND_PATTERNS` (src/rate-limit.ts) declared itself "the POST routes that submit GPU jobs or paid

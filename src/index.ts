@@ -51,6 +51,13 @@ import {
 } from "./demo-render";
 import { runDemoChat, DEFAULT_DEMO_CHAT_CAPS, type DemoChatCaps, type DemoChatModel } from "./demo-chat";
 import { isSpendRoute, enforceSpendLimit } from "./rate-limit";
+import {
+  checkStorageQuota,
+  isStorageSubmitRoute,
+  reconcileStorageUsage,
+  storageQuotaBytes,
+  storageUsage,
+} from "@skyphusion-labs/vivijure-core/storage-quota";
 import { applyResponseSecurity } from "./asset-response";
 import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
@@ -1688,7 +1695,34 @@ const hDemoChat: Handler = async (req, env) => {
   return json({ reply: r.reply, model: "oss" });
 };
 
-const API_ROUTES: Route[] = [
+// core#52 operator surface. GET reports what the ledger says; POST rebuilds it from the bucket (the
+// one-time backfill for a studio that predates accounting, and the repair for lifecycle-expiry drift or
+// a failed ledger write). Both sit behind the same auth gate as every other /api route.
+const hStorageUsage: Handler = async (_req, env) => {
+  const quotaBytes = storageQuotaBytes(env);
+  const { usedBytes, objects } = await storageUsage(env.DB);
+  return json({
+    used_bytes: usedBytes,
+    objects,
+    quota_bytes: quotaBytes,
+    over: quotaBytes !== null && usedBytes >= quotaBytes,
+  });
+};
+
+const hStorageReconcile: Handler = async (_req, env) => {
+  const report = await reconcileStorageUsage(env.R2_RENDERS, env.DB);
+  return json({
+    objects: report.objects,
+    bytes: report.bytes,
+    // Objects the bucket would not report a size for. Accounted as 0 and reported honestly rather than
+    // folded into the total as a guess.
+    unsized: report.unsized,
+  });
+};
+
+export const API_ROUTES: Route[] = [
+  { method: "GET",    pattern: "/api/storage/usage",                   handler: hStorageUsage },
+  { method: "POST",   pattern: "/api/storage/reconcile",               handler: hStorageReconcile },
   { method: "GET",    pattern: "/api/demo/menu",                       handler: hDemoMenu },
   { method: "POST",   pattern: "/api/demo/render",                     handler: hDemoRender },
   { method: "GET",    pattern: "/api/demo/render/:id",                 handler: hDemoPoll },
@@ -1892,6 +1926,19 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         const headers: Record<string, string> = { "content-type": "application/json; charset=utf-8" };
         if (rl.retryAfter !== undefined) headers["retry-after"] = String(rl.retryAfter);
         return new Response(JSON.stringify({ error: rl.message }), { status: rl.status, headers });
+      }
+    }
+    // core#52: the storage ceiling. Same posture as the spend gate above and deliberately AFTER it (a
+    // rate-limited request never reaches the DB). Enforced at SUBMIT, before the spend, so an over-quota
+    // studio is denied honestly with the real numbers instead of discovering it halfway through a film.
+    // Reads, deletes, the planner, and chat keep working, so the operator can go delete something.
+    if (isStorageSubmitRoute(request.method, url.pathname)) {
+      const q = await checkStorageQuota(env);
+      if (!q.ok) {
+        return new Response(JSON.stringify({ error: q.message }), {
+          status: q.status,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
       }
     }
     const hit = match(API_ROUTES, request.method, url.pathname);

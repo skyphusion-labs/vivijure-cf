@@ -73,8 +73,16 @@ R2_S3_BUCKET = "${R2_S3_BUCKET}"
 #   SPEND_DAILY_CEILING = "25"        -- OFF unless set: at most N spend-route submissions per UTC day
 #     (counted in D1, migration 0008). Over the ceiling returns 429 until UTC midnight. Submissions,
 #     not dollars.
+#   R2_STORAGE_QUOTA_BYTES = "53687091200"  -- OFF unless set (core#52): the studio storage ceiling in
+#     BYTES (this example is 50 GiB). Usage is accounted at WRITE TIME in D1 (migration 0013), never
+#     read from the R2 usage API, so the Node/MinIO host behaves identically. Over the ceiling, the
+#     artifact-writing routes return 507 with the real used-vs-limit numbers; reads, deletes, the
+#     planner and chat keep working. A quota that is SET but cannot be checked denies 503 (fail
+#     closed), same posture as the spend ceiling. Backfill + drift repair: POST /api/storage/reconcile
+#     (accounting starts at the version that shipped it). Bytes only -- no "50GB" unit parsing.
 # SPEND_LIMIT_FAIL_CLOSED = "false"
 # SPEND_DAILY_CEILING = "25"
+# R2_STORAGE_QUOTA_BYTES = "53687091200"
 # Assemble duration honesty gate (#697, src/film-orchestrator.ts):
 #   FILM_CLIP_DURATION_FLOOR -- the fraction of a shot`s PLANNED seconds its ASSEMBLED clip must reach
 #     before the render FAILS LOUD (a truncated per-shot finish output, not a legitimate beat-trim; the
