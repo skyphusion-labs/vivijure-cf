@@ -49,6 +49,10 @@ interface WorkerEnv {
   AI: ProviderEnv["AI"];
   GATEWAY_ID?: SecretsStoreSecret;
   CF_AIG_TOKEN?: SecretsStoreSecret;
+  // Hosted attribution (cp#185), bound as PLAIN TEXT by the control plane, not via the Secrets
+  // Store: neither value is a secret, and they are absent entirely on a self-hosted install.
+  TENANT_ID?: string;
+  TENANT_SLUG?: string;
   ENHANCE_MODEL?: string;
   PLANNER_AI_MOCK?: string;
 }
@@ -293,6 +297,8 @@ export default {
         AI: env.AI,
         GATEWAY_ID: await secretValue(env.GATEWAY_ID),
         CF_AIG_TOKEN: await secretValue(env.CF_AIG_TOKEN),
+        TENANT_ID: env.TENANT_ID,
+        TENANT_SLUG: env.TENANT_SLUG,
         ENHANCE_MODEL: env.ENHANCE_MODEL,
         PLANNER_AI_MOCK: env.PLANNER_AI_MOCK,
       };

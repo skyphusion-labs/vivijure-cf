@@ -25,6 +25,13 @@ binding = "AI"
 [vars]
 ENHANCE_MODEL = "claude-opus-4-8"
 
+# TENANT_ID + TENANT_SLUG are NOT declared here on purpose. They are hosted-tier attribution vars
+# (cp#185) injected as plain_text by the control plane onto each tenant copy of this module at
+# provision time, so they exist only inside the hosted dispatch namespace. A self-hosted install
+# has no tenant identity and sends no cf-aig-metadata header at all, which is the parity-correct
+# behaviour: a self-hoster bills their own account and has nothing to attribute. Declaring them
+# here would advertise a binding self-host never sets.
+
 # GATEWAY_ID + CF_AIG_TOKEN are bound from the account-level Cloudflare Secrets Store (see the
 # [[secrets_store_secrets]] blocks below); no `wrangler secret put` needed. Without both, the module
 # runs entirely on the free local Workers AI model (no Opus, still functional).
