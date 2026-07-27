@@ -37,4 +37,10 @@ export const ORCHESTRATOR_VAR_KEYS = [
   "FILM_CLIP_DURATION_FLOOR",
   "R2_S3_ENDPOINT",
   "R2_S3_BUCKET",
+  // cf#258: read by src/abuse-contact.ts and WRITTEN by the hosted control plane onto every
+  // tenant studio, yet absent here -- so it never reached the manifest required_vars and
+  // assertDispositionCoversContract could not enforce a disposition for it, which is exactly
+  // the drift class this list exists to close. Conditional, not required: a studio without it
+  // renders no link, the deliberate self-host behaviour.
+  "ABUSE_REPORT_URL",
 ] as const;
