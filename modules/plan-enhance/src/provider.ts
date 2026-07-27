@@ -25,6 +25,14 @@ export interface ProviderEnv {
   };
   GATEWAY_ID?: string;
   CF_AIG_TOKEN?: string;
+  /**
+   * Hosted-tier attribution (cp#185). Bound as plain_text by the control plane onto the tenant copy
+   * of this module; ABSENT on a self-hosted install, which is why both are optional and why the
+   * metadata header is omitted entirely rather than emitted empty. Neither is a secret: a tenant id
+   * is an opaque identifier and the slug is already public in the tenant own URL.
+   */
+  TENANT_ID?: string;
+  TENANT_SLUG?: string;
   ENHANCE_MODEL?: string;
   // Dev-only mock gate (#411). Unset in prod. See mock.ts.
   PLANNER_AI_MOCK?: string;
@@ -91,6 +99,45 @@ export function extractAnthropicText(raw: unknown): string | null {
   return text.trim().length > 0 ? text : null;
 }
 
+/** Characters allowed verbatim in an attribution value.
+ *
+ * The slug is TENANT-CHOSEN, so it is untrusted input on its way into an HTTP header. A raw CR/LF
+ * would be header injection and a non-ASCII byte is not legal in a header value at all, so this is
+ * a guard, not cosmetics. Anything outside the set is DROPPED rather than escaped: an attribution
+ * key is only useful if it round-trips exactly, and a silently mangled key that still looks valid
+ * is worse than an absent one. */
+const ATTRIBUTION_UNSAFE = /[^A-Za-z0-9._:-]/g;
+const ATTRIBUTION_MAX = 128;
+
+/** Sanitize one attribution value, or undefined when nothing usable survives. Pure. */
+function safeAttribution(v: string | undefined): string | undefined {
+  const trimmed = v?.trim();
+  if (!trimmed) return undefined;
+  const cleaned = trimmed.replace(ATTRIBUTION_UNSAFE, "").slice(0, ATTRIBUTION_MAX);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/** The `cf-aig-metadata` header value for a call, or null when this install has no tenant identity.
+ *
+ * THE attribution mechanism for the hosted per-tenant Opus meter (cp#185). The AI Gateway records
+ * `authentication` as a BOOLEAN -- it logs THAT a request was authenticated, never WHICH token --
+ * so the per-tenant token is the access and revocation boundary and carries no attribution at all.
+ * This header is what makes spend attributable: the gateway copies it into the log verbatim, next
+ * to a natively-computed `cost`. Two different jobs, deliberately not conflated.
+ *
+ * Keyed on TENANT_ID and never on the slug alone, because a slug is renameable and therefore
+ * worthless as a ledger key; the slug rides along only as a human label. Returns null on a
+ * self-hosted install, so no header is sent and parity holds -- a self-hoster billing their own
+ * account has nothing to attribute. Pure, so the shape is unit-tested without the runtime. */
+export function aigMetadata(env: ProviderEnv): string | null {
+  const tenantId = safeAttribution(env.TENANT_ID);
+  if (!tenantId) return null;
+  const meta: Record<string, string> = { tenant_id: tenantId };
+  const slug = safeAttribution(env.TENANT_SLUG);
+  if (slug) meta.slug = slug;
+  return JSON.stringify(meta);
+}
+
 /** Call Opus through the AI Gateway (Unified Billing: cf-aig-authorization only, never x-api-key).
  *  Throws on a missing token, a non-2xx, or an empty reply, so the caller can fall back. */
 export async function callOpus(
@@ -111,14 +158,20 @@ export async function callOpus(
   };
   if (system) body.system = system;
 
+  const headers: Record<string, string> = {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    // Unified Billing: keyless. An x-api-key would flip the gateway to BYOK billing, so never set one.
+    "cf-aig-authorization": `Bearer ${env.CF_AIG_TOKEN}`,
+  };
+  // Hosted per-tenant attribution (cp#185). Omitted entirely on a self-hosted install rather than
+  // sent empty, so a self-hoster emits exactly the request they emitted before this existed.
+  const metadata = aigMetadata(env);
+  if (metadata) headers["cf-aig-metadata"] = metadata;
+
   const resp = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
-    headers: {
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-      // Unified Billing: keyless. An x-api-key would flip the gateway to BYOK billing, so never set one.
-      "cf-aig-authorization": `Bearer ${env.CF_AIG_TOKEN}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
