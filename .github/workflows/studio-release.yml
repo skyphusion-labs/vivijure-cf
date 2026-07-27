@@ -118,6 +118,25 @@ jobs:
             --out dist-release | tee build.log
           echo "pin=$(cat dist-release/PIN.txt)" >> "$GITHUB_OUTPUT"
 
+      # cf#56: the tenant release module list is resolved ONCE here and carried to every step
+      # below through $GITHUB_ENV. It used to be recomputed inline in THREE places (bundle, verify,
+      # publish), which is the same drift hazard scripts/finish-satellite-modules.txt already exists
+      # to close, one level up: a module added to two of the three lists would build and verify and
+      # then never be uploaded to R2, cutting a release whose manifest promises bytes a tenant
+      # provision cannot fetch. One list, three consumers.
+      #
+      # plan-enhance JOINS the set (cf#56). Hosted tenants get the Opus director pass on our own
+      # unified billing through the dedicated vivijure-hosted AI Gateway, carrying a per-tenant
+      # CF_AIG_TOKEN so that spend is attributable and revocable one tenant at a time. It is NOT a
+      # finish satellite, so it is named here rather than added to finish-satellite-modules.txt,
+      # which drives a different thing (FINISH_SATELLITES_ONLY in deploy-module-workers.sh).
+      - name: Resolve the tenant release module list (single source)
+        run: |
+          set -euo pipefail
+          SATELLITES="$(grep -vE "^[[:space:]]*$" scripts/finish-satellite-modules.txt | tr "\n" " ")"
+          echo "TENANT_MODULES=keyframe own-gpu plan-enhance $SATELLITES" >> "$GITHUB_ENV"
+          echo "tenant release modules: keyframe own-gpu plan-enhance $SATELLITES"
+
       # Tenant MODULE workers (cf#99): each is its own wrangler project, so wrangler's own
       # bundler produces the deploy shape and build-module-release.ts assembles + hashes it into
       # the SAME release tree (studio-releases/<tag>/modules/<name>/). A tenant's studio and its
@@ -127,9 +146,7 @@ jobs:
       - name: Bundle + assemble the tenant module workers (cf#99)
         run: |
           set -euo pipefail
-          # Tenant bundle modules: core GPU hooks + finish satellites (cf#197). Single list in
-          # scripts/finish-satellite-modules.txt so release artifacts cannot omit finish-rife.
-          TENANT_MODULES="keyframe own-gpu $(grep -v '^[[:space:]]*$' scripts/finish-satellite-modules.txt | tr '\n' ' ')"
+          # $TENANT_MODULES is resolved once, in the step above; do NOT recompute it here.
           for m in $TENANT_MODULES; do
             ( cd "modules/$m" && npx wrangler deploy --dry-run --outdir="$GITHUB_WORKSPACE/module-out/$m" )
             node scripts/build-module-release.ts \
@@ -178,7 +195,6 @@ jobs:
       - name: Verify the module artifacts before publishing (cf#99)
         run: |
           set -euo pipefail
-          TENANT_MODULES="keyframe own-gpu $(grep -v '^[[:space:]]*$' scripts/finish-satellite-modules.txt | tr '\n' ' ')"
           for m in $TENANT_MODULES; do
             test -s "dist-release/modules/$m/worker.js"
             test -s "dist-release/modules/$m/manifest.json"
@@ -232,7 +248,6 @@ jobs:
           for f in dist-release/assets/*; do
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/assets/$(basename "$f")" --file "$f" --remote
           done
-          TENANT_MODULES="keyframe own-gpu $(grep -v '^[[:space:]]*$' scripts/finish-satellite-modules.txt | tr '\n' ' ')"
           for m in $TENANT_MODULES; do
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/manifest.json" --file "dist-release/modules/$m/manifest.json" --remote
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/worker.js" --file "dist-release/modules/$m/worker.js" --remote
