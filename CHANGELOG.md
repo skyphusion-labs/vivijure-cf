@@ -7,6 +7,21 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.12.0
+
+### ci(release): publish plan-enhance as a tenant module bundle (cf#56)
+
+MINOR. Adds `plan-enhance` to the tenant module set the release publishes, so
+`studio-releases/<tag>/modules/plan-enhance/` exists in the release artifact and the hosted
+provisioner can fetch it. Without it, `moduleBundle.fetch(release, "plan-enhance")` had nothing to
+fetch at any tag.
+
+Recorded retroactively (cf#272): v1.12.0 was tagged without a version-bump commit, so this release
+shipped declaring `1.11.0` in `package.json` and left no changelog entry. The artifact itself is
+correct -- the release manifest carries `tag: v1.12.0` and provisioning is unaffected -- so the tag
+is NOT being re-cut. The declared version is corrected here and a tag-vs-version guard now runs in
+`studio-release.yml` so it cannot recur.
+
 ## v1.11.0
 
 ### feat(quota): the storage ceiling, R2_STORAGE_QUOTA_BYTES (vivijure-core#52, lane cf#56)

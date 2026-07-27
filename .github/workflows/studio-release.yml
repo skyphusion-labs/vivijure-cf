@@ -71,6 +71,38 @@ jobs:
 
       - run: npm ci
 
+      # TAG-VS-VERSION GUARD (cf#272). vivijure-control-plane has carried this in deploy.yml
+      # preflight since cp#80; vivijure-cf did not, and two tags drifted as a result: v1.12.0 was
+      # cut on a tree declaring 1.11.0, and v1.10.1 on a tree declaring 1.10.0. The cp version of
+      # this comment says it best -- without the guard you publish a build reporting a version it
+      # is not, and every later "which version is live" answer becomes a lie.
+      #
+      # ADAPTED, not copied. cp keys off GITHUB_REF_NAME because it only ever runs on a tag push.
+      # THIS workflow also accepts a `tag` INPUT and checks out `inputs.tag || github.ref`, so on a
+      # workflow_dispatch GITHUB_REF_NAME is the launch BRANCH, not the tag being released. Keying
+      # off it here would silently skip the guard on exactly the dispatch path that can release an
+      # arbitrary tag. It uses the same TAG expression the rest of this file uses.
+      #
+      # Non-v refs are a NOTICE and pass: this workflow is dispatchable for artifact rebuilds that
+      # are not releases, and failing those would make the guard something people route around.
+      - name: Tag matches the declared version
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v*) ;;
+            *) echo "::notice::ref ${TAG} is not a v* tag; the version guard does not apply."; exit 0 ;;
+          esac
+          want="${TAG#v}"
+          pkg="$(node -p "require(\"./package.json\").version")"
+          if [ "$want" != "$pkg" ]; then
+            echo "::error::tag ${TAG} does not match package.json version ${pkg} -- refusing to publish a mislabelled release"
+            exit 1
+          fi
+          echo "tag ${TAG} matches declared version ${pkg}."
+
+
       # Render with DUMMY values on purpose. The bundle is code-only, so none of these reach it; a
       # secret-free render is what makes the artifact reproducible by a third party. The rendered
       # wrangler.toml is gitignored and never leaves the runner.
