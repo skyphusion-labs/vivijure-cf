@@ -134,6 +134,12 @@ export interface Env {
   // Positive integer: max spend-route submissions per UTC day, counted atomically in D1
   // (spend_counter, migration 0008). Over the ceiling denies 429, Retry-After = UTC midnight.
   SPEND_DAILY_CEILING?: string;
+  // core#52 storage ceiling, in BYTES. Unset / "0" / non-integer = OFF. Set = enforced at submit with
+  // an honest 507 deny carrying used-vs-limit; 503 (fail closed) when the quota is set but its own
+  // check cannot run. Usage is accounted at write time in D1 (migration 0013), never read from the R2
+  // usage API -- that read is CF-specific and would break the Node/MinIO host. See docs/STORAGE-QUOTA.md
+  // in vivijure-core.
+  R2_STORAGE_QUOTA_BYTES?: string;
 
   // #697 per-shot duration honesty gate floor: the fraction of a shot`s planned seconds an assembled
   // clip must reach before the render fails loud (a truncated clip, not a beat-trim). [vars] entry,
