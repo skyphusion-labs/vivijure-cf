@@ -90,6 +90,15 @@ tenant; a self-hoster caps their own R2 bill with the identical feature.
   Inventing a second limiter there was out of scope for this fix; recorded here so the absence is a
   stated call and not an oversight.
 
+## v1.10.1 -- 2026-07-26
+
+- **fix(spend): meter the planner and chat routes (cf#256).** They were unmetered paid AI, which
+  made any token holder an Opus proxy at our expense.
+- **fix(panel): gate the module-host stage projection on what the host can actually serve
+  (cf#234).**
+- (The GitHub release for this tag reads only "Studio release artifact", so this row is reconstructed
+  from the commits it carries.)
+
 ## v1.10.0 -- 2026-07-26
 
 MINOR: the abuse-report link (control-plane#130) and the unreachable-studio sentence that can finally be READ (cf#229 / cf#234). Twin: vivijure-local v1.4.0 (same window, per the parity promise).
@@ -293,6 +302,15 @@ bundles now include `finish-rife`.
 
 PATCH: dual-panel with vivijure-local **v1.1.16** (K3 security closeout). Pins
 `@skyphusion-labs/vivijure-core` to `^1.2.12`.
+
+## v1.7.13 -- 2026-07-23
+
+- **fix(security): K3 medium and low close-out** -- cast key bind, and the demo cap peek.
+- **docs(security): the K3 verify medium/low false-positive disposition (#203)**, and the `cast.js`
+  train-lora K2.7 false positives (KF3), recorded rather than dismissed in a chat.
+- **chore(deps): pin `@skyphusion-labs/vivijure-core` to `^1.2.11` (#201).**
+- (The GitHub release for this tag reads only "Studio release artifact", so this row is reconstructed
+  from the commits it carries.)
 
 ## v1.7.12 -- 2026-07-23
 
@@ -582,6 +600,21 @@ the "a value known at provision time never reaches one of its consumers" family.
 - **The verify census covers the contract.** It previously checked a remembered subset, which is why
   provisioning reported green over a studio that could not presign: a var nobody listed is a var
   nobody checks.
+
+## v1.2.5 -- 2026-07-18
+
+Five control-plane provisioning fixes, all of the same family: provisioning that reported success
+without having reached a state the next step depends on.
+
+- **fix(control-plane): drive provisioning across invocations instead of one `waitUntil` (#112).**
+- **fix(control-plane): wait for the studio to serve the uploaded token before installing modules
+  (#108).**
+- **fix(control-plane): track tenant D1 migrations instead of replaying them (#105).**
+- **fix(control-plane): write the minted R2 credential to adopted RunPod templates (#83).**
+- **fix(control-plane): bind `R2_S3_ENDPOINT`, and link the tenant studio env contract to CI
+  (#116).**
+- (The GitHub release for this tag reads only "Studio release artifact", so this row is reconstructed
+  from the commits it carries.)
 
 ## v1.2.4 -- 2026-07-18
 
