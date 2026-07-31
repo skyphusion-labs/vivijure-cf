@@ -458,11 +458,47 @@ def render_core_toml(text: str, *, account_id: str, d1_id: str, store_id: str,
     return text
 
 
-def render_module_toml(text: str) -> str:
-    """Base-install render of a module wrangler.toml: STRIP [[vpc_services]] (the media-stack VPC
-    services are unprovisioned by a base install; binding one dangles the deploy). The store_id
-    placeholder is handled separately (replace_store_id_placeholder)."""
-    return re.sub(r'(?ms)^\[\[vpc_services\]\].*?(?=^\[|\Z)', '', text)
+def render_module_toml(text: str, *, prefix: str = "") -> str:
+    """PURE render of a DEPLOYABLE module wrangler.toml. DELIBERATELY COMPLETE, not incidentally
+    short: the audit below is the contract, so the next reader can tell a considered omission from a
+    gap. (This was one line, and the one thing it did not do was the isolation pass -- cf#281.)
+
+    ALWAYS: strip [[vpc_services]]. The media-stack VPC services are unprovisioned by a base install,
+    and binding one dangles the deploy.
+
+    PREFIX SET (an isolated install standing beside an existing one): rewrite every GLOBALLY-SCOPED
+    resource name this file can carry. A name that is not rewritten points the isolated install at the
+    ORIGINAL resource, which is the cf#281 failure: worker names all carried the prefix while the r2
+    bucket did not, so the isolation was partial and looked total.
+      - r2 bucket_name, for every bucket in R2_BUCKETS (13 module tomls name the shared bucket);
+      - the [[workflows]] name, which is account-scoped (2 module tomls declare one).
+
+    CHECKED AND DELIBERATELY NOT DONE, so nobody has to re-derive it:
+      - the top-level worker name: deploy_workers already passes --name prefixed(...), and doing it
+        here too would be a second seam for one value;
+      - database_id / store_id: filled by the placeholder pass (replace_d1_id_placeholder,
+        replace_store_id_placeholder), not by this render;
+      - database_name: unprefixed in the module tomls AND in the core render, which rewrites only
+        database_id. Identical on both halves, so not an isolation divergence; wrangler resolves a d1
+        binding by id;
+      - secret_name: scoped INSIDE the Secrets Store, and the store itself is created prefixed;
+      - service = : no module toml binds another worker (the core binds modules, not the reverse);
+      - ${...} placeholders, [[routes]], [[migrations]], tail_consumers: no module toml carries any,
+        so the matching core-render passes have nothing here to miss;
+      - workers_dev = false: NOT flipped to true as the core render does. A base install verifies on
+        the core workers.dev URL; module workers are reached by service binding and need no public URL.
+    """
+    text = re.sub(r'(?ms)^\[\[vpc_services\]\].*?(?=^\[|\Z)', '', text)
+    p = (prefix or "").strip()
+    if not p:
+        return text
+    for b in R2_BUCKETS:
+        text = text.replace(f'bucket_name = "{b}"', f'bucket_name = "{p}-{b}"')
+    # Only the name INSIDE a [[workflows]] block. The top-level name is the WORKER and is handled by
+    # --name, so a blanket name= substitution would rewrite both and double-prefix the worker.
+    text = re.sub(r'(?m)^(\[\[workflows\]\]\n)name = "([^"]+)"',
+                  lambda m: m.group(1) + f'name = "{p}-{m.group(2)}"', text)
+    return text
 
 
 # --------------------------------------------------------------------------------------------------
@@ -1027,15 +1063,16 @@ def deploy_workers(repo: Path, s: Secrets, st: State) -> None:
         mp = repo / "modules" / m / "wrangler.toml"
         text = mp.read_text()
         name_extra = ["--name", prefixed(module_worker_name(repo, m))] if isolate else []
-        if "[[vpc_services]]" in text:  # a media-stack module -> strip its VPC binding (base install)
-            tmp = repo / "modules" / m / ".wrangler-base.toml"
-            tmp.write_text(render_module_toml(text))
-            try:
-                wrangler(["deploy", "-c", f"modules/{m}/.wrangler-base.toml", *name_extra], cwd=repo, cf_env=env)
-            finally:
-                tmp.unlink(missing_ok=True)
-        else:
-            wrangler(["deploy", "-c", f"modules/{m}/wrangler.toml", *name_extra], cwd=repo, cf_env=env)
+        # EVERY module goes through the render, not only the [[vpc_services]] ones (cf#281). The old
+        # branch reached the renderer only when a module had a VPC block, and NONE of the 13 tomls that
+        # name the shared r2 bucket has one, so the isolation pass was skipped for exactly the files
+        # that needed it. A verbatim deploy is no longer a path through this loop.
+        tmp = repo / "modules" / m / ".wrangler-base.toml"
+        tmp.write_text(render_module_toml(text, prefix=DEPLOY_PREFIX.strip()))
+        try:
+            wrangler(["deploy", "-c", f"modules/{m}/.wrangler-base.toml", *name_extra], cwd=repo, cf_env=env)
+        finally:
+            tmp.unlink(missing_ok=True)
     # The core, AFTER every module (service bindings). Carry the /api/* auth mode as a NON-SECRET var.
     core_vars = ["--var", f"AUTH_MODE:{AUTH_MODE}"]
     if AUTH_MODE == "access":

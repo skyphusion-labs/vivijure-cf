@@ -151,13 +151,23 @@ Empty (the default) is byte-for-byte the old behavior; a real outsider sees zero
 When set, the prefix is applied through ONE seam (`prefixed()`) to every globally-named resource: the
 D1 database, BOTH R2 buckets, the Secrets Store, the AI Gateway slug, the scoped R2 S3 token, the core
 worker, every module worker, and the state file (`.proving-vivijure-deploy.json`, so two instances keep
-disjoint state). The minted R2 S3 token is scoped to the prefixed bucket. Module workers deploy under
-`--name`; the core deploys from a transformed toml (`transform_core_toml`) that repoints its module
-service bindings to the prefixed names, rebinds its D1/R2 + injects the prefixed Secrets Store id,
-enables `workers_dev`, and drops the custom-domain `[[routes]]` plus the `[[vpc_services]]` /
+disjoint state). The minted R2 S3 token is scoped to the prefixed bucket.
+
+**Both halves deploy from a RENDERED toml.** The core goes through `render_core_toml`, which repoints
+its module service bindings to the prefixed names, rebinds its D1/R2 + injects the prefixed Secrets
+Store id, enables `workers_dev`, and drops the custom-domain `[[routes]]` plus the `[[vpc_services]]` /
 `tail_consumers` / `[[migrations]]` blocks (an isolated instance needs no domain and does not provision
-the media-stack / tail / Durable-Object targets, so binding them would dangle the deploy). A prefixed
-instance verifies on its `*.workers.dev` URL.
+the media-stack / tail / Durable-Object targets, so binding them would dangle the deploy). Every module
+goes through `render_module_toml`, which strips `[[vpc_services]]` and, under a prefix, rewrites the r2
+`bucket_name` and the `[[workflows]]` name; the module WORKER name is prefixed separately via `--name`.
+That docstring carries the full audit of what the module render does and does not rewrite, and why.
+
+A module worker getting only its `--name` prefixed was cf#281: the r2 bucket stayed unprefixed, so a
+prefixed install read and wrote the ORIGINAL bucket while every worker name in the deploy looked
+correctly isolated. Partial isolation that looks total is the failure mode this section exists to
+prevent, so treat any resource NAME reachable from a module toml as in scope for `prefixed()`.
+
+A prefixed instance verifies on its `*.workers.dev` URL.
 
 Assumptions: the operator has already rendered `wrangler.toml` (the installer transforms that rendered
 file; it does not render from the example). Workers-for-Platforms dispatch is not prefixed -- an

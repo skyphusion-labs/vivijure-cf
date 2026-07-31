@@ -56,3 +56,8 @@ report.[0-9]*.json
 # LOKI_VPC Workers-VPC service id injected; the id itself lives in the private store, not here).
 # Edit the .example; render locally to deploy. (cf#148)
 /tail/wrangler.toml
+
+# The installer deploys each module from a RENDERED config written beside its tracked wrangler.toml
+# (deploy_workers -> render_module_toml). It is unlinked in a finally, so it survives only a hard kill
+# mid-deploy; ignored so a crash cannot leave 26 untracked tomls in a checkout.
+modules/*/.wrangler-base.toml

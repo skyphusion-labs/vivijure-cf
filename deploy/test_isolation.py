@@ -216,3 +216,108 @@ def test_d1_restore_is_a_no_op_without_an_id(tmp_path):
     repo, toml = _module_repo(tmp_path, TOML.replace(vd.D1_ID_PLACEHOLDER, "d1-abc-123"))
     vd.restore_d1_id_placeholder(repo, "")
     assert "d1-abc-123" in toml.read_text()
+
+
+# --- cf#281: the module render carries the isolation pass, and EVERY module goes through it -------
+
+
+MOD_TOML = ("name = \"vivijure-module-dialogue-gen\"\n"
+            "main = \"src/index.ts\"\n"
+            "\n"
+            "[[r2_buckets]]\n"
+            "binding = \"R2_RENDERS\"\n"
+            "bucket_name = \"vivijure\"\n"
+            "\n"
+            "[[workflows]]\n"
+            "name = \"dialogue-gen\"\n"
+            "binding = \"DIALOGUE_WORKFLOW\"\n"
+            "class_name = \"DialogueGenWorkflow\"\n")
+
+
+def test_render_module_toml_prefixes_the_bucket():
+    out = vd.render_module_toml(MOD_TOML, prefix="proving")
+    assert 'bucket_name = "proving-vivijure"' in out
+    assert 'bucket_name = "vivijure"' not in out
+
+
+def test_render_module_toml_without_a_prefix_leaves_the_bucket_alone():
+    # CONTROL for the test above: without this, that assertion also passes on a render that prefixes
+    # unconditionally, which would break every NON-isolated install (the default path).
+    out = vd.render_module_toml(MOD_TOML)
+    assert 'bucket_name = "vivijure"' in out
+    assert "proving" not in out
+
+
+def test_render_module_toml_prefixes_every_bucket_the_installer_creates():
+    body = "".join(f'bucket_name = "{b}"\n' for b in vd.R2_BUCKETS)
+    out = vd.render_module_toml(body, prefix="proving")
+    for b in vd.R2_BUCKETS:
+        assert f'bucket_name = "proving-{b}"' in out
+
+
+def test_render_module_toml_prefixes_the_workflow_name_and_NOT_the_worker_name():
+    # The precision case. A blanket name= substitution would pass the workflow assertion and
+    # double-prefix the worker, which deploy_workers already renames via --name.
+    out = vd.render_module_toml(MOD_TOML, prefix="proving")
+    assert 'name = "proving-dialogue-gen"' in out
+    assert 'name = "vivijure-module-dialogue-gen"' in out
+    assert 'name = "proving-vivijure-module-dialogue-gen"' not in out
+
+
+def test_every_tracked_module_bucket_is_one_the_render_knows_about():
+    """Binds the render to REALITY rather than to a fixture. A module introducing a bucket name that
+    is not in R2_BUCKETS would be silently left unprefixed by an isolated install -- exactly the cf#281
+    shape, arriving through a new module instead of through a missing pass. This fails loudly instead."""
+    repo = pathlib.Path(__file__).resolve().parent.parent
+    found = set()
+    for toml in sorted((repo / "modules").glob("*/wrangler.toml")):
+        for line in toml.read_text().splitlines():
+            if line.startswith("bucket_name = "):
+                found.add(line.split("=", 1)[1].strip().strip(chr(34)))
+    assert found, "no module declares a bucket: the scan broke, it did not prove absence"
+    assert found <= set(vd.R2_BUCKETS), f"module buckets the render cannot prefix: {found - set(vd.R2_BUCKETS)}"
+
+
+def test_deploy_workers_renders_EVERY_module_not_only_the_vpc_ones(tmp_path, monkeypatch):
+    """The load-bearing half of cf#281. The render was only reached by modules carrying a
+    [[vpc_services]] block, and no bucket-naming module carries one, so a perfect render would still
+    have deployed those tomls verbatim. Asserts on the config file wrangler was actually HANDED."""
+    (tmp_path / "wrangler.toml").write_text('name = "vivijure-studio"' + "\n")
+    for name, body in (("dialogue-gen", MOD_TOML), ("audio-master", MOD_TOML.replace(
+            "[[workflows]]", "[[vpc_services]]") )):
+        d = tmp_path / "modules" / name
+        d.mkdir(parents=True)
+        (d / "wrangler.toml").write_text(body)
+
+    seen = {}
+
+    def fake_wrangler(args, *, cwd, cf_env=None, secret_stdin=None):
+        if args[0] != "deploy" or "-c" not in args:
+            return                                   # the core deploy carries no -c
+        cfg = cwd / args[args.index("-c") + 1]
+        seen[cfg.parent.name] = (args[args.index("-c") + 1], cfg.read_text())
+
+    monkeypatch.setattr(vd, "wrangler", fake_wrangler)
+    monkeypatch.setattr(vd, "DEPLOY_PREFIX", "proving")
+    secrets = type("S", (), {"cf_account_id": "acct", "cf_api_token": "tok"})()
+    state = type("St", (), {"resource_id": lambda self, k: ""})()
+    vd.deploy_workers(tmp_path, secrets, state)
+
+    assert set(seen) == {"dialogue-gen", "audio-master"}, "a module skipped the render entirely"
+    for mod, (cfg_path, body) in seen.items():
+        assert cfg_path.endswith(".wrangler-base.toml"), f"{mod} deployed its tracked toml verbatim"
+        assert 'bucket_name = "proving-vivijure"' in body, f"{mod} was handed the BASE bucket"
+    assert "[[vpc_services]]" not in seen["audio-master"][1]   # the original strip still happens
+
+
+def test_deploy_workers_leaves_no_rendered_toml_behind(tmp_path, monkeypatch):
+    # The render writes a temp config next to each module. It must not survive the deploy, or a
+    # checkout ends up carrying 26 untracked tomls.
+    (tmp_path / "wrangler.toml").write_text('name = "vivijure-studio"' + "\n")
+    d = tmp_path / "modules" / "dialogue-gen"
+    d.mkdir(parents=True)
+    (d / "wrangler.toml").write_text(MOD_TOML)
+    monkeypatch.setattr(vd, "wrangler", lambda *a, **k: None)
+    vd.deploy_workers(tmp_path, type("S", (), {"cf_account_id": "a", "cf_api_token": "t"})(),
+                      type("St", (), {"resource_id": lambda self, k: ""})())
+    assert not list(d.glob(".wrangler-base.toml"))
