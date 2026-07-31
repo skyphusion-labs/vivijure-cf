@@ -148,6 +148,9 @@ jobs:
           # SECRETS_STORE_ID is a repo VARIABLE (an identifier, not a secret -- it was public in the
           # repo before #398 templated it out): the account Secrets Store id the module bindings bind.
           SECRETS_STORE_ID: ${{ vars.SECRETS_STORE_ID }}
+          # cf#279: the 6 RunPod-polling modules bind the studio D1 as TELEMETRY_DB. The SAME repo
+          # secret the core render already consumes -- no new deploy configuration was introduced.
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
           # #520: the 5 media modules carry a REPLACE_WITH_VPC_*_ID placeholder (no hardcoded prod VPC
           # service id in the tracked tomls). Filled per-module below from these repo secrets.
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}

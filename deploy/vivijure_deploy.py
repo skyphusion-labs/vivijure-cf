@@ -66,6 +66,7 @@ STORE_NAME = "vivijure"  # the account-level Secrets Store name (#237/#238)
 # The placeholder the module wrangler.tomls ship with (#237). After creating the store the installer
 # replaces it with the real store id so the secrets_store_secrets bindings resolve at deploy.
 STORE_ID_PLACEHOLDER = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+D1_ID_PLACEHOLDER = "REPLACE_WITH_D1_DATABASE_ID"
 # Single-tenant studio gating (config, NOT secrets -- set these for your deploy):
 DEPLOY_DOMAIN = ""    # AUTH_MODE=access only: the studio hostname behind CF Access (the edge app host)
 OPERATOR_EMAIL = ""   # AUTH_MODE=access only: the one email allowed through the Access self-only policy
@@ -462,23 +463,6 @@ def render_module_toml(text: str) -> str:
     services are unprovisioned by a base install; binding one dangles the deploy). The store_id
     placeholder is handled separately (replace_store_id_placeholder)."""
     return re.sub(r'(?ms)^\[\[vpc_services\]\].*?(?=^\[|\Z)', '', text)
-    def pfx(n):
-        return f"{p}-{n}"
-    for w in module_service_names:
-        text = text.replace(f'service = "{w}"', f'service = "{pfx(w)}"')
-    for b in R2_BUCKETS:
-        text = text.replace(f'bucket_name = "{b}"', f'bucket_name = "{pfx(b)}"')
-        text = text.replace(f'R2_S3_BUCKET = "{b}"', f'R2_S3_BUCKET = "{pfx(b)}"')
-    if d1_id:
-        text = re.sub(r'(?m)^(database_id\s*=\s*").*?(")', lambda m: m.group(1) + d1_id + m.group(2), text)
-    if store_id:
-        text = re.sub(r'(?m)^(\s*store_id\s*=\s*").*?(")', lambda m: m.group(1) + store_id + m.group(2), text)
-    text = re.sub(r'(?m)^workers_dev\s*=\s*false\s*$', 'workers_dev = true', text)
-    text = re.sub(r'(?ms)^\[\[routes\]\].*?(?=^\[|\Z)', '', text)
-    text = re.sub(r'(?ms)^\[\[vpc_services\]\].*?(?=^\[|\Z)', '', text)
-    text = re.sub(r'(?ms)^\[\[migrations\]\].*?(?=^\[|\Z)', '', text)
-    text = re.sub(r'(?m)^tail_consumers\s*=\s*\[.*?\]\s*$', '', text)
-    return text
 
 
 # --------------------------------------------------------------------------------------------------
@@ -861,32 +845,52 @@ def provision_runpod(repo: Path, s: Secrets, st: State, cf_derived: dict) -> dic
     return endpoints
 
 
-def replace_store_id_placeholder(repo: Path, store_id: str) -> None:
-    """Wire the real Secrets Store id into the module wrangler.tomls (replace the #237 placeholder) so
-    the secrets_store_secrets bindings resolve at deploy. Idempotent: a no-op once already replaced."""
+def _fill_module_placeholder(repo: Path, placeholder: str, value: str, label: str) -> None:
+    """Wire a real resource id into the module wrangler.tomls so the bindings resolve at deploy.
+    Idempotent: a no-op once already replaced."""
     n = 0
     for toml in sorted((repo / "modules").glob("*/wrangler.toml")):
         text = toml.read_text()
-        if STORE_ID_PLACEHOLDER in text:
-            toml.write_text(text.replace(STORE_ID_PLACEHOLDER, store_id))
+        if placeholder in text:
+            toml.write_text(text.replace(placeholder, value))
             n += 1
-    log(f"  wired store_id into {n} module wrangler.toml(s)")
+    log(f"  wired {label} into {n} module wrangler.toml(s)")
 
 
-def restore_store_id_placeholder(repo: Path, store_id: str) -> None:
-    """Undo replace_store_id_placeholder after a successful deploy, so the working tree is left CLEAN
-    (the user's checkout is not dirtied with their store id). Only runs on success; a failed deploy
+def _restore_module_placeholder(repo: Path, placeholder: str, value: str, label: str) -> None:
+    """Undo _fill_module_placeholder after a successful deploy, so the working tree is left CLEAN
+    (the checkout is not dirtied with account resource ids). Only runs on success; a failed deploy
     leaves the tomls mutated, and a re-run reconciles them."""
-    if not store_id:
+    if not value:
         return
     n = 0
     for toml in sorted((repo / "modules").glob("*/wrangler.toml")):
         text = toml.read_text()
-        if store_id in text and STORE_ID_PLACEHOLDER not in text:
-            toml.write_text(text.replace(store_id, STORE_ID_PLACEHOLDER))
+        if value in text and placeholder not in text:
+            toml.write_text(text.replace(value, placeholder))
             n += 1
     if n:
-        log(f"  restored the store_id placeholder in {n} module wrangler.toml(s) (working tree left clean)")
+        log(f"  restored the {label} placeholder in {n} module wrangler.toml(s) (working tree left clean)")
+
+
+def replace_store_id_placeholder(repo: Path, store_id: str) -> None:
+    """The #237 Secrets Store placeholder in the module wrangler.tomls."""
+    _fill_module_placeholder(repo, STORE_ID_PLACEHOLDER, store_id, "store_id")
+
+
+def restore_store_id_placeholder(repo: Path, store_id: str) -> None:
+    _restore_module_placeholder(repo, STORE_ID_PLACEHOLDER, store_id, "store_id")
+
+
+def replace_d1_id_placeholder(repo: Path, d1_id: str) -> None:
+    """cf#279: the module TELEMETRY_DB binding. A tracked module toml carries the placeholder and
+    never an account resource id. An UNFILLED placeholder is a dangling binding, which wrangler
+    hard-fails on -- the deploy breaks loudly instead of shipping a module that records nothing."""
+    _fill_module_placeholder(repo, D1_ID_PLACEHOLDER, d1_id, "d1 database_id")
+
+
+def restore_d1_id_placeholder(repo: Path, d1_id: str) -> None:
+    _restore_module_placeholder(repo, D1_ID_PLACEHOLDER, d1_id, "d1 database_id")
 
 
 def resolved_secret_values(runpod_api_key: str, cf_derived: dict, runpod_endpoints: dict) -> dict:
@@ -932,6 +936,7 @@ def seed_secrets(repo: Path, s: Secrets, st: State, cf_derived: dict, runpod_end
     store_id = store.rid
     st.put_resource("store_id", store_id, adopted=store.adopted)
     replace_store_id_placeholder(repo, store_id)  # so the deploy's bindings resolve
+    replace_d1_id_placeholder(repo, str(st.resource_id("d1_id") or ""))  # cf#279 TELEMETRY_DB
 
     base = f"/accounts/{acct}/secrets_store/stores/{store_id}/secrets"
     existing = {x.get("name"): x.get("id") for x in (cf_api("GET", base, tok) or []) if isinstance(x, dict) and x.get("name")}
@@ -1186,6 +1191,7 @@ def cmd_up(repo: Path, dry_run: bool, noninteractive: bool, rotate_token: bool =
     if AUTH_MODE == "token":
         set_studio_api_token(repo, s, rotate_token, noninteractive)  # operator login (worker secret, safe post-deploy)
     restore_store_id_placeholder(repo, st.resource_id("store_id"))  # leave the working tree clean post-deploy
+    restore_d1_id_placeholder(repo, str(st.resource_id("d1_id") or ""))
     bring_up_containers(repo)
     finalize(repo, st)
 

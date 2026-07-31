@@ -16,6 +16,21 @@ workers_dev = false
 [observability]
 enabled = true
 
+# cf#279: the durable record of every RunPod job this module submits and polls. RunPod cannot
+# enumerate jobs, so an id this worker does not write down is unreachable permanently, and the
+# endpoint health counters cannot supply a denominator (they bucket four terminal statuses into two
+# and exclude CANCELLED, which this module produces deliberately).
+#
+# database_id is a PLACEHOLDER in the tracked file and is filled at deploy time (CI:
+# scripts/deploy-module-workers.sh; installer: replace_d1_id_placeholder). An unfilled placeholder
+# is a dangling binding and wrangler hard-fails on it, which is the intended behaviour: the deploy
+# breaks loudly rather than shipping a worker that silently records nothing. The write itself is
+# best-effort in code and never fails a render (modules/_shared/runpod-job-log.ts).
+[[d1_databases]]
+binding = "TELEMETRY_DB"
+database_name = "vivijure-studio"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
 # RUNPOD_API_KEY + RUNPOD_ENDPOINT_ID (the user's own i2v endpoint) are bound from the account-level
 # Cloudflare Secrets Store -- declarative config that every `wrangler deploy` re-establishes, so a
 # fresh-create can't start secretless and silently degrade (the v0.2.2 finish-upscale passthrough bug).

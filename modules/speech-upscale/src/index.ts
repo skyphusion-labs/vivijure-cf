@@ -35,10 +35,15 @@ import {
 } from "./speech";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
+import { recordRunpodJob } from "../../_shared/runpod-job-log";
+
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
   RUNPOD_WORKERS_MAX?: string;
+  /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
+   *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
+  TELEMETRY_DB?: D1Database;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -182,10 +187,14 @@ async function submit(env: Env, req: InvokeRequest<SpeechInput>): Promise<Invoke
     if (!r.ok) return passthrough(input, "runpod-run-failed", "HTTP " + r.status);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
+    // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
+    // permanently -- and a failure RATE needs this denominator, not only the failures.
+    const submittedAt = Date.now();
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId, module: MANIFEST.name, outcome: "submitted", submittedAtMs: submittedAt });
     return {
       ok: true,
       pending: true,
-      poll: encodePoll({ jobId, shotId: input.shot_id, audioKey: input.audio_key, submittedAt: Date.now() }),
+      poll: encodePoll({ jobId, shotId: input.shot_id, audioKey: input.audio_key, submittedAt }),
     };
   } catch (e) {
     return passthrough(input, "exception", (e as Error).message);
@@ -221,11 +230,15 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<SpeechOut
       ) {
         return { ok: true, pending: true };
       }
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "gone", submittedAtMs: st.submittedAt });
       return pollPassthrough(st, "endpoint-gone");
     }
     return { ok: true, pending: true };
   }
-  if (s.status === "FAILED") return pollPassthrough(st, "endpoint-failed", JSON.stringify(s.error ?? s).slice(0, 160));
+  if (s.status === "FAILED") {
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s) });
+    return pollPassthrough(st, "endpoint-failed", JSON.stringify(s.error ?? s).slice(0, 160));
+  }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
     // forever -- holding and billing the worker -- while `output` already carries the structured
@@ -233,10 +246,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<SpeechOut
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(apiKey, endpointId, st.jobId);
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr });
       return pollPassthrough(st, "endpoint-error", backendErr.slice(0, 160));
     }
     return { ok: true, pending: true };
   }
+  // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
+  // could use the output is a different fact and the chain response is what carries it.
+  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt });
 
   const out = parseBackendOutput(s.output);
   // The endpoint soft-degrades (ok:false in its payload) on its own failures; without an output_key
@@ -266,6 +283,11 @@ export default {
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
         credentials: { runpod_api_key: Boolean(apiKey), runpod_endpoint_id: Boolean(endpointId) },
+        // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
+        // otherwise an empty job log is indistinguishable from a clean run, which is the exact
+        // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
+        // telemetry and a module without it still renders.
+        telemetry: { job_log: Boolean(env.TELEMETRY_DB) },
       });
     }
 
