@@ -29,10 +29,15 @@ import {
 } from "./finish";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
+import { recordRunpodJob } from "../../_shared/runpod-job-log";
+
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
   RUNPOD_WORKERS_MAX?: string;
+  /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
+   *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
+  TELEMETRY_DB?: D1Database;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -182,10 +187,14 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
     if (!r.ok) return passthrough(input, "runpod-run-failed", { detail: "HTTP " + r.status });
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
+    // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
+    // permanently -- and a failure RATE needs this denominator, not only the failures.
+    const submittedAt = Date.now();
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId, module: MANIFEST.name, outcome: "submitted", submittedAtMs: submittedAt });
     return {
       ok: true,
       pending: true,
-      poll: encodePoll({ jobId, shotId: input.shot_id, srcFps: input.src_fps ?? 24, frames: input.frames ?? 0, submittedAt: Date.now() }),
+      poll: encodePoll({ jobId, shotId: input.shot_id, srcFps: input.src_fps ?? 24, frames: input.frames ?? 0, submittedAt }),
     };
   } catch (e) {
     return passthrough(input, "exception", { detail: (e as Error).message });
@@ -223,11 +232,15 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
       ) {
         return { ok: true, pending: true };
       }
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "gone", submittedAtMs: st.submittedAt });
       return { ok: false, error: "finish-upscale job not found on RunPod (GC'd or never ran); failing shot " + st.shotId + " (#141)" };
     }
     return { ok: true, pending: true };
   }
-  if (s.status === "FAILED") return { ok: false, error: "finish-upscale job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
+  if (s.status === "FAILED") {
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s) });
+    return { ok: false, error: "finish-upscale job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
+  }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
     // forever -- holding and billing the worker -- while `output` already carries the structured
@@ -235,10 +248,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(apiKey, endpointId, st.jobId);
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr });
       return { ok: false, error: "finish-upscale backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
     return { ok: true, pending: true };
   }
+  // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
+  // could use the output is a different fact and the chain response is what carries it.
+  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt });
 
   const out = parseBackendOutput(s.output);
   if (!out?.clip_key) return { ok: false, error: "finish-upscale: backend returned no clip_key" };
@@ -275,6 +292,11 @@ export default {
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
         credentials: { runpod_api_key: Boolean(apiKey), runpod_endpoint_id: Boolean(endpointId) },
+        // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
+        // otherwise an empty job log is indistinguishable from a clean run, which is the exact
+        // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
+        // telemetry and a module without it still renders.
+        telemetry: { job_log: Boolean(env.TELEMETRY_DB) },
       });
     }
 

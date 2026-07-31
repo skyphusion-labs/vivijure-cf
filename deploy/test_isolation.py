@@ -182,3 +182,37 @@ def test_absent_is_created(monkeypatch):
     assert vd.create_if_absent(kind="D1", account="a", token="t", list_path="/x", create_path="/x",
         create_body={"name": "vivijure-studio"}, name="vivijure-studio", name_key="name",
         id_key="uuid", known_id=None).rid == "newly-created"
+
+
+# --- cf#279: the module TELEMETRY_DB placeholder round-trip -----------------------------------
+
+
+def _module_repo(tmp_path, body):
+    d = tmp_path / "modules" / "finish-upscale"
+    d.mkdir(parents=True)
+    (d / "wrangler.toml").write_text(body)
+    return tmp_path, d / "wrangler.toml"
+
+
+TOML = ("name = \"vivijure-module-finish-upscale\"\n"
+        "[[d1_databases]]\n"
+        "binding = \"TELEMETRY_DB\"\n"
+        "database_id = \"REPLACE_WITH_D1_DATABASE_ID\"\n")
+
+
+def test_d1_placeholder_is_filled_then_restored(tmp_path):
+    repo, toml = _module_repo(tmp_path, TOML)
+    vd.replace_d1_id_placeholder(repo, "d1-abc-123")
+    filled = toml.read_text()
+    assert "d1-abc-123" in filled
+    assert vd.D1_ID_PLACEHOLDER not in filled
+    vd.restore_d1_id_placeholder(repo, "d1-abc-123")
+    assert toml.read_text() == TOML   # working tree left exactly as checked out
+
+
+def test_d1_restore_is_a_no_op_without_an_id(tmp_path):
+    # NEGATIVE CONTROL: an empty id must not blank-substitute every module toml. Without this, the
+    # round-trip test above passes on a restore that simply deletes the id it was given.
+    repo, toml = _module_repo(tmp_path, TOML.replace(vd.D1_ID_PLACEHOLDER, "d1-abc-123"))
+    vd.restore_d1_id_placeholder(repo, "")
+    assert "d1-abc-123" in toml.read_text()

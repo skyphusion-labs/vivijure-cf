@@ -34,11 +34,11 @@ const MODULES: { name: string; worker: Worker }[] = [
   { name: "speech-upscale", worker: speechUpscaleWorker as unknown as Worker },
 ];
 
-const env = (apiKey?: string, endpointId?: string) =>
-  ({ RUNPOD_API_KEY: apiKey, RUNPOD_ENDPOINT_ID: endpointId }) as never;
+const env = (apiKey?: string, endpointId?: string, telemetryDb?: unknown) =>
+  ({ RUNPOD_API_KEY: apiKey, RUNPOD_ENDPOINT_ID: endpointId, TELEMETRY_DB: telemetryDb }) as never;
 
-const ready = async (worker: Worker, apiKey?: string, endpointId?: string) => {
-  const res = await worker.fetch(new Request("https://m.internal/ready"), env(apiKey, endpointId));
+const ready = async (worker: Worker, apiKey?: string, endpointId?: string, telemetryDb?: unknown) => {
+  const res = await worker.fetch(new Request("https://m.internal/ready"), env(apiKey, endpointId, telemetryDb));
   return { status: res.status, body: (await res.json()) as Record<string, unknown>, text: "" };
 };
 
@@ -50,6 +50,7 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: true,
       module: name,
       credentials: { runpod_api_key: true, runpod_endpoint_id: true },
+      telemetry: { job_log: false },
     });
   });
 
@@ -59,6 +60,7 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: false,
       module: name,
       credentials: { runpod_api_key: false, runpod_endpoint_id: true },
+      telemetry: { job_log: false },
     });
   });
 
@@ -68,7 +70,19 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: false,
       module: name,
       credentials: { runpod_api_key: false, runpod_endpoint_id: false },
+      telemetry: { job_log: false },
     });
+  });
+
+  // cf#279 CONTROL: the three assertions above all read job_log false, which is also what a field
+  // hardcoded to false would produce. This is the case that tells them apart, and it is the probe
+  // an operator uses to distinguish an empty job log from a worker that cannot write one.
+  it("reports the job-log binding as PRESENT when it is bound, and ok does not depend on it", async () => {
+    const { body } = await ready(worker, KEY, ENDPOINT, { prepare: () => ({}) });
+    expect(body.telemetry).toEqual({ job_log: true });
+    expect(body.ok).toBe(true);
+    const without = await ready(worker, KEY, ENDPOINT);
+    expect(without.body.ok).toBe(true);   // telemetry absence must NOT unready a module
   });
 
   // THE test that makes this endpoint safe to leave unauthenticated. Booleans only: the serialized
