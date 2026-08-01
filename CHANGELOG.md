@@ -36,6 +36,7 @@ isolation fix (cf#281).
   a module can write to it; an unfilled `database_id` placeholder fails the module deploy loudly
   rather than shipping a worker that silently records nothing.
 - Full detail: `docs/runpod-job-log.md`.
+- vivijure-local parity tracked separately: vivijure-local#294.
 
 ### fix(deploy): give module renders the isolation pass they never had (cf#281)
 
