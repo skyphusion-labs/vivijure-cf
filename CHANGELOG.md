@@ -7,6 +7,39 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### fix(ready): report whether the job log can RECORD, not whether a binding is attached (cf#284)
+
+`GET /ready` on every polling module reported `telemetry: { job_log: <bool> }` from
+`Boolean(env.TELEMETRY_DB)`, which is the presence of the BINDING. A worker bound to a database
+where `runpod_job_log` does not exist answered `true` while being structurally incapable of writing
+a row. Observed in the v1.13.0 pre-tag smoke: a real job ran to completion through such a worker
+while both the submit and terminal writes failed.
+
+The field is now three states, and the third one is the point:
+
+| state | meaning |
+|---|---|
+| `ok` | a read against the table succeeded |
+| `unavailable` | definitively cannot record: no binding, or no table |
+| `unknown` | the probe could not answer (read threw, or outran its 1.5s bound) |
+
+A boolean has nowhere to put "I could not tell", so it answered that as `true`. `unknown` is not
+`ok`, and the shape of the field now forces a reader to notice the difference.
+
+The probe is a READ against `sqlite_master`, never a write: a readiness check that inserted would
+put fabricated jobs in the table operators query for real ones. Table existence is decided by DATA
+(a row or no row), never by matching vendor error text. It costs one round trip on a path that was
+previously free; taken deliberately, since `/ready` is called before flipping a tenant live.
+
+Honest limit, stated in the code: this proves the table is READABLE, not that an INSERT would
+succeed. A read-only replica would still report `ok`. It closes the observed hole and no more.
+
+**Wire change:** `telemetry.job_log` is a string, not a boolean. No consumer in this repo or in
+vivijure-control-plane read the boolean; the only readers were this repo tests and docs, both updated.
+
+
 ## v1.13.0 -- 2026-08-01
 
 MINOR: every RunPod-polling module now writes a durable job log (cf#279), plus a module-render

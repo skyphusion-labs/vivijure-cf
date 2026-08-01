@@ -121,3 +121,79 @@ function describe(e: unknown): string {
   if (typeof e === "string" && e) return e;
   return "unknown";
 }
+
+// ---------------------------------------------------------------------------------------------
+// READINESS (cf#284): can this worker actually RECORD, not merely is a binding attached.
+//
+// GET /ready used to report Boolean(env.TELEMETRY_DB), which is the presence of the BINDING. A
+// worker bound to a real database where runpod_job_log does not exist reported job_log:true while
+// being structurally incapable of writing a row, and that is not hypothetical: it was observed in
+// the v1.13.0 pre-tag smoke, with a job running to completion while both writes failed. A probe that
+// cannot distinguish a missing table from a working one reintroduces, one layer up, the exact defect
+// the job log exists to end -- an empty log being indistinguishable from a clean run.
+//
+// THREE STATES, NOT A BOOLEAN, and that is the whole point. A boolean has nowhere to put I COULD NOT
+// TELL, so it answers it as one of the two real states, and the safe-looking one is the lie:
+//
+//   ok           a read against runpod_job_log succeeded: the table is there and reachable
+//   unavailable  DEFINITIVELY cannot record: no binding at all, or the table does not exist
+//   unknown      the probe itself could not answer (the read threw, or it outran the timeout)
+//
+// unknown is NOT ok. An operator reading unknown knows the probe failed; an operator reading a true
+// that was produced by a failed probe knows nothing and believes something.
+//
+// WHY A READ AND NOT A WRITE. A readiness probe must not leave litter, and a probe that inserts a row
+// would put fabricated jobs in the very table operators query for real ones. A read costs one round
+// trip on a path that was previously free, which is the tradeoff cf#284 raised: taken deliberately,
+// because /ready is called before flipping a tenant live, and a free answer to the wrong question is
+// worth less than a cheap answer to the right one.
+//
+// HONEST LIMIT, stated because the name invites more than it proves: this establishes the table is
+// READABLE, not that an INSERT would succeed. A read-only replica or a constraint failure would
+// still report ok. It closes the observed hole (missing table) and does not claim to close every one.
+//
+// WHY NOT CLASSIFY THE ERROR TEXT. Reading no such table out of an error message would be a parser
+// only as fresh as the vendor string it was built from. sqlite_master answers the same question
+// structurally: a row or no row, nothing to match. The distinction is decided by data, not by prose.
+export type JobLogReadiness = "ok" | "unavailable" | "unknown";
+
+/** Tighter than the write bound: /ready is an interactive probe, and a slow answer is a bad one. */
+export const JOB_LOG_PROBE_TIMEOUT_MS = 1500;
+
+/** Existence by DATA, not by error text: a row means the table is there, no row means it is not. */
+export const JOB_LOG_TABLE_PROBE = "SELECT name FROM sqlite_master WHERE type = ?1 AND name = ?2";
+
+/**
+ * Probe whether this worker could record a job outcome. Never throws, never rejects, and never
+ * outlives JOB_LOG_PROBE_TIMEOUT_MS: the same discipline as the writer, for the same reason. A
+ * readiness endpoint that can fail the module it reports on is worse than no readiness endpoint.
+ */
+export async function probeRunpodJobLog(
+  db: D1Database | undefined,
+  timeoutMs: number = JOB_LOG_PROBE_TIMEOUT_MS,
+): Promise<JobLogReadiness> {
+  // No binding is not a measurement failure, it is a definitive answer: nothing to write through.
+  if (!db) return "unavailable";
+  try {
+    const read = db
+      .prepare(JOB_LOG_TABLE_PROBE)
+      .bind("table", "runpod_job_log")
+      .first<{ name?: string }>()
+      .then(
+        (row): JobLogReadiness => (row && typeof row.name === "string" ? "ok" : "unavailable"),
+        (): JobLogReadiness => "unknown",
+      );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expiry = new Promise<JobLogReadiness>((resolve) => {
+      timer = setTimeout(() => resolve("unknown"), timeoutMs);
+    });
+    try {
+      return await Promise.race([read, expiry]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  } catch {
+    // prepare/bind threw synchronously, or the binding is not the shape we were handed.
+    return "unknown";
+  }
+}

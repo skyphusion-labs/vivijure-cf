@@ -103,9 +103,31 @@ it can. So "no rows" is made distinguishable from "cannot write rows" three ways
 1. the deploy fails loudly on an unfilled `database_id` placeholder (a dangling binding), rather than
    shipping a worker that silently records nothing;
 2. an absent binding warns with its own marker on every call;
-3. `GET /ready` reports `telemetry: { job_log: <bool> }`, so an operator can ask a deployed worker
-   whether it can record at all, with no render and no GPU spend. It is deliberately not part of
-   `ok`: the job log is telemetry, and a module without it still renders.
+3. `GET /ready` reports `telemetry: { job_log: "ok" | "unavailable" | "unknown" }`, so an operator
+   can ask a deployed worker whether it can record at all, with no render and no GPU spend. It is
+   deliberately not part of `ok`: the job log is telemetry, and a module without it still renders.
+
+   **Three states, not a boolean (cf#284).** The field used to be `Boolean(env.TELEMETRY_DB)`, which
+   reported the presence of the BINDING, not the ability to record: a worker bound to a database
+   where `runpod_job_log` does not exist answered `true` while being structurally incapable of
+   writing a row. That was observed in the v1.13.0 pre-tag smoke, not theorised.
+
+   | state | meaning |
+   |---|---|
+   | `ok` | a read against the table succeeded: it is there and reachable |
+   | `unavailable` | definitively cannot record: no binding, or the table does not exist |
+   | `unknown` | the probe itself could not answer (the read threw, or outran its 1.5s bound) |
+
+   `unknown` is not `ok`. A boolean has nowhere to put "I could not tell", so it answers that as one
+   of the two real states, and the reassuring one is the wrong one.
+
+   The probe is a READ (`sqlite_master`), never a write: a readiness check that inserted would put
+   fabricated jobs in the table operators query for real ones. It costs one round trip on a path
+   that was previously free, taken deliberately because a free answer to the wrong question is worth
+   less than a cheap answer to the right one.
+
+   Honest limit: this proves the table is READABLE, not that an INSERT would succeed. A read-only
+   replica would still report `ok`. It closes the observed hole and does not claim to close every one.
 
 ## Deploy
 

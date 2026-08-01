@@ -25,7 +25,7 @@ import {
 import { buildI2vBody, readOutput, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./i2v";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
-import { recordRunpodJob } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog } from "../../_shared/runpod-job-log";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -249,7 +249,7 @@ export default {
         // otherwise an empty job log is indistinguishable from a clean run, which is the exact
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
         // telemetry and a module without it still renders.
-        telemetry: { job_log: Boolean(env.TELEMETRY_DB) },
+        telemetry: { job_log: await probeRunpodJobLog(env.TELEMETRY_DB) },
       });
     }
 
