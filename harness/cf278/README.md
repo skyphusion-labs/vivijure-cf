@@ -134,11 +134,18 @@ Do one of these instead:
 
 ### Two things a future run needs to know before it plans
 
-- **`poll-films.sh` and `enumerate.mjs` both need a live studio bearer**, and the crew one was dead
-  during run 2 (403 `bad API token` on `/api/modules` while unauthenticated `/health` returned 200).
-  Presence-checking the token cannot tell a dead credential from a live one; only an authenticated call
-  judged on its reply can. Films still advance without any poller, because the studio's own 1-minute
-  cron sweep drives them.
+- **`poll-films.sh` and `enumerate.mjs` both need a live studio bearer, and the one this lane started
+  with had been REVOKED.** Symptom: 403 `bad API token` on `/api/modules`, `/api/storyboard/projects`
+  and `/api/voices`, while unauthenticated `/health` returned 200. Established cause, from a read of
+  the D1 `api_tokens` table rather than from the symptom: the named token `harness-cf278` was minted
+  for the PREVIOUS harness lane and explicitly revoked at that lane's close; this lane picked up the
+  stale file. Two things follow. **A named token belongs to the lane that minted it, so a new lane
+  mints its own.** And `bad API token` is deliberately ambiguous (see `src/auth-gate.ts`): a revoked
+  token, a wrong token, a stale operator token and a broken D1 read all produce that identical
+  string, so the symptom alone cannot tell you which -- do not diagnose from it. The one distinction
+  the message DOES carry is that an unauthenticated call returns `missing API token` instead, so
+  those two states are separable and the other four are not. Films advance without any poller
+  regardless, because the studio's own 1-minute cron sweep drives them.
 - **`speech-upscale` is opt-in and ships `enable: false`.** A default film render therefore never puts a
   job on the audio-upscale endpoint; the module is invoked and honestly degrades with
   `applied: []`, `degraded: "disabled"`. To exercise that endpoint through the studio path, submit with
