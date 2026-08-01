@@ -99,16 +99,22 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(READY.length).toBe(ENTRIES.length);
   });
 
-  it("reporting telemetry.job_log and writing job-log rows are the SAME six modules", () => {
+  it("reporting telemetry.job_log and writing job-log rows are the SAME fourteen modules", () => {
     // If these ever diverge, one of two real bugs exists: a module that records but cannot say so
     // (invisible failures), or one that claims a job log it never writes (a false green).
     expect([...REPORTS_JOB_LOG].sort()).toEqual([...WRITES_JOB_LOG].sort());
-    expect(WRITES_JOB_LOG.length).toBe(6);
+    // cf#305: was 6. The eight cost-door submitters (seedance, kling, vidu-q3, google-veo,
+    // minimax-hailuo, alibaba-wan, alibaba-wan-lora, narration-gen) wrote NO row at all, so a
+    // census of the table showed six healthy lanes and could not mention the other eight.
+    expect(WRITES_JOB_LOG.length).toBe(14);
+    for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen"]) {
+      expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
+    }
   });
 
   it("the four populations are the sizes the published table claims", () => {
     expect(ENTRIES.length).toBe(26);
-    expect(WRITES_JOB_LOG.length).toBe(6);
+    expect(WRITES_JOB_LOG.length).toBe(14);
     expect(publishedToTenants().length).toBe(7);
     expect(CATALOG.length).toBe(6);
   });

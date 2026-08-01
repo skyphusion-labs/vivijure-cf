@@ -27,3 +27,14 @@ bucket_name = "vivijure"
 binding = "RUNPOD_API_KEY"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "RUNPOD_API_KEY"
+
+# cf#305: the studio D1 as TELEMETRY_DB, so this cost-door submitter writes a runpod_job_log row.
+# Before this the entire cost door wrote NO row at all, so a census of the table showed the six
+# tenant modules and simply did not mention these eight -- a module that never writes cannot appear
+# in a count built from what was written. database_id is filled by scripts/deploy-module-workers.sh
+# from the D1_DATABASE_ID secret (generic across modules/*/wrangler.toml, no script change), and
+# that script refuses to deploy if the placeholder survives.
+[[d1_databases]]
+binding = "TELEMETRY_DB"
+database_name = "vivijure-studio"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
