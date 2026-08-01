@@ -42,6 +42,20 @@ secret_name = "RUNPOD_API_KEY"
 # in a count built from what was written. database_id is filled by scripts/deploy-module-workers.sh
 # from the D1_DATABASE_ID secret (generic across modules/*/wrangler.toml, no script change), and
 # that script refuses to deploy if the placeholder survives.
+#
+# REVISIT THIS BINDING IF cp#284 IS ANSWERED "TENANTS GET THE COST DOOR". `vivijure-studio` is the
+# FIRST-PARTY studio D1. Binding it here is correct TODAY only because these eight scripts live in
+# our own namespace and a hosted tenant cannot reach them at all: cp#284 measured zero occurrences
+# of all eight cost-door module names in the control plane (with `keyframe` at 28 through the same
+# matcher as the positive control), and TENANT_MODULE_CATALOG is six entries, none of them these.
+# So every row this binding writes is our own traffic.
+#
+# If that decision goes the other way and these modules are installed into the tenant dispatch
+# namespace, this same binding becomes a CROSS-TENANT WRITE into the first-party telemetry table,
+# not a missing row. That failure is silent and it fails in the worse direction: the table keeps
+# filling, the counts keep looking healthy, and tenant job ids sit in an operator-facing table they
+# do not belong in. The tenant modules would need their own telemetry destination decided WITH that
+# ruling, not after it.
 [[d1_databases]]
 binding = "TELEMETRY_DB"
 database_name = "vivijure-studio"
