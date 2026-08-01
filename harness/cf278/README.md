@@ -88,3 +88,58 @@ a live studio are otherwise indistinguishable, and only one of them proves reach
   An edge 404 absorbed as "infra" inflates the exact rate cf#277 is about, invisibly.
 
 Refs cf#277, cf#278, cf#279, cf#287, cf#288.
+
+## Run 2 additions (cf#278 phase 1 continuation, 2026-08-01)
+
+| file | what it does |
+|---|---|
+| `sample-endpoints.sh` | 10-second TIME SERIES over the four our-GPU endpoints. Bounded by a sample count. |
+| `wait-job.sh` | blocks until ONE RunPod job is terminal, printing a `POLL_FAIL` line rather than looping silently. |
+
+### Why the sampler exists, and why a single health read is not a substitute
+
+The load evidence in this phase is a queue that formed and drained **in about twenty seconds**:
+
+```
+12:47:46   inQueue 0   inProgress 0   idle 3
+12:47:57   inQueue 5   inProgress 0   idle 3     <- the whole batch lands
+12:48:08   inQueue 3   inProgress 2   idle 3
+12:48:18   inQueue 0   inProgress 0   running 3  completed 15 -> 20
+```
+
+A health read a minute either side shows a flat idle endpoint. **A queue that never formed and a queue
+that formed and drained are the same snapshot**, and the snapshot is the reassuring one. Anything
+claiming "no queueing was observed" from a point-in-time read has not measured queueing.
+
+The sampler prints `PROBE_FAILED -- state UNKNOWN, NOT assumed clean` on a dead read rather than
+skipping the row, for the same reason the other scripts here do: an absent row otherwise reads as fine.
+
+### HARD RULE: never A/B two versions of the same R2 key through the CF API object-GET route
+
+Measured (cf#300): `GET /accounts/{id}/r2/buckets/{b}/objects/{key}` served the **previous** body for an
+overwritten key, durably (+1, +4 and +36 minutes, including with `Cache-Control: no-cache`), while
+`GET .../objects?prefix={key}` on the SAME API reported the new object's etag and size. A control on a
+never-overwritten key matched exactly, so the route is normally byte-correct and the comparison method
+is sound.
+
+This breaks the obvious verification pattern (render, read, change one knob, re-render to the same key,
+read again, compare) in the most dangerous direction: the second read returns the first render, so the
+result is always "nothing changed". In this run it briefly supported a confident and completely wrong
+finding.
+
+Do one of these instead:
+- compare `etag` and `size` from the LISTING route, matching the **exact key** (a prefix query returns
+  sidecars like `<key>.hash` and `<key>.prov` too, and `result[0]` is not necessarily your object);
+- or write each variant to a DISTINCT key and compare bodies across keys.
+
+### Two things a future run needs to know before it plans
+
+- **`poll-films.sh` and `enumerate.mjs` both need a live studio bearer**, and the crew one was dead
+  during run 2 (403 `bad API token` on `/api/modules` while unauthenticated `/health` returned 200).
+  Presence-checking the token cannot tell a dead credential from a live one; only an authenticated call
+  judged on its reply can. Films still advance without any poller, because the studio's own 1-minute
+  cron sweep drives them.
+- **`speech-upscale` is opt-in and ships `enable: false`.** A default film render therefore never puts a
+  job on the audio-upscale endpoint; the module is invoked and honestly degrades with
+  `applied: []`, `degraded: "disabled"`. To exercise that endpoint through the studio path, submit with
+  `speech_config: {"speech-upscale": {"enable": true}}`.
