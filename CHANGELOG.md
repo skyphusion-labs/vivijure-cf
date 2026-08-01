@@ -9,6 +9,114 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.14.0 -- 2026-08-01
+
+MINOR: the instrumentation release. The job log can now say what actually happened to a job, `/ready`
+covers every module instead of a quarter of them, and the render panel can tell a stalled render from
+one that is merely starting up. **Nothing here changes the render path.** Every change is telemetry,
+readiness or presentation, and the one live counter-example is documented below.
+
+Shipped alongside `vivijure-local` (parity per the dual-panel gate): the `error_type` column and the
+`cancelled` outcome landed on the self-host door in the same wave, in a shape that fits that door
+rather than a verbatim copy of this one.
+
+### fix(telemetry): runpod_job_log can say refusal, cancel, and which job (cf#286 / cf#288 / cf#298 / cf#289)
+
+`outcome = failed` absorbed three different things a reader could not separate: a deliberate refusal,
+a handler fault, and genuine infra. All three arrive from RunPod as `FAILED`, and only the exception
+class tells them apart.
+
+**Why the old arrangement was fragile, measured rather than asserted:** that class survived only
+inside `detail`, and only because `error_type` happens to be the FIRST key RunPod emits. On a real
+refusal the raw error string is 1071 chars, the class name ends at char 73, and `detail` is bounded
+to 160. **Eighty-seven characters of headroom against a vendor reordering its own JSON** -- with a
+silent failure mode, because the numbers would not break, they would quietly stop meaning what they
+say.
+
+`migrations/0015` adds a bounded `error_type`, extracted at WRITE time from the structured key and
+normalised. It NEVER reads the message: classifying by matching English error sentences is a parser
+only as fresh as the sample it was built from, and those strings are ordinary prose someone will
+reword without knowing a classification depends on them.
+
+`cancelled` joins the outcome vocabulary. `CANCELLED` and `TIMED_OUT` are terminal, but the poll
+paths tested only `COMPLETED`/`FAILED`, so for those two **no terminal write was ever attempted** and
+the row stayed `submitted` permanently. It also has a denominator consequence: endpoint health
+counters exclude `CANCELLED`, and the modules produce it deliberately, so a cancelled job was neither
+a success nor a failure nor an open job -- it was missing from the arithmetic. `TIMED_OUT` records as
+`failed` rather than getting its own value, because it has not been observed on our endpoints and a
+vocabulary member added on speculation is harder to remove later than one added on evidence.
+
+**`cancelled` is NOT the home for a refusal**, and the earlier decision refusing it for that purpose
+stands: a refusal raises inside the handler and the SDK books it `FAILED`, so the value would never
+have fired for the case it would have been added for.
+
+Three limits, stated rather than papered over:
+
+- **`NULL` means the endpoint did not tell us, never "this was not a refusal."**
+- `vivijure-backend` emits `error_type`; the three satellite containers do not. **One endpoint of
+  four is classifiable.** A column that looked like it had solved classification while covering a
+  quarter of the surface would be worse than the honest absence.
+- **Historical rows are not backfilled and not reinterpreted.** Mining a class out of a truncated
+  `detail` blob would manufacture exactly the confidence that data cannot support.
+
+**The render path is deliberately unchanged**, and there is a live counter-example for why: a
+CANCELLED job had already written the artifact the film went on to consume, so failing a shot on
+`CANCELLED` would break a path that works today.
+
+cf#298 is **narrowed, not closed** -- a lost terminal write is only narrowed by the added retry; the
+reconciler is the real fix and carries a hard ~30-minute RunPod result-retention constraint.
+
+### fix(modules): GET /ready covers all 26 modules, not 6 (cf#295)
+
+Twenty modules had no `/ready` at all and answered **404** -- which is not a failure verdict, it is
+the ABSENCE of one. A caller sweeping readiness could not distinguish "this module is not ready" from
+"this module has no readiness endpoint", and answered as though it could.
+
+Each module's real hard-fail guards were read before deciding gating, because the twenty are not
+uniform. Modules whose credential only unlocks an optional better path -- with a genuine fallback in
+the code -- report `ok: true` and surface the credential informationally, following the precedent
+`telemetry.job_log` already set. Templating one shape across all twenty would have gated `ok` on
+credentials several modules' own code treats as optional, and would have failed in the safe-looking
+direction.
+
+`bindings` is now reported alongside `credentials`, kept separate because a binding has no value to
+leak.
+
+**Not yet verified against a deployed worker.** This is proven against the real fetch handlers in
+unit tests; hitting `/ready` on deployed workers is a separate claim and cf#295 stays open until
+someone does it.
+
+### feat(planner): explain the render startup wait instead of showing a bare 0% (cf#303)
+
+Measured on the pre-change build rather than argued: a render **queued**, a render in **keyframe with
+nothing drawn**, and a **genuinely stalled** render were byte-identical in the panel -- same bar, same
+"computing...", same label. So the defect was larger than "cold start is invisible": **a stalled
+render and a healthy one that is merely starting up looked exactly the same.**
+
+Now the panel says what is happening and why -- GPUs are not kept running idle, which keeps costs
+down -- with curated phase labels, unknown phases passing through raw, and the pre-submit window no
+longer blank.
+
+**The server's `stalled` verdict is surfaced in the live panel**, where it never was before, though it
+was already in the envelope and already shown in the history list. Without it the startup note would
+reassure the user straight through a real stall, masking the exact failure this work exists to reveal.
+The two are mutually exclusive by construction: there is one note element, so both messages cannot
+coexist.
+
+The bar still sits at the band floor and the ETA is still withheld until it can be honest. **This does
+not invent progress motion**, and it does not claim a queue state we cannot observe -- the module
+`/poll` contract cannot express queued-versus-running at all, which is filed as cf#307 and deliberately
+not started.
+
+### fix(tail): render vivijure-tail's config from its committed example (cf#294)
+
+`tail/wrangler.toml.example` was committed with nothing rendering from it, so `vivijure-tail` was
+still deployed by hand. Adds `scripts/deploy-tail.sh`, run by hand rather than wired into CI:
+`vivijure-tail` is our-fleet-only (SELFHOST-SKIPped, and stripped again for tenants) and changes
+rarely, so it fits neither `deploy.sh` nor the tag-gated release job -- and wiring it into the release
+job would have required a secret that could not be provisioned or exercised, shipping a CI path that
+looked wired while being unproven.
+
 ### fix(modules): finish-rife exposes GET /ready, and a guard so the next one cannot be missed (cf#291)
 
 `finish-rife` writes `runpod_job_log` rows and exposed no `/ready` at all, from 2026-07-18 until
@@ -26,10 +134,15 @@ by sweeping readiness endpoints returns a clean result across the modules that h
 mentions the module that does not. The absence removes the module from the census that would report
 it. So a test now fails when any module importing `recordRunpodJob` exposes no `/ready`.
 
-The guard deliberately does NOT require `/ready` of every tenant module: `plan-enhance` has none and
-that is correct, since it holds no RunPod credentials and writes no job log, so the probe would have
-nothing to report. The invariant is keyed on RECORDING, because recording is what creates the
-question an operator needs answered.
+The guard deliberately does NOT require `/ready` of every tenant module. The invariant is keyed on
+RECORDING, because recording is what creates the question an operator needs answered.
+
+**Corrected before release by cf#295, below.** This entry originally said `plan-enhance` has no
+`/ready` "and that is correct, since it holds no RunPod credentials and writes no job log, so the
+probe would have nothing to report." That premise was wrong: `plan-enhance` reads `GATEWAY_ID` and
+`CF_AIG_TOKEN`, which select the provider, and that IS something a credential-visibility probe can
+report. It now has a `/ready` and still writes no job-log row, so the invariant is a strict SUBSET
+(every job-log writer is askable) rather than an equality.
 
 ### fix(ready): report whether the job log can RECORD, not whether a binding is attached (cf#284)
 
