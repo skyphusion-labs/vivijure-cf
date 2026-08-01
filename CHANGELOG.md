@@ -9,7 +9,25 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
-### feat(modules): forward the tenant per-job R2 credential to the pooled backend endpoint (cp#270)
+## v1.15.0 -- 2026-08-01
+
+MINOR: the pooled-endpoint release. A tenant's per-job R2 credential now rides the invoke envelope
+to the two modules that submit to `vivijure-backend`, which is what lets that endpoint be SHARED
+across tenants instead of one dedicated endpoint per customer. Alongside it, the module-readiness
+denominator is published and guarded, so a surface that speaks for six of twenty-six modules has to
+say which six.
+
+**No `vivijure-local` counterpart in this wave, deliberately, and this is not the gate being
+skipped.** The dual-panel gate above covers studio FEATURES. Neither change is one. cf#316 is hosted
+multi-tenant plumbing: it exists because a pooled backend endpoint serves more than one tenant, and
+the credential is what puts a job in the right tenant's bucket. `vivijure-local` is a single-tenant
+self-host door: no tenant concept, no pooled endpoint, nothing to mirror. cf#313 publishes a
+denominator about this repo's modules and the hosted control plane's provisioned set, which likewise
+has no self-host analogue. Written down rather than left silent, because an unexplained absence under
+a parity gate reads as an oversight to the next person, and the next person cannot tell the two
+apart.
+
+### feat(modules): forward the tenant per-job R2 credential to the pooled backend endpoint (cp#270 / cf#316)
 
 Step 3 of the pooled-shared-tier chain, and the consumer half of vivijure-core 1.5.0.
 
@@ -19,12 +37,21 @@ which may be POOLED across tenants. Both now declare `needs_tenant_r2` on their 
 where `vivijure-backend/docs/contract.md` specifies it. No other module is touched: declaring the
 field hands a live tenant credential to a worker with no use for one.
 
+`needs_tenant_r2` is declared on the module MANIFEST rather than decided in core. Which modules ride
+a pooled endpoint is a property of the module, and core must not branch on module identity.
+
+STRIP AT THE BOUNDARY, not inside `submit()`. The guarantee is about the REQUEST object, so
+`takeTenantR2(req)` reads and removes the credential in one call at the parse site and it travels
+onward as a value. Every line after that point is unable to leak it even by accident, because
+nothing after that line holds an object that still contains it.
+
 THE RULE THAT BREAKS THE FAR END, held in one shared helper rather than spelled out twice: the
 backend REFUSES an explicit `"r2": null` rather than reading it as absent, because a silent
 fallback would run a tenant's job against the wrong bucket under the wrong credential. So
 `withTenantR2Body` returns the body UNCHANGED when there is nothing to attach. It does not set the
 key to undefined and rely on `JSON.stringify` dropping it, which works today by a property of the
-serialiser rather than by intent.
+serialiser rather than by intent. **A producer that helpfully emitted `null` would fail every job on
+every dedicated endpoint, which is the entire installed base.**
 
 THE DRIFT GUARD is the half that has to survive future edits. The credential rides the invoke
 request, so serialising that request into a console line is what would put it in Workers Logs
@@ -44,6 +71,40 @@ cover every name. Scoping by meaning beats an exemption list that grows with eve
 The core dependency moves `^1.3.0` -> `^1.5.0`. The RANGE bump is deliberate and not cosmetic: the
 modules now import `@skyphusion-labs/vivijure-core/modules/tenant-r2`, which does not exist before
 1.5.0, so `^1.3.0` would have been a compatibility claim that is no longer true.
+
+### docs(modules): publish the readiness denominator and guard it against drift (cf#295 / cf#313)
+
+The original cf#295 defect is REMEDIED, and was re-measured at this head rather than carried forward
+from the issue's sha: all 26 modules implement an anchored `/ready` today, against the 6 of 26 the
+issue recorded, with a matcher controlled in both directions.
+
+The coverage gap did not close, it MOVED, and it got harder to see. `module-readiness` on the
+control plane iterates `TENANT_MODULE_CATALOG`, which is six entries. Every one of those now answers
+200, so the route looks COMPLETE while speaking for six of twenty-six. Before, an unimplemented
+sweep 404'd and the hole was visible in the result; a route that reports a subset without saying so
+is the same defect one layer up.
+
+So `docs/module-readiness-coverage.md` publishes the denominator. There are FOUR populations of "the
+modules" and confusing any two is how this class of error happens: 26 modules in the repo, 6 writing
+`runpod_job_log` rows, 7 published as tenant bundles by a studio release, and 6 provisioned to a
+tenant, which is all `module-readiness` can report on.
+
+The two asymmetries are the ones that get misread, so they are named rather than counted.
+`finish-rife` writes job-log rows and IS published but is NOT provisioned, so on the hosted door its
+jobs do not exist rather than going unrecorded. `plan-enhance` IS provisioned but writes no job-log
+row: it is not endpoint-backed, so null credentials and a null job_log are the correct result, not a
+fault.
+
+A published table that can go stale would be the same defect the page warns about, so the table is
+asserted against source row for row, and the guard was proved by re-introducing the defect three
+ways -- claiming `finish-rife` is provisioned, dropping a module row entirely, and softening the
+"6 of 26" denominator out of the prose -- each failing with the specific row named. Three of the
+four populations are derived from this repo and really checked; the fourth lives in
+`vivijure-control-plane` and is DECLARED here, not verified, which the test says in those words
+rather than implying coverage it does not have.
+
+**cf#295 stays OPEN after this**, and stays open on the same terms v1.14.0 left it: none of this is
+verified against a deployed worker, which is a separate claim someone still has to make.
 
 ## v1.14.0 -- 2026-08-01
 
