@@ -570,7 +570,19 @@ function updateRenderProgress(data) {
         document.createTextNode(" " + out.scene_index + "/" + out.scene_total),
       );
     }
-    if (typeof out.phase === "string" && out.phase) {
+    // cf#303: show a curated, user-facing phase NAME instead of the raw
+    // pipeline token ("i2v", "mux"), which reads as jargon to a first-time
+    // user. Unknown tokens pass through raw (renderEta.phaseLabel), so a new
+    // backend phase degrades to unpolished rather than silently missing.
+    // Falls back to statusRaw for the pre-submit "queued" window only, where
+    // core's phaseProgress emits no `phase` key at all and the row was blank.
+    const phaseSrc = (typeof out.phase === "string" && out.phase)
+      ? out.phase
+      : (data.statusRaw === "queued" ? "queued" : "");
+    const phaseText = window.renderEta
+      ? window.renderEta.phaseLabel(phaseSrc)
+      : (phaseSrc || null);
+    if (phaseText) {
       const el = $("#planner-render-phase");
       el.hidden = false;
       el.innerHTML = "";
@@ -578,7 +590,7 @@ function updateRenderProgress(data) {
       lab.className = "planner-render-label";
       lab.textContent = "phase:";
       el.appendChild(lab);
-      el.appendChild(document.createTextNode(" " + out.phase));
+      el.appendChild(document.createTextNode(" " + phaseText));
     }
     if (Array.isArray(out.log) && out.log.length > 0) {
       const wrap = $("#planner-render-log-wrap");
@@ -673,6 +685,29 @@ function refreshProgressWidget(out) {
   const elapsedEl = $("#planner-render-progress-elapsed");
   if (elapsedEl) elapsedEl.textContent = formatDuration(elapsedMs);
 
+  // cf#303: during the startup window the bar legitimately has no signal to
+  // show, and a bare 0% is indistinguishable from a stall. Say so in words.
+  // Words ONLY: the bar stays at its band floor, because inventing motion here
+  // would be exactly the dishonesty render-eta.js refuses.
+  //
+  // The stall branch is the necessary other half: the reassuring startup note
+  // must give way to the warning once the server says the phase has stopped
+  // advancing, or it would explain away the very failure it was added to make
+  // visible. The stall signal was already in the envelope and already shown in
+  // the history list, but never in this live panel.
+  const coldEl = $("#planner-render-coldstart");
+  if (coldEl) {
+    const eta = window.renderEta;
+    let note = "";
+    if (eta) {
+      if (eta.isStalled(out)) note = eta.STALL_NOTE;
+      else if (eta.isStartupWindow(out)) note = eta.COLD_START_NOTE;
+    }
+    coldEl.hidden = !note;
+    coldEl.textContent = note;
+    coldEl.classList.toggle("planner-render-coldstart-stalled", !!note && note === (eta && eta.STALL_NOTE));
+  }
+
   const frac = computeProgressFraction(out);
   const pctEl = $("#planner-render-progress-pct");
   const fillEl = $("#planner-render-progress-fill");
@@ -712,6 +747,13 @@ function hideProgressWidget() {
   renderState.startedAt = null;
   const widget = $("#planner-render-progress");
   if (widget) widget.hidden = true;
+  // cf#303: clear the cold-start note too, so a re-submit never opens showing
+  // the previous render's queue message.
+  const coldEl = $("#planner-render-coldstart");
+  if (coldEl) {
+    coldEl.hidden = true;
+    coldEl.textContent = "";
+  }
   savePersistedState();
 }
 

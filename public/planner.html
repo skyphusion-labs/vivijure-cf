@@ -456,6 +456,15 @@
              from elapsed * (1 - progress) / progress, so accuracy
              improves as the render gets further along. -->
         <div id="planner-render-progress" class="planner-render-progress" hidden>
+          <!-- cf#303: explains the wait the user actually feels. Carries the
+               startup note while the keyframe phase is underway with nothing
+               drawn yet (GPU starting, model loading), and switches to the
+               server's stall warning once the phase stops advancing.
+               Deliberately words-only: we do not animate or fake progress
+               here, matching the band-floor honesty in render-eta.js. A cold
+               start and a stalled render used to render identically; this is
+               the line that tells them apart. -->
+          <div id="planner-render-coldstart" class="planner-render-coldstart" hidden></div>
           <div class="planner-render-progress-bar">
             <div id="planner-render-progress-fill" class="planner-render-progress-fill"></div>
           </div>

@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COLD_START_NOTE,
+  PHASE_LABELS,
   PIPELINE_PHASES,
+  STALL_NOTE,
+  isStalled,
+  isStartupWindow,
+  phaseLabel,
   progressFraction,
   remainingMs,
   type RenderProgressOutput,
@@ -104,5 +110,142 @@ describe("remainingMs ETA extrapolation (#115)", () => {
   });
   it("never returns negative remaining", () => {
     expect(remainingMs(1, 60_000)).toBe(0);
+  });
+});
+
+// cf#303: cold start is a permanent accepted characteristic (workersMin is 0 by
+// a standing cost ruling), so the panel must EXPLAIN it rather than hide it or
+// fake motion through it. These cover the two pure helpers that carry that.
+describe("phaseLabel: user-facing names for pipeline tokens (cf#303)", () => {
+  it("maps every internal band key to a human-readable label", () => {
+    // Guards the real coupling: a band the user can reach with no label would
+    // surface raw jargon. Enumerated from PIPELINE_PHASES, not hardcoded, so a
+    // NEW band added upstream fails this test instead of silently shipping.
+    for (const band of PIPELINE_PHASES) {
+      expect(PHASE_LABELS[band.key], `no label for band "${band.key}"`).toBeTruthy();
+      expect(phaseLabel(band.key)).toBe(PHASE_LABELS[band.key]);
+    }
+  });
+
+  it("labels the pre-submit queued window, which carries no envelope phase", () => {
+    expect(phaseLabel("queued")).toBe("Waiting to start");
+  });
+
+  it("is case-insensitive on the token", () => {
+    expect(phaseLabel("KEYFRAME")).toBe(PHASE_LABELS.keyframe);
+  });
+
+  it("passes an UNKNOWN phase through raw rather than hiding it", () => {
+    // Degrade to "visible but unpolished", never to "silently missing": a new
+    // backend phase must not blank the row.
+    expect(phaseLabel("brand_new_phase")).toBe("brand_new_phase");
+  });
+
+  it("returns null only when there is genuinely no phase", () => {
+    expect(phaseLabel("")).toBeNull();
+    expect(phaseLabel(null)).toBeNull();
+    expect(phaseLabel(undefined)).toBeNull();
+  });
+
+  it("does not leak inherited Object members for prototype-shaped tokens", () => {
+    // A bare map lookup would return Object.prototype.constructor here and the
+    // panel would render a function body into the DOM.
+    expect(phaseLabel("constructor")).toBe("constructor");
+    expect(phaseLabel("toString")).toBe("toString");
+  });
+});
+
+describe("isStartupWindow: honest about our pipeline, silent about RunPod (cf#303)", () => {
+  const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput =>
+    o as RenderProgressOutput;
+
+  it("is true while the keyframe phase is underway with nothing drawn yet", () => {
+    expect(isStartupWindow(out({ phase: "keyframe", scene_index: 1 }))).toBe(true);
+  });
+
+  it("is FALSE once the server says the phase has stalled", () => {
+    // THE LOAD-BEARING CASE. The startup note is reassuring; if it kept showing
+    // through a stall it would explain away the exact failure this work exists
+    // to make visible, which is worse than the silence we started with.
+    expect(isStartupWindow(out({ phase: "keyframe", scene_index: 1, stalled: true }))).toBe(false);
+  });
+
+  it("is false once keyframes start landing", () => {
+    expect(isStartupWindow(out({ phase: "keyframe", scene_index: 2 }))).toBe(false);
+    expect(isStartupWindow(out({ phase: "keyframe", progress: 0.25 }))).toBe(false);
+  });
+
+  it("is false outside the keyframe phase", () => {
+    expect(isStartupWindow(out({ phase: "i2v", scene_index: 1 }))).toBe(false);
+    expect(isStartupWindow(out({ phase: "mux" }))).toBe(false);
+  });
+
+  it("is false for null/undefined envelopes", () => {
+    expect(isStartupWindow(null)).toBe(false);
+    expect(isStartupWindow(undefined)).toBe(false);
+  });
+});
+
+describe("isStalled: the server's verdict, now surfaced live (cf#303)", () => {
+  const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput =>
+    o as RenderProgressOutput;
+
+  it("reads the server-authored flag and nothing else", () => {
+    expect(isStalled(out({ stalled: true }))).toBe(true);
+    expect(isStalled(out({ phase: "keyframe", scene_index: 1 }))).toBe(false);
+    expect(isStalled(null)).toBe(false);
+  });
+
+  it("never infers a stall from a merely slow render", () => {
+    // A long startup is not a stall. Only the orchestrator, which knows
+    // KEYFRAME_STALL_SECONDS and the phase clock, gets to make that call.
+    expect(isStalled(out({ phase: "keyframe", scene_index: 1, last_progress_at: 1 }))).toBe(false);
+  });
+});
+
+describe("the two notes are mutually exclusive (cf#303)", () => {
+  const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput =>
+    o as RenderProgressOutput;
+
+  it("a stalled keyframe render is never also a startup window", () => {
+    const stalledOut = out({ phase: "keyframe", scene_index: 1, stalled: true });
+    expect(isStalled(stalledOut)).toBe(true);
+    expect(isStartupWindow(stalledOut)).toBe(false);
+  });
+});
+
+describe("cold-start copy (cf#303)", () => {
+  it("explains WHY the wait exists, not just that it exists", () => {
+    // Conrad's framing: people accept a slower time if they are told what is
+    // happening and why. The note names the cost trade; it does not apologise.
+    expect(COLD_START_NOTE).toMatch(/cost/i);
+    expect(COLD_START_NOTE).toMatch(/idle/i);
+  });
+
+  it("does not claim to know RunPod's queue state", () => {
+    // The module /poll contract cannot distinguish queued from running, so
+    // asserting "queued" would be claiming an observation we cannot make.
+    expect(COLD_START_NOTE).not.toMatch(/queue/i);
+  });
+
+  it("carries no em-dash or en-dash (house style)", () => {
+    expect(COLD_START_NOTE).not.toMatch(/[\u2014\u2013]/);
+    expect(STALL_NOTE).not.toMatch(/[\u2014\u2013]/);
+  });
+});
+
+describe("the startup window still refuses to fabricate motion (cf#303)", () => {
+  const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput =>
+    o as RenderProgressOutput;
+
+  it("keeps the bar at the keyframe band floor during startup", () => {
+    // Adding the note must change the WORDS, never the fraction.
+    const o1 = out({ phase: "keyframe", scene_index: 1 });
+    expect(isStartupWindow(o1)).toBe(true);
+    expect(progressFraction(o1)).toBe(0);
+  });
+
+  it("withholds an ETA during the startup window", () => {
+    expect(remainingMs(progressFraction(out({ phase: "keyframe", scene_index: 1 })), 120_000)).toBeNull();
   });
 });
