@@ -249,6 +249,22 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
+    // GET /ready (cf#295): credential-visibility probe, matching the contract of the six tenant
+    // RunPod modules (docs/module-api.md "Credential readiness"). This module's RunPod endpoint id is
+    // a fixed PUBLIC url baked into the code, not a per-tenant secret, so the API key is the only
+    // credential worth reporting -- unlike the tenant finish satellites there is no endpoint-id
+    // propagation state to distinguish. No telemetry field: this module holds no runpod_job_log
+    // binding (cf#295's own finding is that the six modules that do are exactly the six that already
+    // shipped /ready).
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const apiKey = await secretValue(env.RUNPOD_API_KEY);
+      return json({
+        ok: Boolean(apiKey),
+        module: MANIFEST.name,
+        credentials: { runpod_api_key: Boolean(apiKey) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<ScoreInput>;
       try {

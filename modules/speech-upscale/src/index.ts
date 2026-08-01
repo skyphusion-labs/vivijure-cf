@@ -35,7 +35,7 @@ import {
 } from "./speech";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
-import { recordRunpodJob, probeRunpodJobLog } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -195,6 +195,7 @@ async function submit(env: Env, req: InvokeRequest<SpeechInput>): Promise<Invoke
       ok: true,
       pending: true,
       poll: encodePoll({ jobId, shotId: input.shot_id, audioKey: input.audio_key, submittedAt }),
+      jobId,  // cf#289/#296: RunPod cannot enumerate jobs, so a caller that is not handed the id at submit can never reach it.
     };
   } catch (e) {
     return passthrough(input, "exception", (e as Error).message);
@@ -236,8 +237,23 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<SpeechOut
     return { ok: true, pending: true };
   }
   if (s.status === "FAILED") {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error) });
     return pollPassthrough(st, "endpoint-failed", JSON.stringify(s.error ?? s).slice(0, 160));
+  }
+  // cf#298: CANCELLED and TIMED_OUT are TERMINAL, and the branch below treats every non-COMPLETED
+  // status as "still running" -- so for those two no terminal write was ever ATTEMPTED and the row
+  // stayed `submitted` permanently. That is a different bug from a terminal write being LOST, and a
+  // write retry cannot touch it. Observed live on a keyframe job that ran to completion, wrote its
+  // PNG to R2, and was booked CANCELLED by RunPod.
+  //
+  // RECORD ONLY. The render-path behaviour below is deliberately UNCHANGED: telemetry must never
+  // gate the render path, and the live CANCELLED job above had already produced the artifact the
+  // film went on to use, so failing a shot here would break a path that works today. What the chain
+  // should DO about a terminal-cancelled job is a render-path question with its own evidence
+  // requirement.
+  const walkedPast = runpodWalkedPastOutcome(s.status);
+  if (walkedPast) {
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error) });
   }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
@@ -246,7 +262,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<SpeechOut
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(apiKey, endpointId, st.jobId);
-      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr });
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
       return pollPassthrough(st, "endpoint-error", backendErr.slice(0, 160));
     }
     return { ok: true, pending: true };

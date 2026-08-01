@@ -63,6 +63,20 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
+
+    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
+    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
+    // EMAIL is fully optional by design (notify()'s own comment: "No recipient or no EMAIL binding
+    // -> nothing to deliver (a no-op, not a failure)"), so `ok` is not gated on it -- the boolean is
+    // informational only, reporting whether this install can ever actually send.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      return json({
+        ok: true,
+        module: MANIFEST.name,
+        bindings: { email: Boolean(env.EMAIL) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<NotifyInput>;
       try {

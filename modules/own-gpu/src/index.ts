@@ -25,7 +25,7 @@ import {
 import { buildI2vBody, readOutput, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./i2v";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
-import { recordRunpodJob, probeRunpodJobLog } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -155,7 +155,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
     // permanently -- and a failure RATE needs this denominator, not only the failures.
     const submittedAt = Date.now();
     await recordRunpodJob(env.TELEMETRY_DB, { jobId, module: MANIFEST.name, outcome: "submitted", submittedAtMs: submittedAt });
-    return { ok: true, pending: true, poll: encodePoll({ jobId, project: req.context.project, shotId: input.shot_id, submittedAt }) };
+    return { ok: true, pending: true, poll: encodePoll({ jobId, project: req.context.project, shotId: input.shot_id, submittedAt }), jobId };  // cf#289/#296: RunPod cannot enumerate jobs, so a caller not handed the id at submit can never reach it.
   } catch (e) {
     return { ok: false, error: "own-gpu submit failed: " + (e as Error).message };
   }
@@ -201,8 +201,23 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
     return { ok: true, pending: true }; // still inside the grace window
   }
   if (s.status === "FAILED") {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error) });
     return { ok: false, error: "own-gpu job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
+  }
+  // cf#298: CANCELLED and TIMED_OUT are TERMINAL, and the branch below treats every non-COMPLETED
+  // status as "still running" -- so for those two no terminal write was ever ATTEMPTED and the row
+  // stayed `submitted` permanently. That is a different bug from a terminal write being LOST, and a
+  // write retry cannot touch it. Observed live on a keyframe job that ran to completion, wrote its
+  // PNG to R2, and was booked CANCELLED by RunPod.
+  //
+  // RECORD ONLY. The render-path behaviour below is deliberately UNCHANGED: telemetry must never
+  // gate the render path, and the live CANCELLED job above had already produced the artifact the
+  // film went on to use, so failing a shot here would break a path that works today. What the chain
+  // should DO about a terminal-cancelled job is a render-path question with its own evidence
+  // requirement.
+  const walkedPast = runpodWalkedPastOutcome(s.status);
+  if (walkedPast) {
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error) });
   }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
@@ -211,7 +226,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(apiKey, endpointId, st.jobId);
-      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr });
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
       return { ok: false, error: "own-gpu backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
     return { ok: true, pending: true }; // IN_QUEUE / IN_PROGRESS

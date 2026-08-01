@@ -153,6 +153,21 @@ export default {
       return json(MANIFEST);
     }
 
+    // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
+    // Both credentials are fully optional: OPENAI_API_KEY only unlocks the BYOK-direct OpenAI path
+    // (image-gen.ts generateImageBytes falls back to the proxied/native path without it), and
+    // GATEWAY_ID only routes an already-optional proxied call through the gateway. This module always
+    // has a working @cf model path -- `ok` is not gated on either, the booleans are informational only.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const gatewayId = await secretValue(env.GATEWAY_ID);
+      const openaiKey = await secretValue(env.OPENAI_API_KEY);
+      return json({
+        ok: true,
+        module: MANIFEST.name,
+        credentials: { gateway_id: Boolean(gatewayId), openai_api_key: Boolean(openaiKey) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<ImageGenerateInput>;
       try {

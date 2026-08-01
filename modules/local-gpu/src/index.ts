@@ -334,6 +334,23 @@ export default {
       return json(grid ? { ...MANIFEST, duration_grid: grid } : MANIFEST);
     }
 
+    // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
+    // LOCAL_BACKEND_URL is hard-required (every submit/poll/cancel path fails without it);
+    // LOCAL_BACKEND_TOKEN is optional defense-in-depth (the module comment: "Absent => the body still
+    // submits; the server may run open on a trusted LAN tunnel"), so it is reported but does not gate
+    // `ok`. Read independently of backendCfg() so a failure reading one secret cannot mask the other's
+    // real visibility.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const rawUrl = await secretValue("LOCAL_BACKEND_URL", env.LOCAL_BACKEND_URL);
+      const rawToken = await secretValue("LOCAL_BACKEND_TOKEN", env.LOCAL_BACKEND_TOKEN);
+      const baseUrl = normalizeBackendUrl(rawUrl.value);
+      return json({
+        ok: Boolean(baseUrl),
+        module: MANIFEST.name,
+        credentials: { local_backend_url: Boolean(baseUrl), local_backend_token: Boolean(rawToken.value) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest;
       try {
