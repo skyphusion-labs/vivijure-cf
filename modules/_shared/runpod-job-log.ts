@@ -16,8 +16,27 @@
 // closed union, and (on a fault) the backend error text bounded to DETAIL_MAX. Nothing here reads
 // user input, and the RunPod endpoint id is deliberately not a column (see migrations/0014).
 
-/** Terminal states we can observe from the module side. `submitted` is the open state. */
-export type RunpodJobOutcome = "submitted" | "completed" | "backend-error" | "failed" | "gone";
+/**
+ * Terminal states we can observe from the module side. `submitted` is the open state.
+ *
+ * `cancelled` (cf#298) was added for a state RunPod ACTUALLY REPORTS and which this table previously
+ * could not express at all: a job whose /status returns CANCELLED. Observed live -- job
+ * dcbaaa55-d64d-4f0b-8a4a-002b149c99cc-e2 ran to completion, wrote its keyframe to R2, and RunPod
+ * booked it CANCELLED; the poll path fell through to "not COMPLETED yet", no terminal write was ever
+ * ATTEMPTED, and the row is stuck at `submitted` permanently. It also has a denominator consequence:
+ * the endpoint health counters exclude CANCELLED, and the modules produce it deliberately (the F17
+ * spend-leak cancel and the core cancel path), so without this value a deliberately-cancelled job is
+ * neither a success nor a failure nor an open job -- it is simply missing from the arithmetic.
+ *
+ * READ THIS BEFORE ASSUMING cf#286 WAS OVERRULED. cf#286 and cf#288 both explicitly REFUSED a
+ * `cancelled` value, and they were right about what they were refusing: it was proposed there as the
+ * home for a DELIBERATE REFUSAL, and a refusal never becomes CANCELLED (a raise inside the handler
+ * propagates and the SDK books the job FAILED), so it would have named the wrong thing and never
+ * fired for its stated purpose. That reasoning is untouched. Refusals are discriminated by
+ * `error_type` (cf#288, below), NOT by this value. This value names an observed RunPod terminal
+ * status and nothing else.
+ */
+export type RunpodJobOutcome = "submitted" | "completed" | "backend-error" | "failed" | "gone" | "cancelled";
 
 export interface RunpodJobRecord {
   /** RunPod job id. The upsert key; a blank id is dropped (nothing to reconcile against later). */
@@ -31,30 +50,63 @@ export interface RunpodJobRecord {
   submittedAtMs?: number;
   /** Backend error text on a fault outcome. Bounded to DETAIL_MAX before it reaches the statement. */
   detail?: string;
+  /** Machine label for the fault CLASS (cf#288), e.g. HarnessError. Bounded to ERROR_TYPE_MAX.
+   *  OMIT IT rather than passing a placeholder when the endpoint did not report one: NULL means
+   *  "not told", which must stay distinguishable from "told, and it was not a refusal". */
+  errorType?: string;
 }
 
 /** Same bound the module poll paths already apply to a backend error string. */
 export const DETAIL_MAX = 160;
 
+/** A class name, not prose. Generous enough for a fully-qualified python class, short enough that a
+ *  vendor deciding to put a sentence in this key cannot widen the row. */
+export const ERROR_TYPE_MAX = 80;
+
 /** A D1 write on this path must not outlive a poll tick. Past this the write is abandoned, warned,
- *  and the caller proceeds; the row is lost, which is the correct trade for best-effort telemetry. */
+ *  and the caller proceeds; the row is lost, which is the correct trade for best-effort telemetry.
+ *  This bound covers the retry too (see RUNPOD_JOB_LOG_RETRY_DELAY_MS), so the caller's worst case
+ *  is unchanged from before the retry existed. */
 export const RUNPOD_JOB_LOG_TIMEOUT_MS = 2000;
+
+/** cf#298: one bounded retry on a failed write, INSIDE the existing timeout budget.
+ *
+ *  WHY. The terminal write happens on the module POLL path. Once the core advances past that phase
+ *  nothing polls the job again, so a terminal write lost to a transient D1 error is lost
+ *  PERMANENTLY: the row stays `submitted` and reads as an in-flight job forever. Measured at 2 of 20
+ *  module jobs in a run with zero actual faults, i.e. a perfect run presenting as 10% unexplained.
+ *
+ *  WHAT THIS DOES NOT DO, stated plainly so nobody reads cf#298 as closed. This reduces the window;
+ *  it does not remove it. A D1 outage longer than the budget still loses the row, and nothing here
+ *  revisits a row after the fact. The real fix is a reconciler that re-asks RunPod for rows with
+ *  terminal_at IS NULL, and it has a hard constraint: RunPod keeps async results for ~30 minutes and
+ *  has no job-history API, so a reconciler running later than that cannot learn the outcome at all
+ *  and must record `unknown` honestly rather than guess. That is filed separately, not done here.
+ *
+ *  The retry is safe to repeat: the upsert is keyed on job_id and guarded by
+ *  `WHERE runpod_job_log.terminal_at IS NULL`, so a second attempt that lands after a first one
+ *  actually succeeded is a no-op rather than a rewrite. */
+export const RUNPOD_JOB_LOG_RETRY_DELAY_MS = 150;
 
 /**
  * Upsert keyed on job_id. The submit write lands `submitted` with terminal_at NULL; the first
- * terminal write fills outcome, detail and terminal_at.
+ * terminal write fills outcome, detail, error_type and terminal_at.
  *
  * `WHERE runpod_job_log.terminal_at IS NULL` makes the FIRST terminal write win: a repeated poll
  * after a terminal state is a no-op rather than a rewrite, so the recorded outcome is the one the
  * chain actually acted on. A terminal write whose submit write was lost still INSERTs a complete row,
  * because the poll token carries the original submit time.
+ *
+ * error_type uses the same COALESCE as detail: a later write that carries no class must not erase a
+ * class an earlier write established.
  */
 export const RUNPOD_JOB_LOG_UPSERT =
-  "INSERT INTO runpod_job_log (job_id, module, outcome, detail, submitted_at, terminal_at) " +
-  "VALUES (?1, ?2, ?3, ?4, ?5, ?6) " +
+  "INSERT INTO runpod_job_log (job_id, module, outcome, detail, submitted_at, terminal_at, error_type) " +
+  "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) " +
   "ON CONFLICT(job_id) DO UPDATE SET " +
   "outcome = excluded.outcome, " +
   "detail = COALESCE(excluded.detail, runpod_job_log.detail), " +
+  "error_type = COALESCE(excluded.error_type, runpod_job_log.error_type), " +
   "terminal_at = excluded.terminal_at " +
   "WHERE runpod_job_log.terminal_at IS NULL";
 
@@ -83,21 +135,37 @@ export async function recordRunpodJob(
       return;
     }
     const detail = rec.detail === undefined || rec.detail === null ? null : String(rec.detail).slice(0, DETAIL_MAX);
+    const errorType =
+      rec.errorType === undefined || rec.errorType === null || rec.errorType === ""
+        ? null
+        : String(rec.errorType).slice(0, ERROR_TYPE_MAX);
     const terminalAt = rec.outcome === "submitted" ? null : Math.floor(nowMs / 1000);
     const submittedAt = rec.submittedAtMs === undefined ? null : Math.floor(rec.submittedAtMs / 1000);
     // .then(ok, err) rather than a bare await: the write promise must never be able to reject, or a
     // rejection arriving after the timeout already won the race becomes an unhandled rejection.
-    const write = db
-      .prepare(RUNPOD_JOB_LOG_UPSERT)
-      .bind(rec.jobId, rec.module, rec.outcome, detail, submittedAt, terminalAt)
-      .run()
-      .then(
-        () => "ok" as const,
-        (e: unknown) => {
-          warn("write failed (module=" + rec.module + ", outcome=" + rec.outcome + "): " + describe(e));
-          return "failed" as const;
-        },
-      );
+    const attempt = (): Promise<"ok" | "failed"> =>
+      db
+        .prepare(RUNPOD_JOB_LOG_UPSERT)
+        .bind(rec.jobId, rec.module, rec.outcome, detail, submittedAt, terminalAt, errorType)
+        .run()
+        .then(
+          () => "ok" as const,
+          (e: unknown) => {
+            warn("write failed (module=" + rec.module + ", outcome=" + rec.outcome + "): " + describe(e));
+            return "failed" as const;
+          },
+        );
+    // cf#298: a lost terminal write never reconciles, so spend one bounded retry on it. Still one
+    // race against ONE timer, so the caller's worst-case delay is unchanged.
+    const write: Promise<"ok" | "failed"> = attempt().then(async (first) => {
+      if (first === "ok") return "ok" as const;
+      await new Promise<void>((resolve) => setTimeout(resolve, RUNPOD_JOB_LOG_RETRY_DELAY_MS));
+      const second = await attempt();
+      if (second !== "ok") {
+        warn("write failed twice (module=" + rec.module + ", outcome=" + rec.outcome + ") -- row NOT recorded");
+      }
+      return second;
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expiry = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => resolve("timeout"), RUNPOD_JOB_LOG_TIMEOUT_MS);
@@ -120,6 +188,100 @@ function describe(e: unknown): string {
   if (e instanceof Error && e.message) return e.message;
   if (typeof e === "string" && e) return e;
   return "unknown";
+}
+
+// ---------------------------------------------------------------------------------------------
+// FAULT CLASS EXTRACTION (cf#288): read a STRUCTURED key, or read nothing.
+//
+// The RunPod /status `error` field for a vivijure-backend fault is a JSON STRING whose first key is
+// `error_type`, e.g. "<class 'vivijure_backend.harness.handler.HarnessError'>". That class is the
+// only thing separating a DELIBERATE REFUSAL from an OOM: both arrive as RunPod FAILED and both are
+// written as outcome `failed`. Today it survives only inside `detail`, which is truncated at 160
+// chars, and it survives only because `error_type` happens to be the first key emitted -- 87
+// characters of headroom against a vendor reordering its own JSON, with a silent failure mode.
+//
+// THE THREE SATELLITE ENDPOINTS EMIT NO error_type AT ALL. musetalk, video-upscale and
+// audio-upscale return a bare string in `error` for BOTH a validation refusal and a genuine crash:
+//
+//     return {"ok": False, "error": "lipsync needs both clip_key and audio_key"}   # refusal
+//     except Exception as e: return {"ok": False, "error": str(e)[:500]}           # crash
+//
+// So this parser returns undefined for three of the four endpoints we submit to, and their rows
+// carry NULL. That is the honest answer and it is deliberately NOT papered over: an extractor that
+// fell back to matching the English message would classify those endpoints by prose, which is a
+// parser only as fresh as the sample it was built from, and would make the classification LOOK
+// solved on a surface where it is not. Fixing the satellites means the containers emitting a
+// structured marker, which is a vivijure-musetalk / -upscale / -audio-upscale change, filed
+// separately.
+// ---------------------------------------------------------------------------------------------
+
+/** Unwraps python's repr of a class object. "<class 'a.b.C'>" -> "C". Anything else is returned as
+ *  given, so a plain class name from a future producer passes through unharmed. */
+function normalizeClassName(raw: string): string {
+  const m = /^<class\s+'([^']+)'>$/.exec(raw.trim());
+  const qualified = m ? m[1] : raw.trim();
+  const leaf = qualified.slice(qualified.lastIndexOf(".") + 1);
+  return leaf || qualified;
+}
+
+/**
+ * Extract the fault CLASS from a RunPod /status error field.
+ *
+ * Accepts the payload in the shapes it actually arrives in: an object, or a JSON string holding an
+ * object. Returns undefined when there is no structured `error_type` key -- including for a bare
+ * error string, which is the satellite containers' shape. NEVER derives a class from the message.
+ */
+export function parseRunpodErrorType(err: unknown): string | undefined {
+  let obj: unknown = err;
+  if (typeof err === "string") {
+    try {
+      obj = JSON.parse(err);
+    } catch {
+      // A bare error string carries no class. Saying so is the point; guessing one is the trap.
+      return undefined;
+    }
+  }
+  if (!obj || typeof obj !== "object") return undefined;
+  const raw = (obj as { error_type?: unknown }).error_type;
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  return normalizeClassName(raw).slice(0, ERROR_TYPE_MAX);
+}
+
+// ---------------------------------------------------------------------------------------------
+// TERMINAL STATUSES THE POLL PATH USED TO WALK PAST (cf#298).
+//
+// The module poll paths test COMPLETED and FAILED, then treat everything else as "still running".
+// RunPod also reports CANCELLED and TIMED_OUT, both of which are TERMINAL: the job will never
+// advance, no further poll can learn anything new, and the row stays `submitted` forever because no
+// terminal write is ever ATTEMPTED. That is a different bug from a terminal write being LOST, and a
+// retry cannot touch it.
+//
+// SCOPE, deliberately narrow: this classifies for the RECORDER only. Callers record the outcome and
+// then leave their existing render-path behaviour EXACTLY as it was. Telemetry must never gate the
+// render path, and there is a live counter-example to changing it here: the CANCELLED job in cf#298
+// had already written its artifact to R2 and the film consumed it, so failing a shot on CANCELLED
+// would break a path that works today. What the chain should DO about a terminal-cancelled job is a
+// render-path question with its own evidence requirement, filed separately.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Map a RunPod status that the poll paths otherwise walk past onto the outcome that names it.
+ * Returns undefined for COMPLETED, FAILED (both already handled by every caller) and for the
+ * genuinely non-terminal statuses (IN_QUEUE, IN_PROGRESS), so a caller can use it as a guard.
+ */
+export function runpodWalkedPastOutcome(status: string | undefined): RunpodJobOutcome | undefined {
+  switch (status) {
+    case "CANCELLED":
+      return "cancelled";
+    // A job killed by the endpoint execution timeout is a genuine infra failure, and `failed` is
+    // where infra failures already live. It is NOT given its own outcome value: unlike CANCELLED it
+    // has not been observed on our endpoints, and a vocabulary member added on speculation is
+    // harder to remove later than one added on evidence (cf#286's standing objection).
+    case "TIMED_OUT":
+      return "failed";
+    default:
+      return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

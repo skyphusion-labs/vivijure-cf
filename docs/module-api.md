@@ -233,6 +233,41 @@ A polish module that soft-degrades rather than failing carries the same distinct
 reason (`runpod-key-not-yet-visible` vs `no-runpod-secrets`), so the honest-degrade record does not
 itself carry the lie.
 
+### Binding readiness (`GET /ready` `bindings` field, optional + additive, cf#295)
+
+A module whose real work depends on a Workers **service binding** (a CPU-container VPC binding, an
+EMAIL send binding) rather than a Secrets Store credential reports that binding's presence the same
+way, in a sibling field kept separate from `credentials`:
+
+```
+GET /ready
+->
+{
+  "ok": true,
+  "module": "film-titles",
+  "bindings": { "video_finish_vpc": true }
+}
+```
+
+Same discipline, same reason it exists: an operator (or a hosted control plane) can ask whether a
+module's binding is actually wired without submitting a render. `credentials` and `bindings` are kept
+apart because they answer different questions -- a credential can leak a VALUE if handled carelessly
+(hence booleans only); a binding has no value to leak, but conflating the two fields would blur
+"secret configured" with "infrastructure wired," which are different failure modes with different
+fixes (rotate a secret vs. add a binding to `wrangler.toml`).
+
+**`ok` reflects what the code actually requires, read from its own hard-fail guards, never a default.**
+Some modules hard-fail without their binding (a `film.finish` module passthroughs the film degraded
+rather than failing the chain, but `/ready` still reports `ok:false` -- the SPEECH-UPSCALE precedent:
+an opt-in feature being off by default does not make "can this feature ever fire" uninteresting).
+Others hold a credential that only unlocks an optional, better path with a real fallback (`plan-enhance`
+falls back to a free local model; several AI-Gateway-adjacent modules run their default model directly,
+gateway-bypassed) -- for those, the credential is reported but never gates `ok`, the same "informational,
+not gating" discipline `telemetry.job_log` already established: report what you can see, never invent a
+verdict for a case this endpoint cannot determine (e.g. a credential a module needs only for a
+config-dependent model choice `/ready` has no way to know the caller will pick).
+
+
 ### Declared finish artifacts (`finish_artifacts`, optional + additive)
 
 A `finish` module SHOULD declare its artifact conventions in the manifest so the core's

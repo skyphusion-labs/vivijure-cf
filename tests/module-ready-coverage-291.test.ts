@@ -18,11 +18,15 @@
 // every one of these modules through the real contract and would catch a declared-but-broken
 // endpoint. This file catches the case that test cannot: a module nobody remembered to add to it.
 //
-// WHAT IT DELIBERATELY DOES NOT REQUIRE. plan-enhance is in the tenant release set and has no
-// /ready, and that is correct rather than a second instance: it holds no RunPod credentials (Workers
-// AI and AI Gateway instead) and writes no job log, so the probe would have nothing to report. The
-// invariant is keyed on RECORDING, not on tenant deployment, because recording is what creates the
-// question an operator needs answered.
+// REVISED BY cf#295. This file used to assert that plan-enhance had NO /ready, on the premise that it
+// "holds no RunPod credentials ... and writes no job log, so the probe would have nothing to report."
+// That premise was wrong: plan-enhance reads GATEWAY_ID and CF_AIG_TOKEN (they pick the Opus-vs-local
+// provider), which IS something a credential-visibility probe can report. cf#295 measured that 20 of
+// 26 modules had no /ready at all, and a caller sweeping readiness could not tell "not ready" from
+// "no endpoint exists" -- so every module now exposes /ready for whatever it can honestly check
+// (a RunPod key, an AI Gateway id, a service binding), even when it writes no job-log row. The
+// invariant below is therefore a SUBSET (every job-log writer is askable), never an equality (not
+// every askable module is a job-log writer) -- see the "DISCRIMINATES" test.
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -61,12 +65,21 @@ describe("every module that records a RunPod job can be asked whether it can", (
     expect(READY).toContain("finish-upscale");
   });
 
-  it("the filter DISCRIMINATES: a non-writer is not required to have one", () => {
-    // Without this, an invariant that happened to require /ready of EVERY module would pass here
-    // today and start failing the moment someone adds a module that legitimately needs neither.
-    // plan-enhance is that case, and it is in the tenant release set, so it is not a strawman.
+  it("the filter DISCRIMINATES: READY is a strict superset of WRITERS, not the same set (cf#295)", () => {
+    // Before cf#295, a module with no job-log binding genuinely had no /ready either, so WRITERS and
+    // READY happened to be the same six names -- a filter that always returns its input unchanged
+    // would have passed every test in this file. cf#295 broadened /ready to every module for
+    // credential/binding visibility, a reason that has nothing to do with job-log recording, so
+    // WRITERS is now a PROPER subset of READY: some modules are askable without ever writing a row.
+    // Without this the invariant above could pass by accident (e.g. a copy-paste that made every
+    // module both a "writer" and "ready").
+    expect(READY.length).toBe(ENTRIES.length); // cf#295: every module now exposes /ready
+    expect(WRITERS.length).toBeLessThan(READY.length);
+    // plan-enhance is the named case: it now HAS /ready (reports GATEWAY_ID / CF_AIG_TOKEN
+    // visibility, informationally -- see modules/plan-enhance/src/index.ts) but still writes no
+    // job-log row, so it must never appear in WRITERS even though it appears in READY.
+    expect(READY).toContain("plan-enhance");
     expect(WRITERS).not.toContain("plan-enhance");
-    expect(READY).not.toContain("plan-enhance");
     const silent = WRITERS.filter((name) => !READY.includes(name));
     expect(silent).not.toContain("plan-enhance");
   });

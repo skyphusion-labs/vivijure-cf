@@ -160,6 +160,21 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
+    // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
+    // GATEWAY_ID is fully optional here: FLUX-2 (the primary path) runs the AI binding directly and is
+    // gateway-bypassed by design; the nano-banana fallback works with or without a gateway id (see
+    // image-gen.ts: `gatewayId ? { gateway: { id: gatewayId } } : undefined`). So this module always
+    // has a working generation path -- `ok` is not gated on it, the boolean is informational only, the
+    // same discipline `telemetry.job_log` already uses elsewhere in this contract.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const gatewayId = await secretValue(env.GATEWAY_ID);
+      return json({
+        ok: true,
+        module: MANIFEST.name,
+        credentials: { gateway_id: Boolean(gatewayId) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<CastImageInput>;
       try {
