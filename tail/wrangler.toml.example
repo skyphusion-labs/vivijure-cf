@@ -8,10 +8,11 @@
 #
 # account_id is NOT hardcoded; read from CLOUDFLARE_ACCOUNT_ID same as the core.
 #
-# NOTE: unlike the core's wrangler.toml.example, this file is not yet wired into deploy.sh /
-# ci.yml's render step -- vivijure-tail predates that automation and has so far been deployed by
-# hand. Adding it here fixes the reproducibility gap (the config is now readable and re-creatable
-# from source); wiring it into the automated render/deploy pipeline is a separate follow-up.
+# NOTE: unlike the core, vivijure-tail is OUR-fleet-only (SELFHOST-SKIP in the root
+# wrangler.toml.example; stripped in studio-release.yml for a WfP tenant) and changes rarely, so it
+# is not part of deploy.sh or the tag-gated CI release job. cf#294: render + deploy it with
+# scripts/deploy-tail.sh (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, LOKI_VPC_ID) -- run by hand,
+# same as before, but now from this tracked example instead of a hand-edited or guessed config.
 
 name = "vivijure-tail"
 main = "src/index.ts"
