@@ -278,6 +278,22 @@ export default {
       return json(MANIFEST);
     }
 
+    // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
+    // GATEWAY_ID + CF_AIG_TOKEN only unlock the Opus cloud path (provider.ts pickProvider: routes to
+    // "opus" only when BOTH are configured); absent either, the module falls back to the free local
+    // Workers AI model and still completes every request. This module never fails for lack of these,
+    // so `ok` is not gated on them -- the booleans are informational only, reporting which provider a
+    // render will actually use.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const gatewayId = await secretValue(env.GATEWAY_ID);
+      const aigToken = await secretValue(env.CF_AIG_TOKEN);
+      return json({
+        ok: true,
+        module: MANIFEST.name,
+        credentials: { gateway_id: Boolean(gatewayId), cf_aig_token: Boolean(aigToken) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<PlanEnhanceInput>;
       try {

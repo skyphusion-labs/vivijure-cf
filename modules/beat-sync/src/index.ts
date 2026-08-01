@@ -129,6 +129,20 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
+    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
+    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
+    // Booleans only, in a `bindings` field kept separate from `credentials`. Unlike audio-master's
+    // soft degrade, a missing AUDIO_BEAT_SYNC_VPC binding hard-fails runAnalyze() (the bare property
+    // access throws inside the try/catch and returns ok:false), so this is a genuine ready/not-ready
+    // signal, not merely informational.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      return json({
+        ok: Boolean(env.AUDIO_BEAT_SYNC_VPC),
+        module: MANIFEST.name,
+        bindings: { audio_beat_sync_vpc: Boolean(env.AUDIO_BEAT_SYNC_VPC) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<ScoreInput>;
       try {

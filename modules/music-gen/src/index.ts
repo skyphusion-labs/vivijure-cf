@@ -280,6 +280,20 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
+    // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
+    // GATEWAY_ID is hard-required here (see submit(): "GATEWAY_ID not configured" fails the call), so
+    // its visibility is a genuine ready/not-ready signal, unlike the AI-Gateway modules where the
+    // credential only routes an optional fallback. No telemetry field: this module holds no
+    // runpod_job_log binding.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const gatewayId = await secretValue(env.GATEWAY_ID);
+      return json({
+        ok: Boolean(gatewayId),
+        module: MANIFEST.name,
+        credentials: { gateway_id: Boolean(gatewayId) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<ScoreInput>;
       try {
