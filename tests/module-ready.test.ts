@@ -50,7 +50,7 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: true,
       module: name,
       credentials: { runpod_api_key: true, runpod_endpoint_id: true },
-      telemetry: { job_log: false },
+      telemetry: { job_log: "unavailable" },
     });
   });
 
@@ -60,7 +60,7 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: false,
       module: name,
       credentials: { runpod_api_key: false, runpod_endpoint_id: true },
-      telemetry: { job_log: false },
+      telemetry: { job_log: "unavailable" },
     });
   });
 
@@ -70,19 +70,37 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: false,
       module: name,
       credentials: { runpod_api_key: false, runpod_endpoint_id: false },
-      telemetry: { job_log: false },
+      telemetry: { job_log: "unavailable" },
     });
   });
-
-  // cf#279 CONTROL: the three assertions above all read job_log false, which is also what a field
-  // hardcoded to false would produce. This is the case that tells them apart, and it is the probe
-  // an operator uses to distinguish an empty job log from a worker that cannot write one.
-  it("reports the job-log binding as PRESENT when it is bound, and ok does not depend on it", async () => {
-    const { body } = await ready(worker, KEY, ENDPOINT, { prepare: () => ({}) });
-    expect(body.telemetry).toEqual({ job_log: true });
+  // cf#279 CONTROL, updated for cf#284: the three assertions above all read unavailable, which is
+  // also what a field hardcoded to unavailable would produce. These are the cases that tell them
+  // apart, and they are the probe an operator uses to distinguish an empty job log from a worker
+  // that cannot write one.
+  it("reports ok when the table is really there, and ok does not depend on it", async () => {
+    const withTable = { prepare: () => ({ bind: () => ({ first: async () => ({ name: "runpod_job_log" }) }) }) };
+    const { body } = await ready(worker, KEY, ENDPOINT, withTable);
+    expect(body.telemetry).toEqual({ job_log: "ok" });
     expect(body.ok).toBe(true);
     const without = await ready(worker, KEY, ENDPOINT);
     expect(without.body.ok).toBe(true);   // telemetry absence must NOT unready a module
+  });
+
+  // cf#284, THE case this issue was filed for: a real binding attached to a database where the table
+  // does not exist. This reported job_log:true before, while the worker could not write a single row.
+  it("a bound database with NO table reports unavailable, not ok", async () => {
+    const noTable = { prepare: () => ({ bind: () => ({ first: async () => null }) }) };
+    const { body } = await ready(worker, KEY, ENDPOINT, noTable);
+    expect(body.telemetry).toEqual({ job_log: "unavailable" });
+    expect(body.ok).toBe(true);   // still telemetry: a module without a job log still renders
+  });
+
+  // A binding whose shape we cannot drive is NOT evidence of health. Before cf#284 this exact stub
+  // reported true, which is the disease in one line: a probe that could not answer said yes.
+  it("a binding the probe cannot drive reports unknown, never ok", async () => {
+    const { body } = await ready(worker, KEY, ENDPOINT, { prepare: () => ({}) });
+    expect(body.telemetry).toEqual({ job_log: "unknown" });
+    expect(body.ok).toBe(true);
   });
 
   // THE test that makes this endpoint safe to leave unauthenticated. Booleans only: the serialized
