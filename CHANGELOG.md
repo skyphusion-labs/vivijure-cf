@@ -9,6 +9,28 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### fix(modules): finish-rife exposes GET /ready, and a guard so the next one cannot be missed (cf#291)
+
+`finish-rife` writes `runpod_job_log` rows and exposed no `/ready` at all, from 2026-07-18 until
+now. The module was never broken (it recorded a `completed` outcome on the prod door during the
+cf#278 run); nothing could ASK it whether its telemetry worked.
+
+**Established as an omission rather than a decision before fixing it:** finish-rife already existed
+when `/ready` shipped, it is in the tenant release set
+(`scripts/finish-satellite-modules.txt`), and it carries the identical bindings the probe reports on
+(`TELEMETRY_DB`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`). The original commit says "all five tenant
+modules"; the tenant release set is seven.
+
+**The durable half is the guard.** This gap survived four months because of its shape: an audit built
+by sweeping readiness endpoints returns a clean result across the modules that have one and never
+mentions the module that does not. The absence removes the module from the census that would report
+it. So a test now fails when any module importing `recordRunpodJob` exposes no `/ready`.
+
+The guard deliberately does NOT require `/ready` of every tenant module: `plan-enhance` has none and
+that is correct, since it holds no RunPod credentials and writes no job log, so the probe would have
+nothing to report. The invariant is keyed on RECORDING, because recording is what creates the
+question an operator needs answered.
+
 ### fix(ready): report whether the job log can RECORD, not whether a binding is attached (cf#284)
 
 `GET /ready` on every polling module reported `telemetry: { job_log: <bool> }` from
