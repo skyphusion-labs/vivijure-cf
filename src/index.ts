@@ -463,6 +463,56 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   return new Response(obj.body, { headers: h });
 };
 
+// cf#317: hand an artifact KEY back as something a caller can actually FETCH. The MCP proxies the
+// studio over HTTP and cannot carry bytes, so `GET /api/artifact/<key>` is structurally invisible to
+// an agent -- it drives a whole film and then cannot look at what it made. This route closes that by
+// returning a SHORT-LIVED presigned GET for one object, reusing presignR2Get (the same path
+// film-titles / cast-image-orchestrator / wan-lora-projection already sign with).
+//
+// A presigned URL is a capability credential: it authenticates on its own, it can land in a transcript
+// or a log, and R2 token revocation propagates slowly enough that revoke-after-use is not a control.
+// So the security here rests on EXPIRY and SCOPE, both enforced server-side: the signature covers
+// exactly one key (no wildcard, no prefix), and the lifetime is clamped to
+// [ARTIFACT_URL_MIN_TTL, ARTIFACT_URL_MAX_TTL] with a short default -- a caller cannot ask for longer.
+//
+// The key is gated by the SAME guard as the serve route (isSafeRelKey + ARTIFACT_PREFIXES), so this
+// can never sign an object the serve route would refuse, and existence is checked with head() so a
+// miss is an honest 404 instead of a signed URL that 404s later at R2.
+const ARTIFACT_URL_MIN_TTL = 60;
+const ARTIFACT_URL_MAX_TTL = 3600;
+const ARTIFACT_URL_DEFAULT_TTL = 300;
+
+/** Clamp a caller-supplied lifetime into the allowed band. Absent/blank/garbage -> the default;
+ *  never throws, because a bad TTL is not worth failing a read over -- it is worth ignoring. */
+export function clampArtifactUrlTtl(raw: string | null): number {
+  if (raw === null || raw.trim() === "") return ARTIFACT_URL_DEFAULT_TTL;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return ARTIFACT_URL_DEFAULT_TTL;
+  return Math.min(ARTIFACT_URL_MAX_TTL, Math.max(ARTIFACT_URL_MIN_TTL, Math.floor(n)));
+}
+
+const hArtifactUrl: Handler = async (req, env, _c, p) => {
+  if (!env.R2_RENDERS) throw notFound("the artifact store is not available on this deployment");
+  const key = p.key;
+  if (!key || !isSafeRelKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+    throw notFound("artifact");
+  }
+  // Existence + real metadata from the bucket. Reported content_type is the STORED type, deliberately
+  // NOT run through safeArtifactContentType: that remap describes what OUR serve route would send,
+  // and this URL does not go through our serve route -- it goes straight to R2, which sends the
+  // stored type. Advertising the remapped type would be a claim about a response we do not produce.
+  const meta = await env.R2_RENDERS.head(key);
+  if (!meta) throw notFound("artifact");
+  const expiresIn = clampArtifactUrlTtl(new URL(req.url).searchParams.get("expires_in"));
+  return json({
+    key,
+    url: await presignR2Get(env, key, expiresIn),
+    expires_in: expiresIn,
+    content_type: meta.httpMetadata?.contentType || "application/octet-stream",
+    size: meta.size,
+  });
+};
+
 // --- renders (library / metadata) ----------------------------------------
 const hListRenders: Handler = async (req, env) => {
   const url = new URL(req.url);
@@ -1758,6 +1808,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/upload",                          handler: hUpload },
   { method: "GET",    pattern: "/api/artifact/*key",                   handler: hServeArtifact },
   { method: "HEAD",   pattern: "/api/artifact/*key",                   handler: hServeArtifact },
+  { method: "GET",    pattern: "/api/artifact-url/*key",               handler: hArtifactUrl },
   { method: "POST",   pattern: "/api/storyboard/preflight",            handler: hPreflight },
   { method: "POST",   pattern: "/api/storyboard/plan",                 handler: hPlan },
   { method: "POST",   pattern: "/api/storyboard/refine",               handler: hRefine },

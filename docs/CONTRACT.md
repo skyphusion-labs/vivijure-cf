@@ -232,6 +232,7 @@ unchanged.
 | 24 | GET | `/api/cast/:id/lora-status` | 2.9 |
 | 25 | POST | `/api/upload` | 2.10 |
 | 26 | GET | `/api/artifact/*key` | 2.11 |
+| 26a | GET | `/api/artifact-url/*key` | 2.11.1 |
 | 27 | POST | `/api/storyboard/preflight` | 2.12 |
 | 28 | POST | `/api/storyboard/plan` | 2.13 |
 | 29 | POST | `/api/storyboard/refine` | 2.13 |
@@ -466,6 +467,44 @@ Serve an R2 object by its full (slashed) key.
 
 > Render outputs mutate (a render can re-finish in place), so artifact serving is short-lived caching
 > only. History-preview bursts limit concurrency client-side, not via long caching.
+
+### 2.11.1 GET /api/artifact-url/*key
+
+Return a **short-lived presigned GET URL** for one R2 object, plus its real content type and size.
+Added for cf#317: a caller that cannot carry bytes (the Studio MCP proxies over HTTP, and MCP has no
+video content block) needs a key it can turn into something fetchable. `list_renders` already returns
+`output_key` and `keyframes[].key`; this is what makes those keys usable.
+
+**Request:** path `*key` = the R2 key. Optional query `expires_in` = link lifetime in seconds,
+**clamped server-side to [60, 3600]**, default **300**. An absent or unparseable value takes the
+default; an out-of-range value is clamped, never honoured and never an error.
+
+**Response 200:**
+
+```json
+{
+  "key": "renders/film-abc/film.mp4",
+  "url": "https://<account>.r2.cloudflarestorage.com/<bucket>/renders/film-abc/film.mp4?X-Amz-...",
+  "expires_in": 300,
+  "content_type": "video/mp4",
+  "size": 3811331
+}
+```
+
+`content_type` is the object's **stored** type, deliberately NOT the remap `/api/artifact` applies to
+its own responses: this URL does not pass through that route, so reporting the remapped type would be
+a claim about a response the studio does not produce.
+
+**404** if the key is missing from the bucket, is outside the known artifact namespaces, is malformed
+(traversal / absolute / scheme / control bytes), or the deployment binds no render bucket. The prefix
+allowlist is the same one `/api/artifact` uses, so this can never sign an object that route would
+refuse. Existence is checked before signing, so a 200 always names an object that exists.
+
+> **The returned URL is a capability credential.** It authenticates on its own, needs no studio
+> bearer, and may end up in a log or an agent transcript. Security rests on **expiry and scope**, not
+> on revocation: R2 token revocation propagates slowly enough that revoke-after-use is not a control.
+> The signature covers exactly one key (never a prefix or wildcard) and the lifetime cannot be widened
+> by the caller. Request a fresh link rather than storing one.
 
 ### 2.12 POST /api/storyboard/preflight
 
