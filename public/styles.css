@@ -583,6 +583,13 @@ details.planner-bundle-scenes-wrap, details.planner-overrides-raw-details {
 .planner-render-progress-bar { height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
 .planner-render-progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.4s; }
 .planner-render-progress-text { color: var(--muted); font-size: 12px; margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+/* cf#303: cold-start explanation shown above the bar while the GPU worker is
+   still starting. Static by design -- no pulse, no shimmer, no spinner: an
+   animation here would imply progress we cannot actually observe. */
+.planner-render-coldstart { color: var(--muted); font-size: 12px; line-height: 1.45; margin-bottom: 8px; padding-left: 10px; border-left: 2px solid var(--line); }
+/* cf#303: the stall variant must NOT read like the reassuring startup note.
+   Same amber the history list already uses for a stalled row (#131). */
+.planner-render-coldstart-stalled { color: #e6a817; border-left-color: #5c4010; }
 .planner-render-result { display: grid; gap: 12px; }
 .planner-render-label { color: var(--muted); }
 

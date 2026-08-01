@@ -23,12 +23,27 @@
 // scene count); when a phase has no sub-signal we sit at the band floor, which
 // is honest about "phase N of 5 underway" without fabricating motion.
 //
-// KNOWN LIMITATION (flagged to backend): the keyframe phase emits no per-
-// keyframe progress, so its band cannot subdivide -- the bar holds at the band
-// floor and the ETA stays "computing..." until i2v starts. Real keyframe-phase
-// granularity needs the backend to advance scene_index during keyframe (or the
-// already-written-but-unwired render-progress.ts snapshot channel: counts
-// keyframe_done/i2v_done) folded into the poll view. That is a backend change.
+// KEYFRAME SUB-PROGRESS: wired since #318. readKeyframeDone
+// (src/render-progress.ts) reads the GPU job's R2 progress snapshot and feeds
+// keyframe_done into the poll view, so the keyframe band now subdivides on a
+// real signal. The older note here called that channel "unwired"; that is no
+// longer true, and this comment is corrected rather than left to mislead.
+//
+// REMAINING HONEST GAP (cf#303): the snapshot only exists once the GPU worker
+// is actually running. Before that a worker is being started and a large model
+// set loaded, so the keyframe band legitimately sits at its floor with no
+// sub-signal to subdivide on. We do NOT fabricate motion there. Instead the
+// panel explains the wait in words (COLD_START_NOTE below). workersMin is 0 on
+// every endpoint by a deliberate standing cost ruling, so cold start is a
+// permanent accepted characteristic to be EXPLAINED, not engineered away.
+//
+// WHAT WE DELIBERATELY DO NOT CLAIM: we do not say "queued at RunPod". The
+// module /poll contract (core PollResponse) reports only `pending: true`, with
+// no queued-versus-running distinction, and modules hold their own backend
+// creds so the host cannot ask RunPod directly. Asserting queue state would be
+// claiming an observation we cannot make. What we CAN say honestly is that the
+// pipeline is in its startup window, and, via the server-authored `stalled`
+// signal already in the envelope, when it has stopped being one.
 (function (root, factory) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) {
@@ -50,6 +65,41 @@
     { key: "assemble", start: 0.93, span: 0.05 },
     { key: "mux", start: 0.98, span: 0.02 },
   ];
+
+  // cf#303: user-facing names for the internal phase tokens. The envelope's
+  // `phase` strings (keyframe / i2v / mux) are pipeline vocabulary, not
+  // English; shown raw they read as jargon to a first-time user. An unknown
+  // phase deliberately falls back to the RAW token rather than being hidden, so
+  // a new backend phase degrades to "visible but unpolished" instead of
+  // "silently missing" -- the same failure class this module already guards.
+  const PHASE_LABELS = {
+    // "queued" is not an envelope phase (core emits no `phase` key before
+    // submission); it arrives via the poll view's statusRaw, which the panel
+    // falls back to so the pre-submit window is not blank either.
+    queued: "Waiting to start",
+    keyframe: "Drawing keyframes",
+    i2v: "Animating shots",
+    finish: "Finishing shots",
+    assemble: "Assembling the film",
+    mux: "Adding audio",
+  };
+
+  // cf#303: what the panel says while RunPod is starting a worker. It says WHY,
+  // not just what: the wait is a deliberate cost trade, not a fault, and naming
+  // the reason is what turns a stalled-looking bar into an explained wait. Kept
+  // here (not in the DOM layer) so it is single-sourced and unit-testable.
+  const COLD_START_NOTE =
+    "Getting a GPU going. The first few minutes go into starting a worker and "
+    + "loading the model, before any frame is drawn. We do not keep GPUs "
+    + "running idle, which is what keeps rendering costs down.";
+
+  // cf#303: shown when the server's own stall signal fires (the envelope's
+  // `stalled` flag, authored by the orchestrator past KEYFRAME_STALL_SECONDS).
+  // This is the other half of telling the two states apart: the startup note
+  // must STOP being shown once the wait stops being normal, or it would
+  // reassure the user through exactly the failure it was meant to disambiguate.
+  const STALL_NOTE =
+    "This render has not advanced in a while and may need attention.";
 
   // ETA confidence floors: below this much overall progress, or this little
   // elapsed wall time, a linear extrapolation is dominated by one-time model-
@@ -136,8 +186,49 @@
     return Math.max(0, totalEstMs - elapsedMs);
   }
 
+  // User-facing label for an envelope's phase string, or null when there is no
+  // phase at all (the pre-submit window, where core's phaseProgress emits no
+  // `phase` key). Unknown phases pass through raw. hasOwnProperty guards the
+  // lookup so a phase named e.g. "constructor" cannot return an inherited
+  // Object.prototype member instead of a label.
+  function phaseLabel(phase) {
+    if (typeof phase !== "string" || !phase) return null;
+    const key = phase.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(PHASE_LABELS, key)) return PHASE_LABELS[key];
+    return phase;
+  }
+
+  // cf#303: the startup window -- the keyframe phase is underway but no keyframe
+  // has landed yet, so the GPU is still being brought up. Bounded by the
+  // server's stall signal: once `stalled` is set this is no longer a normal
+  // startup and we must stop calling it one.
+  //
+  // This is an honest statement about OUR pipeline's position, not a claim
+  // about RunPod's queue, which we cannot observe through the module contract.
+  function isStartupWindow(out) {
+    if (!out || typeof out !== "object") return false;
+    if (out.stalled === true) return false;
+    if (typeof out.phase !== "string" || out.phase.toLowerCase() !== "keyframe") return false;
+    if (typeof out.progress === "number" && out.progress > 0) return false;
+    if (typeof out.scene_index === "number" && out.scene_index > 1) return false;
+    return true;
+  }
+
+  // The server-authored stall verdict, already carried in the envelope by
+  // stallSignal() but until now surfaced only in the history list, never in the
+  // live panel the user actually watches during the wait.
+  function isStalled(out) {
+    return !!out && typeof out === "object" && out.stalled === true;
+  }
+
   return {
     PIPELINE_PHASES,
+    PHASE_LABELS,
+    COLD_START_NOTE,
+    STALL_NOTE,
+    phaseLabel,
+    isStartupWindow,
+    isStalled,
     MIN_FRACTION_FOR_ETA,
     MIN_ELAPSED_MS_FOR_ETA,
     progressFraction,
