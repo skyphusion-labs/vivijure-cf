@@ -9,6 +9,35 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### chore(deps): bump vivijure-mcp to ^1.1.0, and fix what the bump exposed (cf#317)
+
+`view_artifact` and `artifact_url` are now REACHABLE from this repo, which is the last step of the
+cf#317 chain: the route shipped in v1.16.0, the package released as v1.1.0, and this bump is what
+makes the deployed surface include them. Published parity moves **19 -> 21 tools, 18 -> 20 curated**,
+exactly as the doc predicted it would, because the test measures the INSTALLED package.
+
+Three things the bump exposed, all fixed here:
+
+- **The parity matcher could never match a WILDCARD route.** It rewrote a tool's placeholder path to
+  `:id` and left the route's `*key` alone, so `view_artifact` and `artifact_url` were reported as
+  ORPHANS pointing at routes that do not exist, while both routes exist and both tools work. Every
+  artifact route is a wildcard route, so the assertion that exists to catch a renamed or deleted
+  route was instead producing a false alarm on a whole class of route. Both sides now go through one
+  canonical form.
+- **`res.content[0].text` no longer typechecks** at three call sites, because v1.1.0 widened
+  `runTool`'s return to `McpContent[]` so a tool can return an image. Narrowed with a type guard
+  rather than a cast: a cast would keep compiling on the day `runTool` starts inlining bytes at those
+  call sites, which is the exact regression those three tests exist to catch.
+- **Nothing was reading `docs/mcp-parity.md`.** The doc says CI fails until it is re-measured; only
+  the constants were asserted, against the code, so a bump that updated `PUBLISHED` and forgot the
+  document left CI green with a stale published denominator. Now guarded row-for-row and in the
+  prose ratio, the same way `docs/module-readiness-coverage.md` already is.
+
+Finding 2 in the parity doc ("artifact parity is ZERO") is marked closed rather than deleted, with
+the measurement preserved: the byte-returning class is still 4 route entries, and what closed is the
+agent-can-SEE gap, not the whole class.
+
+
 ### feat(telemetry): make the GPUless cost door write a runpod_job_log row (cf#305)
 
 `runpod_job_log` held ZERO rows for the entire cost door. Eight modules submit jobs to RunPod

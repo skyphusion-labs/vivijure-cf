@@ -15,8 +15,8 @@ without saying so is the defect, not the subset.
 |---|---|---|
 | Studio API route entries | **85** | Distinct `method` + `pattern` pairs the studio serves. 84 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
 | Panel-reachable | **70** | Route entries the studio panel calls, i.e. the human surface. Matched from `public/` with controls in both directions. |
-| MCP tools | **19** | 18 curated tools plus the `studio_request` escape hatch. |
-| Reached by a CURATED tool | **18** | Route entries with a purpose-built tool. |
+| MCP tools | **21** | 20 curated tools plus the `studio_request` escape hatch. |
+| Reached by a CURATED tool | **20** | Route entries with a purpose-built tool. |
 | Reachable via `studio_request` | **85** | Every route. The escape hatch takes an arbitrary method + path. |
 | Structurally invisible to the MCP | **4** | Route entries whose response is BYTES. |
 
@@ -26,19 +26,28 @@ assumed.
 ## Finding 1: action parity is NOT the gap
 
 `studio_request` sends any method to any path with the studio bearer. There is no route in the
-contract an agent cannot invoke. Curated coverage is 18 of 85 (21%), and that number measures
+contract an agent cannot invoke. Curated coverage is 20 of 85 (24%), and that number measures
 **ergonomics**, not capability: a curated tool means the agent does not have to know the contract to
 find the route. A low number here costs discoverability, not reach.
 
 So the honest answer to "can an agent do everything a human can do" is **yes, already**, with the
-caveat that 67 routes require the agent to read `docs/CONTRACT.md` first.
+caveat that 65 routes require the agent to read `docs/CONTRACT.md` first.
 
 Note the asymmetry the table makes visible: parity is not a subset relation in either direction.
 `POST /api/render/film` and `GET /api/render/film/:id` -- the film submit and poll the MCP is built
 around -- are **not panel-reachable at all**. The panel renders through `/api/storyboard/render`.
 The agent surface and the human surface overlap; neither contains the other.
 
-## Finding 2: artifact parity is ZERO, and that is the real gap
+## Finding 2: artifact parity WAS zero, and that was the real gap (now closed)
+
+**Status: closed by `vivijure-mcp` v1.1.0 plus this repo's dependency bump to `^1.1.0`.** The
+measurement below is preserved as written, because it is the evidence that motivated the fix and a
+finding deleted the moment it is fixed leaves the next reader unable to tell it ever existed. What
+changed: `view_artifact` returns an image as MCP image content, and `artifact_url` returns a
+short-lived presigned link for what MCP structurally cannot carry. `HEAD /api/artifact/*key` and
+the two `/api/cast/export/:id` entries remain byte-returning with no curated tool, so the
+**structurally invisible** row is unchanged at 4: this closed the agent-can-SEE gap, not the whole
+byte-returning class.
 
 Every route whose response is bytes is invisible through the MCP. `runTool` detects a binary
 content-type and returns a text summary instead of the object:
@@ -90,10 +99,12 @@ so the guarantees are **expiry and scope**, both enforced server-side and both n
   later at R2.
 
 The MCP-side tools that consume it (`view_artifact`, which returns an image as MCP image content so
-an agent literally sees it, and `artifact_url`) ship in `vivijure-mcp`. **Until that package is
-released and this repo's dependency is bumped, the numbers above stay at 19 tools / 18 curated** --
-this document measures the INSTALLED package, so it reports the surface that is actually deployed,
-not the one that is merged somewhere.
+an agent literally sees it, and `artifact_url`) ship in `vivijure-mcp`. That package released as
+**v1.1.0** and this repo's dependency is now `^1.1.0`, which is why the numbers above moved from 19
+tools / 18 curated to **21 / 20**. The footnote that produced that wait still stands and is the
+reason to trust the number: **this document measures the INSTALLED package**, so it reports the
+surface actually deployed rather than one that is merged somewhere. Code on `main` in another repo
+moves nothing here; a published version this repo resolves does.
 
 ## Method, and what it does not cover
 
@@ -151,9 +162,9 @@ structurally invisible to the MCP.
 | `POST` | `/api/cast/:id/train-wan-lora` | no | -- | json |
 | `GET` | `/api/cast/:id/lora-status` | yes | -- | json |
 | `POST` | `/api/upload` | yes | -- | json |
-| `GET` | `/api/artifact/*key` | yes | -- | **bytes** |
+| `GET` | `/api/artifact/*key` | yes | `view_artifact` | **bytes** |
 | `HEAD` | `/api/artifact/*key` | yes | -- | **bytes** |
-| `GET` | `/api/artifact-url/*key` | no | -- | json |
+| `GET` | `/api/artifact-url/*key` | no | `artifact_url` | json |
 | `POST` | `/api/storyboard/preflight` | yes | `preflight` | json |
 | `POST` | `/api/storyboard/plan` | yes | `plan_storyboard` | json |
 | `POST` | `/api/storyboard/refine` | yes | `refine_storyboard` | json |
