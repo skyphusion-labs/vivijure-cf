@@ -15,6 +15,7 @@
 import {
   MODULE_API,
   type ModuleManifest,
+  type TenantR2Config,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -26,6 +27,8 @@ import { buildI2vBody, readOutput, encodePoll, decodePoll, runpodJobGone, classi
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { withTenantR2Body } from "../../_shared/tenant-r2-body";
+import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -40,6 +43,11 @@ interface Env {
 // Exported so the core's tier-drift guard (tests/quality-tier-drift.test.ts, issue #124) can assert
 // this module's `quality` enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
+  // cp#270: this module submits to the vivijure-backend endpoint, which may be POOLED across
+  // tenants, so it needs the tenant's per-job R2 credential on the invoke envelope. Declared on
+  // the MANIFEST rather than decided in core: which modules ride a pooled endpoint is a property
+  // of the module, and core must not branch on module identity.
+  needs_tenant_r2: true,
   name: "own-gpu",
   version: "0.2.0",
   api: MODULE_API,
@@ -122,7 +130,14 @@ function credentialProblem(apiKey: string, endpointId: string): string | null {
 }
 
 /** /invoke: validate, submit the i2v_clip job to our backend, return a poll token immediately. */
-async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
+async function submit(
+  env: Env,
+  req: InvokeRequest<MotionBackendInput>,
+  /** cp#270: the tenant's per-job R2 credential, already STRIPPED off the request at the handler
+   *  boundary. Passed as a value rather than read off `req` here precisely so `req` no longer
+   *  carries it by the time anything in this function can serialise it. */
+  tenantR2: TenantR2Config | null,
+): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.prompt || !input.shot_id) {
     return { ok: false, error: "motion.backend: input needs shot_id and prompt" };
@@ -146,7 +161,9 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
     const r = await fetch(endpoint(endpointId) + "/run", {
       method: "POST",
       headers: { ...auth(apiKey), "content-type": "application/json" },
-      body: JSON.stringify(buildI2vBody(input, req.config, req.context.project)),
+      body: JSON.stringify(
+        withTenantR2Body(buildI2vBody(input, req.config, req.context.project), tenantR2),
+      ),
     });
     if (!r.ok) return { ok: false, error: "own-gpu /run -> " + r.status };
     const jobId = ((await r.json()) as { id?: string }).id;
@@ -275,10 +292,16 @@ export default {
       } catch {
         return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
       }
+      // cp#270: STRIP AT THE BOUNDARY. Reads the tenant credential and REMOVES it from `req` in
+      // one call, so nothing below this line holds an object that still contains it -- the
+      // mirror of the backend's `strip_from_payload`. Done here, at the parse boundary, rather
+      // than inside submit(): the guarantee is about the REQUEST object, and every line after
+      // this one should be unable to leak it even by accident.
+      const tenantR2 = takeTenantR2(req);
       if (req.hook !== "motion.backend") {
         return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
       }
-      return json(await submit(env, req));
+      return json(await submit(env, req, tenantR2));
     }
 
     if (request.method === "POST" && url.pathname === "/poll") {

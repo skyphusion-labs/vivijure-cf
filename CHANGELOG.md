@@ -9,6 +9,42 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### feat(modules): forward the tenant per-job R2 credential to the pooled backend endpoint (cp#270)
+
+Step 3 of the pooled-shared-tier chain, and the consumer half of vivijure-core 1.5.0.
+
+`keyframe` and `own-gpu` are the only two modules that submit to the `vivijure-backend` endpoint,
+which may be POOLED across tenants. Both now declare `needs_tenant_r2` on their manifest, call
+`takeTenantR2(req)` at the parse boundary, and forward the block INSIDE the RunPod `input` object
+where `vivijure-backend/docs/contract.md` specifies it. No other module is touched: declaring the
+field hands a live tenant credential to a worker with no use for one.
+
+THE RULE THAT BREAKS THE FAR END, held in one shared helper rather than spelled out twice: the
+backend REFUSES an explicit `"r2": null` rather than reading it as absent, because a silent
+fallback would run a tenant's job against the wrong bucket under the wrong credential. So
+`withTenantR2Body` returns the body UNCHANGED when there is nothing to attach. It does not set the
+key to undefined and rely on `JSON.stringify` dropping it, which works today by a property of the
+serialiser rather than by intent.
+
+THE DRIFT GUARD is the half that has to survive future edits. The credential rides the invoke
+request, so serialising that request into a console line is what would put it in Workers Logs
+`Logs` and from there into the tail worker and Loki. `tests/tenant-r2-forward.test.ts` scans every
+module source and fails on that pattern, with a positive-evidence floor (the scan must find
+modules at all), a control proving the matcher fires on a constructed offender, and a control
+asserting a non-pooled module declares neither field. It was proved by planting
+`console.warn(JSON.stringify(req))` in `keyframe` and watching it go red.
+
+The matcher's scope was NARROWED by a real false positive on its first run rather than guessed:
+`local-gpu`'s `encodePoll` does `btoa(JSON.stringify(payload))` on a `PollState` to build a poll
+token, which is not a leak of anything. Bare-stringify now flags `req` only -- the invoke-request
+variable by convention, with no legitimate reason to serialise -- while the console patterns still
+cover every name. Scoping by meaning beats an exemption list that grows with every local named
+`payload`.
+
+The core dependency moves `^1.3.0` -> `^1.5.0`. The RANGE bump is deliberate and not cosmetic: the
+modules now import `@skyphusion-labs/vivijure-core/modules/tenant-r2`, which does not exist before
+1.5.0, so `^1.3.0` would have been a compatibility claim that is no longer true.
+
 ## v1.14.0 -- 2026-08-01
 
 MINOR: the instrumentation release. The job log can now say what actually happened to a job, `/ready`
