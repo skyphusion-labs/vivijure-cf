@@ -13,11 +13,11 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **85** | Distinct `method` + `pattern` pairs the studio serves. 84 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
+| Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves. 85 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
 | Panel-reachable | **70** | Route entries the studio panel calls, i.e. the human surface. Matched from `public/` with controls in both directions. |
 | MCP tools | **21** | 20 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **20** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **85** | Every route. The escape hatch takes an arbitrary method + path. |
+| Reachable via `studio_request` | **86** | Every route. The escape hatch takes an arbitrary method + path. |
 | Structurally invisible to the MCP | **4** | Route entries whose response is BYTES. |
 
 Two of those rows are the whole finding, and they point in opposite directions from what the issue
@@ -26,12 +26,12 @@ assumed.
 ## Finding 1: action parity is NOT the gap
 
 `studio_request` sends any method to any path with the studio bearer. There is no route in the
-contract an agent cannot invoke. Curated coverage is 20 of 85 (24%), and that number measures
+contract an agent cannot invoke. Curated coverage is 20 of 86 (23%), and that number measures
 **ergonomics**, not capability: a curated tool means the agent does not have to know the contract to
 find the route. A low number here costs discoverability, not reach.
 
 So the honest answer to "can an agent do everything a human can do" is **yes, already**, with the
-caveat that 65 routes require the agent to read `docs/CONTRACT.md` first.
+caveat that 66 routes require the agent to read `docs/CONTRACT.md` first.
 
 Note the asymmetry the table makes visible: parity is not a subset relation in either direction.
 `POST /api/render/film` and `GET /api/render/film/:id` -- the film submit and poll the MCP is built
@@ -165,6 +165,7 @@ structurally invisible to the MCP.
 | `GET` | `/api/artifact/*key` | yes | `view_artifact` | **bytes** |
 | `HEAD` | `/api/artifact/*key` | yes | -- | **bytes** |
 | `GET` | `/api/artifact-url/*key` | no | `artifact_url` | json |
+| `POST` | `/api/render/frames` | no | -- | json |
 | `POST` | `/api/storyboard/preflight` | yes | `preflight` | json |
 | `POST` | `/api/storyboard/plan` | yes | `plan_storyboard` | json |
 | `POST` | `/api/storyboard/refine` | yes | `refine_storyboard` | json |
@@ -212,3 +213,24 @@ structurally invisible to the MCP.
 | `GET` | `/api/modules/:name/config` | yes | -- | json |
 | `PATCH` | `/api/modules/:name/config` | yes | -- | json |
 | `GET` | `/api/modules` | yes | `studio_modules` | json |
+
+## The tool count moved, as predicted, and here is what moved it (cf#322)
+
+This section previously said the published **19 tools / 18 curated** was transient by design and would
+become **21 / 20** the moment the `@skyphusion-labs/vivijure-mcp` dependency bumped. **That has now
+happened** (cf#326, dep to `^1.1.0`), and the numbers above are the post-bump ones.
+
+Kept rather than deleted, because the prediction is the useful part: these figures measure the
+**INSTALLED** package, which is what the deployed surface actually serves, so they move on a dependency
+bump with no change to this repo's own code. A reader who finds a number here that disagrees with a
+newer one should check the installed version before filing a regression.
+
+What the bump did NOT change, and this is the part that is easy to get wrong: `view_artifact` and
+`artifact_url` both consume EXISTING routes (`GET /api/artifact/*key` and `GET /api/artifact-url/*key`),
+so they moved `curatedCovered`, not the route count, and the four structurally-invisible byte-returning
+entries stay four. **`view_artifact` makes an image VIEWABLE; it does not make the route stop returning
+bytes.**
+
+Separately, `POST /api/render/frames` (cf#322) takes the route count 85 -> 86. It is the reason a
+byte-returning clip can be looked at at all: it writes a contact sheet as a normal image artifact, so
+the thing the transport can carry is the thing it gets handed. It adds a route, not a curated tool.

@@ -63,6 +63,9 @@ import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import {
+  buildFramesSheet, clampFrameCount, parseFrameAt, FRAMES_CONTENT_TYPE,
+} from "./render-frames";
+import {
   insertRender, updateRenderFromView, getRenderByIdForUser, listRendersForUser, DEFAULT_RENDERS_LIMIT, listUserTags,
   setRenderLabel, setRenderLockedShots, setRenderFolder, setRenderTags, deleteRenderRow,
   normalizeLockedShots, normalizeFolderPath, normalizeTags,
@@ -368,7 +371,7 @@ const hUpload: Handler = async (req, env) => {
 // F4: the known artifact namespaces. The serve route is scoped to these so it can only ever return a
 // real artifact, not an arbitrary R2 object. ADD a prefix here when a feature introduces a new one
 // (a served key outside this set is rejected).
-const ARTIFACT_PREFIXES = [
+export const ARTIFACT_PREFIXES = [
   "audio/", "bundles/", "cast/", "cast-clean/", "cast-gen/", "character-refs/",
   "characters/", "clips/", "loras/", "out/", "renders/", "uploads/",
 ];
@@ -383,7 +386,7 @@ const ARTIFACT_PREFIXES = [
 const ARTIFACT_SAFE_CT_RE =
   /^(image\/(png|jpe?g|webp|gif)|video\/(mp4|webm|quicktime)|audio\/[\w.+-]+|application\/(octet-stream|json|x-tar|zip|safetensors))$/i;
 
-function safeArtifactContentType(contentType: string): string {
+export function safeArtifactContentType(contentType: string): string {
   const t = (contentType || "").split(";")[0].trim();
   if (ARTIFACT_SAFE_CT_RE.test(t)) return t === "image/jpg" ? "image/jpeg" : t;
   return "application/octet-stream";
@@ -510,6 +513,59 @@ const hArtifactUrl: Handler = async (req, env, _c, p) => {
     expires_in: expiresIn,
     content_type: meta.httpMetadata?.contentType || "application/octet-stream",
     size: meta.size,
+  });
+};
+
+// cf#322: POST /api/render/frames -- sample frames out of a rendered clip, tile them into ONE jpeg
+// contact sheet, and store it as a NORMAL artifact under the source clip's own prefix.
+//
+// Returns the KEY, never the bytes. `view_artifact` fetches `GET /api/artifact/<key>`, so bytes from
+// a new route would be unreachable to it; a key makes the sheet reachable through every surface that
+// already exists (the panel, the serve route, and `artifact_url`) with no new MCP tool.
+//
+// Failure is reported as a STATE, not a generic error. Tier-unbound, container-does-not-serve-this-
+// route-yet, container-unreachable and container-failed-on-this-clip each imply a different operator
+// action, and `route-not-served` is an EXPECTED condition during a rollout window rather than a bug.
+const hRenderFrames: Handler = async (req, env) => {
+  if (!env.R2_RENDERS) throw notFound("the artifact store is not available on this deployment");
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    throw badRequest("invalid JSON body: expected { key, count?, at? }");
+  }
+  const asParam = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+  const key = String(body.key ?? "").trim();
+  // Same guard as the serve route, so this can never read an object /api/artifact would refuse.
+  if (!key || !isSafeRelKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+    throw notFound("artifact");
+  }
+  // head() first so a miss is an honest 404 here, rather than the container failing to download later.
+  const src = await env.R2_RENDERS.head(key);
+  if (!src) throw notFound("artifact");
+
+  const count = clampFrameCount(asParam(body.count));
+  // `at` only means anything for a single frame; for a sheet the container spaces the samples itself.
+  const at = count === 1 ? parseFrameAt(asParam(body.at)) : null;
+
+  const outcome = await buildFramesSheet(env, key, count, at);
+  if (!outcome.ok) {
+    return json({ error: outcome.reason, state: outcome.state, source_key: key }, outcome.status);
+  }
+  return json({
+    key: outcome.key,
+    source_key: key,
+    count: outcome.count,
+    grid: outcome.grid,
+    frame_times: outcome.frame_times,
+    duration: outcome.duration,
+    reused: outcome.reused,
+    content_type: FRAMES_CONTENT_TYPE,
+    // Carried in the response on purpose: the honest scope of the evidence travels WITH the evidence,
+    // so a caller cannot quote the sheet as "the clip was checked".
+    proves:
+      "Evidence about the frames sampled at frame_times, not about the whole clip. Per-frame flicker " +
+      "and motion between the samples are not visible in a contact sheet.",
   });
 };
 
@@ -1809,6 +1865,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/artifact/*key",                   handler: hServeArtifact },
   { method: "HEAD",   pattern: "/api/artifact/*key",                   handler: hServeArtifact },
   { method: "GET",    pattern: "/api/artifact-url/*key",               handler: hArtifactUrl },
+  { method: "POST",   pattern: "/api/render/frames",                  handler: hRenderFrames },
   { method: "POST",   pattern: "/api/storyboard/preflight",            handler: hPreflight },
   { method: "POST",   pattern: "/api/storyboard/plan",                 handler: hPlan },
   { method: "POST",   pattern: "/api/storyboard/refine",               handler: hRefine },

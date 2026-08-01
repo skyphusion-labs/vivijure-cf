@@ -9,6 +9,41 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### Frame extraction: an agent can finally LOOK at motion output (cf#322)
+
+`POST /api/render/frames` samples a rendered clip into ONE jpeg contact sheet (3x3 by default) and
+stores it as a normal R2 artifact, returning the key.
+
+The gap it closes: our MCP tool-result content union carries text and images and has no video variant,
+so a finished film could only ever be handed over as a LINK. Meanwhile 128 of the 129 most recent
+COMPLETED renders carry `keyframes: null`, so the mp4 was the only artifact that existed for them. The
+one artifact type we produce was the one the transport cannot carry, and the one it can carry was the
+one we almost never produced. A contact sheet is an image, so it crosses.
+
+Returning a key rather than bytes is deliberate: `view_artifact` fetches `GET /api/artifact/<key>`, so
+a key makes the sheet reachable through the panel, the serve route and `/api/artifact-url` with **no
+new MCP tool and no vivijure-mcp release behind it**. The derived key inherits the source clip's own
+prefix by construction, which is what keeps it inside `ARTIFACT_PREFIXES` and therefore reachable at
+all; that property is asserted against the real exported guard with a control.
+
+Extraction runs in the `video-finish` CPU container (`POST /frames`), already the ffmpeg surface,
+reached over the private VPC binding. Failures report a STATE rather than a generic error
+(`tier-unavailable` / `route-not-served` / `container-unreachable` / `container-error`), because each
+implies a different operator action and `route-not-served` is an EXPECTED condition during the rollout
+window before the container image is rebuilt and the always-on service rolled.
+
+A contact sheet is evidence about the frames it sampled, not about the clip: it cannot show per-frame
+flicker or motion between the samples. The response carries that scope in a `proves` field so the
+limitation travels with the evidence.
+
+**Dual-panel gate: NOT waived, OPEN.** This is a studio feature by the gate's own definition, so it
+owes a `vivijure-local` counterpart in the same release wave. That counterpart is not in this change
+and is not mine to land here; it is called out rather than assumed non-applicable, because the failure
+mode of a parity gate is a change quietly deciding it is exempt. Flagged for the release lead.
+
+**Deploy ordering.** The container route ships in the `video-finish` image, so the image must be
+rebuilt and the always-on service rolled for this to do anything. Until then the studio route answers
+`route-not-served`, honestly and by name.
 ## v1.17.0 -- 2026-08-02
 
 MINOR: the agent-can-SEE capability becomes REAL, and the GPUless cost door starts recording.

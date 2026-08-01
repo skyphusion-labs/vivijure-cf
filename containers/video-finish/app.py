@@ -16,6 +16,7 @@ import asyncio
 import base64
 import json as _json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -1122,6 +1123,143 @@ async def inspect(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
+# --- cf#322: contact sheet -------------------------------------------------------------------
+# Sample frames out of a finished clip and tile them into ONE jpeg, so a caller whose transport can
+# carry an image but not a video can actually LOOK at motion output. The studio stores the result as
+# a normal artifact, which is why this PUTs to a presigned URL exactly like /finish and /film-titles
+# and returns only a key: bytes never touch the Worker.
+#
+# The sheet is evidence about the frames it sampled, NOT about the clip. Sampling across the whole
+# duration exposes drift, identity change and the degenerate still-image-with-a-timestamp case that a
+# single frame cannot; it still cannot show per-frame flicker between the samples.
+MAX_FRAMES_COUNT = 25
+FRAME_TILE_WIDTH = 640          # per tile; a 3x3 sheet lands at 1920 wide
+FRAME_SHEET_QUALITY = "3"       # ffmpeg -q:v, 2-5 is visually clean
+
+
+def _grid_for(count):
+    """Square-ish grid: 9 -> 3x3, 4 -> 2x2, 6 -> 3x2. Mirrors gridFor() in src/render-frames.ts."""
+    cols = max(1, int(math.ceil(math.sqrt(count))))
+    return cols, max(1, int(math.ceil(float(count) / cols)))
+
+
+def _sample_times(duration, count, at):
+    """Timestamps to sample. A single frame honours `at` (default: the midpoint). A sheet spaces the
+    samples evenly and biases each into the MIDDLE of its slice, so the first sample is never frame 0
+    (often a black or fade-in frame that says nothing about the clip)."""
+    if count <= 1:
+        t = duration / 2.0 if at is None else float(at)
+        return [max(0.0, min(t, max(0.0, duration - 0.05)))]
+    return [duration * (i + 0.5) / count for i in range(count)]
+
+
+def _build_contact_sheet(src, dst, times, cols, rows):
+    work = os.path.dirname(dst)
+    for i, t in enumerate(times):
+        _run(["ffmpeg", "-y", "-ss", "%.3f" % t, "-i", src, "-frames:v", "1",
+              "-vf", "scale=%d:-2" % FRAME_TILE_WIDTH, "-an",
+              os.path.join(work, "f%03d.png" % i)])
+    if len(times) == 1:
+        _run(["ffmpeg", "-y", "-i", os.path.join(work, "f000.png"),
+              "-q:v", FRAME_SHEET_QUALITY, dst])
+        return
+    _run(["ffmpeg", "-y", "-start_number", "0", "-i", os.path.join(work, "f%03d.png"),
+          "-filter_complex", "tile=%dx%d:padding=6:color=0x101010" % (cols, rows),
+          "-frames:v", "1", "-q:v", FRAME_SHEET_QUALITY, dst])
+
+
+async def frames(req):
+    try:
+        body = await req.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+
+    video_url = body.get("videoUrl")
+    output_url = body.get("outputUrl")
+    output_key = body.get("outputKey", "")
+    # The studio names the stored type because IT is the side that knows what survives
+    # safeArtifactContentType and what view_artifact will inline. Default matches src/render-frames.ts.
+    content_type = str(body.get("contentType") or "image/jpeg")
+
+    if not video_url:
+        return web.json_response({"ok": False, "error": "videoUrl required"}, status=400)
+    if not output_url:
+        return web.json_response({"ok": False, "error": "outputUrl required"}, status=400)
+    ok, why = validate_fetch_url(output_url)
+    if not ok:
+        return web.json_response({"ok": False, "error": "outputUrl blocked: %s" % why}, status=400)
+
+    try:
+        count = int(body.get("count", 9))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "bad numeric input"}, status=400)
+    count = max(1, min(MAX_FRAMES_COUNT, count))
+    at = body.get("at")
+    if at is not None:
+        try:
+            at = float(at)
+        except (TypeError, ValueError):
+            return web.json_response({"ok": False, "error": "bad numeric input"}, status=400)
+
+    work = tempfile.mkdtemp(prefix="frames-")
+    try:
+        clip_path = os.path.join(work, "clip.mp4")
+        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+            dok, info = await _download(s, video_url, clip_path, MAX_CLIP_BYTES)
+            if not dok:
+                sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                return web.json_response({"ok": False, "error": "clip %s" % info}, status=sc)
+
+        # An unreadable duration is reported, never guessed: a clip we cannot probe drops to a single
+        # frame rather than sampling the same instant N times and presenting it as a spread.
+        degraded = None
+        try:
+            duration = _probe_duration(clip_path)
+        except Exception:
+            duration = None
+        if not duration or duration <= 0:
+            degraded = "duration unreadable; sampled a single frame instead of a spread"
+            duration, count = 0.0, 1
+
+        cols, rows = _grid_for(count)
+        times = _sample_times(duration, count, at)
+        out_path = os.path.join(work, "sheet.jpg")
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, _build_contact_sheet, clip_path, out_path, times, cols, rows)
+        except Exception as e:  # noqa: BLE001
+            log.exception("/frames extraction failed")
+            return web.json_response({"ok": False, "error": "frame extraction failed: %s" % e}, status=500)
+
+        with open(out_path, "rb") as f:
+            out_bytes = f.read()
+
+        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
+                             headers={"content-type": content_type}) as r:  # codeql[py/full-ssrf]
+                if r.status not in (200, 201, 204):
+                    return web.json_response({"ok": False, "error": "output put %d" % r.status}, status=502)
+
+        log.info("/frames ok key=%s count=%d grid=%dx%d bytes=%d",
+                 safe_log_value(output_key), len(times), cols, rows, len(out_bytes))  # codeql[py/log-injection]
+        resp = {
+            "ok": True,
+            "key": output_key,
+            "count": len(times),
+            "cols": cols,
+            "rows": rows,
+            "frame_times": [round(t, 3) for t in times],
+            "duration": round(duration, 3) if duration else None,
+            "bytes": len(out_bytes),
+            "content_type": content_type,
+        }
+        if degraded:
+            resp["degraded"] = degraded
+        return web.json_response(resp)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 # The film.finish routes exposed for async job+poll (#602). Assemble/mux (/finish),
 # /overlay and /inspect stay synchronous -- they are not the single-step-exceeds-budget
 # film.finish class this addresses.
@@ -1137,6 +1275,7 @@ app.router.add_post("/overlay", overlay)
 app.router.add_post("/film-titles", film_titles)
 app.router.add_post("/subtitle", subtitle)
 app.router.add_post("/inspect", inspect)
+app.router.add_post("/frames", frames)
 app.router.add_post("/async/{route}", async_submit)
 app.router.add_get("/async/status/{jobId}", async_status)
 
