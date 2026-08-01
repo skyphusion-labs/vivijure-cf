@@ -9,6 +9,54 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.16.0 -- 2026-08-02
+
+MINOR: an artifact key stops being a dead end. `GET /api/artifact-url/*key` turns any artifact key
+into a short-lived presigned GET plus the object's real content type and size, and the panel/MCP
+parity table is published with its denominator so it fails CI rather than going stale.
+
+### feat(api): presign any artifact key, and publish the MCP parity denominator (cf#317)
+
+The launch gate this unblocks is measurement: `cf#278` phase 1 cannot report on artifact QUALITY
+because **nobody has looked at the clips.** That was a TOOLING limit, not a credential limit.
+`list_renders` hands back `output_key` and `keyframes[].key` for every render in the library and
+nothing could turn any of them into something fetchable, so a key was a dead end.
+
+One correction to the issue's premise, kept because it changes what is left to do: `poll_film`
+already returns a presigned `download_url` on `phase: "done"`, and still does for a historical film
+id. The gap was never "no film is fetchable" -- it was that an arbitrary KEY could not be resolved,
+and that nothing is ever *seen*, not even an image, which MCP carries natively.
+
+A presigned URL is a capability credential, and R2 revocation propagates too slowly for
+revoke-after-use to be a control, so the guarantees are **expiry and scope, both server-side**: the
+signature covers exactly one key and never a prefix or wildcard; the lifetime is clamped to
+`[60, 3600]` (default 300) so a caller cannot widen it; the same key guard as the serve route
+applies; and existence is checked with `head()`, so a 200 always names a real object.
+
+`content_type` is the **stored** type, deliberately not the remap `/api/artifact` applies to its own
+responses. This URL does not pass through that route, so reporting the remapped type would be a claim
+about a response we do not produce.
+
+The parity table at `docs/mcp-parity.md` is measured by `tests/mcp-parity-317.test.ts` from the real
+route table and the real INSTALLED MCP tool catalog. Its finding: action parity was not the gap.
+`studio_request` can send any method to any path, so there is no route an agent cannot invoke, and
+18-of-85 measures ERGONOMICS rather than reach. Artifact parity was the real zero.
+
+**The capability is not user-reachable on either door yet, and that is deliberate ordering.** The MCP
+tools that consume this route (`view_artifact`, `artifact_url`) ship in `vivijure-mcp`; until that
+package is released and this repo's dependency is bumped, the published numbers stay at 19 tools /
+18 curated, because the test measures the INSTALLED package and therefore reports the surface
+actually deployed.
+
+**Dual-panel parity: the counterpart is `vivijure-local#309`, filed with this release rather than
+after it.** This IS a studio feature, so it is not exempt from the gate the way cf#316 and cf#313
+were. What this release ships is plumbing that no client can yet reach, so the gate binds at the
+`vivijure-mcp` release, not here, and local#309 lands before that point. The local port is not a
+copy-paste: its FILESYSTEM presigner ignores the expiry argument and embeds the studio bearer in the
+URL, which is the exact inverse of the two guarantees above. Written down rather than left silent,
+because an unexplained absence under a parity gate reads as an oversight to the next person, and the
+next person cannot tell the two apart.
+
 ## v1.15.0 -- 2026-08-01
 
 MINOR: the pooled-endpoint release. A tenant's per-job R2 credential now rides the invoke envelope
