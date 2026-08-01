@@ -233,6 +233,7 @@ unchanged.
 | 25 | POST | `/api/upload` | 2.10 |
 | 26 | GET | `/api/artifact/*key` | 2.11 |
 | 26a | GET | `/api/artifact-url/*key` | 2.11.1 |
+| 26b | POST | `/api/render/frames` | 2.11.2 |
 | 27 | POST | `/api/storyboard/preflight` | 2.12 |
 | 28 | POST | `/api/storyboard/plan` | 2.13 |
 | 29 | POST | `/api/storyboard/refine` | 2.13 |
@@ -505,6 +506,55 @@ refuse. Existence is checked before signing, so a 200 always names an object tha
 > on revocation: R2 token revocation propagates slowly enough that revoke-after-use is not a control.
 > The signature covers exactly one key (never a prefix or wildcard) and the lifetime cannot be widened
 > by the caller. Request a fresh link rather than storing one.
+
+### 2.11.2 POST /api/render/frames
+
+Sample frames out of a rendered clip, tile them into ONE jpeg contact sheet, and store it in R2 as a
+normal artifact. Returns the KEY of the sheet, never the bytes.
+
+**Why a key and not bytes.** The MCP tool-result content union carries text and images and has no video
+variant, so a finished film can only ever be handed to an agent as a link. A contact sheet is an image,
+which the transport CAN carry, and `view_artifact` fetches `GET /api/artifact/<key>` -- so returning a
+key is what makes the sheet reachable through every surface that already exists (the panel, the serve
+route, `/api/artifact-url`) with no new MCP tool.
+
+**Request** `{ key (req), count?, at? }`
+- `key` -- the source clip's artifact key. Guarded by `isSafeRelKey` + `ARTIFACT_PREFIXES`, the same
+  guard as the serve route, and checked with `head()` so a miss is an honest 404 here rather than a
+  container download failure later.
+- `count` -- samples, clamped to `[1, 25]`, default `9` (a 3x3 sheet). Garbage clamps to the default.
+- `at` -- seconds, honoured ONLY when `count == 1`; a sheet spaces its own samples. Default: the
+  midpoint, chosen by the container because only it knows the duration.
+
+**Response 200** `{ key, source_key, count, grid: {cols, rows}, frame_times, duration, reused,
+content_type, proves }`
+
+The output key is DETERMINISTIC (`<source dir>/frames/<stem>-<spec>.jpg`), so a repeat request is
+idempotent: an existing sheet is returned with `reused: true` and the container is never called. The
+key keeps the source's own directory and therefore its top-level prefix by construction, which is what
+keeps it inside `ARTIFACT_PREFIXES` and reachable through the artifact routes.
+
+**What a contact sheet proves, and what it does not.** It is evidence about the frames it sampled, at
+the timestamps in `frame_times`, NOT about the clip. It can show composition, lighting and whether the
+subject is on-model, and sampling across the duration additionally exposes drift, identity change
+between shots, and the degenerate still-image-with-a-timestamp case that a single frame cannot. It
+CANNOT show per-frame flicker or motion judder between the samples. The `proves` field carries this
+scope in the response itself so the limitation travels with the evidence; nothing built on this route
+may describe a clip as "checked".
+
+**Failure is reported as a state, never a generic error**, because each implies a different operator
+action:
+
+| `state` | HTTP | Means |
+|---|---|---|
+| `tier-unavailable` | 503 | `VIDEO_FINISH_VPC` unbound. A provisioning state, not a fault. |
+| `route-not-served` | 503 | Container answered 404: its image predates this route. **EXPECTED during a rollout window**, when the Worker ships before the container image is rebuilt and the always-on service rolled. No bug to hunt. |
+| `container-unreachable` | 502 | No answer (transport failure, or 503/504 after retries). The service is down or unreachable over the VPC. |
+| `container-error` | 502 | The container serves the route and failed on this clip. The fault is the input or ffmpeg on it. |
+
+Extraction runs in the `video-finish` CPU container (`POST /frames`) over the private VPC binding, not
+in the Worker: it is already the ffmpeg surface, and the clip is downloaded and the sheet uploaded via
+short-lived presigned URLs, so bytes never touch the Worker.
 
 ### 2.12 POST /api/storyboard/preflight
 

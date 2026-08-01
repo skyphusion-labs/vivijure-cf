@@ -134,7 +134,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 85, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
+  routes: 86, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
   tools: 19, // MCP tools: curated + the studio_request escape hatch
   curatedCovered: 18, // route entries reached by a CURATED tool
   panelReachable: 70, // route entries the studio panel calls (the human surface)

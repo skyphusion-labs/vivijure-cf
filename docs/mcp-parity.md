@@ -13,11 +13,11 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **85** | Distinct `method` + `pattern` pairs the studio serves. 84 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
+| Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves. 85 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
 | Panel-reachable | **70** | Route entries the studio panel calls, i.e. the human surface. Matched from `public/` with controls in both directions. |
 | MCP tools | **19** | 18 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **18** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **85** | Every route. The escape hatch takes an arbitrary method + path. |
+| Reachable via `studio_request` | **86** | Every route. The escape hatch takes an arbitrary method + path. |
 | Structurally invisible to the MCP | **4** | Route entries whose response is BYTES. |
 
 Two of those rows are the whole finding, and they point in opposite directions from what the issue
@@ -26,7 +26,7 @@ assumed.
 ## Finding 1: action parity is NOT the gap
 
 `studio_request` sends any method to any path with the studio bearer. There is no route in the
-contract an agent cannot invoke. Curated coverage is 18 of 85 (21%), and that number measures
+contract an agent cannot invoke. Curated coverage is 18 of 86 (21%), and that number measures
 **ergonomics**, not capability: a curated tool means the agent does not have to know the contract to
 find the route. A low number here costs discoverability, not reach.
 
@@ -154,6 +154,7 @@ structurally invisible to the MCP.
 | `GET` | `/api/artifact/*key` | yes | -- | **bytes** |
 | `HEAD` | `/api/artifact/*key` | yes | -- | **bytes** |
 | `GET` | `/api/artifact-url/*key` | no | -- | json |
+| `POST` | `/api/render/frames` | no | -- | json |
 | `POST` | `/api/storyboard/preflight` | yes | `preflight` | json |
 | `POST` | `/api/storyboard/plan` | yes | `plan_storyboard` | json |
 | `POST` | `/api/storyboard/refine` | yes | `refine_storyboard` | json |
@@ -201,3 +202,19 @@ structurally invisible to the MCP.
 | `GET` | `/api/modules/:name/config` | yes | -- | json |
 | `PATCH` | `/api/modules/:name/config` | yes | -- | json |
 | `GET` | `/api/modules` | yes | `studio_modules` | json |
+
+## The tool count is correct today and transient by design (cf#322)
+
+The **19 tools / 18 curated** above measure the **INSTALLED** `@skyphusion-labs/vivijure-mcp`, which is
+what the deployed surface actually serves. That is deliberate, and it means the number MOVES when the
+dependency bumps to a version carrying `view_artifact` and `artifact_url`: the published figures become
+**21 tools / 20 curated**.
+
+Written down because the alternative is someone reading 19 as the settled denominator months from now
+and filing the increase as a regression. A number that is true today and wrong next week should say so
+in the same place it is published.
+
+Note also what a bump does NOT change. `view_artifact` and `artifact_url` both consume EXISTING routes
+(`GET /api/artifact/*key` and `GET /api/artifact-url/*key`), so they move `curatedCovered`, not the
+route count, and the four structurally-invisible byte-returning entries stay four: `view_artifact`
+makes an image VIEWABLE, it does not make the route stop returning bytes.
