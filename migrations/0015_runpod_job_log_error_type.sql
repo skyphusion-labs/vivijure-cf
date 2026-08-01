@@ -1,0 +1,38 @@
+-- runpod_job_log: a machine-readable discriminator beneath `outcome` (cf#288).
+--
+-- WHY. `outcome = failed` absorbs three different things a reader cannot separate (cf#286): a
+-- DELIBERATE REFUSAL (the backend raised on validation), a genuine HANDLER FAULT, and genuine INFRA
+-- (OOM, eviction, worker crash). All three arrive from RunPod as FAILED. Today the only thing that
+-- tells them apart is the exception class, and it survives ONLY inside `detail`, which is bounded to
+-- 160 chars and only holds the class because `error_type` happens to be the FIRST key RunPod emits.
+-- Measured on a real refusal: the raw error string is 1071 chars, the class name ends at char 73, so
+-- there are 87 characters of headroom against a vendor reordering its own JSON. Nothing in our code
+-- establishes that ordering and nothing in RunPod's contract promises it. When it changes the
+-- numbers do not break, they quietly stop meaning what they say -- which is cf#277 all over again.
+--
+-- WHAT GOES IN IT. The exception CLASS as a short machine label, extracted at WRITE time from the
+-- structured `error_type` key, normalised from "<class 'vivijure_backend.harness.handler.HarnessError'>"
+-- to "HarnessError". Machine-generated content only, same convention as every other column here:
+-- ids and machine labels, never user input, never prose.
+--
+-- WHY NOT PARSE THE MESSAGE. Classifying by matching English error sentences ("finish_clip: clip_key
+-- is required") is a parser only as fresh as the sample it was built from. Those strings are
+-- ordinary prose, they are not marked load-bearing anywhere, and someone will reword one without
+-- knowing a classification depends on it. This column reads a STRUCTURED key or it reads nothing.
+--
+-- NULL MEANS UNKNOWN, AND THAT IS THE POINT. NULL is "the endpoint did not tell us the class", which
+-- is DIFFERENT from "this was not a refusal". Three of the four endpoints we submit to (musetalk,
+-- video-upscale, audio-upscale) emit no `error_type` at all -- a refusal and a crash both come back
+-- as a bare string in `error` -- so their rows will carry NULL and remain unclassifiable until those
+-- containers emit a structured marker. An `error_type` column that LOOKED like it solved the
+-- classification problem while covering one endpoint of four would be worse than the honest gap.
+--
+-- HISTORICAL ROWS ARE NOT BACKFILLED AND NOT REINTERPRETED. Every row written before this migration
+-- gets NULL. That is deliberate: the class for those rows may or may not survive inside their
+-- truncated `detail`, and mining prose out of a bounded blob to populate a column that is supposed
+-- to be structured would manufacture exactly the confidence the data does not support. Old rows stay
+-- honestly unclassified. Anything summarising by error_type must treat NULL as unknown, not as a
+-- fourth category.
+--
+-- Additive (ADD COLUMN only, no default, no rewrite) -> rides the normal auto-apply; no manual gate.
+ALTER TABLE runpod_job_log ADD COLUMN error_type TEXT;

@@ -105,6 +105,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       ok: true,
       pending: true,
       poll: encodePoll({ jobId, project: req.context.project, shotId: input.shot_id, seconds: clampDuration(input.seconds), submittedAt: Date.now() }),
+      jobId,  // cf#289/#296: RunPod cannot enumerate jobs; an id the caller is not handed at submit is unreachable forever.
     };
   } catch (e) {
     return { ok: false, error: "minimax-hailuo submit failed: " + (e as Error).message };

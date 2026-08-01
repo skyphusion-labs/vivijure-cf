@@ -12,16 +12,18 @@ the run and leaves cf#277 where it is.
 
 ## What is recorded
 
-`migrations/0014_runpod_job_log.sql`, one row per job, upserted on `job_id`:
+`migrations/0014_runpod_job_log.sql` plus `migrations/0015_runpod_job_log_error_type.sql`,
+one row per job, upserted on `job_id`:
 
 | column | what it is |
 |---|---|
 | `job_id` | the RunPod job id (upsert key) |
 | `module` | the module worker name, a compile-time constant, already public in its `/module.json` |
-| `outcome` | `submitted` / `completed` / `backend-error` / `failed` / `gone` |
+| `outcome` | `submitted` / `completed` / `backend-error` / `failed` / `gone` / `cancelled` |
 | `detail` | the backend error text on a fault, bounded to 160 chars |
 | `submitted_at` | unix seconds; NULL only for a legacy poll token that carried no submit time |
 | `terminal_at` | unix seconds; NULL while the outcome is `submitted` |
+| `error_type` | the fault CLASS as a machine label, e.g. `HarnessError`; bounded to 80 chars; NULL when the endpoint reported none |
 
 Content-free: every column is an id, a compile-time constant, a closed-set label or a timestamp. The
 one field carrying third-party text is `detail`, held to exactly the standard `renders.error` is
@@ -160,6 +162,7 @@ SELECT module,
        COUNT(*)                                                   AS jobs,
        SUM(outcome = completed)                                 AS completed,
        SUM(outcome IN (failed, backend-error, gone))        AS faults,
+       SUM(outcome = cancelled)                                 AS cancelled,
        SUM(outcome = submitted)                                 AS never_resolved
 FROM runpod_job_log
 WHERE submitted_at >= ?
@@ -168,3 +171,79 @@ GROUP BY module;
 
 `never_resolved` is signal, not noise: a row still open long after its window is a job whose end we
 never observed, which the lifetime counters cannot show either.
+
+## `cancelled`, and what it is NOT (cf#298)
+
+`cancelled` names one thing: a RunPod `/status` that returned `CANCELLED`. Before it existed, the
+module poll paths tested `COMPLETED` and `FAILED` and treated everything else as still running, so a
+cancelled job never had a terminal write ATTEMPTED and its row stayed `submitted` permanently.
+Observed live: a keyframe job that ran to completion, wrote its PNG to R2 and was booked `CANCELLED`
+by RunPod. It also has a denominator consequence, which is why the value matters more than the
+label: the endpoint health counters exclude `CANCELLED`, and the modules produce it deliberately
+(the F17 spend-leak cancel and the core cancel path), so a cancelled job used to be neither a
+success nor a failure nor an open job. It was simply missing from the arithmetic.
+
+**It is not the home for a deliberate refusal.** cf#286 and cf#288 both refused a `cancelled` value
+when it was proposed for that purpose, and they were right: a refusal raises inside the handler, the
+SDK books the job `FAILED`, and a `cancelled` value would never have fired for the case it was added
+for. Refusals are discriminated by `error_type`, below. That reasoning is untouched.
+
+`TIMED_OUT` is the other terminal status the poll paths used to walk past. It is recorded as
+`failed` (it is genuine infra, which is where infra failures already live) rather than given its own
+value: unlike `CANCELLED` it has not been observed on our endpoints, and a vocabulary member added on
+speculation is harder to remove later than one added on evidence.
+
+**The render path is deliberately unchanged.** A terminal status is RECORDED and then the existing
+poll-path behaviour runs exactly as before. Telemetry must never gate the render path, and there is a
+live counter-example to changing it: the CANCELLED job above had already produced the artifact the
+film went on to use, so failing a shot on `CANCELLED` would break a path that works today. What the
+chain should DO about a terminal-cancelled job is a render-path question with its own evidence
+requirement, filed separately.
+
+## `error_type`, and the three endpoints it cannot help (cf#286 / cf#288)
+
+`outcome = failed` absorbs three different things a reader cannot separate: a deliberate refusal, a
+genuine handler fault, and genuine infra (OOM, eviction, crash). All three arrive from RunPod as
+`FAILED`. The only thing that tells them apart is the exception class.
+
+Before `error_type`, that class survived only inside `detail`, and only because `error_type` happens
+to be the FIRST key RunPod emits. Measured on a real refusal: the raw error string is 1071 chars, the
+class name ends at char 73, `detail` is bounded to 160. Eighty-seven characters of headroom against a
+vendor reordering its own JSON, with a silent failure mode: the numbers would not break, they would
+quietly stop meaning what they say.
+
+`error_type` is extracted at WRITE time from the structured key and normalised
+(`<class 'vivijure_backend.harness.handler.HarnessError'>` becomes `HarnessError`). It NEVER reads the
+message. Classifying by matching English error sentences is a parser only as fresh as the sample it
+was built from, and those strings are ordinary prose that someone will reword without knowing a
+classification depends on them.
+
+**NULL means the endpoint did not tell us, which is different from "this was not a refusal."**
+`vivijure-backend` emits `error_type`. The three satellite containers (musetalk, video-upscale,
+audio-upscale) emit none: a validation refusal and a genuine crash both come back as a bare string in
+`error`. So one endpoint of four is classifiable and the other three carry NULL until those
+containers emit a structured marker. That gap is stated rather than papered over, because a column
+that LOOKED like it had solved the classification problem while covering a quarter of the surface
+would be worse than the honest absence.
+
+**Historical rows are not backfilled and not reinterpreted.** Every row written before
+`migrations/0015` reads NULL. Mining a class out of a truncated `detail` blob to populate a column
+that is supposed to be structured would manufacture exactly the confidence that data does not
+support. Anything summarising by `error_type` must treat NULL as unknown, never as a fourth category.
+
+## The lost terminal write is REDUCED, not closed (cf#298)
+
+The terminal write happens on the module POLL path. Once the core advances past that phase nothing
+polls the job again, so a terminal write lost to a transient D1 error is lost permanently and the row
+reads as an in-flight job forever. Measured at 2 of 20 module jobs in a run with zero actual faults:
+a perfect run presenting as ten percent unexplained.
+
+What is in place now is ONE bounded retry inside the existing timeout budget, so the caller's
+worst-case delay is unchanged. That narrows the window. It does not close it: a D1 outage longer than
+the budget still loses the row, and nothing revisits a row after the fact.
+
+The real fix is a reconciler that re-asks RunPod for rows with `terminal_at IS NULL`, and it has a
+hard constraint that must not be designed around: RunPod keeps async results for roughly 30 minutes
+and has no job-history API, so a reconciler running later than that cannot learn the outcome at all
+and must record it as unknown rather than guess. Two jobs from the original report returned COMPLETED
+inside the window and 404 afterwards. That is filed separately and is NOT done here.
