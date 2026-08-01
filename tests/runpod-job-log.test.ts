@@ -14,6 +14,9 @@ import {
   RUNPOD_JOB_LOG_UPSERT,
   RUNPOD_JOB_LOG_TIMEOUT_MS,
   DETAIL_MAX,
+  ERROR_TYPE_MAX,
+  parseRunpodErrorType,
+  runpodWalkedPastOutcome,
 } from "../modules/_shared/runpod-job-log";
 
 /** Records every prepare/bind/run call. `run` is injectable so a test can make the real failure. */
@@ -53,7 +56,7 @@ describe("recordRunpodJob: what it writes", () => {
     // CONTROL: the proxy records at all. Without this, every assertion below passes on a dead proxy.
     expect(calls.sql).toHaveLength(1);
     expect(calls.sql[0]).toBe(RUNPOD_JOB_LOG_UPSERT);
-    expect(calls.bound[0]).toEqual(["job-1", "finish-upscale", "backend-error", "boom", 1_700_000_000, 1_700_000_060]);
+    expect(calls.bound[0]).toEqual(["job-1", "finish-upscale", "backend-error", "boom", 1_700_000_000, 1_700_000_060, null]);
   });
 
   it("leaves terminal_at NULL on the submit row and fills it on a terminal row", async () => {
@@ -150,5 +153,149 @@ describe("recordRunpodJob: absence must not read as a clean run", () => {
     await recordRunpodJob(db, { jobId: "", module: "m", outcome: "failed", submittedAtMs: 0 });
     expect(calls.sql).toHaveLength(0);
     expect(warns.join("|")).toContain("empty job id");
+  });
+});
+
+// ------------------------------------------------------------------------------------------------
+// cf#288: the fault CLASS is read from a STRUCTURED key or it is not read at all.
+//
+// The measured payload below is the real one from a deliberate refusal against the prod backend
+// endpoint during cf#278 phase 1 (job 07f9e72b-cd0d-4012-8216-007b440dbd51-e1, finish_clip with no
+// clip_key). It is kept verbatim rather than paraphrased because the whole point of this column is
+// that the classification must not depend on where in that blob the class happens to sit.
+// ------------------------------------------------------------------------------------------------
+const MEASURED_REFUSAL_ERROR = JSON.stringify({
+  error_type: "<class 'vivijure_backend.harness.handler.HarnessError'>",
+  error_message: "finish_clip: clip_key is required",
+  error_traceback: "Traceback (most recent call last):\n" + "  File \"/app/handler.py\", line 1, in <module>\n".repeat(12),
+  hostname: "runpod-worker-9zjije5t9aqrhl",
+  worker_id: "9zjije5t9aqrhl",
+  runpod_version: "1.11.0",
+});
+
+describe("parseRunpodErrorType", () => {
+  it("extracts the class from the measured refusal payload and unwraps python's class repr", () => {
+    expect(parseRunpodErrorType(MEASURED_REFUSAL_ERROR)).toBe("HarnessError");
+  });
+
+  it("does not depend on error_type being the FIRST key, which is the entire reason for the column", () => {
+    // Today the class survives inside the 160-char `detail` only because RunPod emits error_type
+    // first, with 87 characters of headroom. Nothing in our code or their contract establishes that.
+    const reordered = JSON.stringify({
+      hostname: "x".repeat(200),
+      error_message: "finish_clip: clip_key is required",
+      runpod_version: "1.11.0",
+      error_type: "<class 'vivijure_backend.harness.handler.HarnessError'>",
+    });
+    expect(reordered.length).toBeGreaterThan(DETAIL_MAX); // CONTROL: `detail` would have lost it
+    expect(reordered.indexOf("HarnessError")).toBeGreaterThan(DETAIL_MAX);
+    expect(parseRunpodErrorType(reordered)).toBe("HarnessError");
+  });
+
+  it("REFUSES to invent a class from a bare error string (the three satellite endpoints)", () => {
+    // musetalk / video-upscale / audio-upscale return a bare string for BOTH a validation refusal
+    // and a genuine crash. There is no class to read, and reading one out of the prose would be a
+    // parser only as fresh as the sentence it was built from. undefined is the honest answer.
+    expect(parseRunpodErrorType("lipsync needs both clip_key and audio_key")).toBeUndefined();
+    expect(parseRunpodErrorType("audio_key: R2 key must be a plain relative key under renders/")).toBeUndefined();
+  });
+
+  it("DISCRIMINATES: a structured payload with no error_type key still yields undefined", () => {
+    // Without this, a parser that returned some other field (or a truthy default) would pass every
+    // assertion above. NULL must mean "not told", never "told, and it was not a refusal".
+    expect(parseRunpodErrorType(JSON.stringify({ error_message: "boom", worker_id: "w" }))).toBeUndefined();
+    expect(parseRunpodErrorType({ error_message: "boom" })).toBeUndefined();
+    expect(parseRunpodErrorType({ error_type: "   " })).toBeUndefined();
+    expect(parseRunpodErrorType(undefined)).toBeUndefined();
+    expect(parseRunpodErrorType(null)).toBeUndefined();
+    expect(parseRunpodErrorType(42)).toBeUndefined();
+  });
+
+  it("accepts the object form and passes a plain class name through unharmed", () => {
+    expect(parseRunpodErrorType({ error_type: "<class 'builtins.MemoryError'>" })).toBe("MemoryError");
+    expect(parseRunpodErrorType({ error_type: "HarnessError" })).toBe("HarnessError");
+  });
+
+  it("bounds the class so a vendor putting a sentence in this key cannot widen the row", () => {
+    const long = parseRunpodErrorType({ error_type: "C" + "x".repeat(500) });
+    expect(long).toHaveLength(ERROR_TYPE_MAX);
+  });
+});
+
+describe("recordRunpodJob: error_type column", () => {
+  it("binds NULL when the caller has no class, and the class when it does (CONTROL pair)", async () => {
+    const absent = recordingDb();
+    await recordRunpodJob(absent.db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0 });
+    expect(absent.calls.bound[0][6]).toBeNull();
+    const present = recordingDb();
+    await recordRunpodJob(present.db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0, errorType: "HarnessError" });
+    expect(present.calls.bound[0][6]).toBe("HarnessError");
+  });
+
+  it("treats an empty-string class as absent rather than writing a blank label", async () => {
+    const { db, calls } = recordingDb();
+    await recordRunpodJob(db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0, errorType: "" });
+    expect(calls.bound[0][6]).toBeNull();
+  });
+
+  it("bounds the class at the statement, not only at the parser", async () => {
+    const { db, calls } = recordingDb();
+    await recordRunpodJob(db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0, errorType: "y".repeat(500) });
+    expect(String(calls.bound[0][6])).toHaveLength(ERROR_TYPE_MAX);
+  });
+
+  it("COALESCEs error_type in the upsert so a later classless write cannot erase a known class", () => {
+    expect(RUNPOD_JOB_LOG_UPSERT).toContain("error_type = COALESCE(excluded.error_type, runpod_job_log.error_type)");
+    // CONTROL: the same statement does NOT COALESCE outcome, which must be overwritten by the
+    // first terminal write. A matcher that passed on any COALESCE would prove nothing.
+    expect(RUNPOD_JOB_LOG_UPSERT).toContain("outcome = excluded.outcome");
+    expect(RUNPOD_JOB_LOG_UPSERT).not.toContain("outcome = COALESCE");
+  });
+});
+
+describe("runpodWalkedPastOutcome (cf#298)", () => {
+  it("names the two terminal statuses the poll paths used to treat as still-running", () => {
+    expect(runpodWalkedPastOutcome("CANCELLED")).toBe("cancelled");
+    expect(runpodWalkedPastOutcome("TIMED_OUT")).toBe("failed");
+  });
+
+  it("DISCRIMINATES: it must not fire on a genuinely open job, or every poll writes a terminal row", () => {
+    // This is the control that matters. A guard that returned a truthy value for IN_PROGRESS would
+    // close the row on the first poll tick and make every job look terminal seconds after submit --
+    // a failure far worse than the stuck rows it exists to fix, and one the assertions above cannot
+    // see. COMPLETED and FAILED are excluded too: both are already handled by every caller.
+    for (const s of ["IN_QUEUE", "IN_PROGRESS", "COMPLETED", "FAILED", "", "cancelled", undefined]) {
+      expect(runpodWalkedPastOutcome(s), "must not fire on " + String(s)).toBeUndefined();
+    }
+  });
+});
+
+describe("recordRunpodJob: the cf#298 retry", () => {
+  it("retries ONCE when the write fails, and the second attempt lands", async () => {
+    let attempts = 0;
+    const { db, calls } = recordingDb(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("D1_ERROR: transient");
+      return { success: true };
+    });
+    await expect(degradePath(db)).resolves.toBe("degrade-completed");
+    expect(attempts).toBe(2);
+    expect(calls.sql).toHaveLength(2);
+    expect(warns.join("|")).not.toContain("row NOT recorded");
+  });
+
+  it("gives up after the second failure and says so, rather than reporting nothing", async () => {
+    const { db } = recordingDb(async () => { throw new Error("D1_ERROR: still down"); });
+    await expect(degradePath(db)).resolves.toBe("degrade-completed");
+    expect(warns.join("|")).toContain("write failed twice");
+    expect(warns.join("|")).toContain("row NOT recorded");
+  });
+
+  it("DISCRIMINATES: a write that succeeds first time is attempted exactly once", async () => {
+    // Without this, an unconditional double-write would pass both assertions above while doubling
+    // the D1 traffic of every job in the studio.
+    const { db, calls } = recordingDb();
+    await expect(degradePath(db)).resolves.toBe("degrade-completed");
+    expect(calls.sql).toHaveLength(1);
   });
 });
