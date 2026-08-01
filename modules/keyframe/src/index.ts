@@ -12,6 +12,7 @@
 import {
   MODULE_API,
   type ModuleManifest,
+  type TenantR2Config,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -25,6 +26,8 @@ import { buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decode
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { withTenantR2Body } from "../../_shared/tenant-r2-body";
+import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -131,13 +134,25 @@ export const MANIFEST: ModuleManifest = {
   // #454: compact display token for the keyframe-stage backend, so the planner projects it inline
   // instead of hardcoding "SDXL". OPTIONAL/additive, mirrors src/modules/types.ts.
   keyframe_label: "SDXL",
+  // cp#270: this module submits to the vivijure-backend endpoint, which may be POOLED across
+  // tenants, so it needs the tenant's per-job R2 credential on the invoke envelope. Declared on
+  // the MANIFEST rather than decided in core: which modules ride a pooled endpoint is a property
+  // of the module, and core must not branch on module identity.
+  needs_tenant_r2: true,
 };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<InvokeResponse<KeyframeOutput>> {
+async function submit(
+  env: Env,
+  req: InvokeRequest<KeyframeInput>,
+  /** cp#270: the tenant's per-job R2 credential, already STRIPPED off the request at the handler
+   *  boundary. Passed as a value rather than read off `req` here precisely so `req` no longer
+   *  carries it by the time anything in this function can serialise it. */
+  tenantR2: TenantR2Config | null,
+): Promise<InvokeResponse<KeyframeOutput>> {
   const input = req.input;
   if (!input || !input.project || !input.bundle_key) {
     return { ok: false, error: "keyframe: input needs project and bundle_key" };
@@ -163,7 +178,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     const r = await fetch(endpoint(endpointId) + "/run", {
       method: "POST",
       headers: { ...auth(apiKey), "content-type": "application/json" },
-      body: JSON.stringify(buildPreviewBody(input, req.config)),
+      body: JSON.stringify(withTenantR2Body(buildPreviewBody(input, req.config), tenantR2)),
     });
     if (!r.ok) return { ok: false, error: "keyframe /run -> " + r.status };
     const jobId = ((await r.json()) as { id?: string }).id;
@@ -319,10 +334,16 @@ export default {
       } catch {
         return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
       }
+      // cp#270: STRIP AT THE BOUNDARY. Reads the tenant credential and REMOVES it from `req` in
+      // one call, so nothing below this line holds an object that still contains it -- the
+      // mirror of the backend's `strip_from_payload`. Done here, at the parse boundary, rather
+      // than inside submit(): the guarantee is about the REQUEST object, and every line after
+      // this one should be unable to leak it even by accident.
+      const tenantR2 = takeTenantR2(req);
       if (req.hook !== "keyframe") {
         return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
       }
-      return json(await submit(env, req));
+      return json(await submit(env, req, tenantR2));
     }
     if (request.method === "POST" && url.pathname === "/poll") {
       let body: PollRequest;

@@ -16,6 +16,20 @@ export type ConfigSchema = Record<string, ConfigField>;
 export interface Provides { id: string; label: string; }
 export interface ModuleUi { section?: string; icon?: string; order?: number; locality?: "local" | "byo" | "cloud"; cost?: string; blurb?: string; limits?: string[]; }
 
+/**
+ * cp#270: the TENANT's per-job R2 credential, as the invoke envelope carries it. Vendored to match
+ * `@skyphusion-labs/vivijure-core` `modules/types.ts`, like every other shape in this file.
+ *
+ * All four fields are REQUIRED by the backend contract; a partial block FAILS the job rather than
+ * degrading, which is why the producer omits the whole block when it cannot fill all four.
+ */
+export interface TenantR2Config {
+  endpoint: string;
+  access_key_id: string;
+  secret_access_key: string;
+  bucket: string;
+}
+
 export interface ModuleManifest {
   name: string;
   version: string;
@@ -24,6 +38,10 @@ export interface ModuleManifest {
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
+  /** cp#270: this module submits to an endpoint that may be POOLED across tenants, so the core
+   *  attaches the tenant's per-job R2 credential to its invoke envelope. OPTIONAL/additive,
+   *  mirrors the core module contract. */
+  needs_tenant_r2?: boolean;
 }
 
 export interface InvokeContext {
@@ -36,6 +54,19 @@ export interface InvokeRequest<I = unknown> {
   input: I;
   config: Record<string, unknown>;
   context: InvokeContext;
+  /**
+   * cp#270: the TENANT's per-job R2 credential, present only when this module's manifest declares
+   * `needs_tenant_r2` and the host carries a full credential set.
+   *
+   * THE ONLY SECRET THIS ENVELOPE CARRIES. `context` remains secrets-free by construction -- this
+   * is a SIBLING of it, not a member. A receiver must call `takeTenantR2(req)` at the parse
+   * boundary, which reads and REMOVES it in one step so nothing downstream holds an object
+   * containing it.
+   *
+   * Absent means ABSENT: the key is omitted, never null. The backend REFUSES an explicit null
+   * rather than reading it as "use the environment".
+   */
+  r2?: TenantR2Config;
 }
 
 // A module may answer synchronously (output) or, for a long-running job, asynchronously: return
