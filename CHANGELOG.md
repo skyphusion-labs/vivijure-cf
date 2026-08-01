@@ -44,6 +44,29 @@ mode of a parity gate is a change quietly deciding it is exempt. Flagged for the
 **Deploy ordering.** The container route ships in the `video-finish` image, so the image must be
 rebuilt and the always-on service rolled for this to do anything. Until then the studio route answers
 `route-not-served`, honestly and by name.
+## v1.17.0 -- 2026-08-02
+
+MINOR: the agent-can-SEE capability becomes REAL, and the GPUless cost door starts recording.
+
+This is the release where cf#317 actually lands for a user. v1.16.0 shipped the plumbing
+(`GET /api/artifact-url/*key`); `vivijure-mcp` v1.1.0 published the tools that consume it; this bumps
+the dependency, which is the step that moves the deployed surface from 19 tools / 18 curated to
+**21 / 20**. Code on `main` in another repo moved nothing here. A published version this repo
+resolves does.
+
+Alongside it, the eight GPUless cost-door submitters write `runpod_job_log` rows for the first time.
+cf#278 phase 1 has to report per-endpoint outcomes, and against the previous instruments that door
+produced no rows at all while an operator querying the table grouped by module saw six healthy lanes
+and could not see the eight that never wrote.
+
+**Recording is not classifying, and this release does not claim otherwise.** All eight cost-door
+submitters post to THIRD-PARTY public RunPod endpoints, and nobody has measured what any of them puts
+in `error` on a fault. The RULE is that `error_type` is populated if and only if the endpoint emits a
+structured `error_type` key, and is NULL otherwise; **how often that happens across these eight is
+UNKNOWN, and this release does not estimate it.** NULL means "the endpoint did not tell us the class",
+never "this was not a refusal", and both directions are pinned by test so a populated column cannot be
+misread as a solved classification. What phase 1 gains is that the cost door is COUNTED.
+
 ### chore(deps): bump vivijure-mcp to ^1.1.0, and fix what the bump exposed (cf#317)
 
 `view_artifact` and `artifact_url` are now REACHABLE from this repo, which is the last step of the
