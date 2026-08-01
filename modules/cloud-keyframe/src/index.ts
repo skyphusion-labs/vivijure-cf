@@ -371,6 +371,21 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
+    // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
+    // GATEWAY_ID is CONDITIONALLY required: only the "google/*" proxied model family hard-fails
+    // without it (see submit()); the default FLUX-2 path needs nothing. /ready has no config to know
+    // which model an operator will pick, so it reports visibility without claiming to have verified
+    // the google-model path specifically -- `ok` reflects the always-available default, never an
+    // invented verdict for the config-dependent case it cannot check.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const gatewayId = await secretValue(env.GATEWAY_ID);
+      return json({
+        ok: true,
+        module: MANIFEST.name,
+        credentials: { gateway_id: Boolean(gatewayId) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<KeyframeInput>;
       try {

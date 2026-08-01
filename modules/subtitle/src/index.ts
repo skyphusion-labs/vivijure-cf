@@ -181,6 +181,21 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
+
+    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
+    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
+    // Booleans only, in a `bindings` field kept separate from `credentials`: VIDEO_FINISH_VPC is a
+    // Workers binding, never a value that could leak. Its absence does not fail the render (invoke()
+    // passthroughs to "no-vpc-binding", degraded) -- exactly the speech-upscale precedent (opt-in,
+    // off by default, still gated on `ok` so an operator can tell whether the feature CAN ever fire).
+    if (request.method === "GET" && url.pathname === "/ready") {
+      return json({
+        ok: Boolean(env.VIDEO_FINISH_VPC),
+        module: MANIFEST.name,
+        bindings: { video_finish_vpc: Boolean(env.VIDEO_FINISH_VPC) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FilmFinishInput>;
       try {

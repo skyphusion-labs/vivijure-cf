@@ -115,6 +115,19 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
+    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
+    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
+    // Booleans only, in a `bindings` field kept separate from `credentials`. Its absence does not fail
+    // the render (invoke() passthroughs to "no-vpc-binding", degraded) -- gated on `ok` anyway so an
+    // operator can tell whether mastering can ever actually run on this deployment.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      return json({
+        ok: Boolean(env.AUDIO_MASTER_VPC),
+        module: MANIFEST.name,
+        bindings: { audio_master_vpc: Boolean(env.AUDIO_MASTER_VPC) },
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<MasterInput>;
       try { req = await request.json() as InvokeRequest<MasterInput>; }
