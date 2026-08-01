@@ -1,11 +1,11 @@
-// cf#114: the module-contract GET /ready credential-visibility probe, on all five TENANT modules.
+// cf#114: the module-contract GET /ready credential-visibility probe, on all six RunPod TENANT modules.
 //
 // What this endpoint has to be true about, and what each test below therefore pins:
 //   1. it reports VISIBILITY, never VALUES (a probe that leaks the thing it is checking is worse
 //      than no probe);
 //   2. it observes THIS worker version, so it can distinguish a credential that is configured but
 //      not yet served from one that is genuinely absent;
-//   3. its shape is identical across all five, because the control-plane prober is module-agnostic
+//   3. its shape is identical across all six, because the control-plane prober is module-agnostic
 //      by design (the alternative is the two-hand-maintained-lists drift class that produced #116).
 //
 // The env stubs here are plain strings on purpose: secretValue() in each module resolves a
@@ -20,6 +20,7 @@ import ownGpuWorker from "../modules/own-gpu/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
+import finishRifeWorker from "../modules/finish-rife/src/index";
 
 const KEY = "rpa_A_REAL_LOOKING_KEY_VALUE";
 const ENDPOINT = "nbfj3iatp62ek9";
@@ -32,6 +33,9 @@ const MODULES: { name: string; worker: Worker }[] = [
   { name: "finish-upscale", worker: finishUpscaleWorker as unknown as Worker },
   { name: "finish-lipsync", worker: finishLipsyncWorker as unknown as Worker },
   { name: "speech-upscale", worker: speechUpscaleWorker as unknown as Worker },
+  // cf#291: finish-rife was missed when this shipped. It is in the tenant release set and writes
+  // job-log rows like the rest, so it belongs in the module-agnostic contract, not beside it.
+  { name: "finish-rife", worker: finishRifeWorker as unknown as Worker },
 ];
 
 const env = (apiKey?: string, endpointId?: string, telemetryDb?: unknown) =>

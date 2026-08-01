@@ -25,7 +25,7 @@ import {
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
 } from "./finish";
 
-import { recordRunpodJob } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog } from "../../_shared/runpod-job-log";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -249,6 +249,34 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
+
+    // GET /ready (cf#114 credential visibility, cf#279 telemetry, added here by cf#291).
+    //
+    // This module was MISSED when /ready shipped to the other tenant modules on 2026-07-18: that
+    // commit says all five tenant modules, but the tenant release set is SEVEN
+    // (scripts/finish-satellite-modules.txt plus keyframe, own-gpu, plan-enhance), and finish-rife
+    // already existed. It carries the identical bindings the probe reports on (TELEMETRY_DB,
+    // RUNPOD_API_KEY, RUNPOD_ENDPOINT_ID), so nothing about it made readiness meaningless. It was an
+    // omission, not a decision, and it hid where an omission hides best: a module with no /ready is
+    // invisible to any audit built by sweeping /ready.
+    //
+    // Unauthenticated for the same reason as the others: these scripts are reachable only through
+    // the dispatch namespace, the response contains nothing secret, and the control plane has to be
+    // able to ask at the exact moment the tenant has no working credential to authenticate with.
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const { apiKey, endpointId } = await runpodCreds(env);
+      return json({
+        ok: Boolean(apiKey && endpointId),
+        // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
+        // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
+        module: MANIFEST.name,
+        credentials: { runpod_api_key: Boolean(apiKey), runpod_endpoint_id: Boolean(endpointId) },
+        // cf#279 / cf#284: can this worker RECORD at all, three-state so that could-not-measure is
+        // never reported as healthy. Deliberately NOT part of ok: a module without a job log still
+        // renders.
+        telemetry: { job_log: await probeRunpodJobLog(env.TELEMETRY_DB) },
+      });
+    }
 
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
