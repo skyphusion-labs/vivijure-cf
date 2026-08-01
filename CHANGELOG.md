@@ -24,12 +24,13 @@ cf#278 phase 1 has to report per-endpoint outcomes, and against the previous ins
 produced no rows at all while an operator querying the table grouped by module saw six healthy lanes
 and could not see the eight that never wrote.
 
-**Recording is not classifying, and this release does not claim otherwise.** The cost door's seven
-cloud i2v backends are THIRD-PARTY public RunPod endpoints, and nobody has measured what they put in
-`error` on a fault, so their `error_type` will often be NULL. NULL means "the endpoint did not tell us
-the class", never "this was not a refusal", and both directions are pinned by test so a populated
-column cannot be misread as a solved classification. What phase 1 gains is that the cost door is
-COUNTED.
+**Recording is not classifying, and this release does not claim otherwise.** All eight cost-door
+submitters post to THIRD-PARTY public RunPod endpoints, and nobody has measured what any of them puts
+in `error` on a fault. The RULE is that `error_type` is populated if and only if the endpoint emits a
+structured `error_type` key, and is NULL otherwise; **how often that happens across these eight is
+UNKNOWN, and this release does not estimate it.** NULL means "the endpoint did not tell us the class",
+never "this was not a refusal", and both directions are pinned by test so a populated column cannot be
+misread as a solved classification. What phase 1 gains is that the cost door is COUNTED.
 
 ### chore(deps): bump vivijure-mcp to ^1.1.0, and fix what the bump exposed (cf#317)
 
