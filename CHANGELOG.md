@@ -7,6 +7,51 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.13.0 -- 2026-08-01
+
+MINOR: every RunPod-polling module now writes a durable job log (cf#279), plus a module-render
+isolation fix (cf#281).
+
+### feat(modules): record every RunPod job a polling module submits (cf#279)
+
+- New **`runpod_job_log`** D1 table (**migration `0014_runpod_job_log.sql`**), upserted per
+  `job_id`, written by the six RunPod-polling modules (`keyframe`, `own-gpu`, `finish-rife`,
+  `finish-upscale`, `finish-lipsync`, `speech-upscale`) at SUBMIT and again at every terminal
+  outcome (`completed` / `backend-error` / `failed` / `gone`). It exists because RunPod cannot
+  enumerate jobs (the whole surface is `/run`, `/status`, `/stream`, `/cancel`, `/retry`,
+  `/purge-queue`, `/health`, and `/status` is by id only), so a job id not captured at submit time
+  is unreachable permanently, and the window to write it closes as the job finishes.
+- **Written at submit as well as terminal, on purpose:** a failure RATE needs a denominator, and
+  the endpoint health counters cannot supply one, since `completed + failed` excludes `CANCELLED`,
+  which these modules produce deliberately (the F17 spend-leak cancel).
+- **Content-free:** ids, a compile-time module name, a closed-set outcome, timestamps, and a
+  backend-error string bounded to 160 chars. The RunPod endpoint id is deliberately NOT a column;
+  it stays Secrets-Store-only, and the module name is a sufficient substitute since the
+  module-to-endpoint mapping is fixed and public in this repo.
+- **Best-effort by contract:** the write never throws, never rejects its caller, and never delays a
+  response past its own timeout; an absent `TELEMETRY_DB` binding warns rather than fails. Every
+  polling module now reports `telemetry.job_log` (boolean) on `GET /ready`, so an operator can ask
+  a deployed module whether it can record at all, with no render and no GPU spend.
+- **Operators: this ships a schema change.** `migrations/0014_runpod_job_log.sql` must apply before
+  a module can write to it; an unfilled `database_id` placeholder fails the module deploy loudly
+  rather than shipping a worker that silently records nothing.
+- Full detail: `docs/runpod-job-log.md`.
+- vivijure-local parity tracked separately: vivijure-local#294.
+
+### fix(deploy): give module renders the isolation pass they never had (cf#281)
+
+- **`DEPLOY_PREFIX` installs only.** An isolated install bound the core to `<prefix>-vivijure`, but
+  module workers stayed bound to the unprefixed `vivijure` R2 bucket and `[[workflows]]` name, so a
+  staging install read and wrote the production bucket while every other resource in the install
+  correctly carried the prefix.
+- `render_module_toml` now rewrites every bucket in `R2_BUCKETS` and the in-block `[[workflows]]`
+  name (never the top-level worker name, which is already prefixed via `--name`). Every module toml
+  now goes through the render; it previously ran only for a toml carrying a `[[vpc_services]]`
+  block, which none of the thirteen module tomls naming the shared bucket do.
+- **A non-prefixed install (empty `DEPLOY_PREFIX`) is unchanged byte for byte, and the tag-gated CI
+  deploy (`scripts/deploy-module-workers.sh`) does not use this installer at all.** Production is
+  untouched.
+
 ## v1.12.0
 
 ### ci(release): publish plan-enhance as a tenant module bundle (cf#56)
