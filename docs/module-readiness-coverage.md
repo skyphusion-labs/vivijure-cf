@@ -1,0 +1,98 @@
+# Module readiness: what a green sweep does and does not cover
+
+**Read this before quoting a readiness result.** Four different populations of "the modules" exist,
+they are different sizes, and confusing any two of them is how cf#295 happened. This page publishes
+the denominator so a green sweep cannot be read as covering more than it does.
+
+Generated facts on this page are asserted against source by
+`tests/module-readiness-denominators-295.test.ts`. If you edit the table by hand and it drifts from
+the modules, that test fails.
+
+## The four populations
+
+| # | Population | Size | Where it is defined |
+|---|---|---|---|
+| 1 | Modules in this repo | **26** | `modules/*/src/index.ts` (excluding `_shared`) |
+| 2 | Modules that WRITE `runpod_job_log` rows | **6** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
+| 3 | Modules PUBLISHED as tenant bundles by a studio release | **7** | `.github/workflows/studio-release.yml`, "Resolve the tenant release module list" |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **6** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts` |
+
+Population 4 is the one an operator actually sees, and it is **6 of 26**.
+
+## The table
+
+`/ready` column: an anchored `url.pathname === "/ready"` handler, not a mention in a comment.
+
+| Module | `/ready` | Reports `telemetry.job_log` | Writes job-log rows | Published to tenants (3) | Provisioned to tenants (4) |
+|---|---|---|---|---|---|
+| alibaba-wan | yes | no | no | no | no |
+| alibaba-wan-lora | yes | no | no | no | no |
+| audio-master | yes | no | no | no | no |
+| beat-sync | yes | no | no | no | no |
+| cast-image | yes | no | no | no | no |
+| cloud-keyframe | yes | no | no | no | no |
+| dialogue-gen | yes | no | no | no | no |
+| film-titles | yes | no | no | no | no |
+| finish-lipsync | yes | yes | yes | yes | yes |
+| finish-rife | yes | yes | yes | **yes** | **NO** |
+| finish-upscale | yes | yes | yes | yes | yes |
+| google-veo | yes | no | no | no | no |
+| image-generate | yes | no | no | no | no |
+| keyframe | yes | yes | yes | yes | yes |
+| kling | yes | no | no | no | no |
+| local-gpu | yes | no | no | no | no |
+| minimax-hailuo | yes | no | no | no | no |
+| music-gen | yes | no | no | no | no |
+| narration-gen | yes | no | no | no | no |
+| notify-email | yes | no | no | no | no |
+| own-gpu | yes | yes | yes | yes | yes |
+| plan-enhance | yes | **no** | **no** | yes | **yes** |
+| seedance | yes | no | no | no | no |
+| speech-upscale | yes | yes | yes | yes | yes |
+| subtitle | yes | no | no | no | no |
+| vidu-q3 | yes | no | no | no | no |
+
+## The two asymmetries, and why each is fine
+
+**`finish-rife` writes job-log rows and is published, but is NOT provisioned.** So on the hosted door
+its jobs are not unrecorded, they **do not exist**. Do not read its absence from a `module-readiness`
+result as a missing binding; the control plane carries the same warning at
+`tenant-modules.ts:100-104` precisely because the natural reading is the wrong one. Whether hosted
+should carry it is a product question and is not settled here.
+
+**`plan-enhance` is provisioned and askable but writes no job-log row.** It is not endpoint-backed:
+it reaches Anthropic through our AI Gateway, so there is no RunPod job to record. Its `/ready`
+reports `credentials: { gateway_id, cf_aig_token }` and NO `telemetry` block, so
+`probeTenantModuleReadiness` maps it to `credentials: null, job_log: null`. **That is the correct
+result, not a fault.** It is excluded from `records_unproven` because its catalog entry sets no
+`recordsRunpodJobs`.
+
+## What cf#295 found, and what changed
+
+cf#295 measured 6 of 26 modules implementing `/ready`, so a sweep could not tell "not ready" from
+"no endpoint exists". **That is fixed: all 26 now implement it**, and `tests/module-ready-coverage-291.test.ts`
+holds the invariant in CI.
+
+**The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
+sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
+`module-readiness` looks complete while speaking for population 4, six of twenty-six. A route that
+reports a subset without saying so is the same defect one layer up, which is why the denominator is
+published here rather than left to be re-derived.
+
+## What a green `module-readiness` does NOT tell you
+
+- **Anything about the other 20 modules.** They are not provisioned to tenants and a tenant provision
+  cannot reach them. This includes the entire GPUless cost door.
+- **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
+  module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
+  fail every invocation.
+- **That the finish tier works end to end.** Lipsync, video upscale and audio upscale each need a
+  real submission.
+- **Anything under load.** One probe is not a load test.
+
+## Reporting rule
+
+**A readiness sweep must print its denominator and name what it could not probe.** A result that
+says "all green" without saying "6 of 26 provisioned modules" will be read as a clean fleet by
+whoever was not in the conversation. That is the whole lesson of cf#295 and it applies to this page
+too: if you quote the table, quote the population you are quoting.
