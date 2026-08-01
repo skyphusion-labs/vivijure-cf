@@ -9,6 +9,28 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### feat(telemetry): make the GPUless cost door write a runpod_job_log row (cf#305)
+
+`runpod_job_log` held ZERO rows for the entire cost door. Eight modules submit jobs to RunPod
+(seedance, kling, vidu-q3, google-veo, minimax-hailuo, alibaba-wan, alibaba-wan-lora,
+narration-gen) and none held a `TELEMETRY_DB` binding or called `recordRunpodJob`. Not the missing
+`jobId` of cf#296: that made the id reachable, not the job recorded. All eight now bind the studio
+D1, write the five outcomes plus the cf#298 walked-past terminal statuses, and report
+`telemetry.job_log` on the `/ready` they already expose.
+
+Render-path behaviour is UNCHANGED on every branch, including the walked-past write, which is
+record-only for the reason cf#298 gives: a live CANCELLED job had already written the artifact the
+film consumed.
+
+**Recording is not classifying, and this does not claim to be.** These are third-party public RunPod
+endpoints, not `vivijure-backend`, so their fault payload shape is unmeasured. `error_type` is
+populated from a structured key where one exists and NULL where it does not (migrations/0015): NULL
+means "the endpoint did not tell us the class", never "not a refusal". Both directions are pinned by
+test so a populated column cannot read as a solved classification.
+
+Population 2 of `docs/module-readiness-coverage.md` moves 6 -> 14. Population 4 ("6 of 26"
+provisioned) is a different number and is unchanged.
+
 ## v1.16.0 -- 2026-08-02
 
 MINOR: an artifact key stops being a dead end. `GET /api/artifact-url/*key` turns any artifact key

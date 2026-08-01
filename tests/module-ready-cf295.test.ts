@@ -45,6 +45,11 @@ const get = async (worker: Worker, env: Record<string, unknown>, path = "/ready"
 // ---- Group A: a single RunPod API key, hard-required, no fallback -----------------------------
 // The eight cloud i2v modules call a fixed PUBLIC RunPod endpoint URL baked into the code (not a
 // per-tenant secret), so RUNPOD_API_KEY is the only credential worth reporting.
+//
+// cf#305 added `telemetry.job_log` here as well: these eight are the GPUless cost door, they now
+// bind the studio D1 and write runpod_job_log rows, and a module that records must be able to say
+// whether it can. The env below passes NO TELEMETRY_DB, so the honest answer is `unavailable` --
+// asserted rather than omitted, because an absent field and a false one read the same to a sweep.
 const RUNPOD_ONLY: { name: string; worker: Worker }[] = [
   { name: "alibaba-wan", worker: alibabaWanWorker as unknown as Worker },
   { name: "alibaba-wan-lora", worker: alibabaWanLoraWorker as unknown as Worker },
@@ -60,11 +65,11 @@ describe.each(RUNPOD_ONLY)("$name: GET /ready (RunPod key, hard-required)", ({ n
   it("ok:true, credentials visible, when the key is set", async () => {
     const { status, body } = await get(worker, { RUNPOD_API_KEY: KEY });
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true, module: name, credentials: { runpod_api_key: true } });
+    expect(body).toEqual({ ok: true, module: name, credentials: { runpod_api_key: true }, telemetry: { job_log: "unavailable" } });
   });
   it("ok:false when the key is absent", async () => {
     const { body } = await get(worker, {});
-    expect(body).toEqual({ ok: false, module: name, credentials: { runpod_api_key: false } });
+    expect(body).toEqual({ ok: false, module: name, credentials: { runpod_api_key: false }, telemetry: { job_log: "unavailable" } });
   });
   it("never leaks the key value", async () => {
     const res = await worker.fetch(new Request("https://m.internal/ready"), { RUNPOD_API_KEY: KEY } as never);

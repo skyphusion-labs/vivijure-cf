@@ -13,7 +13,7 @@ the modules, that test fails.
 | # | Population | Size | Where it is defined |
 |---|---|---|---|
 | 1 | Modules in this repo | **26** | `modules/*/src/index.ts` (excluding `_shared`) |
-| 2 | Modules that WRITE `runpod_job_log` rows | **6** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
+| 2 | Modules that WRITE `runpod_job_log` rows | **14** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **7** | `.github/workflows/studio-release.yml`, "Resolve the tenant release module list" |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **6** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts` |
 
@@ -25,8 +25,8 @@ Population 4 is the one an operator actually sees, and it is **6 of 26**.
 
 | Module | `/ready` | Reports `telemetry.job_log` | Writes job-log rows | Published to tenants (3) | Provisioned to tenants (4) |
 |---|---|---|---|---|---|
-| alibaba-wan | yes | no | no | no | no |
-| alibaba-wan-lora | yes | no | no | no | no |
+| alibaba-wan | yes | yes | yes | no | no |
+| alibaba-wan-lora | yes | yes | yes | no | no |
 | audio-master | yes | no | no | no | no |
 | beat-sync | yes | no | no | no | no |
 | cast-image | yes | no | no | no | no |
@@ -36,21 +36,21 @@ Population 4 is the one an operator actually sees, and it is **6 of 26**.
 | finish-lipsync | yes | yes | yes | yes | yes |
 | finish-rife | yes | yes | yes | **yes** | **NO** |
 | finish-upscale | yes | yes | yes | yes | yes |
-| google-veo | yes | no | no | no | no |
+| google-veo | yes | yes | yes | no | no |
 | image-generate | yes | no | no | no | no |
 | keyframe | yes | yes | yes | yes | yes |
-| kling | yes | no | no | no | no |
+| kling | yes | yes | yes | no | no |
 | local-gpu | yes | no | no | no | no |
-| minimax-hailuo | yes | no | no | no | no |
+| minimax-hailuo | yes | yes | yes | no | no |
 | music-gen | yes | no | no | no | no |
-| narration-gen | yes | no | no | no | no |
+| narration-gen | yes | yes | yes | no | no |
 | notify-email | yes | no | no | no | no |
 | own-gpu | yes | yes | yes | yes | yes |
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
-| seedance | yes | no | no | no | no |
+| seedance | yes | yes | yes | no | no |
 | speech-upscale | yes | yes | yes | yes | yes |
 | subtitle | yes | no | no | no | no |
-| vidu-q3 | yes | no | no | no | no |
+| vidu-q3 | yes | yes | yes | no | no |
 
 ## The two asymmetries, and why each is fine
 
