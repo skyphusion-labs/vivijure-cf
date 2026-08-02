@@ -9,6 +9,78 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.19.0 -- 2026-08-02
+
+MINOR: the studio can now say how long the film it delivered actually is, and which provider job
+produced any given piece of it. Both are additive; no existing studio API changes shape.
+
+**This is the metering substrate, not the meter.** Nothing bills, refuses or deducts in this release.
+`CREDITS_ENFORCING` unset already means count-everything-refuse-nothing, so capture lands safely
+ahead of any enforcement and the rate card gets MEASURED instead of guessed. Ordering per
+skyphusion-labs/vivijure#805.
+
+### DEPLOY NOTE: migration `0016` applies on this deploy
+
+`migrations/0016_render_output_ms.sql` adds `renders.output_ms` and rides the normal auto-apply in
+`deploy.sh` step 6. It is additive (`ADD COLUMN`, no default, no table rewrite), so it is safe on a
+live database and needs no manual window.
+
+Called out explicitly because **a migration is first applied in PRODUCTION at deploy time** -- there
+is no CI gate over `migrations/` (cf#358), so the deploy is the first time this file is executed
+anywhere except a scratch sqlite run. This is the first release carrying a migration since that was
+documented, and the order matters: the migration must land before the Worker that writes the column,
+which is what `deploy.sh` already does.
+
+### Added: `renders.output_ms` -- the DELIVERED film length (cf#268, vivijure#805)
+
+Conrad's ruled metering basis is a deduction on the final length of a successfully completed video:
+**"we bill on the last writer"** (2026-08-02). That number was stored nowhere. `duration_seconds` in
+plan JSON is the REQUESTED duration, a different quantity -- every non-final tier delivers clips
+shorter than their planned target, so billing the plan bills for footage nobody received.
+
+Integer milliseconds, not seconds, and a NEW column rather than a reuse. `execution_time_ms` means
+GPU JOB TIME and the history panel already renders it to users; overloading it would corrupt a live
+number in the least visible way available. Milliseconds because this is a billing input and the
+ledger already avoids floats for exactly that reason.
+
+**NULL means NOT MEASURED and must never be read as zero.** A `COALESCE(output_ms, 0)` in a billing
+query bills nothing for a real render.
+
+### Added: every RunPod submitter hands the caller its job id (cf#356, closing cf#289 and cf#296)
+
+RunPod cannot enumerate jobs -- the surface is `/run`, `/status`, `/stream`, `/cancel`, `/retry`,
+`/purge-queue`, `/health`, and `/status` is by id only -- and async results expire after 30 minutes.
+An id the caller is not handed at submit is unreachable PERMANENTLY.
+
+Thirteen of fourteen submitters already carried it; `narration-gen` was the last, and it is the one
+where the obvious fix is wrong: `jobId` in its submit scope is the FILM job id, so the one-word
+shorthand its thirteen siblings use returns the wrong value AND typechecks clean.
+
+**cf#289's own table was measured wrong and is corrected here:** the population is FOURTEEN RunPod
+submitters, not five. It never listed `finish-lipsync` or `finish-rife`, and counted one of the nine
+motion backends. The suite derives the population rather than listing it.
+
+### Added: `film-titles` and `subtitle` report the length they wrote (cf#359)
+
+The `video-finish` container has always returned `durationSeconds` on `/film-titles` and `/subtitle`;
+it was never carried onto the module contract, so a CARDED film -- precisely the case the
+last-writer rule exists for -- had no length to report.
+
+**Gated, because the container returns the field unconditionally.** A subtitle run that only writes a
+sidecar leaves it at a `0.0` initialiser, and forwarding that would attach a zero to an artifact the
+step never wrote, fail conformance, and soft-degrade a run that succeeded. `subtitle` gates on
+`burned` as well as `> 0`; `film-titles` gates on `> 0`.
+
+### Changed: `@skyphusion-labs/vivijure-core` 1.6.0 -> 1.7.0
+
+Brings the writer (`film_output_seconds` keyed by film artifact key, delivered length resolved as a
+lookup of the FINAL film key, persisted so a step ADOPTED from R2 still yields a length) and a
+**behaviour change for module authors: `film.finish` conformance now REJECTS `duration_seconds` when
+present and `<= 0`.** A module that cannot measure its output must OMIT the field.
+
+The declared range moved to `^1.7.0` as well. `^1.6.0` would still have installed, and would have
+been a lie: this code depends on behaviour 1.6.0 does not have.
+
 ## v1.18.0 -- 2026-08-02
 
 MINOR: an agent can look at motion output. This completes the arc v1.16.0 started.
