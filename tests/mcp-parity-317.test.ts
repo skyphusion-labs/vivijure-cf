@@ -132,25 +132,232 @@ function curatedCoverage(): Map<string, string> {
   return cov;
 }
 
-// The panel builds most URLs by concatenation ("/api/cast/" + id + "/train-lora") and some as template
-// literals, so a route's literal segments are matched in order across a bounded gap. The gap refuses to
-// span another "/api/" so a match can never be stitched together from two different call sites.
-const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-function panelReaches(pattern: string): boolean {
-  const parts = pattern.split(/\/(?::[A-Za-z]+|\*[A-Za-z]+)(?=\/|$)/);
-  return new RegExp(parts.map(esc).join("(?:(?!/api/)[^\\n]){0,60}")).test(PANEL);
+// PANEL CALL-SITE EXTRACTION (cf#333). The original matcher compared PATH only: a route inherited
+// reachability from any panel call to its path regardless of METHOD, so it could only ever OVERSTATE
+// the human surface -- a bigger denominator that nobody downstream could ever flag as wrong, because
+// it reads as MORE coverage. This derives METHOD-aware call records instead: the panel builds URLs by
+// string concatenation ("/api/cast/" + id + "/train-lora"), by assigning to a DOM `.href`/`.src` (a
+// browser-issued GET, not a fetch() call at all -- a download link, an <img> preview), and in one
+// case through a local variable built a statement earlier and passed to fetch() by name. Each is a
+// real network call. fetch()'s own default method is GET, matching the platform.
+//
+// A "call record" reduces one call site to {method, template}: literal string pieces kept verbatim,
+// every non-literal piece (a variable, a function call) collapsed to the SAME placeholder a route
+// pattern's `:param`/`*param` collapses to, so a call and a route pattern compare for exact structural
+// equality rather than loose substring containment -- which is what let the old matcher inherit
+// reachability across unrelated routes sharing a literal prefix. Query strings are stripped; routes
+// match on path only.
+
+/** The single placeholder both a route param and a call's interpolated piece collapse to. */
+const PLACEHOLDER = " ";
+
+/** Scan forward from `start` respecting string-literal and paren/brace/bracket nesting, and return
+ * the index of the first character in `stopChars` seen at depth 0 (or, when `stopChars` is empty,
+ * the index of the matching close-paren for a `(` already consumed just before `start`). */
+function scanBalanced(text: string, start: number, stopChars: string): number {
+  let depth = 0;
+  let inStr: string | null = null;
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (inStr) {
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      if (c === inStr) inStr = null;
+    } else if (c === '"' || c === "'" || c === "`") {
+      inStr = c;
+    } else if (c === "(" || c === "{" || c === "[") {
+      depth++;
+    } else if (c === ")" || c === "}" || c === "]") {
+      if (depth === 0) return i;
+      depth--;
+    } else if (depth === 0 && stopChars.includes(c)) {
+      return i;
+    }
+    i++;
+  }
+  return i;
+}
+
+/** Split a call's argument list at its top-level comma (the one separating fetch's url argument from
+ * its options object), respecting nesting so a comma inside `{...}` is never mistaken for it. */
+function splitTopLevelComma(argText: string): [string, string | null] {
+  let depth = 0;
+  let inStr: string | null = null;
+  for (let i = 0; i < argText.length; i++) {
+    const c = argText[i];
+    if (inStr) {
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      inStr = c;
+      continue;
+    }
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth--;
+    else if (c === "," && depth === 0) return [argText.slice(0, i), argText.slice(i + 1)];
+  }
+  return [argText, null];
+}
+
+/** Reduce a URL-building expression to a template: literal string pieces kept verbatim, every
+ * non-literal `+`-joined piece (e.g. `encodeURIComponent(id)`) collapsed to PLACEHOLDER, query string
+ * dropped. Consecutive placeholders collapse to one (defensive; no call site needs it today). */
+function urlTemplate(urlExpr: string): string {
+  const pieces: string[] = [];
+  let depth = 0;
+  let inStr: string | null = null;
+  let start = 0;
+  const push = (raw: string) => {
+    const t = raw.trim();
+    const lit = t.match(/^(["'])((?:[^\\]|\\.)*)\1$/);
+    pieces.push(lit ? lit[2].replace(/\\(.)/g, "$1") : PLACEHOLDER);
+  };
+  for (let i = 0; i < urlExpr.length; i++) {
+    const c = urlExpr[i];
+    if (inStr) {
+      if (c === "\\") {
+        i++;
+        continue;
+      }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      inStr = c;
+      continue;
+    }
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth--;
+    else if (c === "+" && depth === 0) {
+      push(urlExpr.slice(start, i));
+      start = i + 1;
+    }
+  }
+  push(urlExpr.slice(start));
+  const collapsed: string[] = [];
+  for (const p of pieces) {
+    if (p === PLACEHOLDER && collapsed[collapsed.length - 1] === PLACEHOLDER) continue;
+    collapsed.push(p);
+  }
+  return collapsed.join("").split("?")[0];
+}
+
+/** If a fetch()/api() call passes its URL as a bare variable, it was almost always built a statement
+ * earlier (`const url = "..." + id; ... fetch(url, ...)`) -- the shape `deleteHistoryRow` uses for its
+ * DELETE. Resolve ONE hop backward to the nearest preceding `const NAME =`/`let NAME =` in the same
+ * file, bounded to a 2000-char lookback so a same-named declaration in an unrelated, distant function
+ * can never be mistaken for this call's own. This is bounded alias resolution, not data-flow analysis:
+ * an unresolvable or out-of-window reference falls back to `expr` unchanged, which cannot match
+ * "/api/", so the miss is a silent UNDER-count, the same safe direction as every other gap in this
+ * matcher (see the direction note in docs/mcp-parity.md). */
+function resolveAlias(text: string, beforeIndex: number, expr: string): string {
+  const bare = expr.trim().match(/^[A-Za-z_$][A-Za-z0-9_$]*$/);
+  if (!bare) return expr;
+  const declRe = new RegExp(`\\b(?:const|let)\\s+${bare[0]}\\s*=\\s*`, "g");
+  let last: RegExpExecArray | null = null;
+  let dm: RegExpExecArray | null;
+  while ((dm = declRe.exec(text)) !== null) {
+    if (dm.index < beforeIndex) last = dm;
+    else break;
+  }
+  if (!last) return expr;
+  if (beforeIndex - (last.index + last[0].length) > 2000) return expr;
+  return text.slice(last.index + last[0].length, scanBalanced(text, last.index + last[0].length, ";"));
+}
+
+interface PanelCall {
+  method: string;
+  template: string;
+}
+
+/** Every panel call whose URL resolves to an `/api/...` path: `fetch(...)`/`api(...)` calls (cast.js's
+ * local `api()` wrapper forwards straight to fetch, so its calls carry the same shape) plus
+ * `.href =`/`.src =` DOM assignments, which the browser always fetches with GET even though no
+ * fetch() call is written for them. */
+function panelCallRecords(): PanelCall[] {
+  const records: PanelCall[] = [];
+  for (const f of PANEL_FILES) {
+    const text = readFileSync(`${process.cwd()}/public/${f}`, "utf8");
+
+    const callRe = /\b(?:fetch|api)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = callRe.exec(text)) !== null) {
+      const argStart = callRe.lastIndex;
+      const closeParen = scanBalanced(text, argStart, "");
+      const [urlExprRaw, optsExpr] = splitTopLevelComma(text.slice(argStart, closeParen));
+      const template = urlTemplate(resolveAlias(text, m.index, urlExprRaw));
+      if (template.startsWith("/api/")) {
+        const methodMatch = optsExpr?.match(/\bmethod\s*:\s*"([A-Z]+)"/);
+        records.push({ method: methodMatch ? methodMatch[1] : "GET", template });
+      }
+      callRe.lastIndex = closeParen + 1;
+    }
+
+    const attrRe = /\.(?:href|src)\s*=\s*/g;
+    while ((m = attrRe.exec(text)) !== null) {
+      const rhsEnd = scanBalanced(text, attrRe.lastIndex, ";,\n");
+      const template = urlTemplate(text.slice(attrRe.lastIndex, rhsEnd));
+      if (template.startsWith("/api/")) records.push({ method: "GET", template });
+    }
+  }
+  return records;
+}
+
+const PANEL_CALLS = panelCallRecords();
+
+/** A route's own pattern reduced to the SAME template shape a call collapses to, for exact-equality
+ * comparison rather than the substring containment that let cf#333 happen. */
+const routeTemplate = (pattern: string) =>
+  pattern.replace(/:[A-Za-z_][A-Za-z0-9_]*|\*[A-Za-z_][A-Za-z0-9_]*/g, PLACEHOLDER);
+
+function panelReaches(route: Route): boolean {
+  const t = routeTemplate(route.pattern);
+  return PANEL_CALLS.some((c) => c.method === route.method && c.template === t);
 }
 
 describe("cf#317 parity measurement -- the matchers themselves", () => {
   // A matcher that agrees with expectation is the one nobody checks. Both directions, explicitly.
   it("panel matcher: positive control matches routes the panel demonstrably calls", () => {
-    expect(panelReaches("/api/storyboard/plan")).toBe(true);
-    expect(panelReaches("/api/cast/:id/train-lora")).toBe(true); // built by concatenation
+    expect(panelReaches({ method: "POST", pattern: "/api/storyboard/plan" })).toBe(true);
+    expect(panelReaches({ method: "POST", pattern: "/api/cast/:id/train-lora" })).toBe(true); // built by concatenation
   });
 
   it("panel matcher: negative control does NOT match routes the panel never calls", () => {
-    expect(panelReaches("/api/definitely-not-a-real-route")).toBe(false);
-    expect(panelReaches("/api/storage/reconcile")).toBe(false);
+    expect(panelReaches({ method: "GET", pattern: "/api/definitely-not-a-real-route" })).toBe(false);
+    expect(panelReaches({ method: "POST", pattern: "/api/storage/reconcile" })).toBe(false);
+  });
+
+  it("panel matcher: method-aware -- the five path-only false positives cf#333 found are named and excluded", () => {
+    // The exact defect #333 filed: the OLD path-only matcher counted these five as panel-reachable
+    // because SOME call to the same path exists with a DIFFERENT method (or, for the artifact HEAD
+    // route, no call at all). Named so a regression fails with the route in the message, not as a
+    // silently different aggregate count.
+    const falsePositives: Route[] = [
+      { method: "GET", pattern: "/api/storyboard/projects/:id" }, // panel only PATCHes/DELETEs it
+      { method: "POST", pattern: "/api/cast/export/:id" }, // panel uses it as a GET download link
+      { method: "DELETE", pattern: "/api/cast/:id/ref" }, // that path is POSTed; deletes go via /refs/*refKey
+      { method: "DELETE", pattern: "/api/cast/:id/source" }, // same shape, via /source/*sourceKey
+      { method: "HEAD", pattern: "/api/artifact/*key" }, // no HEAD request exists anywhere in public/
+    ];
+    for (const route of falsePositives) {
+      expect(panelReaches(route), `${route.method} ${route.pattern} should NOT be method-aware reachable`).toBe(
+        false,
+      );
+    }
+    // The counterparts that DO exist must still be true, or this matcher would be trivially
+    // "always false" rather than genuinely method-discriminating.
+    expect(panelReaches({ method: "PATCH", pattern: "/api/storyboard/projects/:id" })).toBe(true);
+    expect(panelReaches({ method: "DELETE", pattern: "/api/storyboard/projects/:id" })).toBe(true);
+    expect(panelReaches({ method: "POST", pattern: "/api/cast/:id/ref" })).toBe(true);
+    expect(panelReaches({ method: "POST", pattern: "/api/cast/:id/source" })).toBe(true);
   });
 
   it("route matcher: a WILDCARD route and a tool's placeholder path compare EQUAL", () => {
@@ -225,7 +432,7 @@ const PUBLISHED = {
   routes: 86, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
   tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
   curatedCovered: 41, // route entries reached by a CURATED tool
-  panelReachable: 70, // route entries the studio panel calls (the human surface); PATH-ONLY, see below
+  panelReachable: 65, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70)
 };
 
 describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
@@ -244,7 +451,7 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
   });
 
   it("panel-reachable count matches the published number", () => {
-    expect(studioRoutes().filter((r) => panelReaches(r.pattern)).length).toBe(PUBLISHED.panelReachable);
+    expect(studioRoutes().filter((r) => panelReaches(r)).length).toBe(PUBLISHED.panelReachable);
   });
 
   // FOUND WHILE UPDATING THESE NUMBERS FOR THE v1.1.0 BUMP, and fixed here rather than left.
@@ -280,7 +487,7 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
     // asserted here rather than left to survive editing on goodwill.
     const flat = readFileSync(`${process.cwd()}/docs/mcp-parity.md`, "utf8").replace(/\s+/g, " ");
     expect(flat, "the panel-reachable direction caveat is gone").toContain(
-      `Panel-reachable (${PUBLISHED.panelReachable}) can only be too HIGH`,
+      `Panel-reachable (${PUBLISHED.panelReachable}) can be too LOW`,
     );
     expect(flat, "the curated-coverage direction caveat is gone").toContain(
       `Reached by a curated tool (${PUBLISHED.curatedCovered}) can only be too HIGH`,
@@ -289,7 +496,7 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
       `Route entries (${PUBLISHED.routes}) can only be too LOW`,
     );
     // Negative control: the matcher must not match a caveat that is not there.
-    expect(flat).not.toContain("Panel-reachable (999) can only be too HIGH");
+    expect(flat).not.toContain("Panel-reachable (999) can be too LOW");
   });
 
   it("the doc's PROSE ratio matches the table, not just the table itself", () => {

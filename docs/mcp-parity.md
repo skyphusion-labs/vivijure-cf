@@ -14,7 +14,7 @@ without saying so is the defect, not the subset.
 | Population | Count | What it is |
 |---|---|---|
 | Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves. 85 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
-| Panel-reachable | **70** | Route entries the studio panel calls, i.e. the human surface. Matched from every `.js`/`.html` file under `public/`, derived at test time (cf#332), with controls in both directions. **Path-only:** it ignores METHOD, so it can only ever OVERSTATE the human surface. |
+| Panel-reachable | **65** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
 | Reachable via `studio_request` | **83** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
@@ -155,12 +155,15 @@ Every measurement in this document can err in ONE direction, and a reader a year
 work that out from the number. Both instrument defects found while producing this revision ran in
 the flattering direction, which is exactly why they survived.
 
-- **Panel-reachable (70) can only be too HIGH.** The matcher compares path segments and ignores the
-  METHOD, so a route entry inherits reachability from any panel call to its path. Measured
-  method-aware, the human surface is **65**; five entries the panel never calls with that method are
-  counted here (`GET /api/storyboard/projects/:id`, `POST /api/cast/export/:id`,
-  `DELETE /api/cast/:id/ref`, `DELETE /api/cast/:id/source`, `HEAD /api/artifact/*key`). A bigger
-  denominator reads as MORE coverage, so nothing downstream would ever have flagged it.
+- **Panel-reachable (65) can be too LOW.** Until cf#333 this was a path-only matcher published as
+  **70**, and that number could only ever be too HIGH: it compared path segments and ignored METHOD,
+  so a route entry inherited reachability from any panel call to its path. It is now derived from the
+  panel's own call sites (`fetch`/`api` calls, `.href`/`.src` DOM assignments, one hop of variable
+  indirection) and matches on METHOD as well as path, which flips the risk from over- to
+  under-counting: a call built through more indirection, or through a shape neither of those two
+  covers, is invisible to it. The five entries the old path-only matcher over-counted are named and
+  pinned as a regression test (`GET /api/storyboard/projects/:id`, `POST /api/cast/export/:id`,
+  `DELETE /api/cast/:id/ref`, `DELETE /api/cast/:id/source`, `HEAD /api/artifact/*key`).
 - **Reached by a curated tool (41) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
@@ -176,10 +179,17 @@ the flattering direction, which is exactly why they survived.
 
 - Route entries are parsed from the `API_ROUTES` literal. A route registered anywhere else would be
   missed; exactly one such route exists today (`GET /api/modules`) and it is added explicitly.
-- Panel reachability matches each route's literal segments across a bounded gap, because the panel
-  builds URLs both by concatenation and as template literals. It is guarded by a positive control (a
-  concatenated route that must match) and a negative control (a route that must not). It can still
-  in principle over-match; it is a floor on the human surface, not a proof of each row.
+- Panel reachability (cf#333) is method-aware: each call site in `public/*.js` is reduced to
+  `{method, template}` (literal URL pieces kept verbatim, each interpolated piece collapsed to the
+  same placeholder a route's `:param`/`*param` collapses to) and compared to a route's own template
+  for EXACT equality, not substring containment. It covers `fetch(...)`/`api(...)` calls, `.href =`/
+  `.src =` DOM assignments (a real browser-issued GET even though no `fetch()` call is written), and
+  one bounded hop of `const NAME = ...; fetch(NAME, ...)` variable indirection. It is guarded by a
+  positive control (a concatenated route that must match), a negative control (a route that must
+  not), and the five named cases cf#333 found the old path-only matcher over-counting, pinned so a
+  regression fails with the route in the message. It can still under-match a call built through more
+  indirection or a shape outside those two; it is a floor on the human surface, not a proof of each
+  row.
 - **Not covered:** the control-plane API (`wrangler.control-plane.toml`) is a separate surface and is
   not measured here. Nor is `vivijure-local`, which serves the same contract from a different host.
 - **Not covered:** whether each curated tool's arguments cover every field its route accepts. This
