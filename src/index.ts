@@ -63,6 +63,10 @@ import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import {
+  checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
+  type RenderDoorProfile,
+} from "./render-door";
+import {
   buildFramesSheet, clampFrameCount, parseFrameAt, FRAMES_CONTENT_TYPE,
 } from "./render-frames";
 import {
@@ -734,63 +738,53 @@ const hSubmitRender: Handler = async (req, env) => {
     castLoras?: Record<string, unknown>;
     film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
   }>(req);
-  if (!b.bundleKey) throw badRequest("bundleKey required");
-  // The key is caller-supplied and becomes a storage read downstream: require the canonical
-  // bundle shape (safe relative key under bundles/), the same way the artifact serve route
-  // scopes its key. Enforced once here, before the value is used anywhere.
-  if (!isSafeBundleKey(b.bundleKey)) throw badRequest("bundleKey must be a plain relative key under bundles/");
-  // #696: reject a non-object render_overrides bag (or a per-module config entry that is not an object)
-  // at the door -- parseModuleRenderOverrides keeps only isRecord entries, so garbage would otherwise be
-  // silently dropped and the render would degrade with no error. Same honest-failures gate as hStartFilm.
-  assertConfigMapShape("renderOverrides", b.renderOverrides);
-  assertModuleConfigMap("renderOverrides.config", b.renderOverrides?.config);
+  // cf#334: the guards below are the SHARED pre-flight, not this door's private copy. What stays
+  // here is this door's own contract -- its field spellings, its keyframes-only mode, and its 503 on
+  // an absent keyframe module -- declared in the profile so a reviewer can see what differs instead
+  // of inferring it from which checks happen to be present.
+  const panelProfile: RenderDoorProfile = {
+    door: "panel main render",
+    bundleKeyField: "bundleKey",
+    scenesRequiredMessage: "scenes[] required (storyboard shots with prompt and duration)",
+    hasMotionLeg: !b.keyframesOnly,
+    requireKeyframeModule: true,
+  };
+  const scenes = filterScenesByShotIds(normalizeFilmScenes(b.scenes), b.processShotIds);
+  const panelShape = checkRenderRequestShape({
+    bundleKey: b.bundleKey,
+    scenes,
+    configMaps: [
+      { label: "renderOverrides", value: b.renderOverrides, deep: false },
+      { label: "renderOverrides.config", value: b.renderOverrides?.config, deep: true },
+    ],
+  }, panelProfile);
+  if (!panelShape.ok) throw badRequest(panelShape.refusal.message);
+  const bundleKey = b.bundleKey as string;
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
-  const project = b.project ?? deriveProjectFromBundleKey(b.bundleKey);
+  const project = b.project ?? deriveProjectFromBundleKey(bundleKey);
 
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
-  if (servingForHook(modules, "keyframe").length === 0) {
-    return json({ error: "no keyframe module installed (bind MODULE_KEYFRAME)" }, 503);
-  }
-  const scenes = filterScenesByShotIds(normalizeFilmScenes(b.scenes), b.processShotIds);
-  if (!scenes.length) throw badRequest("scenes[] required (storyboard shots with prompt and duration)");
-  // #500: a full render must name an EXPLICIT, serving motion.backend. The old check only verified
-  // that SOME module was installed, so an omitted motion_backend silently defaulted (via pickOneForHook)
-  // to serving[0] -- which can be a bound-but-non-operational module (e.g. an unseeded local door): the
-  // keyframes burn, then the motion phase yields zero clips and the film dies at assemble ("no clips
-  // rendered to assemble"). Resolve the explicit choice (top-level or render_overrides, NEVER the
-  // serving[0] default) and bounce at the door, BEFORE any keyframe dispatch. keyframesOnly has no
-  // motion leg, so it is unaffected. (The serving[0] default in pickOneForHook is unchanged, but this
-  // preflight makes it unreachable for a full render.)
-  if (!b.keyframesOnly) {
-    const parsedOverrides = parseModuleRenderOverrides(b.renderOverrides);
-    const explicitMotionBackend = b.motion_backend ?? parsedOverrides.motion_backend;
-    const motionErr = motionBackendPreflightError(modules, explicitMotionBackend);
-    if (motionErr) throw badRequest(motionErr);
-    // #577: judge the RAW per-module override config against the chosen backend's schema at the
-    // door, before keyframe spend. mapRenderOverridesToModuleConfigs below CLAMPS, so a bad value
-    // would otherwise degrade silently; the raw values live in the parsed overrides bag.
-    const cfgErr = motionConfigPreflightError(modules, explicitMotionBackend, parsedOverrides.config?.[(explicitMotionBackend ?? "").trim()]);
-    if (cfgErr) throw badRequest(cfgErr);
-  }
-
-  // FAIL HARD on any bound character whose cast LoRA is not ready, instead of letting the GPU
-  // silently inline-retrain it (the ~20-min, no-signal week-long bug). A character with NO bound
-  // cast LoRA is unaffected -- the gate only fires when the planner sent {slot: cast_id} bindings
-  // and one resolves to a not-ready row. Ready bindings are forwarded as pretrained_loras so the GPU
-  // REUSES the banked adapter (the canonical cast-page Train LoRAs flow), and cast_loras lets the
-  // orchestrator bank any freshly-trained adapter back onto the cast member. Mirrors the scatter path.
-  const { pretrained, wanPretrained, castIds, skipped, skippedDetail } = await resolveCastLoras(env, b.castLoras);
-  if (skipped.length) throw badRequest(untrainedCastMessage(skippedDetail));
-
+  const parsedOverrides = parseModuleRenderOverrides(b.renderOverrides);
+  const explicitMotionBackend = b.motion_backend ?? parsedOverrides.motion_backend;
   const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
   const motionBackend = b.keyframesOnly
     ? undefined
     : (b.motion_backend ?? mapped.motion_backend);
-  if (!b.keyframesOnly) {
-    // vivijure-local#153: local-gpu motion must not silently route keyframes through RunPod/cloud.
-    const kfErr = localGpuKeyframePreflightError(modules, motionBackend, mapped.keyframe_backend);
-    if (kfErr) throw badRequest(kfErr);
+  // #500/#504 is judged against the caller's EXPLICIT choice; vivijure-local#153 pairing against the
+  // RESOLVED one. Two different values, passed separately rather than collapsed (see render-door.ts).
+  const panelPre = await preflightRenderModules(productionRenderDoorDeps, env, {
+    modules,
+    motionBackend: explicitMotionBackend,
+    pairingMotionBackend: motionBackend,
+    keyframeBackend: mapped.keyframe_backend,
+    motionConfig: parsedOverrides.config?.[(explicitMotionBackend ?? "").trim()],
+    castLoras: b.castLoras,
+  }, panelProfile);
+  if (!panelPre.ok) {
+    if (panelPre.refusal.status === 503) return json({ error: panelPre.refusal.message }, 503);
+    throw badRequest(panelPre.refusal.message);
   }
+  const { pretrained, wanPretrained, castIds } = panelPre.cast;
   // Wan cast adapters -> alibaba-wan-lora motion config (the shared projection used by all three render
   // paths). motionBackend is undefined on a keyframes-only preview, and non-Wan / no-Wan-cast renders
   // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
@@ -798,7 +792,7 @@ const hSubmitRender: Handler = async (req, env) => {
   await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
   const job = await startFilmJob(env, {
     project,
-    bundle_key: b.bundleKey,
+    bundle_key: bundleKey,
     scenes,
     motion_backend: motionBackend,
     keyframe_backend: mapped.keyframe_backend,
@@ -821,7 +815,7 @@ const hSubmitRender: Handler = async (req, env) => {
   const row: NewRenderRow = {
     jobId: view.jobId,
     project,
-    bundleKey: b.bundleKey,
+    bundleKey,
     qualityTier: tier,
     renderOverrides: b.renderOverrides,
     status: view.status,
@@ -1318,19 +1312,31 @@ async function withFilmDownloadUrlBestEffort(
 }
 const hStartFilm: Handler = async (req, env) => {
   const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
-  if (!a.bundle_key) throw badRequest("bundle_key required");
-  // Same boundary check as hSubmitRender: canonical bundle shape before any use.
-  if (!isSafeBundleKey(a.bundle_key)) throw badRequest("bundle_key must be a plain relative key under bundles/");
-  if (!Array.isArray(a.scenes) || a.scenes.length === 0) throw badRequest("scenes[] required");
-  // #696: reject any config map that is present but not a plain JSON object, BEFORE discoverModules or
-  // any keyframe dispatch. A mis-encoded map (e.g. film_finish_config as a JSON string) would otherwise
-  // clamp to defaults downstream and silently degrade the film (subtitle both -> burn, film-941a4d3b).
-  assertConfigMapShape("keyframe_config", a.keyframe_config);
-  assertConfigMapShape("motion_config", a.motion_config);
-  assertModuleConfigMap("finish_config", a.finish_config);
-  assertModuleConfigMap("speech_config", a.speech_config);
-  assertModuleConfigMap("film_finish_config", a.film_finish_config);
-  assertModuleConfigMap("master_config", a.master_config);
+  // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
+  // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
+  // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
+  const filmProfile: RenderDoorProfile = {
+    door: "agent / MCP / Slate",
+    bundleKeyField: "bundle_key",
+    scenesRequiredMessage: "scenes[] required",
+    hasMotionLeg: true,
+    requireKeyframeModule: false,
+  };
+  const filmShape = checkRenderRequestShape({
+    bundleKey: a.bundle_key,
+    scenes: a.scenes,
+    configMaps: [
+      { label: "keyframe_config", value: a.keyframe_config, deep: false },
+      { label: "motion_config", value: a.motion_config, deep: false },
+      { label: "finish_config", value: a.finish_config, deep: true },
+      { label: "speech_config", value: a.speech_config, deep: true },
+      { label: "film_finish_config", value: a.film_finish_config, deep: true },
+      { label: "master_config", value: a.master_config, deep: true },
+    ],
+  }, filmProfile);
+  if (!filmShape.ok) throw badRequest(filmShape.refusal.message);
+  const filmBundleKey = a.bundle_key as string;
+  const filmScenes = a.scenes as FilmScene[];
 
   // #504: a full film must name an EXPLICIT, serving motion.backend -- the same door-check hSubmitRender
   // (#500) enforces. hStartFilm passed motion_backend straight to startFilmJob with NO install check, so
@@ -1341,16 +1347,6 @@ const hStartFilm: Handler = async (req, env) => {
   // unconditional. The explicit choice is the top-level motion_backend (this endpoint carries no
   // render_overrides bag); NEVER the serving[0] default. Bounces BEFORE any keyframe dispatch.
   const filmModules = await discoverModules(env as unknown as Record<string, unknown>);
-  const filmMotionErr = motionBackendPreflightError(filmModules, a.motion_backend);
-  if (filmMotionErr) throw badRequest(filmMotionErr);
-  // #577: judge the RAW motion_config against the chosen backend's schema at the door, BEFORE the
-  // keyframe phase spends GPU time. The invoke-path clamp is forgiving by design, so without this a
-  // bad value silently degrades to the default -- or, when the schema itself over-promises, fails at
-  // the provider ~17min of keyframes later (film-c9c44dcc).
-  const filmCfgErr = motionConfigPreflightError(filmModules, a.motion_backend, a.motion_config);
-  if (filmCfgErr) throw badRequest(filmCfgErr);
-  const filmKfErr = localGpuKeyframePreflightError(filmModules, a.motion_backend, a.keyframe_backend);
-  if (filmKfErr) throw badRequest(filmKfErr);
 
   // Bundle-only voicing (#313): when the caller passed NO explicit dialogue_lines, derive them from the
   // bundle storyboard's per-shot dialogue (round-tripped by #307), resolving each speaking slot's voice
@@ -1361,23 +1357,27 @@ const hStartFilm: Handler = async (req, env) => {
   // ids ONCE, at this boundary. The int castIds map is what the film job persists (the keyframe LoRA
   // bank-back keys off it); the per-slot voices ride the same resolve for bundle-derived dialogue. A
   // browser never hands the internal int across the wire, and never gets it back.
-  const resolvedLoras = (a.cast_loras && Object.keys(a.cast_loras).length)
-    ? await resolveCastLoras(env, a.cast_loras)
-    : null;
-  // #738: symmetry with hSubmitRender (the untrained-cast guard above). A bound-but-not-ready cast LoRA
-  // must FAIL HARD, never silently drop to a generic render -- the honest-failure doctrine (#245/#249:
-  // a degrade is never silent). Before #738, hStartFilm (the direct API + Slate bot path) skipped an
-  // untrained binding and shipped generic characters with no 400 and no degraded marker.
-  if (resolvedLoras && resolvedLoras.skipped.length) {
-    throw badRequest(untrainedCastMessage(resolvedLoras.skippedDetail));
+  // This door has no keyframes-only mode, so its motion leg is unconditional; one value serves both
+  // the #500/#504 preflight and the local-gpu pairing rule, unlike the panel door.
+  const filmPre = await preflightRenderModules(productionRenderDoorDeps, env, {
+    modules: filmModules,
+    motionBackend: a.motion_backend,
+    keyframeBackend: a.keyframe_backend,
+    motionConfig: a.motion_config,
+    castLoras: a.cast_loras,
+  }, filmProfile);
+  if (!filmPre.ok) {
+    if (filmPre.refusal.status === 503) return json({ error: filmPre.refusal.message }, 503);
+    throw badRequest(filmPre.refusal.message);
   }
-  const castIds = resolvedLoras && Object.keys(resolvedLoras.castIds).length ? resolvedLoras.castIds : undefined;
+  const resolvedLoras = filmPre.cast;
+  const castIds = Object.keys(resolvedLoras.castIds).length ? resolvedLoras.castIds : undefined;
 
   let dialogue_lines = a.dialogue_lines;
   if (!dialogue_lines || !dialogue_lines.length) {
-    const bundleScenes = await readBundleScenes(env, a.bundle_key);
+    const bundleScenes = await readBundleScenes(env, filmBundleKey);
     if (bundleScenes.some((s) => s.dialogue)) {
-      dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras?.voices ?? {});
+      dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
     }
   } else if (
     // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
@@ -1386,28 +1386,28 @@ const hStartFilm: Handler = async (req, env) => {
     // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
     // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
     // resolve, the downstream default stands.
-    resolvedLoras && Object.keys(resolvedLoras.voices).length &&
+    Object.keys(resolvedLoras.voices).length &&
     dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
   ) {
-    const bundleScenes = await readBundleScenes(env, a.bundle_key);
+    const bundleScenes = await readBundleScenes(env, filmBundleKey);
     dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
   }
   // project is optional; default it from the bundle key (mirrors hSubmitRender) so a caller that
   // only has a bundle (e.g. the Slate bot) lands in the same project namespace the monolith uses.
-  const project = a.project ?? deriveProjectFromBundleKey(a.bundle_key);
+  const project = a.project ?? deriveProjectFromBundleKey(filmBundleKey);
   // Wan cast adapters -> alibaba-wan-lora motion config, in place, before the job starts. hStartFilm
   // carries a.motion_config straight into startFilmJob unclamped, so the projected fields flow through.
   // Guarded so a non-Wan film never materializes an empty motion_config.
-  if (shouldProjectWanLoras(a.motion_backend, resolvedLoras?.wanPretrained ?? {})) {
+  if (shouldProjectWanLoras(a.motion_backend, resolvedLoras.wanPretrained)) {
     const filmMotionConfig: Record<string, unknown> =
       a.motion_config && typeof a.motion_config === "object" && !Array.isArray(a.motion_config)
         ? (a.motion_config as Record<string, unknown>)
         : {};
-    await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras!.wanPretrained, filmMotionConfig);
+    await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
     a.motion_config = filmMotionConfig;
   }
   const job = await startFilmJob(env, {
-    project, bundle_key: a.bundle_key, scenes: a.scenes,
+    project, bundle_key: filmBundleKey, scenes: filmScenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
     // audio_key: a staged bed (score-bed music/narration) to mux after assemble. startFilmJob runs it
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
@@ -1423,7 +1423,7 @@ const hStartFilm: Handler = async (req, env) => {
     // ready cast LoRA from scratch (~20 min, no signal) on the film path -- film-09d40b28 sat 23 min in
     // keyframe retraining Wren + the Salvage Robot, both already lora_status:ready. resolvedLoras.pretrained
     // holds the banked adapter R2 keys; startFilmJob already threads them into the keyframe worker input.
-    pretrained_loras: resolvedLoras && Object.keys(resolvedLoras.pretrained).length ? resolvedLoras.pretrained : undefined,
+    pretrained_loras: Object.keys(resolvedLoras.pretrained).length ? resolvedLoras.pretrained : undefined,
     // #762 Bug 2: carry the caller's requested quality tier so the recorded renders-row LABEL is HONEST
     // (filmRowFromJob read a hardcoded "final", so a draft film mislabeled as final in history). The
     // ACTUAL render tier is driven by the baked keyframe_config.quality_tier (read by the keyframe module)
