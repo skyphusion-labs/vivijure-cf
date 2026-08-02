@@ -177,6 +177,11 @@ async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeR
       ok: true,
       pending: true,
       poll: encodePoll({ jobId: runpodJobId, job_id: jobId, film_key: filmKey, format, applied, submittedAt }),
+      // cf#289/#296: RunPod cannot enumerate jobs, so a caller not handed the id at submit can
+      // never reach it. NAME THE VALUE: `jobId` in this scope is the FILM job id
+      // (req.context.job_id), so the `jobId,` shorthand every sibling module uses would return
+      // the wrong id here and still typecheck. Pinned by test against exactly that swap.
+      jobId: runpodJobId,
     };
   } catch (e) {
     return { ok: false, error: "narration-gen submit failed: " + (e as Error).message };
