@@ -1251,6 +1251,23 @@ async function animateHybridRender(row, btnEl, backends) {
   btnEl.disabled = true;
   btnEl.textContent = "submitting...";
 
+  // The default cloud model is PROJECTED, never invented. This used to fall back to a literal
+  // "seedance" when the registry offered no cloud door, which is the one thing the projection
+  // exists to prevent: a module name compiled into the frontend goes stale the moment the module
+  // is renamed, retired, or simply not installed on this studio.
+  //
+  // Same rule the tier picker already follows (cf#62): an unset value OMITS the field and the core
+  // applies its own default, rather than the panel inventing a core-owned value.
+  //
+  // No behaviour changes. The literal could only ever be SENT when `cloudModelOptions()` was empty,
+  // and on every host where that is true the core discards it -- `resolveCloudModel` returns the
+  // requested name only if it is in the installed cloud set, else `allowed[0]`. There is no host
+  // where the panel's cloud list is empty and the core's contains "seedance", so the name could not
+  // be honoured on any path. This is hygiene, not a defect with a user behind it.
+  const cloudDefault = (cloudModelOptions()[0] && cloudModelOptions()[0][0]) || "";
+  const hybridBody = { backends: backends, defaultBackend: "gpu" };
+  if (cloudDefault) hybridBody.defaultCloudModel = cloudDefault;
+
   let resp = null;
   let data = null;
   try {
@@ -1259,11 +1276,7 @@ async function animateHybridRender(row, btnEl, backends) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          backends: backends,
-          defaultBackend: "gpu",
-          defaultCloudModel: (cloudModelOptions()[0] && cloudModelOptions()[0][0]) || "seedance",
-        }),
+        body: JSON.stringify(hybridBody),
       },
     );
     data = await resp.json();
