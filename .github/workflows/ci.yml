@@ -68,6 +68,49 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+  # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
+  # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
+  # vivijure-studio --remote` step below. A syntax error or a migration that references a
+  # column a LATER migration adds was discoverable only by breaking prod. This replays every
+  # migrations/*.sql file, in filename order, against a throwaway LOCAL D1 (wrangler's built-in
+  # --local Miniflare sqlite) and fails the build if any statement errors.
+  #
+  # Credential-free by design: --local never contacts a Cloudflare account, so this runs on
+  # GitHub-hosted ubuntu-latest (public repo, fork-safe) with no secrets, and a fork PR exercises
+  # the exact same gate a same-repo PR does. The wrangler.toml written below is a THROWAWAY
+  # scratch config, not the real one (that file is gitignored and rendered from
+  # wrangler.toml.example with account-specific secrets only in the deploy job); its
+  # database_id is a placeholder wrangler only uses to name the local sqlite dir.
+  migrations-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Write scratch D1 config
+        run: |
+          cat > wrangler.migrations-gate.toml <<'EOF'
+          name = "vivijure-studio-migrations-gate"
+          compatibility_date = "2026-01-01"
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "vivijure-studio-migrations-gate"
+          database_id = "00000000-0000-0000-0000-000000000000"
+          EOF
+
+      - name: Apply migrations to throwaway local D1
+        run: npx wrangler d1 migrations apply DB --local --config wrangler.migrations-gate.toml
+
   # SECURITY GATE (fc#859): a v* tag can point at ANY commit, including one that never merged.
   # The org tag ruleset enforces deletion + non_fast_forward only, so `git tag v9.9.9 <unmerged>
   # && git push origin v9.9.9` would deploy unreviewed code to prod, routing around branch
