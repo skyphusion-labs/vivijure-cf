@@ -9,16 +9,59 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.18.0 -- 2026-08-02
+
+MINOR: an agent can look at motion output. This completes the arc v1.16.0 started.
+
+**This release was held back deliberately for two days' worth of ordering, and the reason is the
+feature itself.** `POST /api/render/frames` calls `POST /frames` on the `video-finish` CPU container.
+That container route does not exist until its image is rebuilt AND the running service is rolled, and
+tagging first would have deployed a Worker route that answers `route-not-served` by name. A route
+that exists and refuses is worse than one that does not exist, because the first looks like a bug in
+the caller. So the order was: merge, build the image, roll the container, THEN tag.
+
+**The roll is done and verified at the artifact, not at the pipeline.** All three finishing-tier nodes
+run `vivijure-cf-video-finish:0434011@sha256:9493c7e9...`, digests read off the RUNNING containers
+rather than the service spec, and each answers `POST /frames` with its own `400 videoUrl required`
+validation against the `404 Not Found` the same nodes returned beforehand. A real transition against a
+real negative control.
+
+Two things the roll turned up, both filed rather than papered over. The stack **could not roll any
+image at all** (`order: start-first` with `max_replicas_per_node: 1` and `replicas` equal to the
+number of eligible nodes is unschedulable by arithmetic) and while broken it reported `3/3 REPLICAS`
+at the new tag over containers running the old build. Fixed to `stop-first`. Then a Pending task left
+over from the failed attempt survived the fix and stranded a node, while the service reported
+`update=completed` at 2/3: **a completed update is not a converged service.** Full capacity restored
+and confirmed per node.
+
+The capacity cost of `stop-first` was measured rather than assumed: **2222 polls across two
+independent rolls, zero dropped requests** (roll 1 `1134/1134/0`, roll 2 the forced one `1088/1088/0`),
+each roll carrying its own positive and negative controls **re-run rather than inherited**, because a
+control that passed against a previous state is not a control for this one. Recorded on
+`fleet-chezmoi#1312`: [both totals](https://github.com/skyphusion-labs/fleet-chezmoi/issues/1312#issuecomment-5154130983)
+and [the control counts behind them](https://github.com/skyphusion-labs/fleet-chezmoi/issues/1312#issuecomment-5154152816).
+Scope stated honestly there: 4/s sampling BOUNDS a blackhole rather than proving zero, at least two
+replicas were always live so it says nothing about all-three-down, and it measures the VIP path and
+not the hop in front of it.
+
 ### Frame extraction: an agent can finally LOOK at motion output (cf#322)
 
 `POST /api/render/frames` samples a rendered clip into ONE jpeg contact sheet (3x3 by default) and
 stores it as a normal R2 artifact, returning the key.
 
+**What is proven and what is not, stated next to the feature rather than buried:** the container half
+is verified on all three nodes (below). The Worker half is smoked END TO END only AFTER this release
+deploys, because the route does not exist in production until then. So the cloudflared / Workers-VPC
+hop between the Worker and the container VIP is **one hop further than anything measured so far.** If
+that hop is wrong, the route names it (`container-unreachable`) rather than failing vaguely.
+
 The gap it closes: our MCP tool-result content union carries text and images and has no video variant,
-so a finished film could only ever be handed over as a LINK. Meanwhile 128 of the 129 most recent
-COMPLETED renders carry `keyframes: null`, so the mp4 was the only artifact that existed for them. The
-one artifact type we produce was the one the transport cannot carry, and the one it can carry was the
-one we almost never produced. A contact sheet is an image, so it crosses.
+so a finished film could only ever be handed over as a LINK. Meanwhile, **across the 200 most recent
+render rows** (the library API clamps `limit` to 200, so this is a WINDOW and not a census of the
+library), 129 were COMPLETED and **128 of those carry `keyframes: null`** -- the mp4 was the only
+artifact that existed for them. The one artifact type we produce was the one the transport cannot
+carry, and the one it can carry was the one we almost never produced. A contact sheet is an image, so
+it crosses.
 
 Returning a key rather than bytes is deliberate: `view_artifact` fetches `GET /api/artifact/<key>`, so
 a key makes the sheet reachable through the panel, the serve route and `/api/artifact-url` with **no
