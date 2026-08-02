@@ -9,6 +9,34 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.19.1 -- 2026-08-02
+
+PATCH. **Ships no new capability. It makes an already-shipped one observable.**
+
+### Fixed: `renders.output_ms` was written in v1.19.0 and readable by nothing
+
+v1.19.0 shipped the capture -- the DELIVERED film length, the metering basis, written on finalize by
+the terminal writer of the film artifact. It was added to **no read path**: not the shared render-row
+column list, not the raw row type, not the normalizer. So `GET /api/storyboard/renders` returned
+`execution_time_ms` and `delay_time_ms` and no `output_ms` at all, and the value could be seen only
+by whoever held account credentials and could query D1 directly.
+
+Fixed in `@skyphusion-labs/vivijure-core@1.7.1`, brought in here. The field now reaches clients on
+the render row alongside its two sibling durations.
+
+**No new migration.** `0016` shipped in v1.19.0 and the column has been in the database and
+correctly populated since that deploy; only the read side was missing. Rows written between the two
+releases keep their values and become visible with this one.
+
+**NULL still means NOT MEASURED and must never be read as zero.** A `COALESCE(output_ms, 0)` in a
+billing query bills nothing for a real render. A row predating `0016` reads `null`, not `NaN`.
+
+**Why it survived a full suite:** every test written for the capture asserted the WRITE, through a
+stubbed database binding. A capture path with no reader passes every test that only exercises
+capture -- the stub was the boundary, so the read side was not merely untested, it was out of frame.
+The core suite now drives the real read functions and asserts the SQL column list, and it fails on
+1.7.0 in all six cases.
+
 ## v1.19.0 -- 2026-08-02
 
 MINOR: the studio can now say how long the film it delivered actually is, and which provider job
