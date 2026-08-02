@@ -36,6 +36,10 @@ const previewRow = (over: Partial<RenderRow> = {}): RenderRow => ({
   render_overrides: null,
   status: "COMPLETED",
   output_key: null,
+  // core 1.7.1 put renders.output_ms on the read path, so RenderRow now REQUIRES it. null is the
+  // honest value for a keyframes-only preview row: NOT MEASURED, and never 0 (which would mean a
+  // film of no length).
+  output_ms: null,
   output: null,
   error: null,
   execution_time_ms: null,
