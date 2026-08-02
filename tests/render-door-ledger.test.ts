@@ -175,7 +175,8 @@ const DOORS: DoorDecl[] = [
     body: { bundleKey: BUNDLE, shotIds: ["shot_01", "shot_02"], shardCount: 2, motion_backend: "alibaba-wan",
             qualityTier: "draft", audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "internal", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
-    guards: { config_shape: "no", unsafe_bundle_key: "yes" },
+    // C2 landed here: this door adopted the shared pre-flight and gained the #696 config-shape gate.
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes" },
     na_reasons: { dialogue: "resolved inside startScatterRender from D1 last_storyboard, and only when project_id is non-null" },
   },
   {
