@@ -67,6 +67,13 @@ export interface RenderDoorProfile {
   /** The message this door uses when scenes are missing. Preserved verbatim per door. */
   scenesRequiredMessage: string;
   /**
+   * The minimum renderable-unit count this door accepts. One for the film doors; TWO for scatter,
+   * where a single shard is not a scatter at all. Declared rather than defaulted, because a default
+   * of 1 would silently accept a degenerate scatter and the failure would surface much later as a
+   * sharding bug rather than here as a refusal.
+   */
+  minSceneCount?: number;
+  /**
    * Whether this request has a motion leg at all. A keyframes-only preview runs no motion phase, so
    * the #500/#504 backend preflight, the #577 config preflight and the local-gpu pairing check do not
    * apply. Declared rather than omitted, because "no motion leg" and "nobody wrote the check" look
@@ -188,7 +195,7 @@ export function checkRenderRequestShape(shape: RenderRequestShape, profile: Rend
     const err = moduleConfigMapError(m.label, m.value, m.deep);
     if (err) return bad(err);
   }
-  if (!Array.isArray(shape.scenes) || shape.scenes.length === 0) {
+  if (!Array.isArray(shape.scenes) || shape.scenes.length < (profile.minSceneCount ?? 1)) {
     return bad(profile.scenesRequiredMessage);
   }
   return { ok: true };

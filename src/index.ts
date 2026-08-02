@@ -990,39 +990,58 @@ const hScatterRender: Handler = async (req, env) => {
     motion_backend?: string;
     film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
   }>(req);
-  if (!b.bundleKey) throw badRequest("bundleKey required");
-  // Same boundary check as hSubmitRender: canonical bundle shape before any use.
-  if (!isSafeBundleKey(b.bundleKey)) throw badRequest("bundleKey must be a plain relative key under bundles/");
-  if (!Array.isArray(b.shotIds) || b.shotIds.length < 2) throw badRequest("shotIds[] required (>= 2)");
+  // cf#334: the shared pre-flight. This door's own contract stays in the profile: it addresses shots
+  // by ID rather than sending scenes, and it needs at least TWO of them because a single shard is not
+  // a scatter. It has no keyframes-only mode, so its motion leg is unconditional, and like the agent
+  // door it leaves an absent keyframe module for startScatterRender to reject rather than answering
+  // 503 itself.
+  //
+  // C2 (RULED, and this is where it lands for this door): scatter now runs the #696 config-shape
+  // gate, which it has never had. A mis-encoded renderOverrides bag previously clamped to defaults
+  // and degraded the render with no error, which is the exact failure #696 was filed for, live on
+  // this door the entire time. A request that was accepted and silently degraded is now refused with
+  // a 400 naming the field. Nothing in production history is known to be affected, and that cannot be
+  // proven either way, because a clamped request leaves no marker -- which is the defect.
+  const scatterProfile: RenderDoorProfile = {
+    door: "panel scatter",
+    bundleKeyField: "bundleKey",
+    scenesRequiredMessage: "shotIds[] required (>= 2)",
+    minSceneCount: 2,
+    hasMotionLeg: true,
+    requireKeyframeModule: false,
+  };
+  const scatterShape = checkRenderRequestShape({
+    bundleKey: b.bundleKey,
+    scenes: b.shotIds,
+    configMaps: [
+      { label: "renderOverrides", value: b.renderOverrides, deep: false },
+      { label: "renderOverrides.config", value: b.renderOverrides?.config, deep: true },
+    ],
+  }, scatterProfile);
+  if (!scatterShape.ok) throw badRequest(scatterShape.refusal.message);
+  const scatterBundleKey = b.bundleKey as string;
+  const scatterShotIds = b.shotIds as string[];
   const shardCount = typeof b.shardCount === "number" ? b.shardCount : 2;
-  const project = b.project ?? deriveProjectFromBundleKey(b.bundleKey);
+  const project = b.project ?? deriveProjectFromBundleKey(scatterBundleKey);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
-  // #504: same full-render door as hSubmitRender (#500) / hStartFilm. A scatter render always runs the
-  // full keyframe -> clips chain across shards (no keyframes-only mode), and an omitted motion_backend
-  // defaults to defaultGpuDoorModule (an order-first door that can be non-operational). Require an
-  // EXPLICIT, serving motion.backend at the door -- top-level motion_backend ?? render_overrides.motion_backend,
-  // NEVER the door default -- so a bad backend bounces 400 BEFORE any shard/keyframe dispatch.
   const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
   const scatterOverrides = parseModuleRenderOverrides(b.renderOverrides);
   const scatterBackend = b.motion_backend ?? scatterOverrides.motion_backend;
-  const scatterMotionErr = motionBackendPreflightError(scatterModules, scatterBackend);
-  if (scatterMotionErr) throw badRequest(scatterMotionErr);
-  // #577: same pre-spend config door as hSubmitRender/hStartFilm -- a scatter render burns keyframes
-  // across every shard before the motion phase would reject a bad config.
-  const scatterCfgErr = motionConfigPreflightError(scatterModules, scatterBackend, scatterOverrides.config?.[(scatterBackend ?? "").trim()]);
-  if (scatterCfgErr) throw badRequest(scatterCfgErr);
   const scatterMapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, scatterModules);
-  const scatterKfErr = localGpuKeyframePreflightError(
-    scatterModules,
-    scatterBackend,
-    scatterMapped.keyframe_backend,
-  );
-  if (scatterKfErr) throw badRequest(scatterKfErr);
-  // #739: castLoras is OPTIONAL on scatter (empty/absent -> generic shards, like the film/render paths),
-  // but a PRESENT-but-not-ready binding fails hard at the door with the #738-symmetric untrained-cast 400
-  // -- never a silent drop to generic shards. Mirrors the hSubmitRender cast guard.
-  const scatterCast = await resolveCastLoras(env, b.castLoras ?? {});
-  if (scatterCast.skipped.length) throw badRequest(untrainedCastMessage(scatterCast.skippedDetail));
+  // Unlike the panel door, scatter judges #500/#504 and the local-gpu pairing rule against the SAME
+  // value: it has no separate resolved choice, because it forwards the override bag raw to the shards.
+  const scatterPre = await preflightRenderModules(productionRenderDoorDeps, env, {
+    modules: scatterModules,
+    motionBackend: scatterBackend,
+    keyframeBackend: scatterMapped.keyframe_backend,
+    motionConfig: scatterOverrides.config?.[(scatterBackend ?? "").trim()],
+    castLoras: b.castLoras ?? {},
+  }, scatterProfile);
+  if (!scatterPre.ok) {
+    if (scatterPre.refusal.status === 503) return json({ error: scatterPre.refusal.message }, 503);
+    throw badRequest(scatterPre.refusal.message);
+  }
+  const scatterCast = scatterPre.cast;
   // SCATTER DIVERGENCE: unlike render/film, scatter builds NO motion_config at the door -- it forwards
   // render_overrides RAW and resolves per-shard downstream (startScatterRender ->
   // mapRenderOverridesToModuleConfigs -> validateConfig). So project the Wan cast adapters into the RAW
@@ -1038,9 +1057,9 @@ const hScatterRender: Handler = async (req, env) => {
   try {
     const job = await startScatterRender(env, {
       project,
-      bundle_key: b.bundleKey,
+      bundle_key: scatterBundleKey,
       quality_tier: tier,
-      shot_ids: b.shotIds,
+      shot_ids: scatterShotIds,
       shard_count: shardCount,
       cast_loras: b.castLoras ?? {},
       render_overrides: b.renderOverrides,
