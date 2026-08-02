@@ -194,7 +194,14 @@ key was removed in the identity strip; see Epoch history above.)
 
 ### 2.1 Full route enumeration
 
-Every route the worker serves. The detail subsection for each follows in 2.2+. (Count: 64.)
+Every route the worker serves. The detail subsection for each follows in 2.2+.
+
+**86 route entries** (distinct `method` + `pattern`) over **70 distinct path patterns**. Those two
+numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
+`tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
+asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
+this section until cf#317; the escape hatch a caller is told to use for an uncurated route is only
+usable if the route is written down.
 
 **Resource ids (`:id`).** `storyboard_projects`, `cast_members`, and `renders` are addressed by an
 **opaque public id** -- a UUID v4 minted per row (migration `0010_public_ids.sql`, S9/F13), never the
@@ -276,6 +283,20 @@ unchanged.
 | 66 | PATCH | `/api/modules/:name/config` | 4.1.2 |
 | 67 | GET/POST | `/api/cast/export/:id` | 2.9a |
 | 68 | POST | `/api/cast/import` | 2.9a |
+| 69 | DELETE | `/api/cast/:id/refs/*refKey` | 2.7 |
+| 70 | DELETE | `/api/cast/:id/source/*sourceKey` | 2.7 |
+| 71 | POST | `/api/cast/:id/train-wan-lora` | 2.9 |
+| 72 | GET | `/api/models` | 2.16 |
+| 73 | GET | `/api/modules/installed` | 2.31 |
+| 74 | POST | `/api/modules/install` | 2.31 |
+| 75 | DELETE | `/api/modules/install/:name` | 2.31 |
+| 76 | PATCH | `/api/modules/install/:name` | 2.31 |
+| 77 | GET | `/api/storage/usage` | 2.32 |
+| 78 | POST | `/api/storage/reconcile` | 2.32 |
+| 79 | GET | `/api/demo/menu` | 2.33 |
+| 80 | POST | `/api/demo/render` | 2.33 |
+| 81 | GET | `/api/demo/render/:id` | 2.33 |
+| 82 | POST | `/api/demo/chat` | 2.33 |
 
 ### 2.2 GET /health
 
@@ -365,17 +386,41 @@ else `400 { "error": "voice_id must be one of: angus, asteria, ..." }`. `bible` 
 
 Each of these registers an image onto a cast member. The request body is one of three forms:
 1. **Raw binary** -- the body IS the image bytes; `Content-Type` is the image mime.
-2. **Staged key** -- JSON `{ key, mime }` referencing an already-uploaded R2 object (from `/api/upload`).
-3. **Chat artifact copy** -- JSON `{ from_chat_artifact: <key> }` to copy a chat-generated image in.
+2. **Staged key** -- JSON `{ key, mime }` referencing an R2 object **already staged under
+   `cast/<internal id>/`**. This is NOT a general staged key: a key from `/api/upload` (which returns
+   `uploads/<uuid>.<ext>`) is refused with `400 { "error": "key must be a safe staged path under this
+   cast member" }`. The bind was added deliberately; this section previously said "from
+   `/api/upload`", which no longer holds. See the note below.
+3. **Copy an existing artifact** -- JSON `{ from_chat_artifact: <key> }`. Despite the name this
+   copies from **any** R2 artifact key in the served bucket, not only a `chat` output: the studio
+   reads the object, re-checks its mime against the cast allowlist, and writes it under
+   `cast/<id>/...`. **This is the form to use for a key that is not already cast-staged.**
+
+**Mime note:** the cast allowlist is **png / jpeg / webp**. `POST /api/upload` additionally accepts
+`gif`, so a gif can be staged and then refused here; that asymmetry is real, not a typo.
+
+> **Open defect (cf#317):** the studio panel's own file-upload path on the cast page uploads through
+> `/api/upload` and then sends form 2 with the resulting `uploads/...` key, which form 2 rejects.
+> Confirmed against the shipped handler with a four-row matrix including a positive control and a
+> row whose answer is fixed under every hypothesis. Whether the guard should widen or the panel
+> should switch to form 3 is not settled here; this section now states what the code does.
 
 | Route | Purpose | Response |
 |-------|---------|----------|
 | POST `/api/cast/:id/portrait` | Set the portrait (the identity seed). | `200 { cast }` |
 | DELETE `/api/cast/:id/portrait` | Clear the portrait (deletes the R2 object best-effort). | `200 { cast }` |
 | POST `/api/cast/:id/ref` | Add a LoRA training reference image. | `200 { cast }` |
-| DELETE `/api/cast/:id/ref` | Remove a reference; body `{ key }` OR path `/refs/*refKey`. | `200 { cast }` |
+| DELETE `/api/cast/:id/ref` | Remove a reference; the key comes from the JSON body `{ key }`. | `200 { cast }` |
+| DELETE `/api/cast/:id/refs/*refKey` | Same, with the key in the PATH. The only form a caller that cannot send a body on DELETE can use. | `200 { cast }` |
 | POST `/api/cast/:id/source` | Add a human-uploaded source photo (extra conditioning). | `200 { cast }` |
-| DELETE `/api/cast/:id/source` | Remove a source; body `{ key }` OR path `/source/*sourceKey`. | `200 { cast }` |
+| DELETE `/api/cast/:id/source` | Remove a source; the key comes from the JSON body `{ key }`. | `200 { cast }` |
+| DELETE `/api/cast/:id/source/*sourceKey` | Same, with the key in the PATH. | `200 { cast }` |
+
+The `*refKey` / `*sourceKey` forms take the key as the greedy trailing catch-all (2.0): the router
+slices the remaining path segments, percent-decodes **each**, and rejoins with `/`. So a key that
+contains slashes may be sent either segment-wise (`/refs/cast/7/refs/a.png`) or as one fully-encoded
+segment (`/refs/cast%2F7%2Frefs%2Fa.png`); both recover the same key. `404 { "error": "ref key not in
+this cast member's set" }` when the key is not on the member.
 
 Errors: `400` on a missing key (DELETE with neither body `key` nor path key), `404` on an unknown
 cast member.
@@ -414,8 +459,24 @@ Errors: `404` if the cast member (POST) or job (GET) is unknown.
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
-| POST `/api/cast/:id/train-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKey, cast }` | `404 { error: "cast not found" }`; `500 { error: "bundle assembly failed", details }`; `502 { error }` on submit failure |
-| GET `/api/cast/:id/lora-status` | none | `200` LoRA status view (the cast member's `lora_status`, `lora_job_id`, `lora_error`, etc.) | `404` if unknown |
+| POST `/api/cast/:id/train-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKey, modelFamily: "sdxl", cast }` | see the shared table below |
+| POST `/api/cast/:id/train-wan-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKeys, modelFamily: "wan", cast }` | as above, plus `501` when Wan training is not wired on this host (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) |
+| GET `/api/cast/:id/lora-status` | none | `200 { cast, view }`; `view` is `null` when the member has never been submitted for training | `404` if unknown |
+
+**Shared preconditions and errors for both train routes.** These are refusals a caller has to expect
+before spending anything, and they are checked in this order:
+
+| Status | Condition |
+|--------|-----------|
+| `404 { error: "cast not found" }` | unknown cast member |
+| `409 { error: "a LoRA training job is already in flight...", jobId }` | `lora_status` is already `training` |
+| `400 { error: "cast member needs a portrait before training..." }` | no `portrait_key` |
+| `400 { error: "cast member has only N training refs; need at least 4..." }` | fewer than **4** reference images |
+| `500 { error: "bundle assembly failed", details }` | training-bundle assembly failed |
+| `502 { error }` | the training submit itself failed |
+
+Note the two success shapes differ by one field: SDXL returns `loraDestKey` (singular), Wan returns
+`loraDestKeys` (plural). `modelFamily` is the field to branch on, not the presence of either key.
 
 `lora_status` enum (on the cast row): `"idle" | "training" | "ready" | "failed"`. The training submit
 banks the freshly-trained adapter back onto the cast member (`lora_status` -> `ready`) so a
@@ -450,12 +511,37 @@ and `400` on an empty body or over-size.
 
 | Route | Accepted mimes | Max size | Key prefix |
 |-------|----------------|----------|------------|
-| POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` (else `bin`) | 25 MB | (per the upload handler) |
+| POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | 25 MB | `uploads/` |
 | POST `/api/storyboard/character-ref` | same image mimes | 25 MB | `character-refs/` |
-| POST `/api/storyboard/audio-upload` | `audio/mpeg|mp3|wav|x-wav|aac|mp4|x-m4a|ogg|webm` (else `bin`) | 32 MB | `audio/` |
+| POST `/api/storyboard/audio-upload` | `audio/mpeg|mp3|wav|x-wav|aac|mp4|x-m4a|ogg|webm` | 32 MB | `audio/` |
+
+**There is no fallback extension.** Each route looks its `Content-Type` up in a fixed table and
+REFUSES a miss with `400 { "error": "unsupported content-type <mime> (png/jpeg/webp/gif only)" }`
+(or the audio equivalent). This table previously said "(else `bin`)", which describes the fallback in
+the shared `extFromMime` helper -- a function these three routes do not call. An unlisted mime is a
+refusal, not a `.bin` object.
 
 The returned `key` is then registered (e.g. onto a cast member via 2.7, or passed as `audioKey` to a
 render route).
+
+**The image routes differ ONLY in the key namespace, and the namespaces are interchangeable.**
+`/api/upload` and `/api/storyboard/character-ref` run the same logic (same mime table, same 25 MB
+cap, same `201 { key, mime, size }` reply) and differ in nothing but the prefix they write under.
+Nothing downstream constrains that prefix: the bundle assembler resolves a `characterRefs[...]
+.trainingImages[].key` (and a `sceneStartImages[...].key`) with a plain R2 `get` on the key as given,
+the file extension inside the bundle is detected from the BYTES, and both prefixes are in the served
+`ARTIFACT_PREFIXES` set.
+
+So an `uploads/` key is usable wherever a `character-refs/` key is. **Measured, not inferred**
+(`tests/upload-namespace-interchange-317.test.ts`): the bundle key is content-addressed, so the same
+image staged under either prefix assembling to the SAME bundle key is proof the two tarballs are
+byte-identical and the prefix reaches the artifact in no form at all. The test carries a
+fixed-answer row (an absent key must fail), a negative control (different bytes must give a different
+key, so the equality is a signal and not a constant), and a row driving the image-prep SUCCESS path,
+whose cache key is derived from the bytes rather than the source key.
+
+This matters beyond tidiness: a caller that can reach only one of the two routes is not thereby cut
+off from the other's use case. The MCP has one image-upload tool for exactly this reason.
 
 ### 2.11 GET /api/artifact/*key
 
@@ -667,6 +753,15 @@ Runs the `plan.enhance` **chain** (LLM auto-direction) over a storyboard.
 The yaml route runs the same storyboard validator as preflight and serializes the normalized value,
 so a raw (schema-valid but non-normalized) client storyboard is accepted; a shape-invalid one is a
 `400` carrying the validator's messages, never a `500` (#731).
+
+**GET `/api/models`** -- the CANONICAL full model catalog for both hosts, `200 { models: [...] }`:
+every row the studio can dispatch, i.e. the projected planning rows (from installed `plan.enhance`
+modules) plus the image rows. Both halves are projections; the studio hardcodes no model names.
+`GET /api/storyboard/models` (2.16 above) is a FILTERED VIEW of this same projection, not a second
+catalog, and it is the one the MCP `storyboard_models` tool rides. The panel filters on `row.type`
+rather than on any naming convention. **An empty array is a legitimate answer** (nothing installed
+declares anything) -- never a `404`, and never a hardcoded backfill standing in for an uninstalled
+module. The `{ models: [...] }` envelope is deliberately stable.
 
 ### 2.17 POST /api/audio/analyze
 
@@ -999,6 +1094,65 @@ route; not part of the module hook contract.)
 
 None of these read any identity header (the identity strip, 1.1): `whoami` answers the fixed
 `"studio"` and prefs are a global singleton. They do not gate access.
+
+### 2.31 Module install / admin (Workers-for-Platforms dispatch)
+
+Install, uninstall, disable and list modules that live as user Workers in the `vivijure-modules`
+dispatch namespace, **without a core redeploy**. Full mechanics: `docs/module-dispatch.md` 4.4. These
+sit behind the same auth gate as every other `/api` route.
+
+| Route | Body | Response | Errors |
+|-------|------|----------|--------|
+| GET `/api/modules/installed` | none | `200 { ok: true, modules: [...] }` -- the installed registry rows | -- |
+| POST `/api/modules/install` | `{ script_name (req) }` | `201 { ok: true, module, script_name, checks }` | `400` if `MODULE_DISPATCH` is unbound on this host, if `script_name` is missing, if the named script is not resident in the namespace, if the module is unreachable, or if `module.json` is not valid JSON; `422 { ok: false, error: "invalid manifest: ..." }`; `422 { ok: false, error: "conformance failed", checks }` |
+| DELETE `/api/modules/install/:name` | none | `200 { ok: true, module, removed: true }` | `404` if not installed |
+| PATCH `/api/modules/install/:name` | `{ enabled (req, boolean) }` | `200 { ok: true, module, enabled }` | `400` if `enabled` is not a boolean; `404` if not installed |
+
+**The install gate runs against the RESIDENT script**, over the same dispatch transport the module
+will serve on, and the registry row is written ONLY on a green suite: a resident-but-failing module
+is never installed and never dispatched. The row stores the exact manifest that passed, so it cannot
+drift from what was gated. **Gate scope:** it proves the contract WIRING (manifest + invoke/degrade
+envelope + a synchronous hook's typed output). It does NOT re-run an ASYNC hook's typed output --
+that would trigger the module's real GPU work at install time, and it stays the module's own
+conformance CI.
+
+**Uninstall order matters:** the registry row is removed FIRST (so the next request stops
+dispatching it) and the CLI evicts the resident script AFTER, so an in-flight `/poll` is not torn out
+from under a running job.
+
+### 2.32 Storage accounting (core#52)
+
+The operator surface for the R2 storage ledger and its quota.
+
+| Route | Body | Response |
+|-------|------|----------|
+| GET `/api/storage/usage` | none | `200 { used_bytes, objects, quota_bytes, over }` -- what the LEDGER says. `quota_bytes` is `null` when no quota is configured; `over` is `true` only when a quota exists and usage has reached it. |
+| POST `/api/storage/reconcile` | none | `200 { objects, bytes, unsized }` -- REBUILDS the ledger from the bucket. |
+
+`reconcile` is the one-time backfill for a studio that predates accounting, and the repair for
+lifecycle-expiry drift or a failed ledger write. **`unsized` is objects the bucket would not report a
+size for**: they are accounted as `0` and reported honestly in their own field rather than folded
+into the total as a guess.
+
+### 2.33 Public demo door (`DEMO_MODE` deploys only)
+
+The zero-spend public demo: one seeded shot rendered as a single i2v clip, plus a capped
+open-weights assistant. **Every handler double-guards demo mode** and answers `404 { "error":
+"route" }` on a non-demo deploy, so a misconfigured gate still cannot expose them. A demo deploy also
+projects `readonly: true` in `GET /api/modules`, which is the flag the panel gates every mutation
+affordance on.
+
+| Route | Body | Response | Errors |
+|-------|------|----------|--------|
+| GET `/api/demo/menu` | none | `200 { available, scenes }` -- `available` is whether demo rendering is switched on; `scenes` is the seeded renderable list | `404` off-demo |
+| POST `/api/demo/render` | `{ scene (req) }` | `200 { jobId, status, position, waitSeconds }` | `400` unknown scene; `429` over the per-IP burst limit or the daily cap; `503` paused; `404` off-demo |
+| GET `/api/demo/render/:id` | none | `200` the demo poll view | `404` unknown render, or off-demo |
+| POST `/api/demo/chat` | `{ message (req) }` | `200 { reply, model: "oss" }` | `400` bad input; `429 { reason: "exhausted" }` over the per-IP cap; `503 { reason: "error" }`; `404` off-demo |
+
+The demo render path is rate-limited per IP by the same fail-closed spend primitive as every other
+spend route (2.0), on top of the per-day submission caps. The assistant runs a free open-weights
+model and says so in the projection's `assistant.note` rather than presenting itself as the studio
+brain.
 
 ### 2.30 Film render lifecycle (sequence)
 
