@@ -958,12 +958,38 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
   const scene = scenes.find((s) => s.shot_id === shotId);
   if (!scene) throw badRequest(`shot ${shotId} not in bundle storyboard`);
 
+  // cf#334: the last door onto the shared pre-flight. It gains little TODAY and that is stated
+  // rather than dressed up: no config bag, no motion leg, no cast bindings, so three guards are
+  // genuinely n/a, and it already did the bundle-key re-check and the keyframe 503 itself. What
+  // adoption buys is that no door is special any more -- a guard added to the shared pre-flight later
+  // reaches this one by construction instead of by somebody remembering it exists.
+  const regenProfile: RenderDoorProfile = {
+    door: "panel regen-shot",
+    // The key comes off the STORED row, not the request, so the field name is the column's.
+    bundleKeyField: "render bundle_key",
+    scenesRequiredMessage: `shot ${shotId} not in bundle storyboard`,
+    scenesInBody: false,
+    hasMotionLeg: false,
+    requireExplicitMotionBackend: false,
+    checkLocalGpuPairing: false,
+    requireKeyframeModule: true,
+  };
+  const regenShape = checkRenderRequestShape({ bundleKey: row.bundle_key }, regenProfile);
+  if (!regenShape.ok) throw badRequest(regenShape.refusal.message);
+
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
-  if (servingForHook(modules, "keyframe").length === 0) {
-    return json({ ok: false, error: "no keyframe module installed (bind MODULE_KEYFRAME)" }, 503);
-  }
   const tier = coerceQualityTier(row.quality_tier) ?? "final";
   const mapped = mapRenderOverridesToModuleConfigs(row.render_overrides, tier, modules);
+  const regenPre = await preflightRenderModules(productionRenderDoorDeps, env, {
+    modules,
+    keyframeBackend: mapped.keyframe_backend,
+  }, regenProfile);
+  if (!regenPre.ok) {
+    // This door answers its 503 in an { ok: false } envelope rather than a bare { error }, which is
+    // its own contract and is preserved rather than unified.
+    if (regenPre.refusal.status === 503) return json({ ok: false, error: regenPre.refusal.message }, 503);
+    throw badRequest(regenPre.refusal.message);
+  }
 
   const job = await startFilmJob(env, {
     project: row.project,
