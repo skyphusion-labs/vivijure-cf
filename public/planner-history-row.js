@@ -443,23 +443,24 @@ function buildHistoryRow(r, childrenByParent) {
   rerun.addEventListener("click", () => rerunBundle(r));
   actions.appendChild(rerun);
 
-  // v0.60.0: one-click retry on terminal-failure rows. Re-POSTs the
-  // same args server-side (project, bundle_key, quality_tier,
-  // render_overrides, mode); the GPU side resumes incrementally off
-  // the network volume so this is much cheaper than the original
-  // submit. Finalize rows have their own retry path (click finalize
-  // on the parent preview) and are excluded.
-  const isFailed =
-    r.status === "FAILED" || r.status === "CANCELLED" || r.status === "TIMED_OUT";
-  if (isFailed && r.mode !== "finalized") {
-    const retry = document.createElement("button");
-    retry.type = "button";
-    retry.className = "planner-history-action";
-    retry.textContent = "retry";
-    retry.title = "resubmit this render as-is (the GPU resumes off the volume so it picks up where it died)";
-    retry.addEventListener("click", () => retryFailedRender(r, retry));
-    actions.appendChild(retry);
-  }
+  // cf#331: the "retry" button that used to render here is GONE, and its absence is deliberate.
+  //
+  // It POSTed /api/storyboard/renders/<id>/retry, a route that has never existed in this repo or in
+  // vivijure-local -- `git log -S` finds it was never added. So every click on it, on the one
+  // control a user reaches for at the one moment a render has just failed, produced a bare 404.
+  //
+  // It was not removed in favour of a panel-side equivalent, because there is none to build
+  // honestly. The button promised a SERVER-side re-POST of the row's STORED args (project,
+  // bundle_key, quality_tier, render_overrides, mode) with the GPU resuming off its network volume
+  // so already-trained LoRAs and already-rendered shots are reused. A panel cannot resume a volume,
+  // and re-submitting from the panel's CURRENT state would silently render from different inputs
+  // than the original -- worse than a dead button, because the dead one at least failed loudly.
+  //
+  // Nobody is stranded: "re-render" above is ungated by status, so a failed row still offers it. It
+  // stages the bundle back into the render section and the user re-picks a tier. What is genuinely
+  // lost is the cheap one-click path that reuses the row's own arguments, and that is filed rather
+  // than quietly dropped -- it wants a real route, through the shared render door, not a ninth
+  // entry point.
 
   // v0.35.4: delete the row from history (and the silent MP4 from R2 when
   // no other row references it). Confirmation prompt before any destructive
@@ -1447,51 +1448,6 @@ function rerunBundle(row) {
     "loading",
   );
   renderSection.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-// v0.60.0: one-click retry for a FAILED / CANCELLED / TIMED_OUT row.
-// POSTs /api/storyboard/renders/<id>/retry; the Worker re-submits with
-// the row's stored args and the GPU resumes incrementally off the
-// volume (lora_already_trained + _indices_skip_locked). On success, a
-// fresh row appears at the top of the history list; the failed row
-// stays for the audit trail.
-async function retryFailedRender(row, btnEl) {
-  const confirmMsg =
-    "retry this render?\n\n"
-    + "the GPU side resumes off its volume so any already-trained LoRAs "
-    + "and already-rendered shots are reused. on the same endpoint within "
-    + "the volume's retention window this is much cheaper than a fresh "
-    + "submit.\n\ncontinue?";
-  if (!window.confirm(confirmMsg)) return;
-
-  btnEl.disabled = true;
-  btnEl.textContent = "submitting...";
-
-  let resp = null;
-  let data = null;
-  try {
-    resp = await fetch(
-      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/retry",
-      { method: "POST" },
-    );
-    data = await resp.json();
-  } catch (err) {
-    btnEl.disabled = false;
-    btnEl.textContent = "retry";
-    window.alert("retry submit failed: " + err.message);
-    return;
-  }
-  if (!resp.ok || !data || !data.ok) {
-    btnEl.disabled = false;
-    btnEl.textContent = "retry";
-    const msg = (data && (data.error
-      || (Array.isArray(data.errors) && data.errors.join(", "))))
-      || ("HTTP " + (resp ? resp.status : "?"));
-    window.alert("retry submit failed: " + msg);
-    return;
-  }
-  btnEl.textContent = "retry submitted";
-  loadHistory();
 }
 
 // v0.35.1: paste an R2 bundle key directly to render a bundle that does
