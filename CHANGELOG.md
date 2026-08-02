@@ -9,6 +9,36 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+## v1.18.0 -- 2026-08-02
+
+MINOR: an agent can look at motion output. This completes the arc v1.16.0 started.
+
+**This release was held back deliberately for two days' worth of ordering, and the reason is the
+feature itself.** `POST /api/render/frames` calls `POST /frames` on the `video-finish` CPU container.
+That container route does not exist until its image is rebuilt AND the running service is rolled, and
+tagging first would have deployed a Worker route that answers `route-not-served` by name. A route
+that exists and refuses is worse than one that does not exist, because the first looks like a bug in
+the caller. So the order was: merge, build the image, roll the container, THEN tag.
+
+**The roll is done and verified at the artifact, not at the pipeline.** All three finishing-tier nodes
+run `vivijure-cf-video-finish:0434011@sha256:9493c7e9...`, digests read off the RUNNING containers
+rather than the service spec, and each answers `POST /frames` with its own `400 videoUrl required`
+validation against the `404 Not Found` the same nodes returned beforehand. A real transition against a
+real negative control.
+
+Two things the roll turned up, both filed rather than papered over. The stack **could not roll any
+image at all** (`order: start-first` with `max_replicas_per_node: 1` and `replicas` equal to the
+number of eligible nodes is unschedulable by arithmetic) and while broken it reported `3/3 REPLICAS`
+at the new tag over containers running the old build. Fixed to `stop-first`. Then a Pending task left
+over from the failed attempt survived the fix and stranded a node, while the service reported
+`update=completed` at 2/3: **a completed update is not a converged service.** Full capacity restored
+and confirmed per node.
+
+The capacity cost of `stop-first` was measured rather than assumed: **2222 polls across two
+independent rolls, zero dropped requests**, each roll carrying its own positive and negative controls.
+Scope stated honestly on the fleet PR: 4/s sampling bounds a blackhole rather than proving zero, at
+least two replicas were always live, and it measures the VIP path and not the hop in front of it.
+
 ### Frame extraction: an agent can finally LOOK at motion output (cf#322)
 
 `POST /api/render/frames` samples a rendered clip into ONE jpeg contact sheet (3x3 by default) and
