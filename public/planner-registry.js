@@ -4,6 +4,17 @@
 (function (global) {
   let cache = null;
   let loadPromise = null;
+  // cf#344: did the projection actually ARRIVE?
+  //
+  // load() resolves on failure with an EMPTY registry rather than rejecting, which keeps every
+  // read-only control degrading quietly. That is right for a label and wrong for a decision: an
+  // empty cache is byte-identical whether the studio installed no modules or the fetch never
+  // landed, so a caller that must NAME a module cannot tell "this studio has no GPU door" from
+  // "I could not ask". Those refusals belong to different parties and read differently to a user.
+  //
+  // Tracked separately rather than by changing load()'s contract, so no existing reader's behaviour
+  // moves: they still see the empty shape and still degrade exactly as before.
+  let loadFailed = false;
 
   function load() {
     if (cache) return Promise.resolve(cache);
@@ -11,15 +22,24 @@
       loadPromise = fetch("/api/modules")
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
+          if (!d) loadFailed = true;
           cache = d || { modules: [], hooks: {}, catalog: [] };
           return cache;
         })
         .catch(() => {
+          loadFailed = true;
           cache = { modules: [], hooks: {}, catalog: [] };
           return cache;
         });
     }
     return loadPromise;
+  }
+
+  // True only when a load COMPLETED and could not deliver the projection (non-ok response or a
+  // transport failure). False before any load and false on a successful one, so a caller must
+  // await load() first -- reading it early answers about a question that has not been asked yet.
+  function registryUnavailable() {
+    return loadFailed;
   }
 
   function byName(data) {
@@ -160,6 +180,7 @@
 
   global.plannerRegistry = {
     load,
+    registryUnavailable,
     moduleLabel,
     musicScoreModules,
     narrationScoreModules,
