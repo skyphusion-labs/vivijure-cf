@@ -630,6 +630,24 @@ async function renderFromKeyframes(bundleKey, btn, status) {
   if (qualityTier) body.qualityTier = qualityTier;
   if (renderOverrides) body.renderOverrides = renderOverrides;
   if (planState.audioKey) body.audioKey = planState.audioKey;
+  // cf#344: name the motion backend EXPLICITLY rather than letting the door default one.
+  // The panel already tells the user which door it means (gpuMotionLabel() is in the confirm
+  // dialog above), so the door resolving its own was the panel knowing the answer and not saying
+  // it. Until it is said, the #500/#504 motion-backend preflight cannot be enforced here: the
+  // guard refuses exactly the request this button sends.
+  //
+  // FIELD NAME: snake_case `motion_backend`, alone among camelCase siblings, because that is what
+  // the route reads. A camelCase guess would be ignored and the render would still SUCCEED on the
+  // door's own default, so this line's failure mode is silence; asserted in a test against the
+  // shipped handler rather than trusted.
+  //
+  // Omitted when no gpu door is installed, which leaves today's behaviour exactly as it was and
+  // lets the core answer with its own honest error rather than the panel inventing a name.
+  // Read through the registry directly rather than adding a global for one call site. An
+  // unloaded registry yields [] and therefore null here, which omits the field and leaves the
+  // pre-cf#344 behaviour intact, so a cold cache degrades to exactly what shipped before.
+  const gpuDoor = window.plannerRegistry ? window.plannerRegistry.defaultGpuDoorModule() : null;
+  if (gpuDoor && gpuDoor.name) body.motion_backend = gpuDoor.name;
   btn.disabled = true;
   status.textContent = "submitting i2v render...";
   let resp = null;
