@@ -93,6 +93,37 @@
     return motionBackendModules().filter((m) => motionLocality(m) === "cloud");
   }
 
+  // The gpu-door SET: motion backends that run on hardware the operator controls (byo or local),
+  // mirroring the core's gpuDoorMotionModules. Cloud backends are excluded.
+  function gpuDoorMotionModules() {
+    return motionBackendModules().filter((m) => {
+      const l = motionLocality(m);
+      return l === "byo" || l === "local";
+    });
+  }
+
+  // The door a render lands on when it names none, mirroring the core's defaultGpuDoorModule:
+  // the byo door if one is installed, else the first gpu door in serving order (a local door is
+  // normally an explicit pick, so it becomes the default only when it is the ONLY gpu door).
+  //
+  // This exists so the panel can send an EXPLICIT motion_backend instead of letting the door pick
+  // for it (cf#344). Mirroring rather than inventing is the point: on every host where the core
+  // would have resolved a door, the panel now NAMES that same door, so making the choice explicit
+  // is not a behaviour change. Null when no gpu door is installed -- the caller then sends no
+  // backend at all rather than inventing a name, and the core refuses honestly.
+  //
+  // One host shape where this and the core disagree, stated because it is not visible from here:
+  // a motion.backend module that declares no ui.locality. The core counts it as neither byo nor
+  // local and so excludes it from the gpu-door set; motionLocality() above still maps a module
+  // NAMED own-gpu to byo during the rollout window. There the panel names a door the core would
+  // not have defaulted to, which the core's own preflight accepts (it is installed and serving)
+  // and which is strictly better than sending nothing. That fallback and this note retire
+  // together, once every motion.backend manifest carries ui.locality.
+  function defaultGpuDoorModule() {
+    const doors = gpuDoorMotionModules();
+    return doors.find((m) => motionLocality(m) === "byo") || doors[0] || null;
+  }
+
   function planEnhanceInstalled() {
     return hookModules("plan.enhance").length > 0;
   }
@@ -135,6 +166,8 @@
     beatSyncScoreModules,
     motionBackendModules,
     ownGpuModule,
+    gpuDoorMotionModules,
+    defaultGpuDoorModule,
     cloudMotionModules,
     planEnhanceInstalled,
     cloudModelLabel,

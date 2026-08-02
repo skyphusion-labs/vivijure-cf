@@ -63,6 +63,22 @@ function studioRoutes(): Route[] {
 }
 
 // Build() needs its required args; supply a shaped placeholder so the call it emits can be read.
+//
+// A generic "PLACEHOLDER" is only valid for arguments a tool does not INSPECT. Some validate their
+// shape in build() and refuse a bad one, which is the correct behaviour for the tool and a broken
+// fixture here: `mime` must look like a media type, so the v1.2.0 upload tools threw and took
+// curatedCoverage() with them, failing five assertions on an argument generator rather than on
+// anything about parity. The named cases below are that list, not a style choice.
+//
+// The failure mode when this list falls behind is LOUD (a throw), unlike most defects in this file,
+// so the risk is a red suite and a confusing message rather than a silently wrong number.
+const ARG_FIXTURES: Record<string, unknown> = {
+  method: "GET",
+  path: "/api/probe",
+  mime: "image/png", // upload_image / upload_audio validate the shape of this one
+  data_base64: "AAEC", // must decode to a non-empty byte string
+};
+
 function placeholderArgs(tool: (typeof TOOLS)[number]): Record<string, unknown> {
   const schema = tool.inputSchema as {
     required?: string[];
@@ -75,8 +91,7 @@ function placeholderArgs(tool: (typeof TOOLS)[number]): Record<string, unknown> 
     if (ty === "object") args[k] = {};
     else if (ty === "array") args[k] = ["x"];
     else if (ty === "number") args[k] = 1;
-    else if (k === "method") args[k] = "GET";
-    else if (k === "path") args[k] = "/api/probe";
+    else if (k in ARG_FIXTURES) args[k] = ARG_FIXTURES[k];
     else args[k] = "PLACEHOLDER";
   }
   return args;
@@ -208,9 +223,9 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // never to relax the assertion.
 const PUBLISHED = {
   routes: 86, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
-  tools: 21, // MCP tools: curated + the studio_request escape hatch
-  curatedCovered: 20, // route entries reached by a CURATED tool
-  panelReachable: 70, // route entries the studio panel calls (the human surface)
+  tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
+  curatedCovered: 41, // route entries reached by a CURATED tool
+  panelReachable: 70, // route entries the studio panel calls (the human surface); PATH-ONLY, see below
 };
 
 describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
@@ -256,6 +271,25 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
     expect(table.get("Panel-reachable")).toBe(PUBLISHED.panelReachable);
     expect(table.get("MCP tools")).toBe(PUBLISHED.tools);
     expect(table.get("Reached by a CURATED tool")).toBe(PUBLISHED.curatedCovered);
+  });
+
+  it("the doc states which DIRECTION each headline number can be wrong in", () => {
+    // Both instrument defects found in this lane (a method-blind matcher, a hardcoded panel corpus)
+    // were invisible because they erred in the FLATTERING direction. A number with no stated
+    // direction of error reads as exact, so the qualification is part of the measurement and is
+    // asserted here rather than left to survive editing on goodwill.
+    const flat = readFileSync(`${process.cwd()}/docs/mcp-parity.md`, "utf8").replace(/\s+/g, " ");
+    expect(flat, "the panel-reachable direction caveat is gone").toContain(
+      `Panel-reachable (${PUBLISHED.panelReachable}) can only be too HIGH`,
+    );
+    expect(flat, "the curated-coverage direction caveat is gone").toContain(
+      `Reached by a curated tool (${PUBLISHED.curatedCovered}) can only be too HIGH`,
+    );
+    expect(flat, "the route-count direction caveat is gone").toContain(
+      `Route entries (${PUBLISHED.routes}) can only be too LOW`,
+    );
+    // Negative control: the matcher must not match a caveat that is not there.
+    expect(flat).not.toContain("Panel-reachable (999) can only be too HIGH");
   });
 
   it("the doc's PROSE ratio matches the table, not just the table itself", () => {
