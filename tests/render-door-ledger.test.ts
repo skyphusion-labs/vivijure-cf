@@ -159,12 +159,22 @@ interface DoorDecl {
 // The two n/a KINDS for the motion-backend preflight, kept apart because collapsing them would hide
 // a real difference behind one label. The first is temporary and has a named remedy; the second is
 // structural and will never move.
-const NA_CALLER_SENDS_NONE =
-  "the caller never names a motion backend (the panel sends none) so this door resolves one itself; " +
-  "enforcing #500/#504 here would refuse every real request. TEMPORARY: closes when cf#344 lands.";
+const NA_SERVER_NOT_YET_STRICT =
+  "this door READS a caller-supplied backend and the panel now NAMES one (cf#345, merged), so the " +
+  "guard is reachable here. Not flipped yet: the panel OMITS the field on a cold registry cache, " +
+  "which degrades to the door's default today and would become a 400 the moment this turns strict. " +
+  "That interaction is not covered by either change alone. TEMPORARY, pending that decision.";
+const NA_SERVER_IGNORES_THE_FIELD =
+  "animateFromPreview's `finalized` branch NEVER reads args.motionBackend: it resolves " +
+  "`mapped.motion_backend ?? gpuDoor` from the PARENT ROW's stored render_overrides. So a panel " +
+  "change here would be INERT, sent and ignored, and the strict guard would still refuse. Needs a " +
+  "SERVER change first (cf#347), not a panel one. TEMPORARY, but blocked on a different lane.";
+const NA_CALLER_ALREADY_EXPLICIT =
+  "the panel already sends an explicit cloud model on this route, and the door validates it against " +
+  "the installed cloud backends. NOT A GAP: there is no missing caller choice to enforce.";
 const NA_NO_MOTION_LEG =
   "keyframes-only: this job has no motion phase at all, so there is no backend to preflight. " +
-  "STRUCTURAL, not a gap.";
+  "STRUCTURAL, not a gap, and it will never move.";
 
 const FROM_KF_NA = {
   film_titles: "startFilmFromKeyframes takes no film_titles, so no caller of it can pass one",
@@ -197,7 +207,7 @@ const DOORS: DoorDecl[] = [
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "no" },
     // C2 landed here with the shared pre-flight. #500 did NOT and the gap is declared, not hidden.
     guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "n/a" },
-    na_reasons: { motion_backend_preflight: NA_CALLER_SENDS_NONE },
+    na_reasons: { motion_backend_preflight: NA_SERVER_NOT_YET_STRICT },
   },
   {
     id: "4a panel finalize", route: "/api/storyboard/renders/:id/finalize",
@@ -206,7 +216,7 @@ const DOORS: DoorDecl[] = [
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
     guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
     na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
-                  motion_backend_preflight: NA_CALLER_SENDS_NONE },
+                  motion_backend_preflight: NA_SERVER_IGNORES_THE_FIELD },
   },
   {
     id: "4b panel animate-cloud", route: "/api/storyboard/renders/:id/animate-cloud",
@@ -215,7 +225,7 @@ const DOORS: DoorDecl[] = [
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
     guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
     na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
-                  motion_backend_preflight: NA_CALLER_SENDS_NONE },
+                  motion_backend_preflight: NA_CALLER_ALREADY_EXPLICIT },
   },
   {
     id: "4c panel animate-hybrid", route: "/api/storyboard/renders/:id/animate-hybrid",
@@ -224,7 +234,7 @@ const DOORS: DoorDecl[] = [
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
     guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
     na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
-                  motion_backend_preflight: NA_CALLER_SENDS_NONE },
+                  motion_backend_preflight: NA_CALLER_ALREADY_EXPLICIT },
   },
   {
     id: "5 panel regen-shot", route: "/api/storyboard/renders/:id/regen-shot",
@@ -404,15 +414,24 @@ describe("cf#334 render door ledger", () => {
     }
   });
 
-  it("the two n/a KINDS stay distinct, so a temporary gap never reads as a structural one", () => {
-    const temporary = DOORS.filter((d) => d.na_reasons.motion_backend_preflight === NA_CALLER_SENDS_NONE);
-    const structural = DOORS.filter((d) => d.na_reasons.motion_backend_preflight === NA_NO_MOTION_LEG);
-    expect(temporary.map((d) => d.id)).toEqual([
-      "3 panel render-from-keyframes", "4a panel finalize", "4b panel animate-cloud", "4c panel animate-hybrid",
-    ]);
-    expect(structural.map((d) => d.id)).toEqual(["5 panel regen-shot"]);
-    // The temporary reason must name its remedy, or "temporary" is a word with nothing behind it.
-    expect(NA_CALLER_SENDS_NONE).toContain("cf#344");
+  it("the FOUR n/a kinds stay distinct, so no gap borrows another's explanation", () => {
+    // The first pass used ONE reason for doors 3, 4a, 4b and 4c. Measuring each against its own
+    // handler showed they are four different situations with four different remedies, and collapsing
+    // them would have had the finalize door borrowing a fix that cannot possibly reach it.
+    const by = (reason: string) =>
+      DOORS.filter((d) => d.na_reasons.motion_backend_preflight === reason).map((d) => d.id);
+    expect(by(NA_SERVER_NOT_YET_STRICT)).toEqual(["3 panel render-from-keyframes"]);
+    expect(by(NA_SERVER_IGNORES_THE_FIELD)).toEqual(["4a panel finalize"]);
+    expect(by(NA_CALLER_ALREADY_EXPLICIT)).toEqual(["4b panel animate-cloud", "4c panel animate-hybrid"]);
+    expect(by(NA_NO_MOTION_LEG)).toEqual(["5 panel regen-shot"]);
+    // Every door declaring n/a must carry one of the four, so a new door cannot land with a blank.
+    const known = new Set([NA_SERVER_NOT_YET_STRICT, NA_SERVER_IGNORES_THE_FIELD, NA_CALLER_ALREADY_EXPLICIT, NA_NO_MOTION_LEG]);
+    for (const d of DOORS.filter((x) => x.guards.motion_backend_preflight === "n/a")) {
+      expect(known.has(d.na_reasons.motion_backend_preflight ?? ""), `${d.id}: unrecognised n/a reason`).toBe(true);
+    }
+    // A reason that says TEMPORARY must name what closes it, or the word means nothing.
+    expect(NA_SERVER_NOT_YET_STRICT).toContain("cf#345");
+    expect(NA_SERVER_IGNORES_THE_FIELD).toContain("cf#347");
   });
 
   it("#696 config-shape gate: named-field refusal on the declared doors, absent on the rest", async () => {
