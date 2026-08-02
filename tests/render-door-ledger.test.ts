@@ -152,9 +152,19 @@ interface DoorDecl {
   seam: "film" | "fromKeyframes" | "scatter";
   body: Record<string, unknown>;
   caps: { dialogue: Cell; quality_tier: Cell; audio_key: Cell; film_titles: Cell };
-  guards: { config_shape: Cell; unsafe_bundle_key: Cell };
+  guards: { config_shape: Cell; unsafe_bundle_key: Cell; motion_backend_preflight: Cell };
   na_reasons: Record<string, string>;
 }
+
+// The two n/a KINDS for the motion-backend preflight, kept apart because collapsing them would hide
+// a real difference behind one label. The first is temporary and has a named remedy; the second is
+// structural and will never move.
+const NA_CALLER_SENDS_NONE =
+  "the caller never names a motion backend (the panel sends none) so this door resolves one itself; " +
+  "enforcing #500/#504 here would refuse every real request. TEMPORARY: closes when cf#344 lands.";
+const NA_NO_MOTION_LEG =
+  "keyframes-only: this job has no motion phase at all, so there is no backend to preflight. " +
+  "STRUCTURAL, not a gap.";
 
 const FROM_KF_NA = {
   film_titles: "startFilmFromKeyframes takes no film_titles, so no caller of it can pass one",
@@ -167,7 +177,7 @@ const DOORS: DoorDecl[] = [
     body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
             audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes" },
     na_reasons: {},
   },
   {
@@ -176,7 +186,7 @@ const DOORS: DoorDecl[] = [
             qualityTier: "draft", audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "internal", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
     // C2 landed here: this door adopted the shared pre-flight and gained the #696 config-shape gate.
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes" },
     na_reasons: { dialogue: "resolved inside startScatterRender from D1 last_storyboard, and only when project_id is non-null" },
   },
   {
@@ -185,40 +195,45 @@ const DOORS: DoorDecl[] = [
     body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "alibaba-wan", audioKey: "audio/bed.mp3",
             film_titles: { title: { text: "T" } } },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "no" },
-    guards: { config_shape: "no", unsafe_bundle_key: "yes" },
-    na_reasons: {},
+    // C2 landed here with the shared pre-flight. #500 did NOT and the gap is declared, not hidden.
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "n/a" },
+    na_reasons: { motion_backend_preflight: NA_CALLER_SENDS_NONE },
   },
   {
     id: "4a panel finalize", route: "/api/storyboard/renders/:id/finalize",
     path: `/api/storyboard/renders/${PUB}/finalize`, seam: "fromKeyframes",
     body: { audioKey: "audio/bed.mp3" },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a" },
-    na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
+                  motion_backend_preflight: NA_CALLER_SENDS_NONE },
   },
   {
     id: "4b panel animate-cloud", route: "/api/storyboard/renders/:id/animate-cloud",
     path: `/api/storyboard/renders/${PUB}/animate-cloud`, seam: "fromKeyframes",
     body: { model: "cloud-i2v", audioKey: "audio/bed.mp3" },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a" },
-    na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
+                  motion_backend_preflight: NA_CALLER_SENDS_NONE },
   },
   {
     id: "4c panel animate-hybrid", route: "/api/storyboard/renders/:id/animate-hybrid",
     path: `/api/storyboard/renders/${PUB}/animate-hybrid`, seam: "fromKeyframes",
     body: { defaultBackend: "cloud", defaultCloudModel: "cloud-i2v", audioKey: "audio/bed.mp3" },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a" },
-    na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
+                  motion_backend_preflight: NA_CALLER_SENDS_NONE },
   },
   {
     id: "5 panel regen-shot", route: "/api/storyboard/renders/:id/regen-shot",
     path: `/api/storyboard/renders/${PUB}/regen-shot`, seam: "film",
     body: { shotId: "shot_01" },
     caps: { dialogue: "n/a", quality_tier: "no", audio_key: "n/a", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
     na_reasons: {
+      motion_backend_preflight: NA_NO_MOTION_LEG,
       dialogue: "keyframes-only: no motion, finish or dialogue leg exists on this job",
       audio_key: "keyframes-only: nothing to mux a bed onto",
       film_titles: "keyframes-only: no assembled film to card",
@@ -231,7 +246,7 @@ const DOORS: DoorDecl[] = [
     body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
             audio_key: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes" },
     na_reasons: {},
   },
 ];
@@ -304,7 +319,7 @@ describe("cf#334 render door ledger", () => {
     for (const d of DOORS) {
       const { res, obs } = await drive(d);
       const cells = CAP_KEYS.map((k) => `${k}=${d.caps[k]}`).join(" ");
-      rows.push(`${d.id.padEnd(30)} http=${res.status} ${cells} config_shape_gate=${d.guards.config_shape}` +
+      rows.push(`${d.id.padEnd(30)} http=${res.status} ${cells} cfg_gate=${d.guards.config_shape} motion_pre=${d.guards.motion_backend_preflight}` +
                 (obs ? ` | observed dialogue=${obs.dialogue}` : " | start fn NOT reached"));
     }
     console.log("\n=== cf#334 RENDER DOOR LEDGER ===\n" + rows.join("\n") + "\n");
@@ -365,6 +380,39 @@ describe("cf#334 render door ledger", () => {
     }
     // Row-count floor: if the filter ever selected nothing, this row would pass having tested nothing.
     expect(checked.length, "the fixed-answer row selected no doors").toBeGreaterThan(2);
+  });
+
+  it("#500/#504 motion-backend preflight: enforced only where the caller names a backend", async () => {
+    for (const d of DOORS) {
+      if (d.guards.motion_backend_preflight === "n/a") {
+        expect(d.na_reasons.motion_backend_preflight, `${d.id}: n/a with no recorded reason`).toBeTruthy();
+      }
+      const bare = { ...d.body } as Record<string, unknown>;
+      delete bare.motion_backend;
+      const res = await worker.fetch(post(d.path, bare), env, ctx);
+      const text = await res.text();
+      // Same discipline as the #696 probe: a door can 400 for unrelated reasons, so the refusal must
+      // NAME the missing choice or it is not evidence this guard is the one that fired.
+      //
+      // EVERY door is driven, including the n/a ones. An earlier version skipped them after checking a
+      // reason string existed, and the mutation sweep caught that: forcing the guard ON for all doors
+      // left the suite green, because nothing asserted the n/a doors were NOT enforcing it. That is a
+      // cell that cannot fail, sitting inside the column added to make a gap visible.
+      const gated = res.status === 400 && text.includes("choose a motion backend");
+      expect(gated, `${d.id}: motion_backend_preflight declared ${d.guards.motion_backend_preflight}, gated=${gated}, body=${text}`)
+        .toBe(d.guards.motion_backend_preflight === "yes");
+    }
+  });
+
+  it("the two n/a KINDS stay distinct, so a temporary gap never reads as a structural one", () => {
+    const temporary = DOORS.filter((d) => d.na_reasons.motion_backend_preflight === NA_CALLER_SENDS_NONE);
+    const structural = DOORS.filter((d) => d.na_reasons.motion_backend_preflight === NA_NO_MOTION_LEG);
+    expect(temporary.map((d) => d.id)).toEqual([
+      "3 panel render-from-keyframes", "4a panel finalize", "4b panel animate-cloud", "4c panel animate-hybrid",
+    ]);
+    expect(structural.map((d) => d.id)).toEqual(["5 panel regen-shot"]);
+    // The temporary reason must name its remedy, or "temporary" is a word with nothing behind it.
+    expect(NA_CALLER_SENDS_NONE).toContain("cf#344");
   });
 
   it("#696 config-shape gate: named-field refusal on the declared doors, absent on the rest", async () => {

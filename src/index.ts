@@ -747,6 +747,8 @@ const hSubmitRender: Handler = async (req, env) => {
     bundleKeyField: "bundleKey",
     scenesRequiredMessage: "scenes[] required (storyboard shots with prompt and duration)",
     hasMotionLeg: !b.keyframesOnly,
+    requireExplicitMotionBackend: true,
+    scenesInBody: true,
     requireKeyframeModule: true,
   };
   const scenes = filterScenesByShotIds(normalizeFilmScenes(b.scenes), b.processShotIds);
@@ -831,10 +833,33 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
     motion_backend?: string;
   }>(req);
-  if (!b.bundleKey) throw badRequest("bundleKey required");
-  // Same boundary check as hSubmitRender: canonical bundle shape before any use.
-  if (!isSafeBundleKey(b.bundleKey)) throw badRequest("bundleKey must be a plain relative key under bundles/");
-  const project = b.project ?? deriveProjectFromBundleKey(b.bundleKey);
+  // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
+  //
+  // C4 lands here PARTIALLY and the gap is declared rather than hidden. #577 (motion config) and the
+  // local-gpu pairing rule are new coverage for this door and need no explicit backend, so they run.
+  // #500/#504 does NOT: the panel sends no motion_backend at all (public/planner-bundle.js), this door
+  // resolves one for itself, and enforcing the guard would refuse every real request. Core says the
+  // same on the function itself, that it is adoptable "once their callers always send a backend".
+  // Tracked as cf#344; when the panel names a backend this becomes true and the ledger cell moves.
+  const fromKfProfile: RenderDoorProfile = {
+    door: "panel render-from-keyframes",
+    bundleKeyField: "bundleKey",
+    scenesRequiredMessage: "bundle has no storyboard scenes",
+    scenesInBody: false,
+    hasMotionLeg: true,
+    requireExplicitMotionBackend: false,
+    requireKeyframeModule: false,
+  };
+  const fromKfShape = checkRenderRequestShape({
+    bundleKey: b.bundleKey,
+    configMaps: [
+      { label: "renderOverrides", value: b.renderOverrides, deep: false },
+      { label: "renderOverrides.config", value: b.renderOverrides?.config, deep: true },
+    ],
+  }, fromKfProfile);
+  if (!fromKfShape.ok) throw badRequest(fromKfShape.refusal.message);
+  const fromKfBundleKey = b.bundleKey as string;
+  const project = b.project ?? deriveProjectFromBundleKey(fromKfBundleKey);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
 
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
@@ -842,7 +867,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     return json({ error: "no motion.backend module installed" }, 503);
   }
 
-  const parsedScenes = await readBundleScenes(env, b.bundleKey);
+  const parsedScenes = await readBundleScenes(env, fromKfBundleKey);
   if (!parsedScenes.length) {
     return json({ error: "bundle has no storyboard scenes" }, 400);
   }
@@ -852,7 +877,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     seconds: s.seconds,
   }));
 
-  const staged = await stageBundleInjectedKeyframes(env, b.bundleKey, project);
+  const staged = await stageBundleInjectedKeyframes(env, fromKfBundleKey, project);
   if (!staged.length) {
     return json({ error: "bundle has no injected keyframes (clips/<id>_keyframe.png)" }, 400);
   }
@@ -862,10 +887,26 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   if (!motionBackend) {
     return json({ error: 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed' }, 400);
   }
+  // The RESOLVED backend is what this door actually renders with, so it is what #577 and the pairing
+  // rule are judged against. That is weaker than judging a caller's explicit choice and it is the
+  // honest maximum here: there is no explicit choice to judge (cf#344).
+  const fromKfPre = await preflightRenderModules(productionRenderDoorDeps, env, {
+    modules,
+    // The caller's own choice, which the panel never sends. Passing the RESOLVED value here would make
+    // #500 pass by construction and the n/a cell a lie; the flag below is what actually spares it.
+    motionBackend: b.motion_backend,
+    resolvedMotionBackend: motionBackend,
+    keyframeBackend: mapped.keyframe_backend,
+    motionConfig: mapped.motion_config,
+  }, fromKfProfile);
+  if (!fromKfPre.ok) {
+    if (fromKfPre.refusal.status === 503) return json({ error: fromKfPre.refusal.message }, 503);
+    throw badRequest(fromKfPre.refusal.message);
+  }
 
   const job = await startFilmFromKeyframes(env, {
     project,
-    bundle_key: b.bundleKey,
+    bundle_key: fromKfBundleKey,
     scenes,
     keyframes: staged,
     motion_backend: motionBackend,
@@ -884,7 +925,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   await insertRenderBestEffort(env, {
     jobId: view.jobId,
     project,
-    bundleKey: b.bundleKey,
+    bundleKey: fromKfBundleKey,
     qualityTier: tier,
     renderOverrides: b.renderOverrides,
     status: view.status,
@@ -1008,6 +1049,8 @@ const hScatterRender: Handler = async (req, env) => {
     scenesRequiredMessage: "shotIds[] required (>= 2)",
     minSceneCount: 2,
     hasMotionLeg: true,
+    requireExplicitMotionBackend: true,
+    scenesInBody: true,
     requireKeyframeModule: false,
   };
   const scatterShape = checkRenderRequestShape({
@@ -1339,6 +1382,8 @@ const hStartFilm: Handler = async (req, env) => {
     bundleKeyField: "bundle_key",
     scenesRequiredMessage: "scenes[] required",
     hasMotionLeg: true,
+    requireExplicitMotionBackend: true,
+    scenesInBody: true,
     requireKeyframeModule: false,
   };
   const filmShape = checkRenderRequestShape({

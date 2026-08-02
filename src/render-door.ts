@@ -74,12 +74,34 @@ export interface RenderDoorProfile {
    */
   minSceneCount?: number;
   /**
+   * Whether the renderable units arrive IN THE REQUEST BODY at all. render-from-keyframes does not
+   * send any: it reads the storyboard out of the bundle and refuses later, with its own message, if
+   * the bundle carries none. Declared instead of passing a placeholder array, because a placeholder
+   * satisfies the check while asserting nothing, and a check that cannot fail is the defect this
+   * whole extraction exists to remove.
+   */
+  scenesInBody: boolean;
+  /**
    * Whether this request has a motion leg at all. A keyframes-only preview runs no motion phase, so
    * the #500/#504 backend preflight, the #577 config preflight and the local-gpu pairing check do not
    * apply. Declared rather than omitted, because "no motion leg" and "nobody wrote the check" look
    * identical in code.
    */
   hasMotionLeg: boolean;
+  /**
+   * Whether this door may REQUIRE the caller to name a motion backend (#500/#504).
+   *
+   * Not every door with a motion leg can. render-from-keyframes, finalize, animate-cloud and
+   * animate-hybrid all resolve a backend for themselves when the caller omits one, and the panel
+   * never sends one to any of them, so enforcing #500 there would refuse every real request. Core
+   * says as much on `motionBackendPreflightError` itself: it is adoptable "once their callers always
+   * send a backend". Tracked as cf#344; when the panel starts naming a backend this becomes true for
+   * those doors and the ledger cell moves.
+   *
+   * The #577 config preflight and the local-gpu pairing rule do NOT need an explicit backend, so they
+   * still run. This flag buys exactly the one guard that cannot be enforced, and no more.
+   */
+  requireExplicitMotionBackend: boolean;
   /**
    * Whether an absent keyframe module is this door's refusal to make. hSubmitRender answers 503 at
    * the door; hStartFilm lets startFilmJob fail the job instead, which surfaces as a started-then-
@@ -92,7 +114,8 @@ export interface RenderDoorProfile {
 /** The cheap half: request shape only. No I/O, so a malformed body is refused before any lookup. */
 export interface RenderRequestShape {
   bundleKey: unknown;
-  scenes: unknown;
+  /** Omitted entirely by a door whose profile says `scenesInBody: false`. */
+  scenes?: unknown;
   /** Config maps to shape-check (#696). Only the ones this door actually accepts. */
   configMaps?: Array<{ label: string; value: unknown; deep: boolean }>;
 }
@@ -100,8 +123,19 @@ export interface RenderRequestShape {
 /** The module-dependent half. Everything here needs the registry the door has already discovered. */
 export interface RenderModulePreflight {
   modules: RegisteredModule[];
-  /** The EXPLICIT motion.backend choice, top-level or merged from an overrides bag. Never a default. */
+  /**
+   * The EXPLICIT motion.backend choice as the CALLER sent it, or undefined when they sent none.
+   * NEVER a default: #500/#504 exists to catch a caller who chose nothing, so handing it a resolved
+   * value makes the guard pass by construction, which is a guard that cannot fail wearing a green
+   * cell. That mistake was made here once and caught by the mutation sweep.
+   */
   motionBackend?: string;
+  /**
+   * What this door will ACTUALLY render with once its own defaulting has run. #577 and the local-gpu
+   * pairing rule are judged against this, because they are about the config and the pairing that will
+   * really be used. Defaults to `motionBackend` for doors that do not default.
+   */
+  resolvedMotionBackend?: string;
   /** The door's RESOLVED keyframe backend, for the local-gpu pairing rule. */
   keyframeBackend?: string;
   /**
@@ -195,7 +229,7 @@ export function checkRenderRequestShape(shape: RenderRequestShape, profile: Rend
     const err = moduleConfigMapError(m.label, m.value, m.deep);
     if (err) return bad(err);
   }
-  if (!Array.isArray(shape.scenes) || shape.scenes.length < (profile.minSceneCount ?? 1)) {
+  if (profile.scenesInBody && (!Array.isArray(shape.scenes) || shape.scenes.length < (profile.minSceneCount ?? 1))) {
     return bad(profile.scenesRequiredMessage);
   }
   return { ok: true };
@@ -220,13 +254,16 @@ export async function preflightRenderModules(
   // The motion leg (#500/#504, #577, vivijure-local#153). Skipped entirely for a keyframes-only
   // preview, which has no motion phase to preflight.
   if (profile.hasMotionLeg) {
-    const backendErr = motionBackendPreflightError(input.modules, input.motionBackend);
-    if (backendErr) return bad(backendErr);
-    const cfgErr = motionConfigPreflightError(input.modules, input.motionBackend, input.motionConfig);
+    if (profile.requireExplicitMotionBackend) {
+      const backendErr = motionBackendPreflightError(input.modules, input.motionBackend);
+      if (backendErr) return bad(backendErr);
+    }
+    const effective = input.resolvedMotionBackend ?? input.motionBackend;
+    const cfgErr = motionConfigPreflightError(input.modules, effective, input.motionConfig);
     if (cfgErr) return bad(cfgErr);
     const pairErr = localGpuKeyframePreflightError(
       input.modules,
-      input.pairingMotionBackend ?? input.motionBackend,
+      input.pairingMotionBackend ?? effective,
       input.keyframeBackend,
     );
     if (pairErr) return bad(pairErr);
