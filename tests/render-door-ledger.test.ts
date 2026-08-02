@@ -432,6 +432,13 @@ describe("cf#334 render door ledger", () => {
     // A reason that says TEMPORARY must name what closes it, or the word means nothing.
     expect(NA_SERVER_NOT_YET_STRICT).toContain("cf#345");
     expect(NA_SERVER_IGNORES_THE_FIELD).toContain("cf#347");
+    // AND the negative half, which is the defect actually worth guarding against: a door must not
+    // point at a remedy that cannot reach it. cf#345 (the panel naming a backend) changes NOTHING for
+    // finalize, because that branch resolves from the parent row and never reads the caller's value.
+    // Without this line the file certifies the SHAPE of the reasons while the content stays wrong,
+    // and a reader who sees cf#345 closed concludes the finalize gap closed with it.
+    expect(NA_SERVER_IGNORES_THE_FIELD, "finalize must not point at the panel-side remedy").not.toContain("cf#345");
+    expect(NA_SERVER_IGNORES_THE_FIELD, "finalize's remedy is a SERVER change").toContain("SERVER");
   });
 
   it("#696 config-shape gate: named-field refusal on the declared doors, absent on the rest", async () => {
