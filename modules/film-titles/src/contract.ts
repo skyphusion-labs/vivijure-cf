@@ -60,6 +60,13 @@ export interface FilmFinishInput {
   fps?: number;
   title?: FilmTitleSpec;   // opening title card; absent -> no title card
   credits?: FilmCreditSpec; // end credit card; absent -> no credit card
+  // #130/#663: presigned PUT for a small JSON sidecar at `<output_key minus .mp4>.meta.json`
+  // carrying `{ duration_seconds?, prepend_seconds? }`. The core reads it when a step is ADOPTED --
+  // i.e. when the artifact landed between polls and this module's RESPONSE WAS NEVER READ, which is
+  // the normal completion route on the async path. Optional and additive: an older core omits it and
+  // the container simply writes nothing.
+  meta_url?: string;
+  meta_key?: string;
 }
 
 // film.finish output: the (possibly new) film R2 key + what ran. film_key is invariant in identity

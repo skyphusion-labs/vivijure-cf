@@ -63,6 +63,10 @@ export function buildContainerSpec(input: FilmFinishInput, cfg: TitlesConfig): R
   if (input.credits && input.credits.lines.some((l) => l.trim().length > 0)) {
     spec.credits = { lines: input.credits.lines.filter((l) => l.trim().length > 0), seconds: cfg.credit_seconds };
   }
+  // #130/#663: forwarded so the container can write the measurement sidecar. Absent on an older
+  // core, in which case the container writes nothing and an adopted step stays NOT MEASURED.
+  if (input.meta_url) spec.metaUrl = input.meta_url;
+
   return spec;
 }
 

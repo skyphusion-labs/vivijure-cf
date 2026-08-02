@@ -285,3 +285,40 @@ describe("film-titles prepend_seconds reporting (#663)", () => {
     expect(checkHookOutput("film.finish", { film_key: "k", applied: ["film-titles"], prepend_seconds: Number.NaN }).pass).toBe(false);
   });
 });
+
+
+const CFG = { font: "DejaVu Sans", color: "white", bg: "black", title_seconds: 4, credit_seconds: 4 } as any;
+const BASE_IN: any = {
+  film_key: "renders/p1/film.mp4",
+  video_url: "https://g/film.mp4",
+  output_url: "https://p/renders/p1/film-ff0.mp4",
+  output_key: "renders/p1/film-ff0.mp4",
+  captions: [],
+  sidecar_url: "https://p/renders/p1/film-ff0.srt",
+  sidecar_key: "renders/p1/film-ff0.srt",
+};
+const withMeta = (): any => ({ ...BASE_IN, meta_url: "https://p/renders/p1/film-ff0.meta.json", meta_key: "renders/p1/film-ff0.meta.json" });
+const withoutMeta = (): any => ({ ...BASE_IN });
+
+describe("#130/#663: the measurement sidecar is forwarded to the container", () => {
+  // The seam that would break SILENTLY. If buildContainerSpec stops forwarding it, the container
+  // writes nothing, every adopted step stays NOT MEASURED, and the render still succeeds -- which is
+  // indistinguishable from the pre-fix behaviour. A broken fix and no fix look identical from
+  // outside, so this assertion is the only thing that reports it.
+  it("forwards meta_url as metaUrl when the core supplies one", () => {
+    const spec = buildContainerSpec(withMeta(), CFG);
+    expect(spec.metaUrl).toBe("https://p/renders/p1/film-ff0.meta.json");
+  });
+
+  // An older core omits it. The container then writes nothing and the step stays NOT MEASURED, which
+  // is the honest fallback and exactly today's behaviour -- NOT an error.
+  it("omits metaUrl entirely when the core does not supply one", () => {
+    const spec = buildContainerSpec(withoutMeta(), CFG);
+    expect("metaUrl" in spec).toBe(false);
+  });
+
+  it("omits it rather than forwarding an empty string", () => {
+    const spec = buildContainerSpec({ ...withMeta(), meta_url: "" }, CFG);
+    expect("metaUrl" in spec).toBe(false);
+  });
+});

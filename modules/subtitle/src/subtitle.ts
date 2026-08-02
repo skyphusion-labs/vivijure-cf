@@ -125,6 +125,10 @@ export function buildContainerSpec(
     spec.sidecarUrl = input.sidecar_url;
     spec.sidecarKey = input.sidecar_key ?? "";
   }
+  // #130/#663: forwarded so the container can write the measurement sidecar. Absent on an older
+  // core, in which case the container writes nothing and an adopted step stays NOT MEASURED.
+  if (input.meta_url) spec.metaUrl = input.meta_url;
+
   return spec;
 }
 
