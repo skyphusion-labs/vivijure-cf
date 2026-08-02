@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { TOOLS, runTool } from "@skyphusion-labs/vivijure-mcp/mcp-tools";
 import type { McpEnv } from "@skyphusion-labs/vivijure-mcp/mcp-env";
 import type { McpContent } from "@skyphusion-labs/vivijure-mcp/mcp-tools";
@@ -22,23 +22,23 @@ import type { McpContent } from "@skyphusion-labs/vivijure-mcp/mcp-tools";
 // URL in scope here is not node's URL, and readFileSync will not take it.
 const SRC = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
 
-const PANEL_FILES = [
-  "app.js", "cast.js", "planner-cast.js", "planner-render.js", "planner-projects.js",
-  "planner-history-list.js", "planner-history-row.js", "planner-plan.js", "planner-refine.js",
-  "planner-preflight.js", "planner-bundle.js", "planner-audio.js", "planner-scenes.js",
-  "planner-registry.js", "planner-render-config.js", "planner-restore.js", "planner-init.js",
-  "planner-stepper.js", "settings.js", "modules.html", "cast.html", "planner.html", "settings.html",
-  "model-catalog.js", "studio-chrome.js", "topbar.js", "cast-select.js", "hook-availability.js",
-  "lora-preflight.js", "render-eta.js", "finish-degrade.js", "readonly-gate.js", "auth-token.js",
-  "demo-steer.js", "abuse-link.js", "planner-fieldhelp.js",
-];
-const PANEL = PANEL_FILES.map((f) => {
-  try {
-    return readFileSync(`${process.cwd()}/public/${f}`, "utf8");
-  } catch {
-    return "";
-  }
-}).join("\n");
+// cf#332: this WAS a hand-maintained list of 36 filenames against a public/ holding 39 panel files
+// (abuse-link-checks.js, hook-availability-checks.js and planner-state.js were absent). It was
+// harmless on the day it was written and structurally guaranteed to stop being so: a new file added
+// to public/ is not added to a literal list, so its routes never enter the human surface, the
+// measured surface SHRINKS relative to reality, and every assertion still passes. That reads as
+// BETTER parity, not as a stale list, which is why nothing downstream could ever have surfaced it.
+//
+// Derived from the directory instead. The exclusion is a stated RULE rather than an omission: panel
+// code is what the browser executes or parses for route calls, i.e. .js and .html. Everything else
+// in public/ (images, styles.css, the webmanifest, and the .d.ts type declarations that ship
+// alongside three of the .js files) issues no fetch and is excluded on that rule, not by being
+// forgotten.
+const PANEL_FILE_RULE = /\.(?:js|html)$/;
+const PANEL_FILES = readdirSync(`${process.cwd()}/public`)
+  .filter((f) => PANEL_FILE_RULE.test(f))
+  .sort();
+const PANEL = PANEL_FILES.map((f) => readFileSync(`${process.cwd()}/public/${f}`, "utf8")).join("\n");
 
 interface Route {
   method: string;
@@ -170,6 +170,23 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
       else seen.set(key, `${r.method} ${r.pattern}`);
     }
     expect(collisions, "distinct routes canonicalize to the same key: " + collisions.join("; ")).toEqual([]);
+  });
+
+  it("the panel corpus is derived from public/ and is not empty (cf#332)", () => {
+    // The read side of the same defect: an empty or collapsed corpus makes panelReaches() false for
+    // everything, which reads as a tiny human surface and therefore as excellent parity. A floor and
+    // a positive control, so "no panel files" cannot pass as "no panel routes".
+    expect(PANEL_FILES.length, "no .js/.html files found under public/").toBeGreaterThanOrEqual(30);
+    expect(PANEL.length, "panel corpus is suspiciously small").toBeGreaterThan(10_000);
+    // Named because they are the three the hardcoded list omitted; if the rule ever stops picking
+    // them up, this fails with their names rather than as a quietly smaller number.
+    for (const f of ["abuse-link-checks.js", "hook-availability-checks.js", "planner-state.js"]) {
+      expect(PANEL_FILES, `${f} is missing from the derived panel corpus`).toContain(f);
+    }
+    // NEGATIVE CONTROL: the rule must EXCLUDE what it says it excludes, or "derived" would just mean
+    // "everything", and a .d.ts sitting next to a .js would be counted as panel code.
+    expect(PANEL_FILES.some((f) => f.endsWith(".d.ts"))).toBe(false);
+    expect(PANEL_FILES.some((f) => f.endsWith(".css"))).toBe(false);
   });
 
   it("route parser returns a plausible table, not an empty one", () => {
