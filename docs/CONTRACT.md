@@ -450,12 +450,37 @@ and `400` on an empty body or over-size.
 
 | Route | Accepted mimes | Max size | Key prefix |
 |-------|----------------|----------|------------|
-| POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` (else `bin`) | 25 MB | (per the upload handler) |
+| POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | 25 MB | `uploads/` |
 | POST `/api/storyboard/character-ref` | same image mimes | 25 MB | `character-refs/` |
-| POST `/api/storyboard/audio-upload` | `audio/mpeg|mp3|wav|x-wav|aac|mp4|x-m4a|ogg|webm` (else `bin`) | 32 MB | `audio/` |
+| POST `/api/storyboard/audio-upload` | `audio/mpeg|mp3|wav|x-wav|aac|mp4|x-m4a|ogg|webm` | 32 MB | `audio/` |
+
+**There is no fallback extension.** Each route looks its `Content-Type` up in a fixed table and
+REFUSES a miss with `400 { "error": "unsupported content-type <mime> (png/jpeg/webp/gif only)" }`
+(or the audio equivalent). This table previously said "(else `bin`)", which describes the fallback in
+the shared `extFromMime` helper -- a function these three routes do not call. An unlisted mime is a
+refusal, not a `.bin` object.
 
 The returned `key` is then registered (e.g. onto a cast member via 2.7, or passed as `audioKey` to a
 render route).
+
+**The image routes differ ONLY in the key namespace, and the namespaces are interchangeable.**
+`/api/upload` and `/api/storyboard/character-ref` run the same logic (same mime table, same 25 MB
+cap, same `201 { key, mime, size }` reply) and differ in nothing but the prefix they write under.
+Nothing downstream constrains that prefix: the bundle assembler resolves a `characterRefs[...]
+.trainingImages[].key` (and a `sceneStartImages[...].key`) with a plain R2 `get` on the key as given,
+the file extension inside the bundle is detected from the BYTES, and both prefixes are in the served
+`ARTIFACT_PREFIXES` set.
+
+So an `uploads/` key is usable wherever a `character-refs/` key is. **Measured, not inferred**
+(`tests/upload-namespace-interchange-317.test.ts`): the bundle key is content-addressed, so the same
+image staged under either prefix assembling to the SAME bundle key is proof the two tarballs are
+byte-identical and the prefix reaches the artifact in no form at all. The test carries a
+fixed-answer row (an absent key must fail), a negative control (different bytes must give a different
+key, so the equality is a signal and not a constant), and a row driving the image-prep SUCCESS path,
+whose cache key is derived from the bytes rather than the source key.
+
+This matters beyond tidiness: a caller that can reach only one of the two routes is not thereby cut
+off from the other's use case. The MCP has one image-upload tool for exactly this reason.
 
 ### 2.11 GET /api/artifact/*key
 
