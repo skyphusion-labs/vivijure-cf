@@ -1,0 +1,51 @@
+-- renders: the ACTUAL delivered length of the finished film (skyphusion-labs/vivijure#805, cf#268).
+--
+-- WHY. Conrad's ruled metering basis is a deduction on "the final length of the successfully
+-- completed video". That number is not stored anywhere today. `duration_seconds` exists only inside
+-- plan JSON and is the REQUESTED duration, which is a different quantity: every non-final tier
+-- delivers clips shorter than their planned target (#698 exists because caption cues timed to the
+-- plan point past EOF), so billing the plan would bill for footage nobody received.
+--
+-- WHY NOT `execution_time_ms`. It means GPU JOB TIME, it is written from RunPod's own job envelope,
+-- and `public/planner-history-row.js` already renders it to users as "ran <duration>". Overloading it
+-- would corrupt a live number in the least visible way available: the column keeps its type, the
+-- panel keeps rendering, and the value quietly starts meaning two things depending on which path
+-- wrote the row. Same reasoning holds for `delay_time_ms` (queue wait + cold start).
+--
+-- WHY MILLISECONDS AND NOT SECONDS. The containers emit `durationSeconds` as `round(secs, 3)`, i.e.
+-- fractional seconds. This is a BILLING input, and the ledger deliberately uses integer micro-USD
+-- rather than floats for exactly this reason: 0.001 has no exact binary representation, so a REAL
+-- column makes the deduction depend on accumulated float error. Integer milliseconds is exact, and it
+-- matches the two duration columns already on this table. The name says the unit so nobody has to
+-- guess: `output_ms`, beside `execution_time_ms` and `delay_time_ms`.
+--
+-- WHICH DURATION GOES IN IT -- THE TERMINAL WRITER, NEVER THE ASSEMBLE FIGURE. Three container routes
+-- each emit a `durationSeconds`: `/finish` (assemble), `/film-titles` and `/subtitle`. On a film that
+-- gets title cards the assemble output is SHORTER than what is delivered, so persisting the assemble
+-- number under-bills by the length of every card, on every film that gets one -- a silent leak in the
+-- direction nobody audits, because the number looks entirely plausible. This column holds the length
+-- of the artifact the viewer receives: the output of the LAST step in the film.finish chain, or the
+-- assemble output when no chain step ran.
+--
+-- A LATER STAGE MUST OVERWRITE, NOT SKIP. Any writer that finds a value already present and leaves it
+-- alone reintroduces the bug above while looking like idempotency. Last write wins, by design.
+--
+-- NULL MEANS NOT MEASURED, AND IT MUST NEVER BE READ AS ZERO. A NULL here is a completed film whose
+-- length we failed to capture; a zero is a film of no length. Billing treats them identically only if
+-- someone coalesces, and coalescing NULL to 0 bills nothing for a real render. Every row written
+-- before this migration carries NULL and is NOT backfilled: the source `durationSeconds` was
+-- discarded at the time (vivijure-core scatter-orchestrator read it for the partial-film guard and
+-- threw it away), so any backfill would be a re-probe presented as a record, and there is no
+-- guarantee the historical artifact still exists. Old rows stay honestly unmeasured.
+--
+-- KNOWN GAP THE WRITER HAS TO CLOSE, RECORDED HERE BECAUSE THE COLUMN CANNOT EXPRESS IT. The
+-- film.finish chain ADOPTS an existing per-step artifact from R2 when a prior tick already produced
+-- it (#600 survivability), and the adoption branch makes NO container call -- so a resumed film
+-- reaches its terminal step with no `durationSeconds` in hand. That is biased toward the expensive
+-- jobs: a film long enough to span ticks is exactly the one most likely to adopt. The writer must
+-- therefore carry per-step durations across ticks (the `film_finish_prepend` map is the existing
+-- precedent: keyed by the deterministic outKey, persisted on the film job doc), not read them only
+-- from a live dispatch result.
+--
+-- Additive (ADD COLUMN only, no default, no rewrite) -> rides the normal auto-apply; no manual gate.
+ALTER TABLE renders ADD COLUMN output_ms INTEGER;
