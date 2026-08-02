@@ -749,6 +749,7 @@ const hSubmitRender: Handler = async (req, env) => {
     hasMotionLeg: !b.keyframesOnly,
     requireExplicitMotionBackend: true,
     scenesInBody: true,
+    checkLocalGpuPairing: true,
     requireKeyframeModule: true,
   };
   const scenes = filterScenesByShotIds(normalizeFilmScenes(b.scenes), b.processShotIds);
@@ -848,6 +849,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     scenesInBody: false,
     hasMotionLeg: true,
     requireExplicitMotionBackend: false,
+    checkLocalGpuPairing: true,
     requireKeyframeModule: false,
   };
   const fromKfShape = checkRenderRequestShape({
@@ -897,7 +899,11 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     motionBackend: b.motion_backend,
     resolvedMotionBackend: motionBackend,
     keyframeBackend: mapped.keyframe_backend,
-    motionConfig: mapped.motion_config,
+    // The RAW override bag, not mapped.motion_config. mapRenderOverridesToModuleConfigs CLAMPS, and
+    // clamping is the thing #577 exists to catch: judging the clamped value means an unknown or
+    // out-of-range key is stripped before the guard ever sees it, so the guard cannot fire. Doors 1,
+    // 2 and 6 pass the raw bag for the same reason.
+    motionConfig: parseModuleRenderOverrides(b.renderOverrides).config?.[(motionBackend ?? "").trim()],
   }, fromKfProfile);
   if (!fromKfPre.ok) {
     if (fromKfPre.refusal.status === 503) return json({ error: fromKfPre.refusal.message }, 503);
@@ -1051,6 +1057,7 @@ const hScatterRender: Handler = async (req, env) => {
     hasMotionLeg: true,
     requireExplicitMotionBackend: true,
     scenesInBody: true,
+    checkLocalGpuPairing: true,
     requireKeyframeModule: false,
   };
   const scatterShape = checkRenderRequestShape({
@@ -1384,6 +1391,7 @@ const hStartFilm: Handler = async (req, env) => {
     hasMotionLeg: true,
     requireExplicitMotionBackend: true,
     scenesInBody: true,
+    checkLocalGpuPairing: true,
     requireKeyframeModule: false,
   };
   const filmShape = checkRenderRequestShape({

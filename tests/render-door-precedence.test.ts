@@ -57,6 +57,12 @@ const base = {
 const env = base as unknown as Env;
 // Same env with NO keyframe module, for the one refusal that is a 503 rather than a 400.
 const envNoKeyframe = { ...base, MODULE_KEYFRAME: undefined } as unknown as Env;
+// A LOCAL gpu motion door with only a CLOUD keyframe module: the vivijure-local#153 pairing rule must
+// refuse rather than silently routing this host's keyframes through RunPod.
+const envLocalMotionCloudKeyframe = {
+  ...base,
+  MODULE_LOCAL_GPU: moduleBinding("local-gpu", ["motion.backend"], "local"),
+} as unknown as Env;
 
 const post = (path: string, body: unknown) =>
   new Request(`https://studio.example${path}`, {
@@ -146,6 +152,42 @@ describe("cf#334: single-defect refusals are per-door contracts and must not mov
       expect(h.started.length, "must refuse BEFORE any GPU spend").toBe(0);
     });
   }
+
+  it("local-gpu pairing: a LOCAL motion door with no local keyframe module is refused (vivijure-local#153)", async () => {
+    // This guard had NO door-level test before. The mutation sweep reported it covered, and that row
+    // was a false positive: the mutation left dangling syntax so the suite failed to PARSE, which is a
+    // harness returning the right answer for the wrong reason. Now that four doors share one copy of
+    // this rule, an untested single point of failure is worse than the duplication it replaced.
+    h.started = [];
+    const res = await worker.fetch(
+      post("/api/storyboard/render", { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "local-gpu" }),
+      envLocalMotionCloudKeyframe,
+      ctx,
+    );
+    const text = await res.text();
+    expect(res.status, `body: ${text}`).toBe(400);
+    expect(text).toContain("local keyframe module");
+    expect(text).toContain("Refusing to silently route keyframes");
+    expect(h.started.length, "must refuse BEFORE any GPU spend").toBe(0);
+  });
+
+  it("CONTROL: a local motion door WITH a local keyframe module is accepted", async () => {
+    // The positive control for the row above: without it, that test would pass identically if this
+    // door refused every local render, and it would be asserting the local path is broken rather than
+    // that the pairing rule is precise.
+    h.started = [];
+    const envBothLocal = {
+      ...base,
+      MODULE_KEYFRAME: moduleBinding("local-gpu-kf", ["keyframe"], "local"),
+      MODULE_LOCAL_GPU: moduleBinding("local-gpu", ["motion.backend"], "local"),
+    } as unknown as Env;
+    const res = await worker.fetch(
+      post("/api/storyboard/render", { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "local-gpu" }),
+      envBothLocal,
+      ctx,
+    );
+    expect(res.status, `body: ${await res.text()}`).toBe(201);
+  });
 
   it("CONTROL: the same requests WITHOUT their defect are accepted", async () => {
     // Without this, every case above would pass identically if the doors refused everything, and the

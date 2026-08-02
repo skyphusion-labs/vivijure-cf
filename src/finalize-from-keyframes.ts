@@ -23,6 +23,8 @@ import {
   type RenderRow,
 } from "@skyphusion-labs/vivijure-core/renders-db";
 import { coerceQualityTier } from "@skyphusion-labs/vivijure-core/runpod-types";
+import { preflightRenderModules, productionRenderDoorDeps } from "./render-door";
+import { parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types";
 import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
@@ -187,6 +189,38 @@ export async function animateFromPreview(
     if (!motionInstalled.has(n)) {
       return { ok: false, error: `motion.backend module "${n}" is not installed`, status: 400 };
     }
+  }
+
+  // cf#334: the shared pre-flight, for the ONE guard of the three that applies here.
+  //
+  // #577 is new coverage on this family. The motion config comes off the PARENT ROW's stored
+  // render_overrides, so a value that was malformed when the preview was submitted has been clamping
+  // to defaults and degrading every finalize since, with no error -- the same silent-degrade class as
+  // #696 and #941a4d3b.
+  //
+  // The other two are declared OFF and neither is an oversight. #500/#504 is unreachable until cf#347
+  // teaches the `finalized` branch to read a caller-supplied backend; requiring one now would refuse
+  // every request. The local-gpu pairing rule does not APPLY: it exists to stop a local motion door
+  // silently routing its KEYFRAME pass through the cloud, and this family has no keyframe pass at all,
+  // so enforcing it would refuse legitimate finalizes on any host with a local door and no local
+  // keyframe module.
+  const finalizePre = await preflightRenderModules(productionRenderDoorDeps, env, {
+    modules,
+    motionBackend,
+    // The RAW parent override bag, not mapped.motion_config. Clamping is what #577 exists to catch,
+    // so judging the clamped value makes the guard unable to fire. Same mistake as door 3's, made
+    // here in the same change and caught by the ledger cell rather than by review.
+    motionConfig: parseModuleRenderOverrides(args.parent.render_overrides ?? undefined)
+      .config?.[(motionBackend ?? "").trim()],
+  }, {
+    door: `panel ${args.deriveMode}`,
+    hasMotionLeg: true,
+    requireExplicitMotionBackend: false,
+    checkLocalGpuPairing: false,
+    requireKeyframeModule: false,
+  });
+  if (!finalizePre.ok) {
+    return { ok: false, error: finalizePre.refusal.message, status: finalizePre.refusal.status };
   }
 
   const job = await startFilmFromKeyframes(
