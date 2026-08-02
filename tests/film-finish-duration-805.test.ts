@@ -138,11 +138,13 @@ describe("subtitle reports a length ONLY when it actually burned a film", () => 
     const body = await outputOf(subtitleWorker, env, subtitleInput);
     const check = checkHookOutput("film.finish", body.output);
     expect(check.pass, JSON.stringify(check)).toBe(true);
-    // NOTE ON WHAT THIS CAN AND CANNOT PROVE TODAY: the installed core (1.6.0) does not yet carry the
-    // `duration_seconds <= 0` rejection -- that ships with the core release for #124 -- so this
-    // assertion currently proves the output is well-formed, not that a zero WOULD be rejected. The
-    // assertion above it (no duration_seconds key at all) is the one that holds regardless of core
-    // version, and it is the one doing the work. Said plainly so nobody cites this as more than it is.
+    // THIS NOW PROVES REJECTION, AND IT DID NOT BEFORE. Written when the installed core was 1.6.0,
+    // which had no `duration_seconds <= 0` rejection, so this assertion could only report that the
+    // output was well-formed. The core 1.7.0 dep bump is the commit where it started meaning what it
+    // says. Measured across that bump with the guard above deliberately broken (subtitle forwarding
+    // the container field blindly): on 1.6.0 this assertion PASSED with a zero on the wire; on 1.7.0
+    // it FAILS with "film.finish duration_seconds, when present, must be a positive finite number".
+    // Same test, same defect, different installed core.
   });
 
   it("burned but the container reports no length: omits the field rather than inventing one", async () => {
