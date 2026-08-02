@@ -282,6 +282,55 @@ def _run(cmd):
     subprocess.run(cmd, check=True, capture_output=True)
 
 
+async def _put_meta_sidecar(meta_url, *, duration_seconds=None, prepend_seconds=None):
+    """Write the measurement sidecar for a film.finish step (vivijure-core#130, #663).
+
+    WHY IT EXISTS. A film.finish step whose artifact lands in R2 between the core's polls is ADOPTED
+    on the next tick and its RESPONSE IS NEVER READ, so the two numbers that travel only on the
+    response -- the delivered length and any title-card prepend -- were lost. Adoption is the NORMAL
+    completion route on the async path, not an edge case, and the consequence was a NULL output_ms on
+    a COMPLETED row: a film that was rendered and billed nothing, silently.
+
+    This is the copy that survives the response never being read. It works because THE SAME HANDLER
+    WRITES BOTH the artifact and the sidecar, so a sidecar exists if and only if the step really ran.
+
+    CALL IT BEFORE THE ARTIFACT PUT, NOT AFTER, AND THE ORDER IS LOAD-BEARING. The core adopts on the
+    ARTIFACT'S presence, so if the artifact landed first there is a window in which a poll adopts and
+    finds no sidecar yet -- the exact NULL this change exists to remove, reintroduced as a race.
+    Writing the sidecar first makes "artifact present" imply "sidecar present" for any run that got
+    that far. The inverse failure is harmless: a sidecar with no artifact is never adopted (nothing
+    triggers on it), the step re-dispatches, and both are overwritten.
+
+    BEST-EFFORT BY CONTRACT: never raises. A telemetry write that can fail a completed render is
+    strictly worse than the gap it closes -- the artifact is good, and a lost sidecar degrades to the
+    honest NULL that was the behaviour before any of this. Every exit is a warn plus a return.
+    """
+    if not meta_url:
+        return  # older core, or a caller that does not want one. Not an error.
+    payload = {}
+    if isinstance(duration_seconds, (int, float)) and duration_seconds > 0:
+        payload["duration_seconds"] = round(float(duration_seconds), 3)
+    if isinstance(prepend_seconds, (int, float)) and prepend_seconds > 0:
+        payload["prepend_seconds"] = round(float(prepend_seconds), 3)
+    # Nothing measurable is not worth an object: an empty sidecar and an absent one both mean NOT
+    # MEASURED, and writing the empty one would only make a reader think a measurement was attempted.
+    if not payload:
+        return
+    ok, why = validate_fetch_url(meta_url)
+    if not ok:
+        log.warning("meta sidecar url blocked: %s", safe_log_value(str(why)))
+        return
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s2:
+            async with guarded_put(s2, meta_url, allow_redirects=False,
+                                   data=json.dumps(payload).encode("utf-8"),
+                                   headers={"content-type": "application/json"}) as r:  # codeql[py/full-ssrf]
+                if r.status not in (200, 201, 204):
+                    log.warning("meta sidecar put %s -- measurement lost, film unaffected", r.status)
+    except Exception as e:  # noqa: BLE001
+        log.warning("meta sidecar put failed: %s -- measurement lost, film unaffected", safe_log_value(str(e)))
+
+
 def _probe_duration(path):
     proc = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -824,6 +873,11 @@ async def _film_titles_work(body):
         with open(out_path, "rb") as f:
             out_bytes = f.read()
 
+        # BEFORE the artifact, deliberately: the core adopts on the ARTIFACT's presence, so writing
+        # this after would leave a window where a poll adopts and finds no measurement (#130).
+        await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=secs,
+                                prepend_seconds=(title_spec or {}).get("seconds"))
+
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
             async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
                              headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
@@ -1039,13 +1093,18 @@ async def _subtitle_work(body):
 
             with open(out_path, "rb") as f:
                 out_bytes = f.read()
+            # Probe BEFORE the upload so the measurement exists in time to be written first. The
+            # subtitle module never prepends (it burns in place), so only a duration is carried.
+            out_secs = _probe_duration(out_path)
+            # BEFORE the artifact, deliberately: the core adopts on the ARTIFACT's presence, so a
+            # sidecar written after would leave a window where a poll adopts and finds nothing (#130).
+            await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=out_secs)
             async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
                 async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
                                  headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
                     if r.status not in (200, 201, 204):
                         raise _JobError(502, f"output put {r.status}")
             burned = True
-            out_secs = _probe_duration(out_path)
 
         log.info("/subtitle ok key=%s burned=%s sidecar=%s dur=%.3f",  # codeql[py/log-injection]
                  safe_log_value(output_key), burned, sidecar_done, out_secs)
