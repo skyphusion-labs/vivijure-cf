@@ -54,7 +54,8 @@ export interface ResolvedCast {
  * Per-door declarations. Everything here is something the doors genuinely differ on today; nothing
  * here is a knob invented for flexibility.
  */
-export interface RenderDoorProfile {
+/** The half `checkRenderRequestShape` consumes. */
+export interface RenderShapeProfile {
   /** For diagnostics: which door is asking. */
   door: string;
   /**
@@ -81,6 +82,13 @@ export interface RenderDoorProfile {
    * whole extraction exists to remove.
    */
   scenesInBody: boolean;
+}
+
+/** The half `preflightRenderModules` consumes. A door with no request body to shape-check declares
+ *  only this, so it cannot carry shape settings nobody reads. */
+export interface RenderModuleProfile {
+  /** For diagnostics: which door is asking. */
+  door: string;
   /**
    * Whether this request has a motion leg at all. A keyframes-only preview runs no motion phase, so
    * the #500/#504 backend preflight, the #577 config preflight and the local-gpu pairing check do not
@@ -102,6 +110,17 @@ export interface RenderDoorProfile {
    * still run. This flag buys exactly the one guard that cannot be enforced, and no more.
    */
   requireExplicitMotionBackend: boolean;
+  /**
+   * Whether the local-gpu keyframe pairing rule (vivijure-local#153) applies.
+   *
+   * It refuses when motion is a LOCAL door and no local KEYFRAME module is installed, so that
+   * keyframes are never silently routed through RunPod/cloud. That is a statement about a job with a
+   * keyframe PASS. The finalize family has none: its keyframes already exist on the parent preview,
+   * so enforcing the rule there would refuse legitimate finalizes on any host with a local motion
+   * door and no local keyframe module. Declared false for those doors, and the reason is that it does
+   * not apply, not that nobody got to it.
+   */
+  checkLocalGpuPairing: boolean;
   /**
    * Whether an absent keyframe module is this door's refusal to make. hSubmitRender answers 503 at
    * the door; hStartFilm lets startFilmJob fail the job instead, which surfaces as a started-then-
@@ -152,6 +171,9 @@ export interface RenderModulePreflight {
   /** { slot: castPublicId } bindings, or undefined when this door sends none. */
   castLoras?: Record<string, unknown>;
 }
+
+/** A door that has both halves. */
+export type RenderDoorProfile = RenderShapeProfile & RenderModuleProfile;
 
 export type ShapeOutcome = { ok: true } | { ok: false; refusal: RenderRefusal };
 export type ModuleOutcome = { ok: true; cast: ResolvedCast } | { ok: false; refusal: RenderRefusal };
@@ -218,7 +240,7 @@ export function moduleConfigMapError(label: string, value: unknown, deep: boolea
  * with TWO defects may now be told about a different one first. That is real, it is disclosed rather
  * than folded in, and it can never turn an accepted request into a rejected one or the reverse.
  */
-export function checkRenderRequestShape(shape: RenderRequestShape, profile: RenderDoorProfile): ShapeOutcome {
+export function checkRenderRequestShape(shape: RenderRequestShape, profile: RenderShapeProfile): ShapeOutcome {
   if (!shape.bundleKey || typeof shape.bundleKey !== "string") {
     return bad(`${profile.bundleKeyField} required`);
   }
@@ -244,7 +266,7 @@ export async function preflightRenderModules(
   deps: RenderDoorDeps,
   env: unknown,
   input: RenderModulePreflight,
-  profile: RenderDoorProfile,
+  profile: RenderModuleProfile,
 ): Promise<ModuleOutcome> {
   // An absent keyframe module: this door's call, per profile.
   if (profile.requireKeyframeModule && servingForHook(input.modules, "keyframe").length === 0) {
@@ -261,12 +283,14 @@ export async function preflightRenderModules(
     const effective = input.resolvedMotionBackend ?? input.motionBackend;
     const cfgErr = motionConfigPreflightError(input.modules, effective, input.motionConfig);
     if (cfgErr) return bad(cfgErr);
-    const pairErr = localGpuKeyframePreflightError(
-      input.modules,
-      input.pairingMotionBackend ?? effective,
-      input.keyframeBackend,
-    );
-    if (pairErr) return bad(pairErr);
+    if (profile.checkLocalGpuPairing) {
+      const pairErr = localGpuKeyframePreflightError(
+        input.modules,
+        input.pairingMotionBackend ?? effective,
+        input.keyframeBackend,
+      );
+      if (pairErr) return bad(pairErr);
+    }
   }
 
   // Cast LoRAs. A bound-but-not-ready binding FAILS HARD (#738/#739): never a silent drop to a generic

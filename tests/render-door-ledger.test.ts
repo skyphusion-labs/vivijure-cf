@@ -111,7 +111,8 @@ const BUNDLE = "bundles/The_Last_Greenhouse.tar.gz";
 const PUB = "11111111-1111-4111-8111-111111111111";
 const PARENT_ROW = {
   id: 1, job_id: "film-parent", project: "p", bundle_key: BUNDLE, status: "COMPLETED",
-  quality_tier: "final", render_overrides: null, mode: "keyframes-only", output: null,
+  quality_tier: "final", render_overrides: null as Record<string, unknown> | null,
+  mode: "keyframes-only", output: null,
   keyframes: BUNDLE_SCENES.map((s) => ({ shot_id: s.shot_id, key: `renders/p/${s.shot_id}.png` })),
   locked_shots: null,
 };
@@ -152,7 +153,7 @@ interface DoorDecl {
   seam: "film" | "fromKeyframes" | "scatter";
   body: Record<string, unknown>;
   caps: { dialogue: Cell; quality_tier: Cell; audio_key: Cell; film_titles: Cell };
-  guards: { config_shape: Cell; unsafe_bundle_key: Cell; motion_backend_preflight: Cell };
+  guards: { config_shape: Cell; unsafe_bundle_key: Cell; motion_backend_preflight: Cell; motion_config_preflight: Cell };
   na_reasons: Record<string, string>;
 }
 
@@ -187,7 +188,7 @@ const DOORS: DoorDecl[] = [
     body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
             audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
     na_reasons: {},
   },
   {
@@ -196,7 +197,7 @@ const DOORS: DoorDecl[] = [
             qualityTier: "draft", audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "internal", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
     // C2 landed here: this door adopted the shared pre-flight and gained the #696 config-shape gate.
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
     na_reasons: { dialogue: "resolved inside startScatterRender from D1 last_storyboard, and only when project_id is non-null" },
   },
   {
@@ -206,7 +207,7 @@ const DOORS: DoorDecl[] = [
             film_titles: { title: { text: "T" } } },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "no" },
     // C2 landed here with the shared pre-flight. #500 did NOT and the gap is declared, not hidden.
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "n/a" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "n/a", motion_config_preflight: "yes" },
     na_reasons: { motion_backend_preflight: NA_SERVER_NOT_YET_STRICT },
   },
   {
@@ -214,7 +215,7 @@ const DOORS: DoorDecl[] = [
     path: `/api/storyboard/renders/${PUB}/finalize`, seam: "fromKeyframes",
     body: { audioKey: "audio/bed.mp3" },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a", motion_config_preflight: "yes" },
     na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
                   motion_backend_preflight: NA_SERVER_IGNORES_THE_FIELD },
   },
@@ -223,7 +224,7 @@ const DOORS: DoorDecl[] = [
     path: `/api/storyboard/renders/${PUB}/animate-cloud`, seam: "fromKeyframes",
     body: { model: "cloud-i2v", audioKey: "audio/bed.mp3" },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a", motion_config_preflight: "yes" },
     na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
                   motion_backend_preflight: NA_CALLER_ALREADY_EXPLICIT },
   },
@@ -232,7 +233,7 @@ const DOORS: DoorDecl[] = [
     path: `/api/storyboard/renders/${PUB}/animate-hybrid`, seam: "fromKeyframes",
     body: { defaultBackend: "cloud", defaultCloudModel: "cloud-i2v", audioKey: "audio/bed.mp3" },
     caps: { dialogue: "no", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a", motion_config_preflight: "yes" },
     na_reasons: { ...FROM_KF_NA, config_shape: "takes no config bag; the parent row's stored overrides are reused",
                   motion_backend_preflight: NA_CALLER_ALREADY_EXPLICIT },
   },
@@ -241,9 +242,10 @@ const DOORS: DoorDecl[] = [
     path: `/api/storyboard/renders/${PUB}/regen-shot`, seam: "film",
     body: { shotId: "shot_01" },
     caps: { dialogue: "n/a", quality_tier: "no", audio_key: "n/a", film_titles: "n/a" },
-    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a" },
+    guards: { config_shape: "n/a", unsafe_bundle_key: "n/a", motion_backend_preflight: "n/a", motion_config_preflight: "n/a" },
     na_reasons: {
       motion_backend_preflight: NA_NO_MOTION_LEG,
+      motion_config_preflight: NA_NO_MOTION_LEG,
       dialogue: "keyframes-only: no motion, finish or dialogue leg exists on this job",
       audio_key: "keyframes-only: nothing to mux a bed onto",
       film_titles: "keyframes-only: no assembled film to card",
@@ -256,7 +258,7 @@ const DOORS: DoorDecl[] = [
     body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
             audio_key: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes" },
+    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
     na_reasons: {},
   },
 ];
@@ -329,7 +331,7 @@ describe("cf#334 render door ledger", () => {
     for (const d of DOORS) {
       const { res, obs } = await drive(d);
       const cells = CAP_KEYS.map((k) => `${k}=${d.caps[k]}`).join(" ");
-      rows.push(`${d.id.padEnd(30)} http=${res.status} ${cells} cfg_gate=${d.guards.config_shape} motion_pre=${d.guards.motion_backend_preflight}` +
+      rows.push(`${d.id.padEnd(30)} http=${res.status} ${cells} cfg_gate=${d.guards.config_shape} motion_pre=${d.guards.motion_backend_preflight} cfg577=${d.guards.motion_config_preflight}` +
                 (obs ? ` | observed dialogue=${obs.dialogue}` : " | start fn NOT reached"));
     }
     console.log("\n=== cf#334 RENDER DOOR LEDGER ===\n" + rows.join("\n") + "\n");
@@ -376,6 +378,34 @@ describe("cf#334 render door ledger", () => {
     expect(seen, "a capability column with no observed presence cannot evidence its absences").toEqual({
       dialogue: true, quality_tier: true, audio_key: true, film_titles: true,
     });
+  });
+
+  it("the finalize family is EXEMPT from the local-gpu pairing rule, and that exemption is defended", async () => {
+    // The render door refuses when motion is a LOCAL door and no local KEYFRAME module is installed
+    // (vivijure-local#153). The finalize family must NOT be refused in the same configuration: it runs
+    // no keyframe pass at all, its keyframes already exist on the parent preview, so the rule that
+    // stops keyframes being routed to the cloud has nothing to say about it.
+    //
+    // Without this row `checkLocalGpuPairing: false` is a declaration nothing defends: the mutation
+    // sweep showed that forcing the gate ON for every door left the suite green. Same defect as the
+    // n/a cells, one layer down.
+    // The byo door is REMOVED, not just joined: defaultGpuDoorModule prefers byo, so leaving it in
+    // means the door resolves to it and the pairing rule never sees a local backend at all. The probe
+    // would then pass while measuring nothing about the exemption.
+    const envLocalOnly = {
+      ...(env as unknown as Record<string, unknown>),
+      MODULE_ALIBABA_WAN: undefined,
+      MODULE_CLOUD_I2V: undefined,
+      MODULE_LOCAL_GPU: moduleBinding("local-gpu", ["motion.backend"], "local"),
+    } as unknown as Env;
+    const res = await worker.fetch(
+      post(`/api/storyboard/renders/${PUB}/finalize`, { audioKey: "audio/bed.mp3" }),
+      envLocalOnly,
+      ctx,
+    );
+    const text = await res.text();
+    expect(res.status, `finalize must not inherit the keyframe pairing rule: ${text}`).toBe(201);
+    expect(text).not.toContain("Refusing to silently route keyframes");
   });
 
   it("FIXED-ANSWER ROW: an unsafe bundle key is refused by every door that takes one", async () => {
@@ -439,6 +469,36 @@ describe("cf#334 render door ledger", () => {
     // and a reader who sees cf#345 closed concludes the finalize gap closed with it.
     expect(NA_SERVER_IGNORES_THE_FIELD, "finalize must not point at the panel-side remedy").not.toContain("cf#345");
     expect(NA_SERVER_IGNORES_THE_FIELD, "finalize's remedy is a SERVER change").toContain("SERVER");
+  });
+
+  it("#577 motion-config preflight: a bogus config key is refused before spend", async () => {
+    for (const d of DOORS) {
+      if (d.guards.motion_config_preflight === "n/a") {
+        expect(d.na_reasons.motion_config_preflight, `${d.id}: n/a with no recorded reason`).toBeTruthy();
+      }
+      // Where the config comes from differs per door: the request bag for 1/2/3, an explicit map for
+      // 6, and the PARENT ROW for the finalize family. The probe has to reach the door's OWN source or
+      // it measures nothing about that door.
+      // Under EVERY installed backend, not one: doors resolve different backends (animate-cloud picks
+      // the cloud door, the rest a byo door), and a bogus key filed under the wrong name is invisible
+      // to that door. Encoding each door's resolution rule here is how a probe silently stops
+      // reaching its subject, which reads as "no guard" rather than "no measurement".
+      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
+      const bad = { ...d.body } as Record<string, unknown>;
+      if (d.seam === "fromKeyframes" && !("bundleKey" in bad)) {
+        PARENT_ROW.render_overrides = { config: BOGUS };
+      } else if (d.route === "/api/render/film") {
+        bad.motion_config = { bogus_key: 1 };
+      } else {
+        bad.renderOverrides = { config: BOGUS };
+      }
+      const res = await worker.fetch(post(d.path, bad), env, ctx);
+      const text = await res.text();
+      PARENT_ROW.render_overrides = null;
+      const gated = res.status === 400 && text.includes("motion_config rejected");
+      expect(gated, `${d.id}: motion_config_preflight declared ${d.guards.motion_config_preflight}, gated=${gated}, body=${text}`)
+        .toBe(d.guards.motion_config_preflight === "yes");
+    }
   });
 
   it("#696 config-shape gate: named-field refusal on the declared doors, absent on the rest", async () => {
