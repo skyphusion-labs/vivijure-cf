@@ -45,10 +45,12 @@ least two replicas were always live, and it measures the VIP path and not the ho
 stores it as a normal R2 artifact, returning the key.
 
 The gap it closes: our MCP tool-result content union carries text and images and has no video variant,
-so a finished film could only ever be handed over as a LINK. Meanwhile 128 of the 129 most recent
-COMPLETED renders carry `keyframes: null`, so the mp4 was the only artifact that existed for them. The
-one artifact type we produce was the one the transport cannot carry, and the one it can carry was the
-one we almost never produced. A contact sheet is an image, so it crosses.
+so a finished film could only ever be handed over as a LINK. Meanwhile, **across the 200 most recent
+render rows** (the library API clamps `limit` to 200, so this is a WINDOW and not a census of the
+library), 129 were COMPLETED and **128 of those carry `keyframes: null`** -- the mp4 was the only
+artifact that existed for them. The one artifact type we produce was the one the transport cannot
+carry, and the one it can carry was the one we almost never produced. A contact sheet is an image, so
+it crosses.
 
 Returning a key rather than bytes is deliberate: `view_artifact` fetches `GET /api/artifact/<key>`, so
 a key makes the sheet reachable through the panel, the serve route and `/api/artifact-url` with **no
