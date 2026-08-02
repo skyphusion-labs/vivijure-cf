@@ -175,7 +175,20 @@ export const CONTAINER_NOTFOUND_GRACE_MS = 30_000;
  *  "subtitle" only when captions were actually burned (film_key then points at the burned film),
  *  "subtitle:sidecar" when a .srt was written. A sidecar-only run burns nothing, so film_key stays the
  *  original -- no fake burn tag (the #77 honest-degrade discipline). */
-export function completedOutput(result: { key?: string; burned?: boolean; sidecar?: boolean } | null, st: FinishPoll): FilmFinishOutput {
+/** The container's measured output length, as the contract's optional field -- or nothing at all.
+ *  ONE definition for both completion paths. Gated on `burned` AS WELL AS on > 0: a sidecar-only run
+ *  writes no film (film_key stays the INPUT key) and the container leaves `durationSeconds` at its 0.0
+ *  initialiser, so reporting it would attach a zero to an artifact this step never wrote. That zero
+ *  would fail the core's film.finish conformance check (<= 0 is rejected) and soft-degrade a
+ *  sidecar-only run that succeeded -- a regression in a working path, caused by forwarding a field
+ *  blindly. */
+export function durationFields(result: { burned?: boolean; durationSeconds?: number } | null): { duration_seconds?: number } {
+  if (!result?.burned) return {};
+  const d = result.durationSeconds;
+  return typeof d === "number" && Number.isFinite(d) && d > 0 ? { duration_seconds: d } : {};
+}
+
+export function completedOutput(result: { key?: string; burned?: boolean; sidecar?: boolean; durationSeconds?: number } | null, st: FinishPoll): FilmFinishOutput {
   const applied: string[] = [];
   if (result?.burned) applied.push("subtitle");
   if (result?.sidecar) applied.push("subtitle:sidecar");
@@ -183,5 +196,5 @@ export function completedOutput(result: { key?: string; burned?: boolean; sideca
   const filmKey = result?.burned
     ? (typeof result.key === "string" && result.key.length > 0 ? result.key : st.outputKey)
     : st.filmKey;
-  return { film_key: filmKey, applied };
+  return { film_key: filmKey, applied, ...durationFields(result) };
 }

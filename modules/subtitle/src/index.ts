@@ -32,7 +32,7 @@ import {
 } from "./contract";
 import {
   coerceConfig, hasCaptions, buildSrt, buildContainerSpec, passthroughOutput,
-  encodePoll, decodePoll, completedOutput, CONTAINER_NOTFOUND_GRACE_MS,
+  encodePoll, decodePoll, completedOutput, durationFields, CONTAINER_NOTFOUND_GRACE_MS,
 } from "./subtitle";
 
 interface Env {
@@ -100,7 +100,7 @@ async function invokeSync(env: Env, input: FilmFinishInput, spec: Record<string,
     return passthrough(input, "passthrough:container-unreachable", true);
   }
   if (!resp.ok) return passthrough(input, "passthrough:container-failed", true);
-  let body: { ok?: boolean; key?: string; burned?: boolean; sidecar?: boolean };
+  let body: { ok?: boolean; key?: string; burned?: boolean; sidecar?: boolean; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
@@ -115,7 +115,7 @@ async function invokeSync(env: Env, input: FilmFinishInput, spec: Record<string,
   if (body.sidecar) applied.push("subtitle:sidecar");
   if (!applied.length) applied.push("noop:no-dialogue"); // defensive: container did nothing
   const filmKey = body.burned ? (body.key || input.output_key) : input.film_key;
-  return { ok: true, output: { film_key: filmKey, applied } };
+  return { ok: true, output: { film_key: filmKey, applied, ...durationFields(body) } };
 }
 
 async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<InvokeResponse<FilmFinishOutput>> {

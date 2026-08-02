@@ -113,7 +113,18 @@ export const CONTAINER_NOTFOUND_GRACE_MS = 30_000;
 /** Map the container's completed /film-titles result to a FilmFinishOutput. A real write lands the
  *  carded film at outputKey (result.key echoes it); a missing key falls back to the deterministic
  *  outputKey the core presigned, never the raw input (a card WAS applied). */
-export function completedOutput(result: { key?: string } | null, st: FinishPoll): FilmFinishOutput {
+/** The container's measured output length, as the contract's optional field -- or nothing at all.
+ *  ONE definition, used by both the synchronous and the async completion path, so the two cannot drift.
+ *  Guarded on > 0 rather than on presence: the container returns `durationSeconds` unconditionally and
+ *  a run that wrote no film reports 0.0, which is NOT a length. Forwarding that zero would fail the
+ *  core's film.finish conformance check (it rejects <= 0, deliberately: a 0 in a billing column is
+ *  indistinguishable from "not measured" once stored) and soft-degrade a step that actually worked. */
+export function durationFields(result: { durationSeconds?: number } | null): { duration_seconds?: number } {
+  const d = result?.durationSeconds;
+  return typeof d === "number" && Number.isFinite(d) && d > 0 ? { duration_seconds: d } : {};
+}
+
+export function completedOutput(result: { key?: string; durationSeconds?: number } | null, st: FinishPoll): FilmFinishOutput {
   const filmKey = result && typeof result.key === "string" && result.key.length > 0 ? result.key : st.outputKey;
-  return { film_key: filmKey, applied: ["film-titles"], ...(st.titleSeconds > 0 ? { prepend_seconds: st.titleSeconds } : {}) };
+  return { film_key: filmKey, applied: ["film-titles"], ...(st.titleSeconds > 0 ? { prepend_seconds: st.titleSeconds } : {}), ...durationFields(result) };
 }
