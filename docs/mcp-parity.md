@@ -14,29 +14,47 @@ without saying so is the defect, not the subset.
 | Population | Count | What it is |
 |---|---|---|
 | Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves. 85 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
-| Panel-reachable | **70** | Route entries the studio panel calls, i.e. the human surface. Matched from `public/` with controls in both directions. |
-| MCP tools | **21** | 20 curated tools plus the `studio_request` escape hatch. |
-| Reached by a CURATED tool | **20** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **86** | Every route. The escape hatch takes an arbitrary method + path. |
-| Structurally invisible to the MCP | **4** | Route entries whose response is BYTES. |
+| Panel-reachable | **70** | Route entries the studio panel calls, i.e. the human surface. Matched from every `.js`/`.html` file under `public/`, derived at test time (cf#332), with controls in both directions. **Path-only:** it ignores METHOD, so it can only ever OVERSTATE the human surface. |
+| MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
+| Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
+| Reachable via `studio_request` | **83** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
+| Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
+| Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
 Two of those rows are the whole finding, and they point in opposite directions from what the issue
 assumed.
 
-## Finding 1: action parity is NOT the gap
+## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer. There is no route in the
-contract an agent cannot invoke. Curated coverage is 20 of 86 (23%), and that number measures
-**ergonomics**, not capability: a curated tool means the agent does not have to know the contract to
-find the route. A low number here costs discoverability, not reach.
+`studio_request` sends any method to any path with the studio bearer, so for **83 of 86** route
+entries there is nothing an agent cannot invoke. Curated coverage is 41 of 86 (48%), and that number
+measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
+contract to find the route. For those 83 a low number costs discoverability, not reach, and 45
+routes require the agent to read `docs/CONTRACT.md` first.
 
-So the honest answer to "can an agent do everything a human can do" is **yes, already**, with the
-caveat that 66 routes require the agent to read `docs/CONTRACT.md` first.
+### The correction, and it was this document's own claim
 
-Note the asymmetry the table makes visible: parity is not a subset relation in either direction.
+**An earlier revision of this section said "There is no route in the contract an agent cannot
+invoke." That was false for three routes**, and the error is mine. `POST /api/upload`,
+`POST /api/storyboard/audio-upload` and `POST /api/storyboard/character-ref` read a **raw request
+body** and dispatch on the content-type header. `studio_request` sends `application/json`. Those
+routes answer `400` on the content-type before reading anything, so the hatch could name them and
+never satisfy them.
+
+The cause is worth more than the instance: **route REACH was measured and body ENCODING never was.**
+A route the hatch could address counted as covered regardless of whether it could be satisfied. Two
+of the three now have curated tools (`upload_image`, `upload_audio`, `vivijure-mcp` v1.2.0) and the
+gap is asserted by a test that drives the shipped `studio_request` at `/api/upload` and checks the
+content-type it sends, so the finding cannot quietly outlive its own truth.
+
+Note the direction, which is why nothing surfaced it: the error made the surface look **more**
+reachable than it was.
+
+Note also the asymmetry the table makes visible: parity is not a subset relation in either direction.
 `POST /api/render/film` and `GET /api/render/film/:id` -- the film submit and poll the MCP is built
 around -- are **not panel-reachable at all**. The panel renders through `/api/storyboard/render`.
-The agent surface and the human surface overlap; neither contains the other.
+The agent surface and the human surface overlap; neither contains the other. Reconciling those doors
+is vivijure-cf#334, and it is why no curated tool aims at a render submit, poll or cancel route.
 
 ## Finding 2: artifact parity WAS zero, and that was the real gap (now closed)
 
@@ -100,11 +118,59 @@ so the guarantees are **expiry and scope**, both enforced server-side and both n
 
 The MCP-side tools that consume it (`view_artifact`, which returns an image as MCP image content so
 an agent literally sees it, and `artifact_url`) ship in `vivijure-mcp`. That package released as
-**v1.1.0** and this repo's dependency is now `^1.1.0`, which is why the numbers above moved from 19
-tools / 18 curated to **21 / 20**. The footnote that produced that wait still stands and is the
+**v1.1.0** and this repo's dependency floor moved to `^1.1.0`, which is why the numbers moved from 19
+tools / 18 curated to 21 / 20 at that time. The footnote that produced that wait still stands and is the
 reason to trust the number: **this document measures the INSTALLED package**, so it reports the
 surface actually deployed rather than one that is merged somewhere. Code on `main` in another repo
 moves nothing here; a published version this repo resolves does.
+
+## v1.2.0: the parity wave (cf#317 half 1)
+
+`vivijure-mcp` **v1.2.0** added 21 curated tools (21 -> 42 tools, 20 -> 41 covered route entries) and
+this repo's dependency floor is now `^1.2.0`. What it closed, by band:
+
+- **bytes IN** -- `upload_image`, `upload_audio`. The class described in Finding 1.
+- **project + render-library write** -- an agent could list and read projects and renders and could
+  not create, save, organize or delete one. `get_project` advertised "incl. its last saved
+  storyboard" while nothing could write one.
+- **cast and identity** -- ten routes covering references, source photos, generated reference sets,
+  LoRA training and its status. Identity is step one of driving a film.
+- **finishing** -- only the two synchronous routes that act on an already-`COMPLETED` render.
+
+**Deliberately not closed:** render submit, poll and cancel, and the six routes downstream of them.
+Each starts a job whose only poll route is `GET /api/storyboard/render/:jobId`, and the render doors
+are being reconciled in vivijure-cf#334. A curated submit tool with a blocked poll tool is half a
+capability, and 29 tools built on an unreconciled door would freeze the divergence. A test in
+`vivijure-mcp` asserts no curated tool aims at one, and is written to be deleted when #334 lands.
+
+The remaining 32 panel-reachable routes with no curated tool are, method-aware, **28**: the 9 blocked
+render-door routes plus the 19 deliberately left on `studio_request` (internal helpers, module
+config, session). Module config write stays on the hatch for a structural reason rather than a scope
+one: its body shape is per-module and discovered at runtime from `config_schema`, so a static
+`inputSchema` would be either uninformative or a frozen snapshot of one deploy's module set.
+
+## Which way each number here can be wrong
+
+Every measurement in this document can err in ONE direction, and a reader a year from now cannot
+work that out from the number. Both instrument defects found while producing this revision ran in
+the flattering direction, which is exactly why they survived.
+
+- **Panel-reachable (70) can only be too HIGH.** The matcher compares path segments and ignores the
+  METHOD, so a route entry inherits reachability from any panel call to its path. Measured
+  method-aware, the human surface is **65**; five entries the panel never calls with that method are
+  counted here (`GET /api/storyboard/projects/:id`, `POST /api/cast/export/:id`,
+  `DELETE /api/cast/:id/ref`, `DELETE /api/cast/:id/source`, `HEAD /api/artifact/*key`). A bigger
+  denominator reads as MORE coverage, so nothing downstream would ever have flagged it.
+- **Reached by a curated tool (41) can only be too HIGH**, for the same reason at one remove: it is
+  exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
+  every field the route accepts. Per-field parity is unmeasured.
+- **Route entries (86) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+  registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
+  added explicitly; a second would be invisible.
+- **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.
+  A new panel file was not added to it, so the measured human surface SHRANK relative to reality
+  while every assertion passed. It is now derived by `readdirSync`, and the fix moved no number,
+  which is the honest outcome: it was harmless on the day it was written and structurally doomed.
 
 ## Method, and what it does not cover
 
@@ -134,11 +200,11 @@ structurally invisible to the MCP.
 | `GET` | `/api/demo/render/:id` | yes | -- | json |
 | `POST` | `/api/demo/chat` | yes | -- | json |
 | `GET` | `/api/storyboard/projects` | yes | `list_projects` | json |
-| `POST` | `/api/storyboard/projects` | yes | -- | json |
+| `POST` | `/api/storyboard/projects` | yes | `create_project` | json |
 | `GET` | `/api/storyboard/projects/:id` | yes | `get_project` | json |
-| `PATCH` | `/api/storyboard/projects/:id` | yes | -- | json |
-| `POST` | `/api/storyboard/projects/:id/storyboard` | yes | -- | json |
-| `DELETE` | `/api/storyboard/projects/:id` | yes | -- | json |
+| `PATCH` | `/api/storyboard/projects/:id` | yes | `update_project` | json |
+| `POST` | `/api/storyboard/projects/:id/storyboard` | yes | `save_storyboard` | json |
+| `DELETE` | `/api/storyboard/projects/:id` | yes | `delete_project` | json |
 | `GET` | `/api/voices` | yes | `voices` | json |
 | `GET` | `/api/cast` | yes | `list_cast` | json |
 | `POST` | `/api/cast` | yes | `create_cast` | json |
@@ -147,21 +213,21 @@ structurally invisible to the MCP.
 | `POST` | `/api/cast/import` | yes | -- | json |
 | `GET` | `/api/cast/:id` | yes | `get_cast` | json |
 | `PATCH` | `/api/cast/:id` | yes | `update_cast` | json |
-| `DELETE` | `/api/cast/:id` | yes | -- | json |
+| `DELETE` | `/api/cast/:id` | yes | `delete_cast` | json |
 | `POST` | `/api/cast/:id/portrait` | yes | `set_cast_portrait` | json |
-| `DELETE` | `/api/cast/:id/portrait` | yes | -- | json |
-| `POST` | `/api/cast/:id/ref` | yes | -- | json |
+| `DELETE` | `/api/cast/:id/portrait` | yes | `clear_cast_portrait` | json |
+| `POST` | `/api/cast/:id/ref` | yes | `add_cast_ref` | json |
 | `DELETE` | `/api/cast/:id/ref` | yes | -- | json |
-| `DELETE` | `/api/cast/:id/refs/*refKey` | yes | -- | json |
-| `POST` | `/api/cast/:id/source` | yes | -- | json |
+| `DELETE` | `/api/cast/:id/refs/*refKey` | yes | `remove_cast_ref` | json |
+| `POST` | `/api/cast/:id/source` | yes | `add_cast_source` | json |
 | `DELETE` | `/api/cast/:id/source` | yes | -- | json |
-| `DELETE` | `/api/cast/:id/source/*sourceKey` | yes | -- | json |
-| `POST` | `/api/cast/:id/generate-refs` | yes | -- | json |
-| `GET` | `/api/cast/:id/refs-job/:jobId` | yes | -- | json |
-| `POST` | `/api/cast/:id/train-lora` | yes | -- | json |
+| `DELETE` | `/api/cast/:id/source/*sourceKey` | yes | `remove_cast_source` | json |
+| `POST` | `/api/cast/:id/generate-refs` | yes | `generate_cast_refs` | json |
+| `GET` | `/api/cast/:id/refs-job/:jobId` | yes | `poll_cast_refs` | json |
+| `POST` | `/api/cast/:id/train-lora` | yes | `train_cast_lora` | json |
 | `POST` | `/api/cast/:id/train-wan-lora` | no | -- | json |
-| `GET` | `/api/cast/:id/lora-status` | yes | -- | json |
-| `POST` | `/api/upload` | yes | -- | json |
+| `GET` | `/api/cast/:id/lora-status` | yes | `cast_lora_status` | json |
+| `POST` | `/api/upload` | yes | `upload_image` | json (**raw body IN**) |
 | `GET` | `/api/artifact/*key` | yes | `view_artifact` | **bytes** |
 | `HEAD` | `/api/artifact/*key` | yes | -- | **bytes** |
 | `GET` | `/api/artifact-url/*key` | no | `artifact_url` | json |
@@ -179,8 +245,8 @@ structurally invisible to the MCP.
 | `POST` | `/api/storyboard/yaml` | yes | -- | json |
 | `POST` | `/api/storyboard/markers` | yes | -- | json |
 | `POST` | `/api/storyboard/bundle` | yes | `bundle_storyboard` | json |
-| `POST` | `/api/storyboard/audio-upload` | yes | -- | json |
-| `POST` | `/api/storyboard/character-ref` | yes | -- | json |
+| `POST` | `/api/storyboard/audio-upload` | yes | `upload_audio` | json (**raw body IN**) |
+| `POST` | `/api/storyboard/character-ref` | yes | -- | json (**raw body IN**) |
 | `POST` | `/api/audio/analyze` | yes | -- | json |
 | `POST` | `/api/storyboard/render` | yes | -- | json |
 | `POST` | `/api/storyboard/render-plan` | no | -- | json |
@@ -194,11 +260,11 @@ structurally invisible to the MCP.
 | `GET` | `/api/storyboard/render/:jobId` | yes | -- | json |
 | `DELETE` | `/api/storyboard/render/:jobId` | yes | -- | json |
 | `GET` | `/api/storyboard/renders` | yes | `list_renders` | json |
-| `GET` | `/api/storyboard/renders/tags` | yes | -- | json |
-| `PATCH` | `/api/storyboard/renders/:id` | yes | -- | json |
-| `DELETE` | `/api/storyboard/renders/:id` | yes | -- | json |
-| `POST` | `/api/storyboard/renders/:id/add-audio` | yes | -- | json |
-| `POST` | `/api/storyboard/renders/:id/add-narration` | yes | -- | json |
+| `GET` | `/api/storyboard/renders/tags` | yes | `render_tags` | json |
+| `PATCH` | `/api/storyboard/renders/:id` | yes | `update_render` | json |
+| `DELETE` | `/api/storyboard/renders/:id` | yes | `delete_render` | json |
+| `POST` | `/api/storyboard/renders/:id/add-audio` | yes | `add_render_audio` | json |
+| `POST` | `/api/storyboard/renders/:id/add-narration` | yes | `add_render_narration` | json |
 | `POST` | `/api/storyboard/renders/:id/finalize` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/animate-cloud` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/animate-hybrid` | yes | -- | json |
