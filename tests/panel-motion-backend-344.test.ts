@@ -93,7 +93,18 @@ describe("cf#344 the wire field name", () => {
     expect(BUNDLE).not.toContain("body.motionBackend");
   });
 
-  it("the field is omitted when no gpu door resolves, preserving pre-cf#344 behaviour", () => {
-    expect(BUNDLE).toContain("if (gpuDoor && gpuDoor.name) body.motion_backend");
+  it("the field is UNCONDITIONAL: the omission branch is deliberately gone", () => {
+    // This assertion used to require the OPPOSITE, and it was right at the time: cf#345 omitted the
+    // field on a cold registry cache to preserve pre-cf#344 behaviour, which holds only while the
+    // server still defaults a backend. The cf#344 cold-cache ruling removed that branch, because
+    // once #500/#504 is enforced the omission stops degrading and starts returning "choose a motion
+    // backend" -- a refusal naming the USER on a button whose job is choosing for them.
+    //
+    // Updated rather than deleted. A guard that fails on a deliberate change has done its job, and
+    // the fix is to state the new contract where the old one was, not to remove the question.
+    // The refusals that replaced the branch are asserted in tests/registry-cold-cache-344.test.ts.
+    expect(BUNDLE).toContain("body.motion_backend = gpuDoor.name;");
+    expect(BUNDLE, "the silent-omission branch is back; cf#344's ruling forbids it")
+      .not.toContain("if (gpuDoor && gpuDoor.name) body.motion_backend");
   });
 });

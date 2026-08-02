@@ -610,6 +610,41 @@ function showBundleResult(data) {
 async function renderFromKeyframes(bundleKey, btn, status) {
   const project = planState.storyboard && planState.storyboard.projectName;
   if (!project) { status.textContent = "no project"; return; }
+
+  // cf#344: AWAIT the projection before deciding anything, and refuse before spend if it cannot
+  // name the door.
+  //
+  // cf#345 made this button name its motion backend explicitly, but omitted the field on a cold
+  // cache on the grounds that omitting preserved the old behaviour. That holds only while the
+  // server still defaults one. When hRenderFromKeyframes enforces #500/#504, the same omission
+  // stops degrading and starts returning "choose a motion backend for a full render" -- a refusal
+  // that names the USER as the party who failed to choose, on a button whose entire job is
+  // choosing for them. The cold cache is OUR state.
+  //
+  // Awaiting is confined to this handler on purpose. load() is already promise-returning and
+  // cached, so nothing about page initialisation changes and no other control's timing moves.
+  //
+  // The two refusals below are deliberately DIFFERENT, because they name different parties:
+  // an unreachable registry is ours to fix, an absent GPU door is the operator's to install.
+  // Both refuse BEFORE the confirm, so the user is never asked to approve a render we will not
+  // submit, and the confirm dialog's own gpuMotionLabel() is accurate when it is shown.
+  const registry = window.plannerRegistry;
+  if (!registry) { status.textContent = "planner registry unavailable; reload the page"; return; }
+  await registry.load();
+  if (registry.registryUnavailable()) {
+    status.textContent =
+      "cannot reach the studio module registry, so this render cannot name its GPU door. "
+      + "reload the page and try again.";
+    return;
+  }
+  const gpuDoor = registry.defaultGpuDoorModule();
+  if (!gpuDoor || !gpuDoor.name) {
+    status.textContent =
+      "no GPU door is installed on this studio (a motion.backend module with locality byo or "
+      + "local), so there is nothing to animate these keyframes with.";
+    return;
+  }
+
   if (!window.confirm(
     "render this bundle's " + Object.keys(bundleState.sceneStartImages || {}).length
     + " injected keyframe(s) with " + gpuMotionLabel() + " (no " + keyframeLabel() + " keyframe pass)?\n\ncontinue?"
@@ -643,11 +678,11 @@ async function renderFromKeyframes(bundleKey, btn, status) {
   //
   // Omitted when no gpu door is installed, which leaves today's behaviour exactly as it was and
   // lets the core answer with its own honest error rather than the panel inventing a name.
-  // Read through the registry directly rather than adding a global for one call site. An
-  // unloaded registry yields [] and therefore null here, which omits the field and leaves the
-  // pre-cf#344 behaviour intact, so a cold cache degrades to exactly what shipped before.
-  const gpuDoor = window.plannerRegistry ? window.plannerRegistry.defaultGpuDoorModule() : null;
-  if (gpuDoor && gpuDoor.name) body.motion_backend = gpuDoor.name;
+  // cf#344: UNCONDITIONAL. The door was resolved and both of its failure cases refused above, so
+  // there is no path to here without a name. The conditional that used to guard this line existed
+  // for the cold cache, and the cold cache is now handled where it can still be explained to a
+  // user rather than silently dropped into a request.
+  body.motion_backend = gpuDoor.name;
   btn.disabled = true;
   status.textContent = "submitting i2v render...";
   let resp = null;
