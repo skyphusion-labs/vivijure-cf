@@ -71,4 +71,10 @@ export interface FilmFinishOutput {
   // Seconds this module prepended to the FRONT of the film (a title card); the core shifts an earlier
   // film.finish .srt sidecar by this so soft subtitles match the final film (#663). Absent / 0 => none.
   prepend_seconds?: number;
+  // The ffprobe length of the artifact THIS STEP WROTE, in seconds. The meter bills on the final length
+  // of the delivered video and "we bill on the last writer" (Conrad, 2026-08-02), so a carded film has
+  // to report its own length -- the assemble figure is short by the length of every card. Set ONLY when
+  // this step actually wrote a film AND the container measured it; absent means NOT MEASURED, which the
+  // core stores as NULL and must never read as zero. Optional + additive, no api bump.
+  duration_seconds?: number;
 }

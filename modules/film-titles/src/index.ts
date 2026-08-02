@@ -28,7 +28,7 @@ import {
 } from "./contract";
 import {
   coerceConfig, hasCards, hasTitleCard, buildContainerSpec, passthroughOutput,
-  encodePoll, decodePoll, completedOutput, CONTAINER_NOTFOUND_GRACE_MS,
+  encodePoll, decodePoll, completedOutput, durationFields, CONTAINER_NOTFOUND_GRACE_MS,
 } from "./film-titles";
 
 interface Env {
@@ -92,7 +92,7 @@ async function invokeSync(env: Env, input: FilmFinishInput, spec: Record<string,
     return passthrough(input, "passthrough:container-unreachable", true);
   }
   if (!resp.ok) return passthrough(input, "passthrough:container-failed", true);
-  let body: { ok?: boolean; key?: string };
+  let body: { ok?: boolean; key?: string; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
@@ -102,7 +102,7 @@ async function invokeSync(env: Env, input: FilmFinishInput, spec: Record<string,
   // Report prepend_seconds only when an opening TITLE card was actually rendered (it shifts the final
   // film`s timeline); credits are appended at the end and never shift cues (#663). titleSeconds is 0 when
   // there is no title card, so this passes through as no prepend.
-  return { ok: true, output: { film_key: body.key || input.output_key, applied: ["film-titles"], ...(titleSeconds > 0 ? { prepend_seconds: titleSeconds } : {}) } };
+  return { ok: true, output: { film_key: body.key || input.output_key, applied: ["film-titles"], ...(titleSeconds > 0 ? { prepend_seconds: titleSeconds } : {}), ...durationFields(body) } };
 }
 
 async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<InvokeResponse<FilmFinishOutput>> {
