@@ -185,3 +185,83 @@ export async function runpodRoute(env: RunpodRouteEnv): Promise<RunpodRoute> {
   ]);
   return resolveRunpodRoute(env.RUNPOD_PROXY_BASE, proxyToken, apiKey);
 }
+
+// ------------------------------------------------------------------------------------------------
+// THE THIRD STATE ON THE POLL PATH (cf#398, the cf-side half of cp#288).
+//
+// THE DEFECT THIS CLOSES. Every RunPod-reaching module's poll handles an unreadable upstream by
+// returning `{ ok: true, pending: true }`. That was correct while the upstream was RunPod: a blip
+// means ask again. Once the upstream is OURS, the identical code turns a degraded, mid-deploy or
+// refusing plane into a render that never completes and never errors. No error surfaces anywhere,
+// nothing is logged as a failure, and the panel shows a job in progress forever. It fails in the
+// worst available direction, which is why the plane emits a header rather than an error body.
+//
+// WHAT THE PLANE ACTUALLY SENDS. Measured at vivijure-control-plane@53152477, four construction
+// sites, all non-2xx, none of them a pass-through of an upstream response:
+//
+//   poll  runpod-proxy-poll-routes.ts  unauthorized 401, endpoint_not_allowed 403
+//   poll  runpod-proxy-poll.ts         credential-unavailable 503
+//   submit runpod-proxy-routes.ts      unauthorized 401, unknown_tenant/tenant_not_live/
+//                                      tenant_suspended/not_shared_mode/endpoint_not_allowed 403,
+//                                      bad_body 400, plus a 503 planeUnavailable
+//
+// The HEADER VALUE IS THE REASON, so a module can name what happened without parsing a body. And a
+// transport failure REACHING RunPod is deliberately NOT given the header: it returns 502 with no
+// header, because mislabelling a vendor hiccup as our outage is a different wrong answer, not a fix.
+//
+// WHY TERMINAL AND NOT A RETRY BUDGET. `PollResponse` is exactly three shapes -- pending, output,
+// error -- and none of them can carry a reason alongside `pending`, nor return an updated poll
+// token. So neither "pend but say why" nor a cross-poll retry counter is expressible without
+// widening a contract that is vendored into 26 modules. It is also not warranted: of the three
+// refusals reachable on the poll path, `unauthorized` and `endpoint_not_allowed` are permanent until
+// a tenant is re-provisioned, and `credential-unavailable` is a plane outage. None is the
+// ask-again-in-eight-seconds condition the pending branch exists for. A refusal therefore surfaces
+// as an ERROR within one poll interval; a transport failure keeps today's behaviour byte for byte.
+//
+// GATED ON `route.proxied`, and that is not belt-and-braces. The header means "our plane refused".
+// On the direct route there is no plane, so honouring a header that arrives from api.runpod.ai
+// would let a vendor response change a self-hoster's render outcome. Gating it makes the self-host
+// door provably untouched by this change rather than untouched by assertion.
+// ------------------------------------------------------------------------------------------------
+
+/** Emitted by the plane on a plane-AUTHORED refusal; its value is the reason. Must stay byte-equal
+ *  to `PLANE_REFUSAL_HEADER` in vivijure-control-plane/src/runpod-proxy-poll.ts. */
+export const PLANE_REFUSAL_HEADER = "x-vivijure-plane-refusal";
+
+/** Only what this needs off a Response, so a test can hand in a plain object and so nothing here
+ *  depends on the body having parsed. A refusal body always parses today; that is a property of the
+ *  plane's current code, not of the contract, and this check must not rest on it. */
+export interface PlaneRefusalCarrier {
+  readonly headers: { get(name: string): string | null };
+}
+
+/**
+ * The reason the PLANE refused, or null if this is not a plane refusal.
+ *
+ * Null covers three genuinely different things and all three must keep today's behaviour: the
+ * direct route (no plane exists), a normal proxied response, and a proxy 502 saying it could not
+ * reach RunPod. Only the header separates the plane's own refusal from everything else.
+ */
+export function planeRefusalReason(route: RunpodRoute, resp: PlaneRefusalCarrier): string | null {
+  if (!route.proxied) return null;
+  const raw = resp.headers.get(PLANE_REFUSAL_HEADER);
+  if (!raw) return null;
+  // Trimmed and bounded because this string is rendered into a render row. A blank header is not a
+  // reason and is treated as no refusal at all; the plane never emits one, and inventing a refusal
+  // out of an empty header would fail a render on a header a proxy stripped the value from.
+  const reason = raw.trim().slice(0, 120);
+  return reason || null;
+}
+
+/** The error text for a refused poll. One wording for all fourteen modules, so an operator seeing it
+ *  in a render row learns the same thing whichever module produced it, and so the sentence cannot
+ *  drift into fourteen variants. Names the plane explicitly: the single most expensive misreading
+ *  available here is "RunPod is down" when the answer is our own plane. */
+export function planeRefusalError(moduleName: string, reason: string): string {
+  return (
+    moduleName +
+    ": the control plane refused this poll (" +
+    reason +
+    "). This is a plane refusal, not a RunPod failure, and the job is not observable until it clears."
+  );
+}

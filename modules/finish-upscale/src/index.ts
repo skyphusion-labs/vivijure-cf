@@ -30,7 +30,7 @@ import {
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
-import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
+import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -226,6 +226,12 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   let s: { status?: string; output?: unknown; error?: unknown };
   try {
     const resp = await fetch(runpodBase(route, endpointId) + "/status/" + st.jobId, { headers: auth(route) });
+    // cf#398: a plane-AUTHORED refusal is NOT an upstream status and must never read as
+    // pending. Checked before the body is interpreted, so it does not rest on the refusal
+    // body parsing. No header (direct route, a normal response, or a proxy 502 that could
+    // not reach RunPod) leaves every branch below byte for byte unchanged.
+    const refusal = planeRefusalReason(route, resp);
+    if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
     httpStatus = resp.status;
     s = await resp.json() as typeof s;
   } catch {
