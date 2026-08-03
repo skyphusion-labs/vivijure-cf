@@ -41,6 +41,7 @@ import {
 } from "./narration-gen";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
@@ -48,13 +49,19 @@ interface R2Bucket {
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
+  /** cf#394 / cp#288: the plane-side RunPod proxy. Bound (plain_text) only for shared hosted
+   *  tenants; unbound everywhere else, which is the untouched direct path. See
+   *  modules/_shared/runpod-route.ts -- the branch is BOUND-ness, never failover. */
+  RUNPOD_PROXY_BASE?: string;
+  /** cf#394 / cp#288: the per-tenant plane credential presented instead of a RunPod key. */
+  RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
   R2_RENDERS: R2Bucket;
   /** cf#279 job log, cf#305. OPTIONAL: a module deployed without it still works, and its
    *  absence warns rather than reading as a clean run (modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
 }
 
-const ENDPOINT = "https://api.runpod.ai/v2/" + MODEL;
+const ENDPOINT_ID = MODEL;
 
 const MANIFEST: ModuleManifest = {
   name: "narration-gen",
@@ -104,26 +111,15 @@ const MANIFEST: ModuleManifest = {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
-const auth = (apiKey: string) => ({ authorization: "Bearer " + apiKey });
+const endpoint = (route: RunpodRoute) => runpodEndpointUrl(route, ENDPOINT_ID);
+const auth = (route: RunpodRoute) => runpodHeaders(route, MANIFEST.name);
 
-/** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
- *  Returns "" if unset/unreadable so the existing "not configured" guards still fire. */
-async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
-  if (typeof s === "string") return s;
-  if (!s) return "";
-  try {
-    return await s.get();
-  } catch (e) {
-    console.warn("secrets-store get failed: " + (e as Error).message);
-    return "";
-  }
-}
 
 /** Is the endpoint still in its virgin cold start (no worker has ever come up)? Best-effort: any
  *  transport/HTTP failure reads as "not cold" so the #141 verdict still fires. */
-async function endpointStillCold(apiKey: string): Promise<boolean> {
+async function endpointStillCold(route: RunpodRoute): Promise<boolean> {
   try {
-    const r = await fetch(ENDPOINT + "/health", { headers: auth(apiKey) });
+    const r = await fetch(endpoint(route) + "/health", { headers: auth(route) });
     if (!r.ok) return false;
     return workersStillCold(await r.json());
   } catch {
@@ -134,9 +130,9 @@ async function endpointStillCold(apiKey: string): Promise<boolean> {
 /** Best-effort cancel of a RunPod job we are about to fail: a hung-error job otherwise HOLDS the
  *  billed worker until someone cancels it by hand (F17 spend leak). Never throws; the honest
  *  failure below is the point, the cancel is damage control. */
-async function cancelRunpodJobBestEffort(apiKey: string, jobId: string): Promise<void> {
+async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Promise<void> {
   try {
-    await fetch(ENDPOINT + "/cancel/" + jobId, { method: "POST", headers: auth(apiKey) });
+    await fetch(endpoint(route) + "/cancel/" + jobId, { method: "POST", headers: auth(route) });
   } catch {
     /* best-effort */
   }
@@ -148,8 +144,8 @@ async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeR
   const input = req.input;
   const filmKey = typeof input?.film_key === "string" ? input.film_key.trim() : "";
   if (!filmKey) return { ok: false, error: "score: input.film_key required" };
-  const apiKey = await secretValue(env.RUNPOD_API_KEY);
-  if (!apiKey) return { ok: false, error: "narration-gen: RUNPOD_API_KEY not configured" };
+  const route = await runpodRoute(env);
+  if (!route.credential) return { ok: false, error: "narration-gen: " + runpodCredentialName(route) + " not configured" };
 
   const config = normalizeConfig(req.config ?? {});
   let body: { input: Record<string, unknown> };
@@ -163,9 +159,9 @@ async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeR
   const format = config.format ?? "mp3";
   const applied = appliedTags(format, config);
   try {
-    const r = await fetch(ENDPOINT + "/run", {
+    const r = await fetch(endpoint(route) + "/run", {
       method: "POST",
-      headers: { ...auth(apiKey), "content-type": "application/json" },
+      headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(body),
     });
     if (!r.ok) return { ok: false, error: "narration-gen /run -> " + r.status };
@@ -192,13 +188,13 @@ async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeR
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "narration-gen: bad poll token" };
-  const apiKey = await secretValue(env.RUNPOD_API_KEY);
-  if (!apiKey) return { ok: false, error: "narration-gen: RUNPOD_API_KEY not configured" };
+  const route = await runpodRoute(env);
+  if (!route.credential) return { ok: false, error: "narration-gen: " + runpodCredentialName(route) + " not configured" };
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
   try {
-    const resp = await fetch(ENDPOINT + "/status/" + st.jobId, { headers: auth(apiKey) });
+    const resp = await fetch(endpoint(route) + "/status/" + st.jobId, { headers: auth(route) });
     httpStatus = resp.status;
     s = (await resp.json()) as typeof s;
   } catch {
@@ -214,7 +210,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
       // polling up to the cold cap instead of false-failing the first-ever job.
       if (
         classifyGoneState(st.submittedAt, now, RUNPOD_COLD_GRACE_MS) === "gone-grace" &&
-        (await endpointStillCold(apiKey))
+        (await endpointStillCold(route))
       ) {
         return { ok: true, pending: true };
       }
@@ -242,7 +238,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
     // terminal error. Surface the REAL error (never "not found") and cancel to stop the spend.
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
-      await cancelRunpodJobBestEffort(apiKey, st.jobId);
+      await cancelRunpodJobBestEffort(route, st.jobId);
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
       return { ok: false, error: "narration-gen backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
@@ -286,11 +282,14 @@ export default {
     // propagation state to distinguish. cf#305 added the runpod_job_log binding, so
     // `telemetry.job_log` is reported here too.
     if (request.method === "GET" && url.pathname === "/ready") {
-      const apiKey = await secretValue(env.RUNPOD_API_KEY);
+      const route = await runpodRoute(env);
       return json({
-        ok: Boolean(apiKey),
+        ok: Boolean(route.credential),
         module: MANIFEST.name,
-        credentials: { runpod_api_key: Boolean(apiKey) },
+        credentials: { runpod_api_key: Boolean(route.credential) },
+        // cf#394: which route answered. Additive -- the plane parses runpod_api_key and
+        // refuses a module whose /ready omits it, so that field keeps its name.
+        runpod_proxied: route.proxied,
         // cf#279/#305: can this worker RECORD a job outcome at all? Reported because an empty
         // job log is otherwise indistinguishable from a clean run, which is the exact failure
         // shape the log exists to end. Deliberately NOT part of `ok`: the job log is telemetry

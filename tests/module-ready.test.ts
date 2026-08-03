@@ -54,6 +54,11 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: true,
       module: name,
       credentials: { runpod_api_key: true, runpod_endpoint_id: true },
+      // cf#394: which RunPod route this worker would take. Additive, and false on every
+      // case here because none of them binds RUNPOD_PROXY_BASE. The field name
+      // runpod_api_key is deliberately unchanged: the control plane parses it and
+      // refuses a module whose /ready omits it.
+      runpod_proxied: false,
       telemetry: { job_log: "unavailable" },
     });
   });
@@ -64,6 +69,11 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: false,
       module: name,
       credentials: { runpod_api_key: false, runpod_endpoint_id: true },
+      // cf#394: which RunPod route this worker would take. Additive, and false on every
+      // case here because none of them binds RUNPOD_PROXY_BASE. The field name
+      // runpod_api_key is deliberately unchanged: the control plane parses it and
+      // refuses a module whose /ready omits it.
+      runpod_proxied: false,
       telemetry: { job_log: "unavailable" },
     });
   });
@@ -74,6 +84,11 @@ describe.each(MODULES)("$name: GET /ready", ({ name, worker }) => {
       ok: false,
       module: name,
       credentials: { runpod_api_key: false, runpod_endpoint_id: false },
+      // cf#394: which RunPod route this worker would take. Additive, and false on every
+      // case here because none of them binds RUNPOD_PROXY_BASE. The field name
+      // runpod_api_key is deliberately unchanged: the control plane parses it and
+      // refuses a module whose /ready omits it.
+      runpod_proxied: false,
       telemetry: { job_log: "unavailable" },
     });
   });

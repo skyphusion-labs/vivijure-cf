@@ -224,11 +224,19 @@ describe("the population under test is the whole one (cf#289)", () => {
       }
     };
 
-    // Derived, not asserted: a module is a RunPod submitter iff its worker names the RunPod API
-    // host. Motion backends are identified the same way the #296 suite identifies them -- matching
-    // the hook INSIDE the array, because keying on `hooks: ["motion.backend"]` matches eight of the
-    // nine and silently drops local-gpu, which is dual-hook.
-    const submitters = candidates.filter((n) => read(n).includes("api.runpod.ai"));
+    // Derived, not asserted: a module is a RunPod submitter iff it names the RunPod API host OR
+    // imports the shared route helper. The second half arrived with cf#394, which moved the base
+    // URL out of the modules and into modules/_shared/runpod-route.ts so a shared hosted tenant
+    // can be pointed at the plane proxy. THE HOST-ONLY PREDICATE WENT TO ZERO THE MOMENT THAT
+    // LANDED, and it was this test's own positive control below -- not a review, and not the type
+    // checker -- that reported it. Both halves are kept: a module may legitimately still name the
+    // host, and a matcher for only the new shape would have the identical blind spot pointed the
+    // other way. Motion backends are identified the same way the #296 suite identifies them --
+    // matching the hook INSIDE the array, because keying on `hooks: ["motion.backend"]` matches
+    // eight of the nine and silently drops local-gpu, which is dual-hook.
+    const submitters = candidates.filter(
+      (n) => read(n).includes("api.runpod.ai") || read(n).includes("_shared/runpod-route"),
+    );
     const motion = candidates.filter((n) => /hooks:\s*\[[^\]]*"motion\.backend"/.test(read(n)));
     const mine = submitters.filter((n) => !motion.includes(n));
     const covered = CASES.map((c) => c.name);

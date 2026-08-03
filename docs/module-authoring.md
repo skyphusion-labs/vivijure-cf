@@ -141,18 +141,62 @@ this request at all"; the core records it and moves on.
 The template generalizes to any off-GPU or cloud capability: keep the same four files and make
 `/invoke` proxy your backend instead of doing the work in the Worker.
 
+**Never build the RunPod URL or the bearer yourself.** Both come from
+`modules/_shared/runpod-route.ts`, and a module that hard-codes either is unreachable for a shared
+hosted tenant (cf#394, cp#288). The reason is an invariant, not a style preference: on the hosted
+tier no tenant-namespace script may hold a RunPod credential at all, so the control plane stands a
+proxy in front of RunPod and binds `RUNPOD_PROXY_BASE` to it. A module with a literal
+`https://api.runpod.ai` in it ignores that binding at that one call site and reaches RunPod directly
+with a credential a tenant must never have.
+
 ```ts
+import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute }
+  from "../../_shared/runpod-route";
+
 async function run(env: Env, req: InvokeRequest<MotionInput>): Promise<InvokeResponse<MotionOutput>> {
-  // 1. submit to your RunPod serverless endpoint
-  const sub = await fetch(`https://api.runpod.ai/v2/${env.RUNPOD_ENDPOINT_ID}/run`, {
+  // 0. resolve the route. Proxied when the plane bound RUNPOD_PROXY_BASE, direct otherwise.
+  const route = await runpodRoute(env);
+  if (!route.credential) {
+    // Name the binding that is actually missing ON THIS ROUTE. Telling an operator to look for
+    // RUNPOD_API_KEY on a proxied worker sends them after a binding that must not exist there.
+    return { ok: false, error: `my-module: ${runpodCredentialName(route)} not configured` };
+  }
+  // 1. submit. The suffixes are RunPod's own on both routes, so this line does not branch.
+  const sub = await fetch(runpodEndpointUrl(route, env.RUNPOD_ENDPOINT_ID) + "/run", {
     method: "POST",
-    headers: { authorization: `Bearer ${env.RUNPOD_API_KEY}`, "content-type": "application/json" },
+    headers: { ...runpodHeaders(route, MANIFEST.name), "content-type": "application/json" },
     body: JSON.stringify({ input: toBackendInput(req.input, req.config) }),
   });
   // 2. poll /status until COMPLETED (or stream), 3. map the result to your hook's output type
   // 4. on any failure return { ok: false, error } (or a soft passthrough for a chain hook)
 }
 ```
+
+Declare both proxy bindings as OPTIONAL in your `Env`, because everything except a shared hosted
+tenant leaves them unbound:
+
+```ts
+interface Env {
+  RUNPOD_API_KEY: SecretsStoreSecret;          // the DIRECT route's bearer
+  RUNPOD_PROXY_BASE?: string;                  // plain_text, shared hosted tenants only
+  RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;  // the PROXIED route's bearer
+}
+```
+
+Three rules that are not obvious from the code:
+
+- **The branch is whether `RUNPOD_PROXY_BASE` is bound. It is never a failover.** A proxied module
+  whose token is missing REFUSES; it must not reach for the direct key, because a shared tenant that
+  can fall back to a RunPod credential is a shared tenant holding one.
+- **Only `/run`, `/status/<id>`, `/cancel/<id>` and `/health` exist on the proxy.** Anything else is
+  a 404 there, deliberately: `purge-queue` wipes an endpoint's queue for every tenant on it, and
+  RunPod's per-endpoint scoping has no operation axis that could refuse it.
+- **The RunPod MANAGEMENT API (`rest.runpod.io`) is not proxied and never will be.** Endpoint
+  capacity is an operator property. If your module calls something like
+  `reconcileRunpodEndpointWorkersMax`, gate it on `!route.proxied`.
+
+`tests/runpod-proxy-base-cf394.test.ts` enforces the first rule across the whole module namespace: it
+counts every module reaching RunPod and fails if one of them is not routing through the helper.
 
 That is the whole "community becomes the roadmap" play: the RunPod ready-to-deploy hub
 (Wan2.2/SDXL/ComfyUI as `motion.backend`, Whisper STT as `score`, vLLM as a self-hosted
