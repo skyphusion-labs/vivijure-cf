@@ -165,9 +165,22 @@ jobs:
       - name: Resolve the tenant release module list (single source)
         run: |
           set -euo pipefail
-          SATELLITES="$(grep -vE "^[[:space:]]*$" scripts/finish-satellite-modules.txt | tr "\n" " ")"
-          echo "TENANT_MODULES=keyframe own-gpu plan-enhance $SATELLITES" >> "$GITHUB_ENV"
-          echo "tenant release modules: keyframe own-gpu plan-enhance $SATELLITES"
+          # cf#394: ONE canonical file, and the composition it replaced is why. This used to be
+          # `keyframe own-gpu plan-enhance` inline plus finish-satellite-modules.txt, so "what
+          # publishes as a tenant bundle" lived in two places and one of them is named for a
+          # different class. Nobody could answer it in a single read, and on 2026-08-03 that cost a
+          # lane its direction: the control plane's catalog had grown to EQUAL the publish set with
+          # zero headroom and no artifact anywhere said so.
+          #
+          # Same parse rule as finish-satellite-modules.txt (bare names, blanks skipped) so there is
+          # one rule rather than two, and the TS readers of this file need no new logic.
+          TENANT_MODULES="$(grep -vE "^[[:space:]]*$" scripts/tenant-release-modules.txt | tr "\n" " ")"
+          if [ -z "${TENANT_MODULES// /}" ]; then
+            echo "::error::scripts/tenant-release-modules.txt resolved to NOTHING; refusing to publish a release with no tenant modules"
+            exit 1
+          fi
+          echo "TENANT_MODULES=$TENANT_MODULES" >> "$GITHUB_ENV"
+          echo "tenant release modules: $TENANT_MODULES"
 
       # Tenant MODULE workers (cf#99): each is its own wrangler project, so wrangler's own
       # bundler produces the deploy shape and build-module-release.ts assembles + hashes it into

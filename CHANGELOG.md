@@ -7,6 +7,55 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### feat(release): publish the 8 cost-door modules and image-generate as tenant bundles (cf#394, cp#284)
+
+A studio release published SEVEN tenant module bundles. The control plane's `TENANT_MODULE_CATALOG`
+reached seven the same day (cp#284 catalogued `finish-rife`), so the two sets became **exactly
+equal with zero headroom**: the plane could not provision one further module without a studio
+release shipping first, and nothing in either repo said so. Conrad's ruling to catalogue modules
+toward parity before phase 1b was, at that moment, not executable at all.
+
+This publishes nine more -- the eight cost-door modules (`alibaba-wan`, `alibaba-wan-lora`,
+`google-veo`, `kling`, `minimax-hailuo`, `narration-gen`, `seedance`, `vidu-q3`) and
+`image-generate`.
+
+**Publishing is not provisioning, and the gap is deliberate.** A bundle with no catalog row uploads
+to nobody, so this changes no tenant's behaviour today; it removes the cross-repo serialisation so
+the plane can add rows on its own schedule. `image-generate` is included even though its row is
+still blocked on a separate flag question, for the same reason: a published bundle has one obvious
+shape and no consumer contract to get wrong.
+
+**Mechanism: one canonical list, `scripts/tenant-release-modules.txt`,** replacing the inline
+composition. NOT an addition to `finish-satellite-modules.txt` -- that file has five consumers and
+only one of them is publishing; the others narrow an OPERATOR deploy (`FINISH_SATELLITES_ONLY`) and
+feed two test denominators. Adding nine non-finish modules there would have silently widened a
+`CORE_ONLY_DEPLOY` operator deploy in order to change a publish set. The workflow's own comment
+already recorded the precedent, having named `plan-enhance` inline "rather than added to
+finish-satellite-modules.txt, which drives a different thing".
+
+The consolidation creates one duplication -- the four satellites now appear in both files -- and
+`tests/tenant-release-modules-cf394.test.ts` converts it into a checked invariant (subset, no
+duplicates, every named module exists, the workflow actually reads the file, and the old inline
+form is gone) rather than leaving it to drift.
+
+**Proved by building, not by parsing.** All nine were run through the two steps a release runs --
+`wrangler deploy --dry-run --outdir` then `scripts/build-module-release.ts` -- and each produced a
+non-empty bundle and a manifest naming itself. Two already-published modules passed as a positive
+control and a nonexistent module refused as a negative one, with a row-count floor so a loop that
+ran zero times could not print a clean table.
+
+### fix(docs): correct a cross-repo mirror that a control-plane merge falsified (cp#284)
+
+`tests/module-readiness-denominators-295.test.ts` pins `TENANT_MODULE_CATALOG` as a hand-maintained
+constant, because this repo cannot read the control plane. Its own comment says a change there "will
+NOT fail this test". That is exactly what happened: vivijure-control-plane#313 catalogued
+`finish-rife`, and the mirror sat false for about three hours while every assertion passed, since
+they compare the constant against itself. Corrected, and the incident recorded at the constant --
+the published table's `finish-rife` row loses its flagged published-not-provisioned asymmetry, which
+was real from cf#295 until cp#284 and is now simply gone.
+
 ## v1.19.3 -- 2026-08-03
 
 ### chore(deps): pick up @skyphusion-labs/vivijure-mcp 1.2.1 -- keyframe_backend + qualityTier on submit_film (vivijure-cf#380, vivijure-cf#382)
