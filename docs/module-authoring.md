@@ -188,6 +188,9 @@ Three rules that are not obvious from the code:
 - **The branch is whether `RUNPOD_PROXY_BASE` is bound. It is never a failover.** A proxied module
   whose token is missing REFUSES; it must not reach for the direct key, because a shared tenant that
   can fall back to a RunPod credential is a shared tenant holding one.
+- **The unbound path is the self-host product, not a transitional one.** vivijure-cf ships to
+  individual self-hosters on their own Workers with their own RunPod account, as well as to shared
+  hosted tenants. Both branches are permanent; neither is scaffolding to be removed later.
 - **Only `/run`, `/status/<id>`, `/cancel/<id>` and `/health` exist on the proxy.** Anything else is
   a 404 there, deliberately: `purge-queue` wipes an endpoint's queue for every tenant on it, and
   RunPod's per-endpoint scoping has no operation axis that could refuse it.
