@@ -68,6 +68,83 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+  # CONTAINER TESTS (cf#325): the CPU containers ship their own test_*.py files and NONE of them
+  # ran anywhere -- this workflow's only pytest invocation above is scoped to deploy/. A suite
+  # nothing runs is indistinguishable from a suite that passes; both produce a green pipeline and
+  # no output. test_url_guard.py is the one that stings: it is the SSRF guard on every URL a
+  # container fetches or PUTs to, reached from /finish, /overlay, /film-titles, /subtitle,
+  # /inspect and /frames, and it has never once executed.
+  #
+  # These are plain scripts (`python3 test_X.py`, non-zero exit on any failed assertion), not
+  # pytest-discoverable `def test_*` functions -- widening the pytest path above to containers/
+  # would have pytest IMPORT each file (which runs their module-level checks as a side effect of
+  # collection, not as a real pytest item) and, worse, silently COLLECT ZERO actual test items for
+  # every one of them: pytest exits 0 on zero collected tests unless told otherwise, which is
+  # exactly the "0 tests collected reads as success" trap this issue exists to close, arriving
+  # through the fix rather than the original gap. Running each script explicitly and counting them
+  # sidesteps it.
+  #
+  # SCOPED to what is proven safe on THIS runner, established by actually running it here rather
+  # than assumed: `test_url_guard.py` (vendored byte-for-byte per its own docstring, stdlib only,
+  # no ffmpeg, no network) from every container that carries a copy, plus video-finish's own
+  # `test_inspect.py` (also stdlib only) and `test_async.py` / `test_meta_sidecar.py` (need
+  # aiohttp, pinned from video-finish's own requirements.txt so a version bump there is picked up
+  # automatically instead of drifting from what the built image runs).
+  #
+  # NOT run here, deliberately, and left open on cf#325 rather than silently skipped:
+  # `containers/audio-master/test_local.py` and `containers/audio-mix/test_local.py`. Both drive
+  # real ffmpeg/ffprobe DSP validation (loudness, ducking) against synthesized audio, and this
+  # issue's own suggested handling is right that ffmpeg presence on this runner has to be
+  # established BY EFFECT (`ffmpeg -version`, exit status), never by `command -v` -- that is
+  # unstarted work, not a solved one skipped for space.
+  container-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install video-finish test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r containers/video-finish/requirements.txt
+
+      - name: Run container test scripts
+        run: |
+          set -eu
+          scripts="
+          containers/audio-beat-sync/test_url_guard.py
+          containers/audio-mix/test_url_guard.py
+          containers/image-prep/test_url_guard.py
+          containers/video-finish/test_url_guard.py
+          containers/video-finish/test_inspect.py
+          containers/video-finish/test_async.py
+          containers/video-finish/test_meta_sidecar.py
+          "
+          ran=0
+          for script in $scripts; do
+            if [ ! -f "$script" ]; then
+              echo "::error::expected container test script missing: $script (list drifted from disk)"
+              exit 1
+            fi
+            echo "=== $script ==="
+            dir="$(dirname "$script")"
+            file="$(basename "$script")"
+            (cd "$dir" && python3 "$file")
+            ran=$((ran + 1))
+          done
+          # cf#325's own warning, restated as a check: a pytest run that collects zero test files
+          # exits 0 and looks identical to a green run. This is that floor for a script runner --
+          # assert the count actually executed, not just that the loop returned without an error.
+          echo "ran ${ran} container test scripts"
+          if [ "$ran" -ne 7 ]; then
+            echo "::error::expected exactly 7 container test scripts to run, ran ${ran}"
+            exit 1
+          fi
+
   # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
   # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
   # vivijure-studio --remote` step below. A syntax error or a migration that references a
