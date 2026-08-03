@@ -9,6 +9,37 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### fix(video-finish): `_put_meta_sidecar` never wrote because `json` was never imported under that name (vivijure-cf#373)
+
+PATCH. `_put_meta_sidecar` (vivijure-core#130, #663) is BEST-EFFORT BY CONTRACT and never raises,
+so this shipped invisibly: `containers/video-finish/app.py` imports the stdlib module as `import
+json as _json`, and every other use in the file correctly says `_json.*`, but the one call inside
+`_put_meta_sidecar` said `json.dumps(payload)`. `json` was unbound. Every call raised `NameError`,
+was caught by the function's own `except Exception`, logged as a warning, and returned. The caller
+saw `HTTP 200, ok:true`, the film artifact was written correctly, and no sidecar ever existed. Both
+call sites (`/film-titles`, `/subtitle`) go through this one function, so every ADOPTED
+`film.finish` step has been landing on the pre-fix `output_ms: NULL` this sidecar exists to fix
+(vivijure-cf#369 entry 2), regardless of whether the reading half (vivijure-core#131) is deployed.
+
+Fix is the one-name correction: `data=json.dumps(...)` -> `data=_json.dumps(...)`. Confirmed zero
+remaining bare `json.` uses in the file.
+
+**Why a status-code test would not have caught this, and did not.** A best-effort function that
+swallows every exception cannot fail loudly, so a test asserting the route returned 200 is
+satisfied by the broken version -- that is exactly how this shipped. Added `test_meta_sidecar.py`,
+which calls `_put_meta_sidecar` directly with `guarded_put` and `validate_fetch_url` swapped for
+in-process fakes, and asserts the PUT body actually exists, parses as JSON, and matches the
+expected `{duration_seconds, prepend_seconds}` shape -- SECONDS, matching the module contract; the
+reading half multiplies by 1000 for `output_ms`, and a units mismatch between the halves is the
+next silent failure waiting to happen. Verified both directions: run against the pre-fix line, the
+two measurable cases FAIL with the exact swallowed `NameError` in the log and the run exits
+non-zero; run against the fix, all twelve assertions pass.
+
+**Not yet gating anything.** `ci.yml`'s pytest step is scoped to `deploy/` only (vivijure-cf#325,
+open, not touched here), so no container test in this directory -- old or new -- runs in CI. This
+test currently proves the fix locally and against a future in-image run; it is not a merge gate
+until #325 lands.
+
 ## v1.19.1 -- 2026-08-02
 
 PATCH. **Ships no new capability. It makes an already-shipped one observable.**
