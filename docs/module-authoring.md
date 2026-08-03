@@ -150,8 +150,10 @@ proxy in front of RunPod and binds `RUNPOD_PROXY_BASE` to it. A module with a li
 with a credential a tenant must never have.
 
 ```ts
-import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute }
-  from "../../_shared/runpod-route";
+import {
+  runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName,
+  planeRefusalReason, planeRefusalError, type RunpodRoute,
+} from "../../_shared/runpod-route";
 
 async function run(env: Env, req: InvokeRequest<MotionInput>): Promise<InvokeResponse<MotionOutput>> {
   // 0. resolve the route. Proxied when the plane bound RUNPOD_PROXY_BASE, direct otherwise.
@@ -167,7 +169,10 @@ async function run(env: Env, req: InvokeRequest<MotionInput>): Promise<InvokeRes
     headers: { ...runpodHeaders(route, MANIFEST.name), "content-type": "application/json" },
     body: JSON.stringify({ input: toBackendInput(req.input, req.config) }),
   });
-  // 2. poll /status until COMPLETED (or stream), 3. map the result to your hook's output type
+  // 2. poll /status until COMPLETED (or stream). On EVERY poll, before the body is read:
+  //      const refusal = planeRefusalReason(route, resp);
+  //      if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
+  // 3. map the result to your hook's output type
   // 4. on any failure return { ok: false, error } (or a soft passthrough for a chain hook)
 }
 ```
@@ -191,6 +196,15 @@ Three rules that are not obvious from the code:
 - **The unbound path is the self-host product, not a transitional one.** vivijure-cf ships to
   individual self-hosters on their own Workers with their own RunPod account, as well as to shared
   hosted tenants. Both branches are permanent; neither is scaffolding to be removed later.
+- **A plane refusal on the POLL path must never read as pending (cf#398).** Your poll almost
+  certainly returns `{ ok: true, pending: true }` when it cannot read the upstream, which was
+  right when the upstream was RunPod. It is not right when the upstream is ours: a plane that is
+  degraded, mid-deploy or refusing this tenant then produces a render that never completes and
+  never errors. Call `planeRefusalReason(route, resp)` on the response BEFORE interpreting it and
+  return an error when it is non-null. It answers null on the direct route, on a normal response,
+  and on a proxy 502 that could not reach RunPod, so a RunPod blip keeps its retry and only OUR
+  refusal is terminal. Do not widen this to "any poll failure": that makes a vendor hiccup look
+  like our outage, which is a different wrong answer rather than a fix.
 - **Only `/run`, `/status/<id>`, `/cancel/<id>` and `/health` exist on the proxy.** Anything else is
   a 404 there, deliberately: `purge-queue` wipes an endpoint's queue for every tenant on it, and
   RunPod's per-endpoint scoping has no operation axis that could refuse it.
@@ -200,6 +214,10 @@ Three rules that are not obvious from the code:
 
 `tests/runpod-proxy-base-cf394.test.ts` enforces the first rule across the whole module namespace: it
 counts every module reaching RunPod and fails if one of them is not routing through the helper.
+`tests/plane-refusal-poll-cf398.test.ts` does the same for the poll rule, and drives all fourteen
+over their real `/invoke` then `/poll` with one stub in three configurations, so a module that
+reads the header, one that ignores it, and one that treats every failure as a refusal are three
+distinguishable outcomes rather than one.
 
 That is the whole "community becomes the roadmap" play: the RunPod ready-to-deploy hub
 (Wan2.2/SDXL/ComfyUI as `motion.backend`, Whisper STT as `score`, vLLM as a self-hosted
