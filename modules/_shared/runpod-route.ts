@@ -123,11 +123,15 @@ export function runpodHeaders(route: RunpodRoute, moduleName?: string): Record<s
  * can never be absent.
  */
 export function runpodCredentialProblem(route: RunpodRoute, endpointPresent: boolean): string | null {
+  const credentialName = runpodCredentialName(route);
   if (route.credential && endpointPresent) return null;
   if (endpointPresent) return "credential not yet visible on this worker version (retry shortly)";
-  return route.proxied
-    ? "RUNPOD_PROXY_TOKEN / RUNPOD_ENDPOINT_ID not configured"
-    : "RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured";
+  // FOURTH BRANCH, and it is the whole point of splitting these: credential present, endpoint
+  // absent. Naming the credential here would report a binding that is FINE as unconfigured, which
+  // is cf#114's own failure committed inside the function written to prevent it -- an operator sent
+  // to check a token that is sitting right there, while the thing actually missing goes unnamed.
+  if (route.credential) return "RUNPOD_ENDPOINT_ID not configured";
+  return `${credentialName} / RUNPOD_ENDPOINT_ID not configured`;
 }
 
 /**

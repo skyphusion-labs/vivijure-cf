@@ -156,6 +156,25 @@ describe("resolveRunpodRoute: the branch is BOUND-ness, never failover", () => {
     expect(runpodCredentialProblem(direct, false)).toContain("RUNPOD_API_KEY");
     expect(runpodCredentialProblem(resolveRunpodRoute(PROBE_BASE, PROBE_TOKEN, ""), true)).toBeNull();
   });
+
+  it("names ONLY what is absent: a healthy credential is never reported as unconfigured", () => {
+    // The fourth state. Credential present, endpoint absent -- so the endpoint is the finding and
+    // the credential must not be mentioned at all. Asserted on BOTH routes, because the direct one
+    // had the same defect before the proxy existed and a fix on one route only would leave the
+    // other lying in exactly the same way.
+    const proxied = resolveRunpodRoute(PROBE_BASE, PROBE_TOKEN, "");
+    const direct = resolveRunpodRoute(undefined, "", DIRECT_KEY);
+    for (const [label, route] of [["proxied", proxied], ["direct", direct]] as const) {
+      const msg = runpodCredentialProblem(route, false);
+      expect(msg, label).toContain("RUNPOD_ENDPOINT_ID");
+      expect(msg, `${label}: named a credential that is present`).not.toContain("RUNPOD_PROXY_TOKEN");
+      expect(msg, `${label}: named a credential that is present`).not.toContain("RUNPOD_API_KEY");
+    }
+    // CONTROL: with the credential ALSO absent the message must name it again, or the assertions
+    // above are satisfiable by a function that never names a credential in any state.
+    expect(runpodCredentialProblem(resolveRunpodRoute(PROBE_BASE, "", ""), false)).toContain("RUNPOD_PROXY_TOKEN");
+    expect(runpodCredentialProblem(resolveRunpodRoute(undefined, "", ""), false)).toContain("RUNPOD_API_KEY");
+  });
 });
 
 // ------------------------------------------------------------------------------------------- 2.
