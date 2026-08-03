@@ -27,11 +27,18 @@ import { buildI2vBody, readOutput, encodePoll, decodePoll, runpodJobGone, classi
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 import { withTenantR2Body } from "../../_shared/tenant-r2-body";
 import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
+  /** cf#394 / cp#288: the plane-side RunPod proxy. Bound (plain_text) only for shared hosted
+   *  tenants; unbound everywhere else, which is the untouched direct path. See
+   *  modules/_shared/runpod-route.ts -- the branch is BOUND-ness, never failover. */
+  RUNPOD_PROXY_BASE?: string;
+  /** cf#394 / cp#288: the per-tenant plane credential presented instead of a RunPod key. */
+  RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
   /** Expected workersMax for idle reconcile (cf#61). Plain-text module var. */
   RUNPOD_WORKERS_MAX?: string;
@@ -66,13 +73,13 @@ export const MANIFEST: ModuleManifest = {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
-const auth = (apiKey: string) => ({ authorization: "Bearer " + apiKey });
+const auth = (route: RunpodRoute) => runpodHeaders(route, MANIFEST.name);
 
 /** Is the endpoint still in its virgin cold start (no worker has ever come up)? Best-effort: any
  *  transport/HTTP failure reads as "not cold" so the #141 verdict still fires. */
-async function endpointStillCold(apiKey: string, endpointId: string): Promise<boolean> {
+async function endpointStillCold(route: RunpodRoute, endpointId: string): Promise<boolean> {
   try {
-    const r = await fetch(endpoint(endpointId) + "/health", { headers: auth(apiKey) });
+    const r = await fetch(endpoint(route, endpointId) + "/health", { headers: auth(route) });
     if (!r.ok) return false;
     return workersStillCold(await r.json());
   } catch {
@@ -83,16 +90,15 @@ async function endpointStillCold(apiKey: string, endpointId: string): Promise<bo
 /** Best-effort cancel of a RunPod job we are about to fail: a hung-error job otherwise HOLDS the
  *  billed worker until someone cancels it by hand (F17 spend leak). Never throws; the honest
  *  failure below is the point, the cancel is damage control. */
-async function cancelRunpodJobBestEffort(apiKey: string, endpointId: string, jobId: string): Promise<void> {
+async function cancelRunpodJobBestEffort(route: RunpodRoute, endpointId: string, jobId: string): Promise<void> {
   try {
-    await fetch(endpoint(endpointId) + "/cancel/" + jobId, { method: "POST", headers: auth(apiKey) });
+    await fetch(endpoint(route, endpointId) + "/cancel/" + jobId, { method: "POST", headers: auth(route) });
   } catch {
     /* best-effort */
   }
 }
 
-const endpoint = (endpointId: string) => "https://api.runpod.ai/v2/" + endpointId;
-const configured = (apiKey: string, endpointId: string) => Boolean(apiKey && endpointId);
+const endpoint = (route: RunpodRoute, endpointId: string) => runpodEndpointUrl(route, endpointId);
 
 /** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
  *  Returns "" if unset/unreadable so the existing "not configured" guards still fire. */
@@ -108,12 +114,16 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
 }
 
 /** Resolve both RunPod secrets once per request. */
-async function runpodCreds(env: Env): Promise<{ apiKey: string; endpointId: string }> {
-  const [apiKey, endpointId] = await Promise.all([
+async function runpodCreds(env: Env): Promise<{ route: RunpodRoute; apiKey: string; endpointId: string }> {
+  const [route, apiKey, endpointId] = await Promise.all([
+    runpodRoute(env),
     secretValue(env.RUNPOD_API_KEY),
     secretValue(env.RUNPOD_ENDPOINT_ID),
   ]);
-  return { apiKey, endpointId };
+  // apiKey is kept alongside the route for ONE caller: the workersMax reconcile, which
+  // targets the RunPod MANAGEMENT API and is gated to the direct route. Nothing else
+  // reads it -- the bearer on every render call comes off `route`.
+  return { route, apiKey, endpointId };
 }
 
 /** cf#114: classify an absent RunPod credential HONESTLY.
@@ -123,10 +133,8 @@ async function runpodCreds(env: Env): Promise<{ apiKey: string; endpointId: stri
  *  misconfiguration, and saying "not configured" about it is a lie that sent a real tenant chasing a
  *  correctly-configured credential. Both absent stays a genuine "not configured".
  *  Returns null when both are readable. */
-function credentialProblem(apiKey: string, endpointId: string): string | null {
-  if (apiKey && endpointId) return null;
-  if (endpointId) return "credential not yet visible on this worker version (retry shortly)";
-  return "RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured";
+function credentialProblem(route: RunpodRoute, endpointId: string): string | null {
+  return runpodCredentialProblem(route, Boolean(endpointId));
 }
 
 /** /invoke: validate, submit the i2v_clip job to our backend, return a poll token immediately. */
@@ -142,11 +150,15 @@ async function submit(
   if (!input || !input.prompt || !input.shot_id) {
     return { ok: false, error: "motion.backend: input needs shot_id and prompt" };
   }
-  const { apiKey, endpointId } = await runpodCreds(env);
-  const credProblem = credentialProblem(apiKey, endpointId);
+  const { route, apiKey, endpointId } = await runpodCreds(env);
+  const credProblem = credentialProblem(route, endpointId);
   if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
   const workersMax = Number(env.RUNPOD_WORKERS_MAX);
-  if (Number.isFinite(workersMax) && workersMax > 0) {
+  // cf#394: NOT on the proxied route. This reconcile targets the RunPod MANAGEMENT API
+  // (rest.runpod.io/v1), which the plane proxy does not carry, and endpoint capacity on a
+  // shared pool is an operator property a tenant must neither set nor need. Skipped, not
+  // failed: the render is unaffected and the pool is sized by whoever owns it.
+  if (!route.proxied && Number.isFinite(workersMax) && workersMax > 0) {
     const rec = await reconcileRunpodEndpointWorkersMax({
       apiKey,
       endpointId,
@@ -158,9 +170,9 @@ async function submit(
     }
   }
   try {
-    const r = await fetch(endpoint(endpointId) + "/run", {
+    const r = await fetch(endpoint(route, endpointId) + "/run", {
       method: "POST",
-      headers: { ...auth(apiKey), "content-type": "application/json" },
+      headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(
         withTenantR2Body(buildI2vBody(input, req.config, req.context.project), tenantR2),
       ),
@@ -183,14 +195,14 @@ async function submit(
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBackendOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "own-gpu: bad poll token" };
-  const { apiKey, endpointId } = await runpodCreds(env);
-  const credProblem = credentialProblem(apiKey, endpointId);
+  const { route, endpointId } = await runpodCreds(env);
+  const credProblem = credentialProblem(route, endpointId);
   if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
   try {
-    const resp = await fetch(endpoint(endpointId) + "/status/" + st.jobId, { headers: auth(apiKey) });
+    const resp = await fetch(endpoint(route, endpointId) + "/status/" + st.jobId, { headers: auth(route) });
     httpStatus = resp.status;
     s = (await resp.json()) as typeof s;
   } catch {
@@ -208,7 +220,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
       // polling up to the cold cap instead of false-failing the first-ever job.
       if (
         classifyGoneState(st.submittedAt, now, RUNPOD_COLD_GRACE_MS) === "gone-grace" &&
-        (await endpointStillCold(apiKey, endpointId))
+        (await endpointStillCold(route, endpointId))
       ) {
         return { ok: true, pending: true };
       }
@@ -242,7 +254,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
     // terminal error. Surface the REAL error (never "not found") and cancel to stop the spend.
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
-      await cancelRunpodJobBestEffort(apiKey, endpointId, st.jobId);
+      await cancelRunpodJobBestEffort(route, endpointId, st.jobId);
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
       return { ok: false, error: "own-gpu backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
@@ -270,13 +282,16 @@ export default {
     // ask this question at the exact moment the tenant has no working credential to authenticate
     // with. Gating it would make it unusable for its one purpose while protecting nothing.
     if (request.method === "GET" && url.pathname === "/ready") {
-      const { apiKey, endpointId } = await runpodCreds(env);
+      const { route, endpointId } = await runpodCreds(env);
       return json({
-        ok: Boolean(apiKey && endpointId),
+        ok: Boolean(route.credential && endpointId),
         // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
-        credentials: { runpod_api_key: Boolean(apiKey), runpod_endpoint_id: Boolean(endpointId) },
+        credentials: { runpod_api_key: Boolean(route.credential), runpod_endpoint_id: Boolean(endpointId) },
+        // cf#394: which route answered. Additive -- the plane parses runpod_api_key and
+        // refuses a module whose /ready omits it, so that field keeps its name.
+        runpod_proxied: route.proxied,
         // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
         // otherwise an empty job log is indistinguishable from a clean run, which is the exact
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is

@@ -65,11 +65,31 @@ describe.each(RUNPOD_ONLY)("$name: GET /ready (RunPod key, hard-required)", ({ n
   it("ok:true, credentials visible, when the key is set", async () => {
     const { status, body } = await get(worker, { RUNPOD_API_KEY: KEY });
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true, module: name, credentials: { runpod_api_key: true }, telemetry: { job_log: "unavailable" } });
+    // cf#394: runpod_proxied is additive. runpod_api_key keeps its NAME because the control
+    // plane parses that exact field and refuses a module whose /ready omits it; under the
+    // proxy it means "the invoke credential this route needs is readable".
+    expect(body).toEqual({
+      ok: true, module: name, credentials: { runpod_api_key: true },
+      runpod_proxied: false, telemetry: { job_log: "unavailable" },
+    });
   });
   it("ok:false when the key is absent", async () => {
     const { body } = await get(worker, {});
-    expect(body).toEqual({ ok: false, module: name, credentials: { runpod_api_key: false }, telemetry: { job_log: "unavailable" } });
+    expect(body).toEqual({
+      ok: false, module: name, credentials: { runpod_api_key: false },
+      runpod_proxied: false, telemetry: { job_log: "unavailable" },
+    });
+  });
+  it("cf#394: reports ok on the PROXIED route, holding no RunPod key at all", async () => {
+    const { body } = await get(worker, {
+      RUNPOD_PROXY_BASE: "https://proxy-probe.cf394.invalid/api/runpod/v2",
+      RUNPOD_PROXY_TOKEN: "vjp1.ten_cf394probe.deadbeefcafe",
+    });
+    // A NON-DEFAULT base, so an honoured binding and an ignored one are distinguishable.
+    expect(body).toEqual({
+      ok: true, module: name, credentials: { runpod_api_key: true },
+      runpod_proxied: true, telemetry: { job_log: "unavailable" },
+    });
   });
   it("never leaks the key value", async () => {
     const res = await worker.fetch(new Request("https://m.internal/ready"), { RUNPOD_API_KEY: KEY } as never);
