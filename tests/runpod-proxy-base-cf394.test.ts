@@ -294,6 +294,74 @@ describe("a proxied module with no token REFUSES; it never reaches RunPod instea
   });
 });
 
+// ------------------------------------------------------------------------------ 3b. FAIL FIRST
+describe("the call genuinely TRANSITS the base: one stub, two configs, opposite outcomes", () => {
+  // NOTHING BINDS RUNPOD_PROXY_BASE ANYWHERE TODAY (measured plane-side: it appears in the control
+  // plane's src only inside comments, and 0 files under vivijure-cf/modules matched it against a
+  // 42-hit RUNPOD_API_KEY positive control). That is what makes this block necessary rather than
+  // thorough: a module that ALWAYS takes the fallback is byte-identical to a module nobody touched,
+  // so it compiles, deploys, and passes every other test in this file -- because the fallback IS the
+  // current behaviour. A green no-op would ship and nobody would learn otherwise until a hosted
+  // render was expected to transit the proxy and quietly did not.
+  //
+  // So the probe base here CANNOT ANSWER, and RunPod can. The two configurations then have opposite
+  // outcomes, and no wrong implementation produces both: a module ignoring the binding succeeds in
+  // both cases (it never touches the refusing host), and a module that always proxies fails in both.
+
+  /** Refuses anything aimed at the probe host, answers RunPod normally. The refusal is a THROW,
+   *  which is what an unresolvable or unreachable base does at the fetch layer. */
+  function stubThatCannotAnswerTheProbe() {
+    const calls: string[] = [];
+    const fn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (hostOf(url) === PROBE_HOST) throw new TypeError("fetch failed: " + PROBE_HOST + " cannot answer");
+      return jobResponse();
+    });
+    return { fn: fn as unknown as typeof fetch, calls };
+  }
+
+  const CASES: Array<{ name: string; worker: { fetch(r: Request, e: never): Promise<Response> }; extra: Record<string, unknown> }> = [
+    { name: "own-gpu", worker: ownGpu, extra: { RUNPOD_ENDPOINT_ID: "ep-own" } },
+    { name: "alibaba-wan", worker: alibabaWan, extra: { R2_RENDERS: { put: async () => undefined } } },
+  ];
+
+  for (const c of CASES) {
+    it(`${c.name}: PROXIED -> the unanswerable base is reached and the submit FAILS there`, async () => {
+      const { fn, calls } = stubThatCannotAnswerTheProbe();
+      globalThis.fetch = fn;
+      const res = await invoke(c.worker, {
+        RUNPOD_API_KEY: DIRECT_KEY,
+        RUNPOD_PROXY_BASE: PROBE_BASE,
+        RUNPOD_PROXY_TOKEN: PROBE_TOKEN,
+        ...c.extra,
+      }, MOTION_BODY);
+      const body = (await res.json()) as { ok: boolean; error?: string };
+
+      // THE LOAD-BEARING PAIR. The module must have gone to the probe host, and the refusal there
+      // must be what it reports. Either half alone is satisfiable by an implementation that is wrong.
+      expect(calls.some((u) => hostOf(u) === PROBE_HOST), `no call reached ${PROBE_HOST}: ${calls.join(", ")}`).toBe(true);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("cannot answer");
+
+      // AND IT MUST NOT HAVE RECOVERED. RunPod was answering the whole time; a module that fell
+      // back would be sitting on ok:true right now, holding a RunPod credential on a shared tenant.
+      expect(calls.some((u) => hostOf(u) === "api.runpod.ai"), "fell back to RunPod after the plane refused").toBe(false);
+    });
+
+    it(`${c.name}: UNBOUND -> the SAME stub yields success, because RunPod answered`, async () => {
+      const { fn, calls } = stubThatCannotAnswerTheProbe();
+      globalThis.fetch = fn;
+      const res = await invoke(c.worker, { RUNPOD_API_KEY: DIRECT_KEY, ...c.extra }, MOTION_BODY);
+      const body = (await res.json()) as { ok: boolean; error?: string };
+      expect(body.error ?? "").toBe("");
+      expect(body.ok).toBe(true);
+      expect(calls.some((u) => hostOf(u) === "api.runpod.ai")).toBe(true);
+      expect(calls.some((u) => hostOf(u) === PROBE_HOST)).toBe(false);
+    });
+  }
+});
+
 // ------------------------------------------------------------------------------------------- 4.
 describe("DENOMINATOR: every RunPod-reaching module routes through the shared helper", () => {
   const MODULES_DIR = "modules";
