@@ -323,7 +323,7 @@ async def _put_meta_sidecar(meta_url, *, duration_seconds=None, prepend_seconds=
     try:
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s2:
             async with guarded_put(s2, meta_url, allow_redirects=False,
-                                   data=_json.dumps(payload).encode("utf-8"),
+                                   data=json.dumps(payload).encode("utf-8"),
                                    headers={"content-type": "application/json"}) as r:  # codeql[py/full-ssrf]
                 if r.status not in (200, 201, 204):
                     log.warning("meta sidecar put %s -- measurement lost, film unaffected", r.status)
