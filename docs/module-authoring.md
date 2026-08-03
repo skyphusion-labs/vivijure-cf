@@ -246,6 +246,12 @@ Two gates on that, both worth knowing before you conclude your module did not de
 - `FINISH_SATELLITES_ONLY` narrows to `scripts/finish-satellite-modules.txt`
   (`finish-rife`, `finish-upscale`, `finish-lipsync`, `speech-upscale`).
 
+**Do not confuse that file with `scripts/tenant-release-modules.txt` (cf#394).** They overlap and
+they answer different questions. `finish-satellite-modules.txt` narrows an OPERATOR deploy;
+`tenant-release-modules.txt` is the canonical list of what a studio release PUBLISHES as a tenant
+bundle. The satellites are a strict subset of the tenant list, and
+`tests/tenant-release-modules-cf394.test.ts` holds that invariant so the two cannot drift.
+
 ### Path 2 -- a hosted tenant: a published bundle, fetched by (tag, module)
 
 The control plane is a Worker and cannot bundle at provision time, so each module must arrive as a
@@ -260,6 +266,15 @@ studio-releases/<tag>/modules/<module>/worker.js
 The bundle is **not** built by a parallel bundler: it comes from `wrangler deploy --dry-run --outdir`
 against the module's own `wrangler.toml`, so the artifact is the deploy shape and cannot drift from
 it. The plane then fetches by `(tag, module)` and uploads into the tenant dispatch namespace.
+
+**Which modules take this path is `scripts/tenant-release-modules.txt`, and that is the whole
+answer** (cf#394). Adding a module to it publishes a bundle; it does NOT provision anything, because
+provisioning is a row in the control plane's `TENANT_MODULE_CATALOG`. **The two are deliberately
+allowed to differ:** a published bundle with no catalog row uploads to nobody and costs nothing,
+which is what lets the plane add a row whenever it is ready instead of the two repos taking turns.
+Until cf#394 the publish set was three names inline in the workflow plus the satellites file, so it
+could not be read in one place -- and on 2026-08-03 that cost a lane its direction when the catalog
+silently grew to equal it.
 
 Three things about this path that are easy to get wrong:
 

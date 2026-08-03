@@ -45,13 +45,14 @@ const WRITES_JOB_LOG = ENTRIES.filter((m) => m.source.includes("recordRunpodJob"
 /** Population 3: what a studio release publishes as tenant module bundles. Parsed from the workflow
  *  that resolves it, which the workflow itself calls the single source for three consumers. */
 function publishedToTenants(): string[] {
-  const wf = readFileSync(join(ROOT, ".github", "workflows", "studio-release.yml"), "utf8");
-  const line = wf.split("\n").find((l) => l.includes("TENANT_MODULES=keyframe"));
-  if (!line) throw new Error("could not find the TENANT_MODULES resolution line in studio-release.yml");
-  const named = (line.match(/TENANT_MODULES=([a-z- ]+)/)?.[1] ?? "").trim().split(/\s+/);
-  const satellites = readFileSync(join(ROOT, "scripts", "finish-satellite-modules.txt"), "utf8")
+  // cf#394: read the canonical list rather than regex-parsing a shell line out of the workflow.
+  // The old form matched `TENANT_MODULES=([a-z- ]+)` against a composed command, so it could only
+  // ever see the INLINE half of the set and silently depended on the literal `=keyframe` prefix --
+  // a matcher over shell text, which is the shape that keeps producing plausible wrong values here.
+  const list = readFileSync(join(ROOT, "scripts", "tenant-release-modules.txt"), "utf8")
     .split("\n").map((s) => s.trim()).filter(Boolean);
-  return [...named, ...satellites].sort();
+  if (list.length === 0) throw new Error("tenant-release-modules.txt parsed to nothing");
+  return [...list].sort();
 }
 
 /**
@@ -61,8 +62,15 @@ function publishedToTenants(): string[] {
  * read it. So this constant is a claim about another repo, and a change there will NOT fail this
  * test. It is pinned here so the published table has one place to be corrected, and so the gap is
  * named rather than papered over. If you are chasing a mismatch, read the control plane first.
+ *
+ * THE GAP THIS FILE NAMED HAS NOW BEEN HIT, WHICH IS WORTH RECORDING RATHER THAN QUIETLY FIXING.
+ * vivijure-control-plane#313 added `finish-rife` to that catalog on 2026-08-03, making this
+ * constant false for roughly three hours. Nothing failed, because the assertions below compare this
+ * constant against itself -- exactly what the paragraph above predicts. Corrected here by hand,
+ * which is the only mechanism available to a repo that cannot read the other one.
  */
-const CATALOG = ["keyframe", "own-gpu", "finish-upscale", "finish-lipsync", "speech-upscale", "plan-enhance"].sort();
+const CATALOG = ["keyframe", "own-gpu", "finish-upscale", "finish-lipsync", "speech-upscale",
+                 "finish-rife", "plan-enhance"].sort();
 
 describe("the readiness denominator is published and does not drift (cf#295)", () => {
   it("the scan read the tree (positive control)", () => {
@@ -115,18 +123,34 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   it("the four populations are the sizes the published table claims", () => {
     expect(ENTRIES.length).toBe(26);
     expect(WRITES_JOB_LOG.length).toBe(14);
-    expect(publishedToTenants().length).toBe(7);
-    expect(CATALOG.length).toBe(6);
+    // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
+    // tenant bundle. A bundle with no catalog row uploads nothing, so publishing is inert until the
+    // plane adds rows; it exists to remove the cross-repo serialisation, not to change behaviour.
+    expect(publishedToTenants().length).toBe(16);
+    // cp#284 moved this from 6 to 7 (finish-rife). DECLARED, not measured -- see the note above.
+    expect(CATALOG.length).toBe(7);
   });
 
-  it("the two asymmetries hold: finish-rife published-not-provisioned, plan-enhance provisioned-not-recording", () => {
-    // These are the two cases that get misread, so they are asserted by name rather than by count.
+  it("the asymmetries that remain, by name rather than by count", () => {
+    // finish-rife's published-not-provisioned asymmetry is GONE: cp#284 catalogued it, so it is now
+    // published AND provisioned AND recording. Asserted in its new shape rather than deleted,
+    // because the old assertion is the record of a real state that lasted from cf#295 to cp#284.
     expect(publishedToTenants()).toContain("finish-rife");
-    expect(CATALOG).not.toContain("finish-rife");
+    expect(CATALOG).toContain("finish-rife");
     expect(WRITES_JOB_LOG).toContain("finish-rife");
 
+    // plan-enhance keeps its own asymmetry: provisioned, and records nothing because it submits no
+    // RunPod job at all.
     expect(CATALOG).toContain("plan-enhance");
     expect(WRITES_JOB_LOG).not.toContain("plan-enhance");
+
+    // cf#394's asymmetry, and the one that matters now: the nine new modules PUBLISH a bundle and
+    // are NOT in the catalog. That is the deliberate intermediate state -- a bundle with no row
+    // uploads nothing -- and it is what lets the plane add rows without waiting on a release.
+    for (const m of ["seedance", "kling", "google-veo", "image-generate"]) {
+      expect(publishedToTenants(), m).toContain(m);
+      expect(CATALOG, m).not.toContain(m);
+    }
   });
 
   it("what module-readiness covers is a STRICT subset of the repo, and the page says so", () => {

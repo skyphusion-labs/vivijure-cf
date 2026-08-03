@@ -14,10 +14,17 @@ the modules, that test fails.
 |---|---|---|---|
 | 1 | Modules in this repo | **26** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **14** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
-| 3 | Modules PUBLISHED as tenant bundles by a studio release | **7** | `.github/workflows/studio-release.yml`, "Resolve the tenant release module list" |
-| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **6** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts` |
+| 3 | Modules PUBLISHED as tenant bundles by a studio release | **16** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **7** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts` |
 
-Population 4 is the one an operator actually sees, and it is **6 of 26**.
+Population 4 is the one an operator actually sees, and it is **7 of 26**.
+
+**Populations 3 and 4 diverged again on 2026-08-03, deliberately, and the gap is the point.** They
+were briefly equal -- 7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane
+could not add a single further module without a studio release first. cf#394 published nine more
+(the eight cost-door modules and `image-generate`), so 3 is now 16 and 4 is 7. **A published bundle
+with no catalog row uploads nothing to anybody**; it exists so the plane can add a row when it is
+ready, instead of the two repos taking turns.
 
 ## The table
 
@@ -25,8 +32,8 @@ Population 4 is the one an operator actually sees, and it is **6 of 26**.
 
 | Module | `/ready` | Reports `telemetry.job_log` | Writes job-log rows | Published to tenants (3) | Provisioned to tenants (4) |
 |---|---|---|---|---|---|
-| alibaba-wan | yes | yes | yes | no | no |
-| alibaba-wan-lora | yes | yes | yes | no | no |
+| alibaba-wan | yes | yes | yes | **yes** | no |
+| alibaba-wan-lora | yes | yes | yes | **yes** | no |
 | audio-master | yes | no | no | no | no |
 | beat-sync | yes | no | no | no | no |
 | cast-image | yes | no | no | no | no |
@@ -34,23 +41,23 @@ Population 4 is the one an operator actually sees, and it is **6 of 26**.
 | dialogue-gen | yes | no | no | no | no |
 | film-titles | yes | no | no | no | no |
 | finish-lipsync | yes | yes | yes | yes | yes |
-| finish-rife | yes | yes | yes | **yes** | **NO** |
+| finish-rife | yes | yes | yes | yes | yes |
 | finish-upscale | yes | yes | yes | yes | yes |
-| google-veo | yes | yes | yes | no | no |
-| image-generate | yes | no | no | no | no |
+| google-veo | yes | yes | yes | **yes** | no |
+| image-generate | yes | no | no | **yes** | no |
 | keyframe | yes | yes | yes | yes | yes |
-| kling | yes | yes | yes | no | no |
+| kling | yes | yes | yes | **yes** | no |
 | local-gpu | yes | no | no | no | no |
-| minimax-hailuo | yes | yes | yes | no | no |
+| minimax-hailuo | yes | yes | yes | **yes** | no |
 | music-gen | yes | no | no | no | no |
-| narration-gen | yes | yes | yes | no | no |
+| narration-gen | yes | yes | yes | **yes** | no |
 | notify-email | yes | no | no | no | no |
 | own-gpu | yes | yes | yes | yes | yes |
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
-| seedance | yes | yes | yes | no | no |
+| seedance | yes | yes | yes | **yes** | no |
 | speech-upscale | yes | yes | yes | yes | yes |
 | subtitle | yes | no | no | no | no |
-| vidu-q3 | yes | yes | yes | no | no |
+| vidu-q3 | yes | yes | yes | **yes** | no |
 
 ## The two asymmetries, and why each is fine
 

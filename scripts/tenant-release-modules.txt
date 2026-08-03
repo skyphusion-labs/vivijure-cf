@@ -1,0 +1,16 @@
+alibaba-wan
+alibaba-wan-lora
+finish-lipsync
+finish-rife
+finish-upscale
+google-veo
+image-generate
+keyframe
+kling
+minimax-hailuo
+narration-gen
+own-gpu
+plan-enhance
+seedance
+speech-upscale
+vidu-q3
