@@ -7,6 +7,18 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.19.3 -- 2026-08-03
+
+### chore(deps): pick up @skyphusion-labs/vivijure-mcp 1.2.1 -- keyframe_backend + qualityTier on submit_film (vivijure-cf#380, vivijure-cf#382)
+
+PATCH. No behaviour change in the studio itself; the fix lives entirely in the MCP package. Both
+route params existed on POST /api/render/film with no schema entry on the MCP side, so an
+MCP-submitted film either could not name its keyframe door (silently defaulted to serving[0], the
+local-gpu door, live projection order -- cf#380) or could not label its render-history row honestly
+(qualityTier recorded "final" on every MCP-submitted film regardless of what ran -- cf#382). An agent
+driving the studio through this Worker can now set both explicitly, the same way a human already can
+in the panel.
+
 ## v1.19.2 -- 2026-08-03
 
 ### fix(video-finish): `_put_meta_sidecar` never wrote because `json` was never imported under that name (vivijure-cf#373)
