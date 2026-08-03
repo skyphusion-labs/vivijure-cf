@@ -205,9 +205,71 @@ That is the whole "community becomes the roadmap" play: the RunPod ready-to-depl
 (Wan2.2/SDXL/ComfyUI as `motion.backend`, Whisper STT as `score`, vLLM as a self-hosted
 `plan.enhance`) is a catalog of modules waiting to be wrapped, each one the same four files.
 
+## Where your change actually goes: TWO delivery paths, different mechanisms, different timing
+
+**The same module source reaches the operator panel and a hosted tenant by two different routes.**
+Neither is a fallback for the other, and a change can be live on one while absent from the other for
+days. Not knowing this produces "it works on the panel but not for tenants" and sends people hunting
+a code difference that does not exist.
+
+**Merging to `main` reaches NEITHER.** Both paths are tag-gated. A merge is CI only.
+
+### Path 1 -- the operator panel: independent Workers, bound by service name
+
+On a SemVer tag, `scripts/deploy-module-workers.sh` runs `wrangler deploy` for each
+`modules/*/wrangler.toml`. Each module is its own live Worker, and the core reaches it through the
+`[[services]]` binding list. There is no bundle and no artifact hop.
+
+Two gates on that, both worth knowing before you conclude your module did not deploy:
+
+- `CORE_ONLY_DEPLOY` (repo variable) set to `1` deploys the core plus the finish satellites only,
+  skipping every other module. Read as `0` on 2026-08-03, so the full set deploys today, but it is a
+  mutable variable and the behaviour is a property of its value, not of this sentence.
+- `FINISH_SATELLITES_ONLY` narrows to `scripts/finish-satellite-modules.txt`
+  (`finish-rife`, `finish-upscale`, `finish-lipsync`, `speech-upscale`).
+
+### Path 2 -- a hosted tenant: a published bundle, fetched by (tag, module)
+
+The control plane is a Worker and cannot bundle at provision time, so each module must arrive as a
+single-file, integrity-checked artifact. `.github/workflows/studio-release.yml` fires on a `v*` tag
+and `scripts/build-module-release.ts` writes:
+
+```
+studio-releases/<tag>/modules/<module>/manifest.json
+studio-releases/<tag>/modules/<module>/worker.js
+```
+
+The bundle is **not** built by a parallel bundler: it comes from `wrangler deploy --dry-run --outdir`
+against the module's own `wrangler.toml`, so the artifact is the deploy shape and cannot drift from
+it. The plane then fetches by `(tag, module)` and uploads into the tenant dispatch namespace.
+
+Three things about this path that are easy to get wrong:
+
+- **The GitHub release asset is authoritative; our R2 is a cache/mirror only.** That is a parity
+  ruling, not an implementation detail: an artifact living only in our private R2 would leave the
+  AGPL hosted door open source but structurally unrunnable by anyone else. If R2 and the release
+  asset ever disagree, R2 is the one that is wrong -- and a verification that walks only R2 cannot
+  tell you that, because it is measuring the mirror.
+- **Reaching a tenant needs more than the tag.** The tag builds the artifact; a tenant runs it only
+  once `STUDIO_RELEASE` points at that release AND the tenant is provisioned or upgraded onto it.
+- **The studio/module coupling is a default, not a law.** A module's `worker.sha256` is deliberately
+  NOT chained into the top-level studio pin digest, and the plane re-verifies each module hash at
+  provision, so tenants MAY pin modules to a different release than the studio (cf#103).
+
+### The practical consequence
+
+A module change is live for the operator panel one tag after merge, and live for a tenant only after
+that tag is built, `STUDIO_RELEASE` is repointed, and the tenant is provisioned or upgraded. **If
+your change works in one place and not the other, check which of those steps has happened before you
+look for a code difference.**
+
 ## Bind it to the core
 
 Deploy your module worker, then add a service binding to the core's `wrangler.toml`:
+
+> This is **path 1 only** -- how the operator panel reaches your module. A hosted tenant
+> reaches it as a published bundle instead, with different timing and different gates. See
+> "Where your change actually goes" above before concluding a deploy did or did not land.
 
 ```toml
 [[services]]
