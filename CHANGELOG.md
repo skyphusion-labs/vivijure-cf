@@ -7,7 +7,7 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
-## Unreleased
+## v1.19.2 -- 2026-08-03
 
 ### fix(video-finish): `_put_meta_sidecar` never wrote because `json` was never imported under that name (vivijure-cf#373)
 
@@ -39,6 +39,33 @@ non-zero; run against the fix, all twelve assertions pass.
 open, not touched here), so no container test in this directory -- old or new -- runs in CI. This
 test currently proves the fix locally and against a future in-image run; it is not a merge gate
 until #325 lands.
+
+### Changed: `@skyphusion-labs/vivijure-core` 1.7.1 -> 1.7.2 -- the reading half of the finish-measurement sidecar (vivijure-core#130, #131, #132; pairs with vivijure-cf#373 above)
+
+PATCH. This is the READER for the sidecar `vivijure-cf#373` (above) writes. Core 1.7.2's own release
+is itself a fix on the ADOPTED completion path: `runFilmFinish` checks R2 for a step's deterministic
+artifact before it checks the poll token, and when the container PUTs between polls the next tick
+ADOPTS -- advancing past the step's output without ever reading it, which is where the delivered
+length and any title-card prepend travel. `readStepMeta` and `metaKeyFor` are the functions that
+recover them from the sidecar on that path; core 1.7.1 does not contain `readStepMeta` at all.
+
+**Until this bump, the deployed studio ran core 1.7.1.** An ADOPTED `film.finish` step recorded no
+duration regardless of whether the sidecar existed, and `output_ms` stayed NULL on completed, billed
+films -- the exact condition vivijure-cf#369 entry 2 exists to close.
+
+The declared range moved to `^1.7.2`. `^1.7.1` would still have installed 1.7.2 once published, but
+would have been a lie about the floor: this deploy depends on `readStepMeta` existing, which 1.7.1
+does not have.
+
+**Both halves are now live, which is why this ships now and not earlier.** The WRITER
+(`vivijure-cf#373`) is deployed as image `de692e3@sha256:1d43a2c3`, converged on all three finishing
+nodes. The READER is this bump, `@skyphusion-labs/vivijure-core@1.7.2`, published.
+
+**vivijure-cf#369 entry 2 stays open.** Both halves being live is necessary, not sufficient: settling
+that entry needs a film with exactly one `film.finish` step, that step named in
+`film_finish.adopted`, and `output_ms` non-NULL on the resulting row. Nothing observed yet proves the
+measurement reaches the column it is billed from; that is a live-render verification, not a code
+change, and it has not been run.
 
 ## v1.19.1 -- 2026-08-02
 
