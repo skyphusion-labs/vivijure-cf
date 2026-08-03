@@ -27,9 +27,16 @@
 // plane stops installing the RunPod key. Reversed, every hosted render breaks. That is why the
 // unbound branch is the untouched original path and why this file ships ahead of any plane change.
 //
-// PARITY: dedicated, BYO and self-host tenants bind nothing here, so their path does not change at
-// all. A self-hoster must never need our plane to render, and this file guarantees that by
-// construction rather than by assertion.
+// THE UNBOUND BRANCH IS A PRODUCT, NOT A MIGRATION CRUTCH. Read the word "fallback" here as
+// "the self-host door", because that is what it is. vivijure-cf ships TWO products (Conrad,
+// 2026-08-03): individual self-hosters running it on their own Cloudflare Workers with their own
+// RunPod account, and shared hosted tenants reaching RunPod through the plane. The unbound path is
+// the entire first product and it is permanently supported. Nobody should ever propose deleting it
+// once the plane half lands -- doing so would remove the self-host door, not finish a migration.
+//
+// PARITY follows from that rather than being a separate promise: dedicated, BYO and self-host bind
+// nothing here, so their path does not change at all. A self-hoster must never need our plane to
+// render, and this file guarantees that by construction rather than by assertion.
 //
 // ------------------------------------------------------------------------------------------------
 // CROSS-REPO CONTRACT. Two binding names, and the plane must bind exactly these:
