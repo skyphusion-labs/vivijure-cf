@@ -34,7 +34,7 @@
     "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260731.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.9",
     "blake3-wasm": "2.1.5",
