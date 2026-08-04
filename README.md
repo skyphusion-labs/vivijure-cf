@@ -58,7 +58,9 @@ npm run dev
 
 ## Related repos
 
-- **vivijure-core** -- shared orchestration package
-- **vivijure-local** -- Node/MinIO homelab host (same core, different platform adapter)
-- **vivijure** -- original CF monolith (frozen reference; not modified by this split)
-- **vivijure-control-plane** -- the hosted door in front of this studio (optional; not needed to self-host)
+- **[vivijure](https://github.com/skyphusion-labs/vivijure)** -- constellation map (start here)
+- **[vivijure-core](https://github.com/skyphusion-labs/vivijure-core)** -- shared orchestration package
+- **[vivijure-local](https://github.com/skyphusion-labs/vivijure-local)** -- Node/MinIO host (same core, no Cloudflare)
+- **[vivijure-mcp](https://github.com/skyphusion-labs/vivijure-mcp)** -- agent MCP for either host
+- **[vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane)** -- optional hosted provisioner (not needed to self-host)
+- **Write-ups:** [runs anywhere](https://skyphusion.net/blog/vivijure-run-anywhere/) · [constellation](https://skyphusion.net/blog/vivijure-constellation/) · [vivijure.com](https://vivijure.com)
