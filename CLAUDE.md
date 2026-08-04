@@ -141,6 +141,41 @@ Full rationale + the closing 8/8 state live in the project memory (`vivijure-new
 
 ## Commits & versioning
 
-Conventional Commits (`feat(scope):`, `fix(scope):`, `docs:`); body explains the why. SemVer-style
-`0.MINOR.PATCH` while pre-1.0 (PATCH for fixes/backend tweaks, MINOR for features). A release commit
-bumps `package.json` `version` and adds a top-of-file `CHANGELOG.md` entry.
+Conventional Commits (`feat(scope):`, `fix(scope):`, `docs:`); body explains the why. SemVer on the
+**1.x** line (`1.MINOR.PATCH`): PATCH for fixes/backend tweaks, MINOR for features. A release PR
+bumps root `package.json` `version` and adds a top-of-file `CHANGELOG.md` entry (`## vX.Y.Z`).
+
+## Release / tagging
+
+**TAG-GATED deploy.** `.github/workflows/ci.yml` deploys the studio Worker **only** on a pushed
+`v*` tag. A bare merge to `main` runs CI only and does **not** redeploy production.
+
+`studio-release.yml` also runs on `v*` and builds the studio release asset; it asserts
+`vX.Y.Z` == `package.json` version.
+
+### Dependency order
+
+1. If this release needs a new **`@skyphusion-labs/vivijure-core`**, release and publish **core
+   first** (`vivijure-core` tag `vivijure-core-v*`). See that repo's `CLAUDE.md` / `RELEASES.md`.
+2. Bump the core pin in this repo's `package.json` on `main` (release PR).
+3. Tag this repo only after the pin is on `main`.
+
+Ship **vivijure-local** in the same dual-panel wave when the change is product-facing (same-time
+releases; see vivijure-local CLAUDE.md).
+
+### Cut a release
+
+1. **Release PR on `main`:** bump `package.json` version, add `CHANGELOG.md` `## vX.Y.Z`, install
+   lockfile if deps changed, land the PR.
+2. **Tag** (must match `package.json`; studio-release refuses a mismatch):
+
+```bash
+git fetch origin main && git checkout main && git pull --ff-only
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+3. Confirm CI deploy job green on the tag run. Verify the live Worker (artifact / behavior), not only
+   a green check.
+
+Merge alone is never a ship.
