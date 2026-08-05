@@ -7,6 +7,17 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### Docs: `FilmSummary.assemble_ms` + `output_ms` (cf#365)
+
+CONTRACT 2.21 documents the poll-surface content-length fields that vivijure-core projects from
+the already-persisted `film_output_seconds` map: assemble-stage (pre-film.finish) vs last-writer
+delivered. Closes the observability gap that left a predicted-vs-delivered delta unexplained.
+Fields appear on live poll only after the host pins the core release that adds them; this entry
+is the wire-contract half. Distinct from `finish_elapsed_ms` (CPU wall-clock, cf#268) and from
+plan `duration_seconds`.
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
