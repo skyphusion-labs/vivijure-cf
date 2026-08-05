@@ -14,6 +14,11 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 Evidence disposition: both original defects are shipped (14/14 job-log writers; 26/26 `/ready`).
 Residuals are structural (wan-train core seam) or documented (tenant catalog population 4).
 See `docs/gate3-instrumentation-closeout.md`.
+### docs(verify): R2 same-key A/B must not trust CF API object-GET (cf#300)
+
+The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
+object. Documented as a HARD RULE in `docs/r2-verification.md`, linked from `CLAUDE.md` and the
+cf#278 harness README. Gate 3 kickoff: instrument defects before metering evidence.
 
 ## v1.20.1 -- 2026-08-05
 
