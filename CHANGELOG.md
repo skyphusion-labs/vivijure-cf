@@ -7,6 +7,11 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### Fixed
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.

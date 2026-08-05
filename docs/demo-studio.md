@@ -80,12 +80,16 @@ All commands run with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` in the en
    # on a fresh install where 0001 already set them.
    wrangler d1 execute vivijure-demo --remote -c wrangler.demo.toml \
      --file=migrations/demo/0003_demo_cast_portraits.sql
+   # Drop retired text-overlay catalog row on a LIVE demo D1 that already ran the old 0001 seed
+   # (cf#24; 0001 no longer inserts it on fresh installs). Idempotent DELETE.
+   wrangler d1 execute vivijure-demo --remote -c wrangler.demo.toml \
+     --file=migrations/demo/0004_drop_text_overlay.sql
    ```
 
-   Seeds: the 26 real module manifests (display-only, `script_name = demo-seed-<name>`, invocable by
-   nothing), plus browseable projects, cast (each with an absolute `assets.skyphusion.net` portrait image
-   -- still no R2 binding), and COMPLETED render rows whose `output_key` is an absolute
-   `assets.skyphusion.net` showcase MP4.
+   Seeds: the 25 real module manifests (display-only, `script_name = demo-seed-<name>`, invocable by
+   nothing; `text-overlay` retired, cf#24), plus browseable projects, cast (each with an absolute
+   `assets.skyphusion.net` portrait image -- still no R2 binding), and COMPLETED render rows whose
+   `output_key` is an absolute `assets.skyphusion.net` showcase MP4.
 
 4. **Deploy the Worker** (creates the `demo.vivijure.com` custom domain -- Workers custom domains own
    DNS + the cert; a first-level subdomain under `vivijure.com` gets Universal SSL, NO ACM needed):
