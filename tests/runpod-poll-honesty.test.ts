@@ -157,8 +157,9 @@ describe("keyframe /poll wiring (worker-level, stubbed fetch)", () => {
       ),
     );
     const tok = encodePoll({ jobId: "j1", project: "p", submittedAt: Date.now() });
-    const body = (await (await kfWorker.fetch(pollReq(tok), env)).json()) as { ok: boolean; pending?: boolean };
-    expect(body).toEqual({ ok: true, pending: true });
+    const body = (await (await kfWorker.fetch(pollReq(tok), env)).json()) as { ok: boolean; pending?: boolean; wait?: string };
+    // cf#307: IN_PROGRESS maps to wait=running (additive; still pending).
+    expect(body).toEqual({ ok: true, pending: true, wait: "running" });
   });
 
   it("cold start: a 404 past normal grace stays pending while /health shows no worker ever up", async () => {
@@ -174,8 +175,9 @@ describe("keyframe /poll wiring (worker-level, stubbed fetch)", () => {
     );
     // 1 minute past the normal grace window, well inside the cold cap
     const tok = encodePoll({ jobId: "j-cold", project: "p", submittedAt: Date.now() - RUNPOD_NOTFOUND_GRACE_MS - 60_000 });
-    const body = (await (await kfWorker.fetch(pollReq(tok), env)).json()) as { ok: boolean; pending?: boolean };
-    expect(body).toEqual({ ok: true, pending: true });
+    const body = (await (await kfWorker.fetch(pollReq(tok), env)).json()) as { ok: boolean; pending?: boolean; wait?: string };
+    // cf#307: still cold => wait=accepted
+    expect(body).toEqual({ ok: true, pending: true, wait: "accepted" });
   });
 
   it("cold start: the same 404 FAILS once a worker has come up (job really is gone)", async () => {
@@ -236,8 +238,9 @@ describe("keyframe /poll wiring (worker-level, stubbed fetch)", () => {
       }),
     );
     const tok = encodePoll({ jobId: "j-fresh", project: "p", submittedAt: Date.now() });
-    const body = (await (await kfWorker.fetch(pollReq(tok), env)).json()) as { ok: boolean; pending?: boolean };
-    expect(body).toEqual({ ok: true, pending: true });
+    const body = (await (await kfWorker.fetch(pollReq(tok), env)).json()) as { ok: boolean; pending?: boolean; wait?: string };
+    // cf#307: grace-window 404 => accepted (not started / not visible yet)
+    expect(body).toEqual({ ok: true, pending: true, wait: "accepted" });
     expect(urls.some((u) => u.includes("/health"))).toBe(false);
   });
 });
