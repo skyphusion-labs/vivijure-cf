@@ -93,6 +93,8 @@ assert renders delay_time_ms ""
 # The columns this chain adds after 0001, each with its introducing migration named.
 assert runpod_job_log error_type 0015_runpod_job_log_error_type.sql
 assert renders          output_ms 0016_render_output_ms.sql
+assert renders          motion_backend 0018_render_motion_backend.sql
+assert renders          keyframe_backend 0018_render_motion_backend.sql
 
 if [ "$fail" -ne 0 ]; then
   echo "MIGRATION CHAIN VERIFY: FAILED" >&2

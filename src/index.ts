@@ -824,7 +824,10 @@ const hSubmitRender: Handler = async (req, env) => {
     status: view.status,
     mode: b.keyframesOnly ? "keyframes-only" : "full",
     projectId: await resolveProjectRef(env, b.projectId),
-  };
+    // cf#393: resolved backends known at submit (motion undefined on keyframes-only).
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: mapped.keyframe_backend ?? null,
+  } as NewRenderRow;
   await insertRenderBestEffort(env, row);
   return json(view, 201);
 };
@@ -937,7 +940,10 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     status: view.status,
     mode: "finalized",
     projectId: await resolveProjectRef(env, b.projectId),
-  });
+    // cf#393: from-keyframes has motion, no keyframe module pass.
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: null,
+  } as NewRenderRow);
   return json(view, 201);
 };
 const hRegenShot: Handler = async (req, env, _c, p) => {
