@@ -88,17 +88,45 @@ const putJob = (env: Env, job: CastRefsJob) =>
     httpMetadata: { contentType: "application/json" },
   });
 
-/** Internal: a finished module run -> register the generated refs onto the cast member (one batch
- *  write), record what it applied, phase -> done. A run that produced nothing still completes (the
- *  caller sees registered=0, not an error -- the failure, if any, is in the module's error). */
-async function finalize(env: Env, job: CastRefsJob, output: CastImageOutput): Promise<void> {
-  const imgs = (output.images || []).filter((i) => i && i.key && i.mime);
-  job.images = imgs;
-  job.applied = output.applied || [];
-  if (imgs.length) {
-    const row = await addRefs(env, job.cast_id, imgs);
-    job.registered = row ? imgs.length : 0;
+/** Pure: refs in `incoming` that are not already tracked on the job (by key). Used so mid-run
+ *  progress folds and the terminal batch both de-dupe against what was already written. */
+export function freshCastRefImages(
+  already: CastRefImage[],
+  incoming: { key?: string; mime?: string }[] | undefined,
+): CastRefImage[] {
+  const known = new Set(already.map((i) => i.key));
+  const out: CastRefImage[] = [];
+  for (const i of incoming || []) {
+    if (!i || !i.key || !i.mime) continue;
+    if (known.has(i.key)) continue;
+    known.add(i.key);
+    out.push({ key: i.key, mime: i.mime });
   }
+  return out;
+}
+
+/** Append newly generated refs onto the cast member and the job (cf#386). Registration is progressive
+ *  so `registered` moves while the job runs; addRefs is append-only, so only FRESH keys are written. */
+async function foldGeneratedRefs(
+  env: Env,
+  job: CastRefsJob,
+  incoming: { key?: string; mime?: string }[] | undefined,
+): Promise<void> {
+  const fresh = freshCastRefImages(job.images, incoming);
+  if (!fresh.length) return;
+  const row = await addRefs(env, job.cast_id, fresh);
+  if (!row) return; // cast vanished mid-run; leave registered as-is, terminal path will surface
+  job.images.push(...fresh);
+  job.registered = job.images.length;
+}
+
+/** Internal: a finished module run -> register any remaining refs onto the cast member, record what
+ *  it applied, phase -> done. Mid-run folds (cf#386) may already have registered some; only the
+ *  residual is written here. A run that produced nothing still completes (the caller sees
+ *  registered=0, not an error -- the failure, if any, is in the module's error). */
+async function finalize(env: Env, job: CastRefsJob, output: CastImageOutput): Promise<void> {
+  await foldGeneratedRefs(env, job, output.images);
+  job.applied = output.applied || [];
   job.phase = "done";
 }
 
@@ -215,7 +243,13 @@ export async function advanceCastRefsJob(env: Env, castId: number, jobId: string
   if (!p.ok) {
     job.phase = "failed";
     job.error = p.error;
-  } else if (!(p as { pending?: boolean }).pending) {
+  } else if ((p as { pending?: boolean }).pending) {
+    // cf#386: a pending poll may carry progressive images (and optional progress). Fold any new
+    // refs onto the member now so `registered` moves while the job runs. A legacy module that
+    // returns bare `{ pending: true }` is unchanged (registered stays 0 until the terminal batch).
+    const partial = p as { images?: { key?: string; mime?: string }[] };
+    await foldGeneratedRefs(env, job, partial.images);
+  } else {
     const out = (p as { output: CastImageOutput }).output;
     const violation = hookOutputViolation(job.module_name ?? "cast.image", "cast.image", out);
     if (violation) { job.phase = "failed"; job.error = violation; }

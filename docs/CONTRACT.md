@@ -446,11 +446,11 @@ Both respond `200 { ok: true, ...CastRefsSummary }` (POST: `201`). `CastRefsSumm
 | Field | Type | Meaning |
 |-------|------|---------|
 | `job_id` | string | The ref-generation job id. |
-| `cast_id` | number | The cast member. |
-| `phase` | `"generating" \| "done" \| "failed"` | Job phase. |
+| `cast_id` | string | The cast member's opaque public id (never the internal integer PK). |
+| `phase` | `"generating" \| "done" \| "failed"` | Job phase. Watch this for terminal state. |
 | `module?` | string | The `cast.image` module that ran. |
-| `registered` | number | Count of generated images registered onto the member so far. |
-| `images` | `{ key, mime }[]` | The generated reference images (R2 keys + mime). |
+| `registered` | number | Count of generated images already written onto the member. Moves while the job runs when the module reports progressive images on pending polls (cf#386); a legacy bare-pending module stays at `0` until `phase === "done"`. |
+| `images` | `{ key, mime }[]` | The generated reference images so far (R2 keys + mime). Grows with `registered`. |
 | `error?` | string | Set when `phase === "failed"`. |
 
 Errors: `404` if the cast member (POST) or job (GET) is unknown.
@@ -899,10 +899,10 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `keyframe_backend` | string | no | `ui.order`-first keyframe module | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. |
 | `keyframe_config` | object | no | -- | Keyframe module config. |
 | `motion_config` | object | no | -- | Motion module config; judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
-| `finish_config` | `{ [moduleName]: object }` | no | -- | Per-finish-module config (the per-shot `finish` chain). |
-| `speech_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `speech` chain (per-shot dialogue-audio cleanup, post-dialogue, pre-finish). |
-| `film_finish_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `film.finish` chain on the assembled, muxed film. Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. |
-| `master_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `master` chain (audio bed mastering, pre-mux). |
+| `finish_config` | `{ [moduleName]: object }` | no | schema defaults | Per-finish-module config (the per-shot `finish` chain). **Omitting a `*_config` does NOT skip the chain** (cf#386): every serving module for that hook still runs, clamped to its `config_schema` defaults. To no-op a step, set the module's own skip/disable knob (e.g. `finish-rife` with `interpolate: false` yields `noop:interpolate-off`). |
+| `speech_config` | `{ [moduleName]: object }` | no | schema defaults | Per-module config for the `speech` chain (per-shot dialogue-audio cleanup, post-dialogue, pre-finish). Same omit rule as `finish_config`. |
+| `film_finish_config` | `{ [moduleName]: object }` | no | schema defaults | Per-module config for the `film.finish` chain on the assembled, muxed film. Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. Same omit rule as `finish_config` -- an absent map still runs subtitle / film-titles at their defaults (and bills for them). |
+| `master_config` | `{ [moduleName]: object }` | no | schema defaults | Per-module config for the `master` chain (audio bed mastering, pre-mux). Same omit rule as `finish_config`. |
 | `audio_key` | string | no | -- | Staged audio bed (score/narration) to mux after assemble; absent => silent film. |
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
