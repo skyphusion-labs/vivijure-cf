@@ -7,6 +7,23 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
+
+`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
+view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
+required R2 archaeology. The host now:
+
+- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
+  injected or cap-dropped;
+- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
+  (`GET/POST /api/render/film`), and the scatter 201 body;
+- emits `film.wan_lora_projection` structured lines (docs/observability.md).
+
+Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
+bump.
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
