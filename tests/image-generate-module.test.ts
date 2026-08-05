@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from "vitest";
 import worker, { MANIFEST, MODELS } from "../modules/image-generate/src/index";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
-import { base64ToBytes, sniffImageMime } from "../modules/image-generate/src/image-gen";
+import { base64ToBytes, sniffImageMime, mayUseOpenAIDirectByok } from "../modules/image-generate/src/image-gen";
 
 // A 1x1 PNG, so the bytes that come back are a real image rather than a placeholder string.
 const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -131,6 +131,52 @@ describe("operator placeholder is treated as an unset secret", () => {
     });
     expect(calledHost(fetchSpy.mock.calls, "api.openai.com")).toBe(true);
     vi.unstubAllGlobals();
+  });
+});
+
+// cf#401: direct api.openai.com is a third-party class the RunPod plane proxy cannot mediate.
+// A hosted tenant (TENANT_ID set) must never take that path, even if OPENAI_API_KEY is wrongly bound.
+describe("cf#401: hosted tenant never takes OpenAI direct BYOK", () => {
+  it("mayUseOpenAIDirectByok is true only with a key and no TENANT_ID", () => {
+    expect(mayUseOpenAIDirectByok({ OPENAI_API_KEY: "sk-x" })).toBe(true);
+    expect(mayUseOpenAIDirectByok({ OPENAI_API_KEY: "sk-x", TENANT_ID: "" })).toBe(true);
+    expect(mayUseOpenAIDirectByok({ OPENAI_API_KEY: "sk-x", TENANT_ID: "   " })).toBe(true);
+    expect(mayUseOpenAIDirectByok({ OPENAI_API_KEY: "sk-x", TENANT_ID: "ten_abc" })).toBe(false);
+    expect(mayUseOpenAIDirectByok({ TENANT_ID: "ten_abc" })).toBe(false);
+    expect(mayUseOpenAIDirectByok({})).toBe(false);
+  });
+
+  it("with TENANT_ID + OPENAI_API_KEY, openai/* rides the AI binding, not api.openai.com", async () => {
+    const seen: string[] = [];
+    const env = {
+      AI: { run: async (m: string) => { seen.push(m); return { url: "https://images.example/x.png" }; } },
+      OPENAI_API_KEY: "sk-should-not-be-used",
+      TENANT_ID: "ten_cf401",
+      GATEWAY_ID: "vivijure",
+    };
+    const fetchSpy = vi.fn(async () => new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200, headers: { "content-type": "image/png" },
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await invoke(env, {
+      hook: "image.generate",
+      input: { prompt: "a quiet harbor" },
+      config: { model: "openai/gpt-image-1.5" },
+    });
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(seen).toEqual(["openai/gpt-image-1.5"]);
+    expect(calledHost(fetchSpy.mock.calls, "api.openai.com")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("/ready reports tenant_id when TENANT_ID is bound", async () => {
+    const res = await worker.fetch(
+      new Request("https://module.example/ready"),
+      { AI: { run: async () => ({}) }, TENANT_ID: "ten_x" } as never,
+    );
+    const body = (await res.json()) as { ok: boolean; tenant_id: boolean };
+    expect(body.ok).toBe(true);
+    expect(body.tenant_id).toBe(true);
   });
 });
 

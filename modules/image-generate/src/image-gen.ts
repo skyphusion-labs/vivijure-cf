@@ -111,12 +111,17 @@ export function providerOf(modelId: string): Provider | undefined {
   return undefined;
 }
 
-/** OpenAI direct (BYOK): the only path to a real alpha channel.
+/** OpenAI direct (operator / self-host BYOK only): the only path to a real alpha channel.
  *
  *  The Unified Billing proxy for gpt-image-1.5 exposes a strict schema and 7003-rejects `background`
  *  and `output_format`, so a transparent PNG is impossible through it. OpenAI's own endpoint accepts
  *  both. GPT image models always return b64_json (the `url` response format is unsupported), so
- *  there is nothing to fetch. */
+ *  there is nothing to fetch.
+ *
+ *  cf#401: this is a THIRD-PARTY class the RunPod-shaped plane proxy cannot mediate. It must never
+ *  run for a hosted tenant (TENANT_ID set): that path would bill an operator OpenAI key without a
+ *  mediated / metered seam. Hosted traffic uses the AI Gateway / Workers AI binding instead
+ *  (opaque PNG). See modules/image-generate/README.md "Third-party outbound". */
 export async function generateOpenAIImage(
   apiKey: string,
   modelId: string,
@@ -149,6 +154,19 @@ export interface GenerateEnv {
   AI: AiRun;
   GATEWAY_ID?: string;
   OPENAI_API_KEY?: string;
+  /**
+   * Hosted-tenant marker (plain text, plane-bound). When present the direct OpenAI BYOK path is
+   * refused and openai/* rides the AI Gateway binding like every other proxied provider (cf#401).
+   * Absent on self-host / first-party operator installs.
+   */
+  TENANT_ID?: string;
+}
+
+/** True when the direct api.openai.com BYOK path may run. Operator / self-host only: a hosted
+ *  tenant (TENANT_ID set) must never leave on the operator key, even if OPENAI_API_KEY is wrongly
+ *  bound into the tenant namespace (cf#401). */
+export function mayUseOpenAIDirectByok(env: Pick<GenerateEnv, "OPENAI_API_KEY" | "TENANT_ID">): boolean {
+  return Boolean(env.OPENAI_API_KEY) && !env.TENANT_ID?.trim();
 }
 
 export interface GenerateArgs {
@@ -172,8 +190,11 @@ export async function generateImageBytes(
   const height = args.height ?? 1024;
 
   if (provider) {
-    // BYOK direct for OpenAI when a key is present: the only transparent-PNG path.
-    if (provider === "openai" && env.OPENAI_API_KEY) {
+    // Operator / self-host BYOK direct for OpenAI when a key is present and this is NOT a hosted
+    // tenant: the only transparent-PNG path. Hosted tenants (TENANT_ID set) always take the
+    // gateway / binding path below -- even if an operator OPENAI_API_KEY was accidentally bound
+    // (cf#401). No OpenAI proxy exists; the RunPod plane proxy has no vocabulary for this class.
+    if (provider === "openai" && mayUseOpenAIDirectByok(env) && env.OPENAI_API_KEY) {
       return await generateOpenAIImage(env.OPENAI_API_KEY, model, args.prompt);
     }
     const refs = (args.refs ?? []).filter((r) => r.startsWith("data:"));

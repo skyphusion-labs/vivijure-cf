@@ -30,8 +30,17 @@ interface SecretsStoreSecret {
 interface Env {
   AI: AiRun;
   GATEWAY_ID?: SecretsStoreSecret | string;
-  /** Optional BYOK key: enables transparent-PNG output on gpt-image-1.5. Absent = opaque proxy path. */
+  /**
+   * Optional operator / self-host BYOK key: enables transparent-PNG output on gpt-image-1.5.
+   * Absent = opaque AI Gateway path. NEVER used when TENANT_ID is set (cf#401): a hosted tenant
+   * must not leave on an operator OpenAI key; the plane has no third-party proxy for this class.
+   */
   OPENAI_API_KEY?: SecretsStoreSecret | string;
+  /**
+   * Hosted attribution (cp#185), plain text, plane-bound when provisioned. Absent on self-host.
+   * Presence forces the AI Gateway path for openai/* and suppresses direct api.openai.com (cf#401).
+   */
+  TENANT_ID?: string;
 }
 
 // The models this module can actually dispatch. Every id here is executable by image-gen.ts; a row
@@ -123,6 +132,8 @@ async function runGenerate(
         AI: env.AI,
         GATEWAY_ID: (await secretValue(env.GATEWAY_ID)) || undefined,
         OPENAI_API_KEY: (await secretValue(env.OPENAI_API_KEY)) || undefined,
+        // Plain text; not a secret. Presence alone gates the third-party direct path (cf#401).
+        TENANT_ID: typeof env.TENANT_ID === "string" ? env.TENANT_ID : undefined,
       },
       {
         model,
@@ -154,10 +165,11 @@ export default {
     }
 
     // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
-    // Both credentials are fully optional: OPENAI_API_KEY only unlocks the BYOK-direct OpenAI path
-    // (image-gen.ts generateImageBytes falls back to the proxied/native path without it), and
-    // GATEWAY_ID only routes an already-optional proxied call through the gateway. This module always
-    // has a working @cf model path -- `ok` is not gated on either, the booleans are informational only.
+    // Both credentials are fully optional: OPENAI_API_KEY only unlocks the operator/self-host
+    // BYOK-direct OpenAI path (suppressed when TENANT_ID is set, cf#401; otherwise image-gen falls
+    // back to the proxied/native path without it), and GATEWAY_ID only routes an already-optional
+    // proxied call through the gateway. This module always has a working @cf model path -- `ok` is
+    // not gated on either, the booleans are informational only.
     if (request.method === "GET" && url.pathname === "/ready") {
       const gatewayId = await secretValue(env.GATEWAY_ID);
       const openaiKey = await secretValue(env.OPENAI_API_KEY);
@@ -165,6 +177,8 @@ export default {
         ok: true,
         module: MANIFEST.name,
         credentials: { gateway_id: Boolean(gatewayId), openai_api_key: Boolean(openaiKey) },
+        // Informational: a hosted tenant sees the direct BYOK path as off even if a key is bound.
+        tenant_id: Boolean(typeof env.TENANT_ID === "string" && env.TENANT_ID.trim()),
       });
     }
 
