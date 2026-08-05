@@ -2004,19 +2004,23 @@ The validated storyboard returned by `POST /api/storyboard/plan` / `refine`:
 
 ## Appendix B: source-of-truth index
 
-| Concern | Canonical file |
+Orchestration and the module contract live in **`@skyphusion-labs/vivijure-core`** (this host
+imports them; it does not keep a second copy under `src/modules/`). Paths below are package entry
+points unless marked **host**.
+
+| Concern | Canonical source |
 |---------|----------------|
-| Hook names / cardinality / blurbs, all hook I/O, manifest + ConfigField, invoke envelopes | `src/modules/types.ts` |
-| Registry projection (`indexByHook`, `hookCatalog`, `modulesResponse`, `toPublic`), dispatch (`dispatchChain`, `dispatchPickOne`, `servingForHook`) | `src/modules/registry.ts` |
-| Conformance checks (manifest, invoke response, per-hook output) | `src/modules/conformance.ts` |
-| Router (`API_ROUTES`), all HTTP handlers, `GET /api/modules` inline | `src/index.ts` |
-| Film job (`FilmJob`, phases), `applyFilmFinish`, `transitionToDone`, summaries | `src/film-orchestrator.ts` |
-| Per-shot clip job (`ClipJob`, `JobSummary`, `summarizeJob`) | `src/render-orchestrator.ts` |
-| Render-override parsing, quality tiers, `RenderConfigProjection` | `src/render-module-config.ts` |
-| RunPod-shaped poll view, override mapping, scene normalization | `src/film-render-bridge.ts` |
-| Scatter orchestration | `src/scatter-orchestrator.ts` |
-| Voice catalog | `src/voices.ts` |
-| Caption cue timing (FilmFinishCaption source) | `src/captions.ts` |
+| Hook names / cardinality / blurbs, all hook I/O, manifest + ConfigField, invoke envelopes | `@skyphusion-labs/vivijure-core` `modules/types` |
+| Registry projection (`indexByHook`, `hookCatalog`, `modulesResponse`, `toPublic`), dispatch (`dispatchChain`, `dispatchPickOne`, `servingForHook`) | `@skyphusion-labs/vivijure-core` `modules/registry` |
+| Conformance checks (manifest, invoke response, per-hook output) | `@skyphusion-labs/vivijure-core` `modules/conformance` |
+| Router (`API_ROUTES`), all HTTP handlers, `GET /api/modules` inline | **host** `src/index.ts` |
+| Film job (`FilmJob`, phases), `applyFilmFinish`, `transitionToDone`, summaries | `@skyphusion-labs/vivijure-core` `film-orchestrator` |
+| Per-shot clip job (`ClipJob`, `JobSummary`, `summarizeJob`) | `@skyphusion-labs/vivijure-core` `render-orchestrator` |
+| Render-override parsing, quality tiers, `RenderConfigProjection` | `@skyphusion-labs/vivijure-core` `render-module-config` |
+| RunPod-shaped poll view, override mapping, scene normalization | `@skyphusion-labs/vivijure-core` `film-render-bridge` (host `src/film-render-bridge.ts` re-exports + D1 row map) |
+| Scatter orchestration | `@skyphusion-labs/vivijure-core` `scatter-orchestrator` |
+| Voice catalog | `@skyphusion-labs/vivijure-core` `voices` |
+| Caption cue timing (FilmFinishCaption source) | `@skyphusion-labs/vivijure-core` `captions` |
 | Cast / project / render row schemas | `src/cast-db.ts`, `src/storyboard-projects-db.ts`, `src/renders-db.ts` |
 | Preflight | `src/preflight.ts` |
 | Planner LLM (plan / refine / chat) + validated storyboard | `src/planner.ts`, `src/storyboard-validate.ts` |
