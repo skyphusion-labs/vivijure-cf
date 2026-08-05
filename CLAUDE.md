@@ -72,6 +72,9 @@ of these areas, update the matching doc.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
 - Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.
+- `docs/real-run-confirmations.md` -- phase-2 standing list: properties only a real run can confirm (#369).
+- `docs/runpod-public-endpoint-slugs.md` -- free slug existence probe + measured rates for cloud i2v (#267).
+- `docs/vendor-runpod-badge.md` -- RunPod badge API 500 on Hub-manifest repos; vendor disposition (#249).
 
 ## Commands
 
