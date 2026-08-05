@@ -122,14 +122,13 @@ export interface Env {
 
   // Rate limiting for GPU/spend endpoints (F3, src/rate-limit.ts). The Cloudflare native Rate
   // Limiting binding; added to wrangler.toml [[ratelimits]] by infra (Strummer). Optional: when
-  // unbound the spend routes fail OPEN (allowed + warned), since rate-limit is availability-
-  // protective, not an auth gate. See docs/SECURITY.md.
+  // Default: fail CLOSED when unbound/broken (spend routes 503). Opt out with
+  // SPEND_LIMIT_FAIL_CLOSED="false" for the old allow+warn posture. See src/rate-limit.ts + docs/SECURITY.md.
   SPEND_RATE_LIMITER?: RateLimitBinding;
 
-  // S4 spend-posture knobs ([vars], both off unless set; src/rate-limit.ts):
-  // "true" flips the spend checks to FAIL CLOSED: a broken/unbound limiter or a failing daily-
-  // ceiling check DENIES spend routes (503) instead of allowing. For operators who prefer blocked
-  // renders over unmetered spend.
+  // S4 spend-posture knobs ([vars]; src/rate-limit.ts):
+  // Default fail-closed. Only the literal "false" opts into fail-open (allow + warn when the check
+  // is broken/unbound). Prefer blocked renders over unmetered spend.
   SPEND_LIMIT_FAIL_CLOSED?: string;
   // Positive integer: max spend-route submissions per UTC day, counted atomically in D1
   // (spend_counter, migration 0008). Over the ceiling denies 429, Retry-After = UTC midnight.
