@@ -1,7 +1,8 @@
 # Vivijure Module API
 
 > Status: **IMPLEMENTED** (`vivijure-module/2`; the `/1` window is closed, no longer accepted). The contract the core and modules share. This
-> document is the design spec; `src/modules/types.ts` is the canonical TypeScript shape.
+> document is the design spec; the canonical TypeScript shape lives in
+> `@skyphusion-labs/vivijure-core` (`modules/types`, package path `src/modules/types.ts` in that repo).
 
 ## Why this exists
 
@@ -33,7 +34,7 @@ feature.
 ## The hooks (vivijure-module/2)
 
 A hook is a contract, not a function. Each has a stable name, a typed input, and a typed output.
-Shapes live in `src/modules/types.ts`.
+Shapes live in `@skyphusion-labs/vivijure-core` (`modules/types`).
 
 | Hook | Purpose | Cardinality |
 |---|---|---|
