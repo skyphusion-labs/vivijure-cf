@@ -90,6 +90,10 @@ conformance is not done. For end-to-end render behavior, verify against a live `
 assert on the structured event channel (`docs/observability.md`), not prose. Always `npm run typecheck`
 first, green, before considering a change done.
 
+**R2 same-key A/B (cf#300):** never prove an overwrite from the CF API object-GET alone -- it can
+serve a stale body while listing shows the new etag/size. Listing is identity authority; body GET is
+for eyeballing. Full rule: `docs/r2-verification.md` (also `harness/cf278/README.md`).
+
 ## Architecture
 
 - **Thin host + published core.** Orchestration lives in `@skyphusion-labs/vivijure-core`. This repo
