@@ -4,32 +4,56 @@ Guidance for Claude Code (and the crew) working in this repo.
 
 ## What this is
 
-**Vivijure Studio: the module host for AI film production.** A single Cloudflare Worker (no
-framework, no build step beyond TypeScript) that owns the core (project / storyboard / cast / render
-orchestration) and a **module registry**. Every capability beyond the core is an opt-in module
-worker plugged in through a typed hook contract. Read **docs/module-api.md** first; it is the
-contract everything builds to. Pre-1.0 (the current version is the latest `v*` git tag; see
-CHANGELOG.md), ~25 modules shipped (cloud i2v, finish/lipsync,
-audio, cast-image, dialogue, titles).
+**Vivijure Studio (CF panel): the Cloudflare module host for AI film production.** A single
+Cloudflare Worker (no framework, no build step beyond TypeScript) that hosts project / storyboard /
+cast / render orchestration via **`@skyphusion-labs/vivijure-core`** and a **module registry**.
+Every capability beyond the core is an opt-in module worker plugged in through a typed hook contract.
 
-The GPU render backend is `vivijure-backend` (RunPod serverless). Production UI:
-**vivijure.skyphusion.org**.
+Read **`@skyphusion-labs/vivijure-core` module types** first (package path `modules/types`;
+`vivijure-module/2`). Host `docs/module-api.md` is the prose contract; **types do not live in
+`src/modules/types.ts` after core extraction.**
 
-## The Vivijure constellation (the same map is in each repo's README)
+Version: see root `package.json` / latest `v*` tag / `CHANGELOG.md` (do not freeze a number here).
+
+GPU render backend: `vivijure-backend` (RunPod serverless). Production panel UI:
+**vivijure.skyphusion.org**. Local-GPU door for this panel's fleet wiring: fatmike CF door (operator
+pin; not frozen here). Demo: **demo.vivijure.com** (`AUTH_MODE=demo`; `DEMO_RENDER_ENABLED=false`
+is intentional zero-spend).
+
+## TWO panels (honesty)
+
+| Panel | Repo | Runtime |
+|-------|------|---------|
+| CF (this repo) | `vivijure-cf` | Workers, D1, R2 |
+| LOCAL | `vivijure-local` | Node, SQLite, MinIO; fleet box propagandhi |
+
+**Dual-panel product parity** is required for product-facing features (same-time releases, no
+community edition). **Dependency pins may lag** between cf and local; check each `package.json`.
+Neither pin is "wrong" solely for lagging; ship the dual-panel wave deliberately.
+
+## TWO version lines (do not conflate)
+
+- **`v*`** on this repo = panel / studio Worker deploy (tag-gated).
+- **`backend-v*`** (or image tags on `vivijure-backend` / satellites) = RunPod GPU images.
+
+## The Vivijure constellation
 
 ```
-   friends + Slate (Discord)
-            |
-            v
-        slate  -->  vivijure (studio control plane / JSON API)   <-- THIS REPO
-                        |
+   friends + Slate (Discord)     vivijure-mcp (agent door)
+            |                           |
+            v                           v
+        slate  -->  vivijure-cf (THIS REPO)  /  vivijure-local
+                        |  orchestration: vivijure-core
                         v
-                  vivijure-backend (GPU render: keyframes -> i2v -> assemble)
+                  vivijure-backend (GPU: keyframes -> i2v -> assemble)
                         |
-            +-----------+-------------+-------------------+
-            |           |             |                   |
-   vivijure-musetalk  vivijure-   vivijure-audio-   vivijure-local-12gb
-   (lipsync module)   upscale     upscale           (self-host render path)
+     +----------+----------+----------------+------------------+
+     |          |          |                |                  |
+  musetalk   upscale  audio-upscale   wan-train          local-12/16gb
+  (lipsync)  (video)  (speech)        (cast LoRA)        (homelab i2v)
+
+  vivijure-control-plane = hosted multi-tenant provisioner (not this UI)
+  hub vivijure = docs/legal history only; issues for the live studio go HERE
 ```
 
 ## Documentation map
@@ -37,16 +61,16 @@ The GPU render backend is `vivijure-backend` (RunPod serverless). Production UI:
 Deep docs live in `docs/`; this file is the working method and conventions. When a change touches one
 of these areas, update the matching doc.
 
-- `docs/module-api.md` -- the typed hook contract (`vivijure-module/2`; `/1` is closed); read FIRST. A module builds to this.
+- `docs/module-api.md` -- prose for the typed hook contract (`vivijure-module/2`); **SoT types in vivijure-core**.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
 - `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
-- `docs/mcp.md` -- MCP deploy pointer; canon in **vivijure-core** `docs/mcp.md`.
+- `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
-- `docs/demo-studio.md` -- the public, read-only, zero-spend demo studio (`demo.vivijure.com`, `AUTH_MODE=demo`): the binding-absence rule, D1 seed procedure, and live-verify list.
-- `docs/dev-modbound.md` -- run the core + every module worker as one local dev so `/api/modules` returns the REAL catalog (no GPU, no prod data). The dev-parity env for driving planner/module flows locally.
-- The **hosted tier** (accounts, signup, tenancy, the hosted AUP, the front-door UI) lives in its OWN repo: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane). It is NOT part of this repo. This repo is the self-hostable studio; nothing here requires operating a hosted service.
-- `docs/SECURITY.md` + `docs/legal/` -- security posture and the public-facing legal/AUP framing.
+- `docs/demo-studio.md` -- public demo (`demo.vivijure.com`, `AUTH_MODE=demo`, `DEMO_RENDER_ENABLED=false` intentional).
+- `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
+- Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
+- `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.
 
 ## Commands
 
@@ -68,18 +92,17 @@ first, green, before considering a change done.
 
 ## Architecture
 
-- **Thin core + module registry.** The Worker owns project/storyboard/cast state and render
-  orchestration; everything else is a module worker behind a typed hook. `src/` holds the core
-  (orchestration, cast DB, bundle assembly, audio/beat staging, preflight); `modules/` holds the
-  shipped module workers.
-- **The module contract is sacred.** `src/modules/types.ts` is `vivijure-module/2`; a breaking change
-  bumps the api version. Module repos vendor this exact file -- keep it dependency-free. One typed
-  input/output per hook; a module declares its knobs in `config_schema` and the core clamps against it.
+- **Thin host + published core.** Orchestration lives in `@skyphusion-labs/vivijure-core`. This repo
+  is the CF host (routes, auth, bindings, modules under `modules/`, UI). Do not reintroduce a
+  parallel copy of core types under `src/modules/types.ts`.
+- **The module contract is sacred.** SoT is **`@skyphusion-labs/vivijure-core`** (`modules/types`,
+  epoch `vivijure-module/2`). Breaking change bumps the api version with a coordinated release.
+  One typed input/output per hook; modules declare knobs in `config_schema`; core clamps against it.
 - **The frontend is a projection of the registry.** The UI renders from `GET /api/modules`; never
   hardcode a per-feature section. If a feature needs the UI to know about it, it is a module.
 - **Honest failures.** A finish/polish step that genuinely fails (after bounded retry + R2 reclaim)
   fails the render with the real per-shot error; it never silently advances to done and ships a
-  raw/unfinished clip with `applied=[]` (#245 / #249). A degrade is never silent.
+  raw/unfinished clip with `applied=[]`. A degrade is never silent.
 
 ## Conventions
 
@@ -89,6 +112,12 @@ first, green, before considering a change done.
 - **Mirror every binding** in `wrangler.toml` and the hand-authored `Env` (`src/env.ts`). The committed
   config is `wrangler.toml.example`; `account_id` is never hardcoded (injected via `CLOUDFLARE_ACCOUNT_ID`).
 - **`npm run typecheck` is the gate.** `tsc` is not part of vitest, so type errors pass tests silently.
+- **Ignore Cursor `AGENTS.md`** if present; this file is the agent contract.
+- **CSAM bright-line (NON-NEGOTIABLE):** zero tolerance including synthetic.
+- **Clean room** for GPU engines; **FLUX self-host OUT** of the CF cost-door thesis unless a
+  deliberate product decision lands elsewhere.
+- **Verify the artifact** (deployed Worker `modified_on` / behavior), never only the pipeline.
+- **Never freeze open sprint boards or specific RunPod endpoint IDs** in this file.
 
 ## Repo standard (aviation-grade governance)
 
