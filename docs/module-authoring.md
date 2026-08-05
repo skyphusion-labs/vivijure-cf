@@ -219,6 +219,15 @@ over their real `/invoke` then `/poll` with one stub in three configurations, so
 reads the header, one that ignores it, and one that treats every failure as a refusal are three
 distinguishable outcomes rather than one.
 
+### Cross-repo wire name: `x-vivijure-plane-refusal` (cf#403)
+
+The plane emits, and every module reads, the header name held in `PLANE_REFUSAL_HEADER`
+(`modules/_shared/runpod-route.ts`). The control plane defines the same constant in
+`vivijure-control-plane/src/runpod-proxy-poll.ts`. There is no shared package; both repos pin the
+literal `"x-vivijure-plane-refusal"` in `tests/plane-refusal-header-contract.test.ts` (mirrored on
+the plane). Renaming the header requires updating **both** pins and both source constants in the
+same change wave. A one-sided rename is a silent restore of the forever-pend cf#398 closed.
+
 That is the whole "community becomes the roadmap" play: the RunPod ready-to-deploy hub
 (Wan2.2/SDXL/ComfyUI as `motion.backend`, Whisper STT as `score`, vLLM as a self-hosted
 `plan.enhance`) is a catalog of modules waiting to be wrapped, each one the same four files.
