@@ -193,6 +193,24 @@ the poll view), and the orchestrator emits one structured line:
 The all-missing case still hard-fails loud; this event is the some-rendered degrade only. A film
 with this line completed, but it is NOT the full storyboard -- the poll view says so too.
 
+## The Wan cast-LoRA projection event (`film.wan_lora_projection`, cf#392)
+
+When the host projects bound cast Wan adapters into an `alibaba-wan-lora` motion config
+(`src/wan-lora-projection.ts`), it records `{ injected, dropped }` on the film job (host field
+`wan_lora_projection`, relayed on the film summary and planner poll `output`) and emits one
+structured line so phase-1 verification can assert the motion adapter was injected without digging
+through R2:
+
+```
+{"ev":"film.wan_lora_projection","film_id":"...","project":"...","injected":1,"dropped":0,"applied":true}
+```
+
+`injected` is the number of cast slots whose high/low expert pair was presigned into the config;
+`dropped` is how many the per-pass cap (`MAX_LORAS_PER_PASS`) refused. A pure no-op (wrong motion
+backend, or no Wan cast) emits nothing and leaves the poll field absent. Scatter submissions that
+project set the same field on the 201 body and emit with `scatter_id` instead of (or in addition to)
+`film_id`.
+
 ## The deferred-bookkeeping event (`render.bookkeeping_deferred`, #695)
 
 A started film never 500s on its own bookkeeping: after `startFilmJob` returns, the post-start

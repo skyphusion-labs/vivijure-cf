@@ -6,10 +6,10 @@ import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, summarizeFilm, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
-  normalizeFilmScenes, filterScenesByShotIds,
+  normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
 } from "./film-render-bridge";
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
@@ -108,7 +108,16 @@ import { videoFinishHooksUnavailable } from "./video-finish-availability";
 import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
-import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
+import {
+  projectWanLorasIntoModuleConfig,
+  ensureModuleOverrideConfig,
+  shouldProjectWanLoras,
+  persistWanLoraProjectionOnFilm,
+  emitWanLoraProjectionEvent,
+  wanLoraProjectionSurface,
+  WAN_LORA_BACKEND,
+  WAN_LORA_PROJECTION_FIELD,
+} from "./wan-lora-projection";
 import { getUserPrefs, setUserPrefs } from "./user-prefs";
 import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "@skyphusion-labs/vivijure-core/operator-config";
 import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
@@ -792,7 +801,7 @@ const hSubmitRender: Handler = async (req, env) => {
   // paths). motionBackend is undefined on a keyframes-only preview, and non-Wan / no-Wan-cast renders
   // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
   // POST-clamp, keeps the JSON LoRA fields intact through startFilmJob.
-  await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
+  const wanProj = await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -814,6 +823,9 @@ const hSubmitRender: Handler = async (req, env) => {
     pretrained_loras: Object.keys(pretrained).length ? pretrained : undefined,
     cast_loras: Object.keys(castIds).length ? castIds : undefined,
   }, modules);
+  // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
+  // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
+  await persistWanLoraProjectionOnFilm(env, job, wanProj);
   const view = filmJobToPollView(job, null);
   const row: NewRenderRow = {
     jobId: view.jobId,
@@ -1125,10 +1137,11 @@ const hScatterRender: Handler = async (req, env) => {
   // fields in the module schema, so they survive validateConfig and reach every shard. Without this a
   // Wan cast scatter would render LoRA-less SILENTLY while render/film worked (the exact Phase C gap).
   // scatterCast is the same resolveCastLoras result the readiness gate above used.
+  let scatterWanProj = { injected: 0, dropped: 0, applied: false as boolean };
   if (shouldProjectWanLoras(scatterBackend, scatterCast.wanPretrained)) {
     const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
     b.renderOverrides = injected.overrides;
-    await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
+    scatterWanProj = await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
   }
   try {
     const job = await startScatterRender(env, {
@@ -1145,7 +1158,22 @@ const hScatterRender: Handler = async (req, env) => {
         project_id: await resolveProjectRef(env, b.projectId),
     });
     const view = scatterJobToPollView(job);
-    return json({ ok: true, jobId: view.jobId, status: view.status }, 201);
+    // cf#392: scatter has no host-owned poll wrapper, so surface on the 201 + structured event.
+    // The LoRAs themselves ride render_overrides into every shard; the counts are for verification.
+    const scatterSurface = wanLoraProjectionSurface(scatterWanProj);
+    if (scatterSurface) {
+      emitWanLoraProjectionEvent({
+        scatter_id: view.jobId,
+        project,
+        result: scatterWanProj,
+      });
+    }
+    return json({
+      ok: true,
+      jobId: view.jobId,
+      status: view.status,
+      ...(scatterSurface ? { [WAN_LORA_PROJECTION_FIELD]: scatterSurface } : {}),
+    }, 201);
   } catch (e) {
     const msg = (e as Error).message || "scatter submit failed";
     return json({ ok: false, error: msg }, 422);
@@ -1496,12 +1524,13 @@ const hStartFilm: Handler = async (req, env) => {
   // Wan cast adapters -> alibaba-wan-lora motion config, in place, before the job starts. hStartFilm
   // carries a.motion_config straight into startFilmJob unclamped, so the projected fields flow through.
   // Guarded so a non-Wan film never materializes an empty motion_config.
+  let filmWanProj = { injected: 0, dropped: 0, applied: false as boolean };
   if (shouldProjectWanLoras(a.motion_backend, resolvedLoras.wanPretrained)) {
     const filmMotionConfig: Record<string, unknown> =
       a.motion_config && typeof a.motion_config === "object" && !Array.isArray(a.motion_config)
         ? (a.motion_config as Record<string, unknown>)
         : {};
-    await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
+    filmWanProj = await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
     a.motion_config = filmMotionConfig;
   }
   const job = await startFilmJob(env, {
@@ -1529,11 +1558,14 @@ const hStartFilm: Handler = async (req, env) => {
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
   }, filmModules);
+  // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
+  // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
+  await persistWanLoraProjectionOnFilm(env, job, filmWanProj);
   // Write a renders-table row so this film shows in the history panel (#164), the same way
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
   await insertRenderBestEffort(env, filmRowFromJob(job));
-  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilm(job, null))) }, 201);
+  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))) }, 201);
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
   const r = await advanceFilmJob(env, p.id);
@@ -1548,7 +1580,8 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
     ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
     : undefined;
   await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob, kfDone), ctx);
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilm(r.job, r.clipJob))) });
+  // cf#392: host summarize relays wan_lora_projection from the job doc when present.
+  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(r.job, r.clipJob))) });
 };
 
 const hEnhance: Handler = async (req, env) => {
