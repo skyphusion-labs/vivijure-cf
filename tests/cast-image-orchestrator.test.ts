@@ -1,7 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { selectSeedKeys, summarizeCastRefs, castRefsJobKey, type CastRefsJob } from "../src/cast-image-orchestrator";
+import {
+  selectSeedKeys,
+  summarizeCastRefs,
+  castRefsJobKey,
+  freshCastRefImages,
+  type CastRefsJob,
+} from "../src/cast-image-orchestrator";
 
 describe("cast-image orchestrator pure logic", () => {
+  it("freshCastRefImages keeps only new keys (progressive registration, cf#386)", () => {
+    const already = [{ key: "cast-gen/7/ref_01.png", mime: "image/png" }];
+    expect(freshCastRefImages(already, [
+      { key: "cast-gen/7/ref_01.png", mime: "image/png" },
+      { key: "cast-gen/7/ref_02.jpg", mime: "image/jpeg" },
+      { key: "cast-gen/7/ref_02.jpg", mime: "image/jpeg" }, // de-dupe within incoming
+      { key: "", mime: "image/png" },
+      { key: "bad" },
+      null as unknown as { key: string; mime: string },
+    ])).toEqual([{ key: "cast-gen/7/ref_02.jpg", mime: "image/jpeg" }]);
+    expect(freshCastRefImages([], undefined)).toEqual([]);
+    expect(freshCastRefImages([], [])).toEqual([]);
+  });
+
   it("selectSeedKeys: portrait first, then requested valid sources, de-duped + capped", () => {
     const sources = [{ key: "s1" }, { key: "s2" }, { key: "s3" }];
     expect(selectSeedKeys("p", sources, ["s2", "s1"])).toEqual(["p", "s2", "s1"]);

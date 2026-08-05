@@ -152,7 +152,16 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<CastImage
   } catch {
     /* best-effort: the next poll re-reads the prior state and continues */
   }
-  return state.prompts.length === 0 ? { ok: true, output: readOutput(state) } : { ok: true, pending: true };
+  // Terminal: full output. Pending: carry progress + images rendered so far (cf#386) so the host can
+  // increment `registered` each tick instead of only at the final batch (a healthy mid-run job looked
+  // stalled at registered:0 under the old shape).
+  if (state.prompts.length === 0) return { ok: true, output: readOutput(state) };
+  return {
+    ok: true,
+    pending: true,
+    progress: { done: state.done.length, total: state.total },
+    images: state.done,
+  };
 }
 
 export default {
