@@ -196,7 +196,7 @@ key was removed in the identity strip; see Epoch history above.)
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**86 route entries** (distinct `method` + `pattern`) over **70 distinct path patterns**. Those two
+**87 route entries** (distinct `method` + `pattern`) over **71 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -272,26 +272,27 @@ unchanged.
 | 55 | DELETE | `/api/storyboard/renders/:id` | 2.25 |
 | 56 | POST | `/api/storyboard/renders/:id/add-audio` | 2.26 |
 | 57 | POST | `/api/storyboard/renders/:id/add-narration` | 2.26 |
-| 58 | POST | `/api/storyboard/renders/:id/finalize` | 2.27 |
-| 59 | POST | `/api/storyboard/renders/:id/animate-cloud` | 2.27 |
-| 60 | POST | `/api/storyboard/renders/:id/animate-hybrid` | 2.27 |
-| 61 | POST | `/api/storyboard/renders/adopt` | 2.28 |
-| 62 | GET | `/api/whoami` | 2.29 |
-| 63 | GET | `/api/prefs` | 2.29 |
-| 64 | PATCH | `/api/prefs` | 2.29 |
-| 65 | GET | `/api/modules/:name/config` | 4.1.2 |
-| 66 | PATCH | `/api/modules/:name/config` | 4.1.2 |
-| 67 | GET/POST | `/api/cast/export/:id` | 2.9a |
-| 68 | POST | `/api/cast/import` | 2.9a |
-| 69 | DELETE | `/api/cast/:id/refs/*refKey` | 2.7 |
-| 70 | DELETE | `/api/cast/:id/source/*sourceKey` | 2.7 |
-| 71 | POST | `/api/cast/:id/train-wan-lora` | 2.9 |
-| 72 | GET | `/api/models` | 2.16 |
-| 73 | GET | `/api/modules/installed` | 2.31 |
-| 74 | POST | `/api/modules/install` | 2.31 |
-| 75 | DELETE | `/api/modules/install/:name` | 2.31 |
-| 76 | PATCH | `/api/modules/install/:name` | 2.31 |
-| 77 | GET | `/api/storage/usage` | 2.32 |
+| 58 | POST | `/api/storyboard/renders/:id/retry` | 2.27 |
+| 59 | POST | `/api/storyboard/renders/:id/finalize` | 2.27 |
+| 60 | POST | `/api/storyboard/renders/:id/animate-cloud` | 2.27 |
+| 61 | POST | `/api/storyboard/renders/:id/animate-hybrid` | 2.27 |
+| 62 | POST | `/api/storyboard/renders/adopt` | 2.28 |
+| 63 | GET | `/api/whoami` | 2.29 |
+| 64 | GET | `/api/prefs` | 2.29 |
+| 65 | PATCH | `/api/prefs` | 2.29 |
+| 66 | GET | `/api/modules/:name/config` | 4.1.2 |
+| 67 | PATCH | `/api/modules/:name/config` | 4.1.2 |
+| 68 | GET/POST | `/api/cast/export/:id` | 2.9a |
+| 69 | POST | `/api/cast/import` | 2.9a |
+| 70 | DELETE | `/api/cast/:id/refs/*refKey` | 2.7 |
+| 71 | DELETE | `/api/cast/:id/source/*sourceKey` | 2.7 |
+| 72 | POST | `/api/cast/:id/train-wan-lora` | 2.9 |
+| 73 | GET | `/api/models` | 2.16 |
+| 74 | GET | `/api/modules/installed` | 2.31 |
+| 75 | POST | `/api/modules/install` | 2.31 |
+| 76 | DELETE | `/api/modules/install/:name` | 2.31 |
+| 77 | PATCH | `/api/modules/install/:name` | 2.31 |
+| 78 | GET | `/api/storage/usage` | 2.32 |
 | 78 | POST | `/api/storage/reconcile` | 2.32 |
 | 79 | GET | `/api/demo/menu` | 2.33 |
 | 80 | POST | `/api/demo/render` | 2.33 |
@@ -1074,7 +1075,8 @@ Each derives a new render from a parent preview (`getRenderByIdForUser`). All re
 
 | Route | Body | Behavior |
 |-------|------|----------|
-| POST `/api/storyboard/renders/:id/finalize` | `{ audioKey?, castLoras? }` (empty body ok) | GPU finalize (motion backend `own-gpu`). |
+| POST `/api/storyboard/renders/:id/retry` | empty body ok | **cf#353:** re-submit the row's STORED args (project, bundle, tier, overrides, mode). Failed/cancelled/timed-out only. Creates a NEW history row; the failed row stays. `201 { ok: true, ...RunpodJobView }`. |
+| POST `/api/storyboard/renders/:id/finalize` | `{ audioKey?, castLoras?, motion_backend? }` (empty body ok) | GPU finalize. Optional `motion_backend` (cf#347). |
 | POST `/api/storyboard/renders/:id/animate-cloud` | `{ model?, perShot?, audioKey? }` | Cloud i2v finalize (`perShot` = per-shot model map). |
 | POST `/api/storyboard/renders/:id/animate-hybrid` | `{ backends?, defaultBackend? ("gpu"\|"cloud", default "gpu"), defaultCloudModel?, audioKey? }` | Mixed GPU/cloud backends; `backends` validated against installed `motion.backend` modules (excluding `own-gpu`). `400` if the backend set is invalid. |
 

@@ -13,8 +13,8 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves. 85 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
-| Panel-reachable | **65** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
+| Studio API route entries | **87** | Distinct `method` + `pattern` pairs the studio serves. 86 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
+| Panel-reachable | **66** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
 | Reachable via `studio_request` | **83** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **83 of 86** route
-entries there is nothing an agent cannot invoke. Curated coverage is 41 of 86 (48%), and that number
+`studio_request` sends any method to any path with the studio bearer, so for **83 of 87** route
+entries there is nothing an agent cannot invoke. Curated coverage is 41 of 87 (48%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 83 a low number costs discoverability, not reach, and 45
+contract to find the route. For those 83 a low number costs discoverability, not reach, and 46
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
@@ -155,7 +155,7 @@ Every measurement in this document can err in ONE direction, and a reader a year
 work that out from the number. Both instrument defects found while producing this revision ran in
 the flattering direction, which is exactly why they survived.
 
-- **Panel-reachable (65) can be too LOW.** Until cf#333 this was a path-only matcher published as
+- **Panel-reachable (66) can be too LOW.** Until cf#333 this was a path-only matcher published as
   **70**, and that number could only ever be too HIGH: it compared path segments and ignored METHOD,
   so a route entry inherited reachability from any panel call to its path. It is now derived from the
   panel's own call sites (`fetch`/`api` calls, `.href`/`.src` DOM assignments, one hop of variable
@@ -167,7 +167,7 @@ the flattering direction, which is exactly why they survived.
 - **Reached by a curated tool (41) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
-- **Route entries (86) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+- **Route entries (87) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
   registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
   added explicitly; a second would be invisible.
 - **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.
@@ -275,6 +275,7 @@ structurally invisible to the MCP.
 | `DELETE` | `/api/storyboard/renders/:id` | yes | `delete_render` | json |
 | `POST` | `/api/storyboard/renders/:id/add-audio` | yes | `add_render_audio` | json |
 | `POST` | `/api/storyboard/renders/:id/add-narration` | yes | `add_render_narration` | json |
+| `POST` | `/api/storyboard/renders/:id/retry` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/finalize` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/animate-cloud` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/animate-hybrid` | yes | -- | json |
@@ -307,6 +308,6 @@ so they moved `curatedCovered`, not the route count, and the four structurally-i
 entries stay four. **`view_artifact` makes an image VIEWABLE; it does not make the route stop returning
 bytes.**
 
-Separately, `POST /api/render/frames` (cf#322) takes the route count 85 -> 86. It is the reason a
+Separately, `POST /api/render/frames` (cf#322) takes the route count 86 -> 87. It is the reason a
 byte-returning clip can be looked at at all: it writes a contact sheet as a normal image artifact, so
 the thing the transport can carry is the thing it gets handed. It adds a route, not a curated tool.
