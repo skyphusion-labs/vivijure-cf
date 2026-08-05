@@ -561,89 +561,22 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
 
 
 # ---------------------------------------------------------------------------
-# /overlay: burn text overlays onto a single clip via ffmpeg drawtext (#190).
-#
-# The caller (the text-overlay module worker) reads the clip from R2 and POSTs
-# the raw bytes here; the processed bytes are returned in the response body.
-# This bypasses the 1 MB JSON body limit by streaming the video directly and
-# reading the spec from the X-Overlay-Spec header (base64-encoded JSON).
-#
-# Header X-Overlay-Spec: base64( { "filter": "<ffmpeg -vf value>", "output_key": "..." } )
-# Request body:  raw video bytes (Content-Type: video/mp4)
-# Response body: raw video bytes on success; JSON {ok:false, error} on failure.
-
-MAX_OVERLAY_CLIP_BYTES = 256 * 1024 * 1024   # 256 MB (same cap as regular clips)
-
-
-def _draw_overlay(src, dst, vf_filter, *, crf=18, preset="medium"):
-    """Run ffmpeg drawtext on `src`, writing to `dst`. Re-encodes with libx264 so
-    the overlay is baked in (stream-copy cannot apply a video filter). Audio is
-    stream-copied unchanged; `-movflags +faststart` keeps the output web-playable."""
-    cmd = [
-        "ffmpeg", "-y", "-i", src,
-        "-vf", vf_filter,
-        "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        dst,
-    ]
-    _run(cmd)
-
+# /overlay: RETIRED with the text-overlay finish module (vivijure#769 / cf#24).
+# Superseded by /film-titles + the subtitle film.finish path. The route stays
+# registered so a stale caller gets an honest 410 instead of a silent hang or
+# 404-without-explanation. Dead implementation removed; do not re-enable without
+# a first-party module that POSTs here.
 
 async def overlay(req):
-    # Parse the overlay spec from the header (base64 JSON: {filter, output_key}).
-    spec_b64 = req.headers.get("X-Overlay-Spec", "").strip()
-    if not spec_b64:
-        return web.json_response({"ok": False, "error": "X-Overlay-Spec header required"}, status=400)
-    try:
-        spec = _json.loads(base64.b64decode(spec_b64))
-    except Exception:
-        return web.json_response({"ok": False, "error": "X-Overlay-Spec: invalid base64 JSON"}, status=400)
-
-    vf_filter = spec.get("filter", "").strip() if isinstance(spec, dict) else ""
-    if not vf_filter:
-        return web.json_response({"ok": False, "error": "X-Overlay-Spec: filter is required"}, status=400)
-
-    # Stream the raw clip bytes from the request body (bypass the 1 MB JSON body limit).
-    total = 0
-    chunks = []
-    try:
-        async for chunk in req.content.iter_chunked(256 * 1024):
-            total += len(chunk)
-            if total > MAX_OVERLAY_CLIP_BYTES:
-                return web.json_response({"ok": False, "error": "clip too large"}, status=413)
-            chunks.append(chunk)
-    except Exception as e:
-        return web.json_response({"ok": False, "error": f"read body failed: {e}"}, status=400)
-
-    if total == 0:
-        return web.json_response({"ok": False, "error": "clip body required"}, status=400)
-
-    clip_bytes = b"".join(chunks)
-    work = tempfile.mkdtemp(prefix="voverlay-")
-    try:
-        src_path = os.path.join(work, "in.mp4")
-        dst_path = os.path.join(work, "out.mp4")
-        with open(src_path, "wb") as f:
-            f.write(clip_bytes)
-
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(None, _draw_overlay, src_path, dst_path, vf_filter)
-        except subprocess.CalledProcessError as e:
-            log.exception("ffmpeg drawtext failed for key=%s", safe_log_value(spec.get("output_key", "?")))  # codeql[py/log-injection]
-            return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)
-        except Exception as e:  # noqa: BLE001
-            log.exception("overlay failed")
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-        with open(dst_path, "rb") as f:
-            out_bytes = f.read()
-
-        log.info("overlay ok key=%s in=%d out=%d", safe_log_value(spec.get("output_key", "?")), len(clip_bytes), len(out_bytes))  # codeql[py/log-injection]
-        return web.Response(body=out_bytes, content_type="video/mp4")
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    return web.json_response(
+        {
+            "ok": False,
+            "error": "route-retired",
+            "message": "POST /overlay was the text-overlay module door; that module is retired "
+            "(subtitle + film-titles). Use /film-titles or the subtitle film.finish path.",
+        },
+        status=410,
+    )
 
 
 
