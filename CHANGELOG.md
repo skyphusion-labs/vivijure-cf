@@ -7,6 +7,10 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## v1.20.1
+
+PATCH: dependency updates and CLAUDE release-procedure docs on main since v1.20.0. **Order:** release vivijure-core first if a new core pin is required; this cut is docs/deps-only unless core pin is bumped in-tree. Tag-gated Worker deploy.
+
 ## v1.20.0 -- 2026-08-03
 
 ### feat(release): publish the 8 cost-door modules and image-generate as tenant bundles (cf#394, cp#284)
