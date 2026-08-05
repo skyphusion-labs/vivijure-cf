@@ -63,6 +63,7 @@ of these areas, update the matching doc.
 
 - `docs/module-api.md` -- prose for the typed hook contract (`vivijure-module/2`); **SoT types in vivijure-core**.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
+- `docs/api-config-conventions.md` -- the four studio HTTP config-passing shapes (flat / nested / `config` / top-level camelCase); wrong shape fails silently (cf#390).
 - `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
