@@ -146,6 +146,14 @@ export interface Env {
   // parsed + clamped to [0,1] (resolveClipDurationFloor); unset defaults to 0.5, 0 disables the gate.
   FILM_CLIP_DURATION_FLOOR?: string;
 
+  // cf#287: studio release / build identity projected on GET /api/modules as top-level
+  // `studio_release` (+ optional `git_sha`). Unset => the baked package.json version is projected
+  // so two tag deploys are still distinguishable. The control plane may bind STUDIO_RELEASE to the
+  // tenant's live tag (the value it already stores as tenants.studio_release); self-host can leave
+  // both unset. See src/studio-release.ts.
+  STUDIO_RELEASE?: string;
+  STUDIO_GIT_SHA?: string;
+
   // BYOK OpenAI image gen (transparent PNG for gpt-image-1.5). Optional.
   OPENAI_API_KEY?: string;
 
