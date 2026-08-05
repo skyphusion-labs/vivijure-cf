@@ -6,8 +6,9 @@
 //   POST /invoke      -> submit to RunPod, return { ok, pending, poll } immediately
 //   POST /poll        -> check job status; return output on completion
 //
-// R2 transport: the endpoint reads `clip_key` and writes `output_key` in the shared bucket itself
-// (exactly as vivijure-backend does for finish-rife), so this worker holds no R2 creds.
+// R2 transport (cf#312): prefer credentialless presigned mode when the core hands video_url +
+// output_url (no endpoint R2 env; poolable). Fall back to shared-bucket R2 mode (clip_key +
+// output_key) when those URLs are absent (legacy core / unbound PRESIGNER).
 //
 // Failures are DATA, never an exception across the wire. For a chain hook the soft degrade (pass the
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot

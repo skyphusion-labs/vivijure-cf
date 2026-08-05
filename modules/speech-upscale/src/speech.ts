@@ -45,15 +45,30 @@ export function enhancedAudioKey(audioKey: string): string {
   return dot > slash ? `${audioKey.slice(0, dot)}_enh.wav` : `${audioKey}_enh.wav`;
 }
 
-/** The RunPod /run body for the dedicated vivijure-audio-upscale endpoint (R2 mode: it reads
- *  `audio_key` and writes `output_key` in the shared bucket itself). `audio_key` is guaranteed present
- *  by the caller (submit rejects malformed input). */
+/** TTL used by the core when it presigns speech satellite URLs (cf#312). */
+export const PRESIGN_TTL_SECONDS = 1800;
+
+/** The RunPod /run body for vivijure-audio-upscale.
+ *  cf#312: when the core hands audio_url + output_url, use the credentialless presigned branch
+ *  (no audio_key). Otherwise R2 shared-bucket mode. */
 export function buildRunPodBody(input: SpeechInput, cfg: SpeechUpscaleConfig, project: string): { input: Record<string, unknown> } {
+  const output_key = input.output_key ?? enhancedAudioKey(input.audio_key);
+  if (input.audio_url && input.output_url) {
+    return {
+      input: {
+        project,
+        audio_url: input.audio_url,
+        output_url: input.output_url,
+        output_key,
+        denoise: cfg.denoise,
+      },
+    };
+  }
   return {
     input: {
       project,
       audio_key: input.audio_key,
-      output_key: enhancedAudioKey(input.audio_key),
+      output_key,
       denoise: cfg.denoise,
     },
   };
