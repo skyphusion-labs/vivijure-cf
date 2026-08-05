@@ -7,6 +7,14 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
+
+`runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
+refusals. Bound raised to 480; cuts end in `...` so a reader knows the string is incomplete.
+`boundDetail` is the single place this happens.
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.

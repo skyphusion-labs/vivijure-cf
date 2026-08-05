@@ -14,6 +14,8 @@ import {
   RUNPOD_JOB_LOG_UPSERT,
   RUNPOD_JOB_LOG_TIMEOUT_MS,
   DETAIL_MAX,
+  DETAIL_TRUNCATION_MARKER,
+  boundDetail,
   ERROR_TYPE_MAX,
   parseRunpodErrorType,
   runpodWalkedPastOutcome,
@@ -89,6 +91,46 @@ describe("recordRunpodJob: what it writes", () => {
     const { db, calls } = recordingDb();
     await recordRunpodJob(db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0, detail: "x".repeat(5000) });
     expect(String(calls.bound[0][3])).toHaveLength(DETAIL_MAX);
+  });
+
+  it("marks truncation visibly so a cut validation error is not mistaken for the whole message (cf#320)", async () => {
+    // Measured class of defect: the actionable tail of a HarnessError was cut with no marker.
+    const long =
+      "HarnessError: preview: bundle_key: bundle_key 'bundles/lighthouse_dawn-be1df0528bdad6d2.tar.gz' " +
+      "must belong to project 'lighthouse_smoke2b' (expected bundles/lighthouse_smoke2b/...) " +
+      "x".repeat(400);
+    expect(long.length).toBeGreaterThan(DETAIL_MAX);
+    const { db, calls } = recordingDb();
+    await recordRunpodJob(db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0, detail: long });
+    const written = String(calls.bound[0][3]);
+    expect(written).toHaveLength(DETAIL_MAX);
+    expect(written.endsWith(DETAIL_TRUNCATION_MARKER)).toBe(true);
+    expect(written).toContain("HarnessError");
+    expect(written).toContain("lighthouse_smoke2b");
+  });
+
+  it("does not mark a short detail (CONTROL: marker only means cut)", async () => {
+    const { db, calls } = recordingDb();
+    await recordRunpodJob(db, { jobId: "j", module: "m", outcome: "failed", submittedAtMs: 0, detail: "short" });
+    expect(calls.bound[0][3]).toBe("short");
+  });
+});
+
+describe("boundDetail (cf#320)", () => {
+  it("returns null for absent detail", () => {
+    expect(boundDetail(undefined)).toBeNull();
+    expect(boundDetail(null)).toBeNull();
+  });
+
+  it("passes through strings at or under the bound without a marker", () => {
+    expect(boundDetail("ok")).toBe("ok");
+    expect(boundDetail("a".repeat(DETAIL_MAX))).toBe("a".repeat(DETAIL_MAX));
+  });
+
+  it("cuts long strings to DETAIL_MAX and ends with the visible marker", () => {
+    const out = boundDetail("b".repeat(DETAIL_MAX + 50));
+    expect(out).toHaveLength(DETAIL_MAX);
+    expect(out!.endsWith(DETAIL_TRUNCATION_MARKER)).toBe(true);
   });
 });
 
@@ -182,7 +224,7 @@ describe("parseRunpodErrorType", () => {
     // Today the class survives inside the 160-char `detail` only because RunPod emits error_type
     // first, with 87 characters of headroom. Nothing in our code or their contract establishes that.
     const reordered = JSON.stringify({
-      hostname: "x".repeat(200),
+      hostname: "x".repeat(DETAIL_MAX + 50),
       error_message: "finish_clip: clip_key is required",
       runpod_version: "1.11.0",
       error_type: "<class 'vivijure_backend.harness.handler.HarnessError'>",
