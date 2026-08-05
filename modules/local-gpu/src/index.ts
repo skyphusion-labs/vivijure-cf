@@ -79,12 +79,20 @@ export const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 4,
     locality: "local",
-    cost: "Free after hardware",
-    blurb: "Renders keyframes + motion on your own GPU -- no cloud, no per-render cost; quality scales with your card and chosen backend (12GB LTX floor, 16GB CogVideoX).",
+    // local#278: not "Free after hardware" -- default 16GB door is CogVideoX, commercial use may
+    // need registration + usage cap. Hardware is free of cloud API billing; the model is not
+    // unconditionally free for every use.
+    cost: "Hardware; model licence may apply",
+    blurb:
+      "Renders keyframes + motion on your own GPU (no cloud API bill). The default 16GB door runs " +
+      "CogVideoX, free for academic research but commercial use may need registration (and a usage " +
+      "cap) -- see the door licence. The 12GB LTX door is a different engine and licence. Quality " +
+      "scales with your card and backend.",
     limits: [
       "Runs whichever local backend you point it at: LTX (12GB floor) or CogVideoX (16GB floor); bigger cards add headroom",
       "Keyframes (SDXL preview) and short i2v clips share the same card serially",
       "One GPU job at a time (a consumer card runs a single preview or i2v job)",
+      "Default 16GB CogVideoX: commercial use may require registration at open.bigmodel.cn (local#278)",
     ],
   },
   cancelable: true,
