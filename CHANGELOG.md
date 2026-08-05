@@ -7,6 +7,22 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298)
+
+A terminal write lost on the poll path used to leave the row at `submitted` forever (measured 2/20
+in a clean run). Retry already narrowed the window; this closes the gap for rows still open:
+
+- Shared reconciler in `modules/_shared/runpod-job-log.ts`: list open rows, re-query RunPod, write
+  terminal outcome; past ~25 min with no answer write `unknown` (new outcome; honest vs inventing
+  completed). Best-effort, never gates render.
+- Wired on **keyframe** and **own-gpu** `/poll` only (the two modules that produced the measured
+  stuck rows). Other modules can adopt later.
+- Docs: `docs/runpod-job-log.md`. Tests: status map, dropped terminal write, retention `unknown`.
+
+Hosted module telemetry (RunPod). Dual-panel N/A for vivijure-local studio door.
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
