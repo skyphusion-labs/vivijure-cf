@@ -7,9 +7,25 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
-## v1.20.1
+## v1.20.1 -- 2026-08-05
 
-PATCH: dependency updates and CLAUDE release-procedure docs on main since v1.20.0. **Order:** release vivijure-core first if a new core pin is required; this cut is docs/deps-only unless core pin is bumped in-tree. Tag-gated Worker deploy.
+PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
+
+### CI / process
+- **Adversarial audit runs on Dependabot PRs (#418):** remove the Dependabot author skip so dependency PRs get the K2.7 audit; org Dependabot secrets supply the CF tokens. PR-comment step is `continue-on-error` (Dependabot `GITHUB_TOKEN` is read-only).
+- **Document exact release/tag ship procedure (#409).**
+- **Remove Cursor Cloud `AGENTS.md` (#408).**
+
+### Docs
+- Related-repos map and blog write-up links (#411).
+- Fix stale currency claims (#416).
+- CLAUDE.md refresh for agents (#417).
+- Dependabot config: em-dashes replaced with ASCII double-hyphen (#412).
+
+### Dependencies
+- postcss 8.5.20 -> 8.5.25 (#414).
+- `@cloudflare/workers-types` (cloudflare-toolchain group; #413, #375).
+- `@types/node` (npm-minor-patch; #376).
 
 ## v1.20.0 -- 2026-08-03
 
