@@ -18,6 +18,23 @@ and `/poll` watches R2 state until the clip lands.
 - **Bindings**: `AI`, `GATEWAY_ID` (Secrets Store), `R2_RENDERS` (`vivijure`), `I2V_WORKFLOW`.
 - **Service**: `vivijure-module-cf-grok-video` bound as `MODULE_CF_GROK_VIDEO`.
 
+## Cost (Cloudflare AI Gateway / Unified Billing)
+
+CF does **not** mark up inference: Unified Billing charges **provider list rates**, and applies a **5% fee only when you buy credits**. See [Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
+
+Account live rates: [CF dashboard · xai/grok-imagine-video](https://dash.cloudflare.com/?to=/:account/ai/models/xai/grok-imagine-video).
+
+**xAI list (grok-imagine-video; as of Aug 2026):**
+
+| Item | Price |
+|---|---|
+| Output video | **$0.05 / second** |
+| Image input (when charged) | check [xAI model page](https://docs.x.ai/developers/models/grok-imagine-video) (resolution tiers may apply on some clusters) |
+
+Source: [xAI · grok-imagine-video](https://docs.x.ai/docs/models/grok-imagine-video).
+
+**Worked example:** 5s clip ≈ **$0.25**; 10s ≈ **$0.50** (plus 5% only on credit purchase).
+
 ## License
 
 **AGPL-3.0-only.**
