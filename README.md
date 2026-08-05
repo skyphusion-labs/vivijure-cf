@@ -11,8 +11,10 @@ planner AI, auth, presign, and `public/`. Prefer a home PC or any cloud VM inste
 [`vivijure-local`](https://github.com/skyphusion-labs/vivijure-local). Drive either host from an
 agent with [`vivijure-mcp`](https://github.com/skyphusion-labs/vivijure-mcp).
 
-**Dual-panel parity:** hosted (this repo) and self-host ship the same studio features in the same
-release; see fleet memory `vivijure-hosted-parity-absolute.md`.
+**Dual-panel parity:** product features ship to hosted and self-host in the same **release wave**
+(review obligation, not package-pin identity). Dependency floors can lag; this host pins
+`@skyphusion-labs/vivijure-core` and `@skyphusion-labs/vivijure-mcp` in `package.json` -- check
+`vivijure-local` for its pins.
 
 The constellation map is [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure).
 
@@ -58,7 +60,9 @@ npm run dev
 
 ## Related repos
 
-- **vivijure-core** -- shared orchestration package
-- **vivijure-local** -- Node/MinIO homelab host (same core, different platform adapter)
-- **vivijure** -- original CF monolith (frozen reference; not modified by this split)
-- **vivijure-control-plane** -- the hosted door in front of this studio (optional; not needed to self-host)
+- **[vivijure](https://github.com/skyphusion-labs/vivijure)** -- constellation map (start here)
+- **[vivijure-core](https://github.com/skyphusion-labs/vivijure-core)** -- shared orchestration package
+- **[vivijure-local](https://github.com/skyphusion-labs/vivijure-local)** -- Node/MinIO host (same core, no Cloudflare)
+- **[vivijure-mcp](https://github.com/skyphusion-labs/vivijure-mcp)** -- agent MCP for either host
+- **[vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane)** -- optional hosted provisioner (not needed to self-host)
+- **Write-ups:** [runs anywhere](https://skyphusion.net/blog/vivijure-run-anywhere/) · [constellation](https://skyphusion.net/blog/vivijure-constellation/) · [vivijure.com](https://vivijure.com)

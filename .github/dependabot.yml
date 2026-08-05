@@ -1,6 +1,6 @@
 version: 2
 
-# skyphusion-labs Dependabot standard — see fleet-chezmoi/docs/runbooks/dependabot-standard.md
+# skyphusion-labs Dependabot standard -- see fleet-chezmoi/docs/runbooks/dependabot-standard.md
 # PRs only (never auto-merge). Group minor/patch; majors stay separate. Peer families bump together.
 updates:
   - package-ecosystem: github-actions
@@ -49,7 +49,7 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
-    # numba (via librosa) ceiling — Dockerfile pins numpy==1.26.4; do not propose >=2.0 (numba/librosa stack; pin 1.26.4).
+    # numba (via librosa) ceiling -- Dockerfile pins numpy==1.26.4; do not propose >=2.0 (numba/librosa stack; pin 1.26.4).
     ignore:
       - dependency-name: "numpy"
         versions: [">= 2.0"]
@@ -101,7 +101,7 @@ updates:
       pip-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
-  # numba-pinned CPU containers — python base pinned to 3.11; numba supports <3.14.
+  # numba-pinned CPU containers -- python base pinned to 3.11; numba supports <3.14.
   - package-ecosystem: docker
     directories:
       - "/containers/audio-beat-sync"

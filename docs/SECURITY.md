@@ -92,7 +92,8 @@ public id, so it is rejected at the shape gate (`isPublicId`) and again at the l
 it): the request `404`s. The enumeration walk -- count 1, 2, 3, or `GET /api/cast/export/:id` to pull
 a whole character bundle by guessing its id -- is therefore DEAD, at the shape level and at the
 lookup. (This covers browser-addressable resources; the core-to-module hop still passes the internal
-`cast_id` int, which never reaches a browser -- see the module contract, `src/modules/types.ts`.)
+`cast_id` int, which never reaches a browser -- see the module contract in
+`@skyphusion-labs/vivijure-core` (`modules/types`).)
 
 This is the SAME capability model as job ids (section 2): possession of an unguessable id IS the
 authorization, and there is no id to guess. It is defense-in-depth BEHIND the auth gate (section 1),
