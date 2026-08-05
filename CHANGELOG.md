@@ -7,6 +7,15 @@ for new features). Newest first.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
+## Unreleased
+
+### feat(finish): containers emit elapsedMs for CPU capacity telemetry (cf#268)
+
+All five CPU finish containers return integer `elapsedMs` (wall clock for the
+request) on success. Destination column `renders.finish_elapsed_ms` (migration
+0017) is ready; core must read `elapsedMs` and write the column (companion PR).
+Does NOT reuse `execution_time_ms` (that is GPU job time, live in the panel).
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
