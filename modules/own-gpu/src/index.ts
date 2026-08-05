@@ -13,8 +13,6 @@
 // The caller polls /poll until it is no longer pending. Failures are DATA, never an exception.
 
 import {
-  MODULE_API,
-  type ModuleManifest,
   type TenantR2Config,
   type InvokeRequest,
   type InvokeResponse,
@@ -30,6 +28,10 @@ import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedP
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 import { withTenantR2Body } from "../../_shared/tenant-r2-body";
 import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
+// MANIFEST is data-only in ./manifest (cf#285) so quality-tier-drift can import it without
+// this entrypoint's runpod-job-log graph. Re-exported for callers that still load index.
+import { MANIFEST } from "./manifest";
+export { MANIFEST };
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -46,29 +48,6 @@ interface Env {
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
 }
-
-// Exported so the core's tier-drift guard (tests/quality-tier-drift.test.ts, issue #124) can assert
-// this module's `quality` enum stays in lockstep with the core QUALITY_TIERS set.
-export const MANIFEST: ModuleManifest = {
-  // cp#270: this module submits to the vivijure-backend endpoint, which may be POOLED across
-  // tenants, so it needs the tenant's per-job R2 credential on the invoke envelope. Declared on
-  // the MANIFEST rather than decided in core: which modules ride a pooled endpoint is a property
-  // of the module, and core must not branch on module identity.
-  needs_tenant_r2: true,
-  name: "own-gpu",
-  version: "0.2.0",
-  api: MODULE_API,
-  hooks: ["motion.backend"],
-  provides: [{ id: "i2v-own-gpu", label: "Own GPU (Wan2.2 i2v)" }],
-  config_schema: {
-    quality: { type: "enum", values: ["draft", "standard", "final"], default: "standard", label: "quality" },
-    fps: { type: "int", default: 16, min: 8, max: 30, label: "fps" },
-    flow_shift: { type: "float", default: 5.0, min: 1, max: 12, label: "motion (flow shift, lower = faster)" },
-    negative_prompt: { type: "string", default: "", label: "negative prompt (additive)" },
-    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
-  },
-  ui: { section: "motion", order: 5, locality: "byo", cost: "Own keys (your RunPod endpoint)", blurb: "Renders on your own RunPod GPU endpoint -- own keys, no per-render markup; quality follows the GPU tier you rent." },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
