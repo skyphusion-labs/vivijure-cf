@@ -1493,7 +1493,14 @@
     )) return;
     setWanLoraStatusText("submitting...", "loading");
     try {
-      const data = await api("/api/cast/" + id + "/train-lora", { method: "POST" });
+      // cf#349: the button is labeled Wan; send model_family explicitly (mirror SDXL
+      // path). Empty body used to inherit server default, which is wan only when
+      // RUNPOD_WAN_TRAIN_ENDPOINT_ID is set -- otherwise it silently trained SDXL.
+      const data = await api("/api/cast/" + id + "/train-lora", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model_family: "wan" }),
+      });
       const idx = state.cast.findIndex((x) => x.id === id);
       if (idx >= 0) state.cast[idx] = data.cast;
       renderLoraPane(data.cast);
