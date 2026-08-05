@@ -79,9 +79,8 @@ export const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 4,
     locality: "local",
-    // local#278: not "Free after hardware" -- default 16GB door is CogVideoX, commercial use may
-    // need registration + usage cap. Hardware is free of cloud API billing; the model is not
-    // unconditionally free for every use.
+    // local#278: do not claim cost-free after the card is paid -- default 16GB door is CogVideoX;
+    // commercial use may need registration + usage cap. No cloud API bill; model licence is separate.
     cost: "Hardware; model licence may apply",
     blurb:
       "Renders keyframes + motion on your own GPU (no cloud API bill). The default 16GB door runs " +
