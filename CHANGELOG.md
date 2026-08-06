@@ -9,6 +9,12 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### feat(finish): containers emit elapsedMs for CPU capacity telemetry (cf#268)
+
+All five CPU finish containers return integer `elapsedMs` (wall clock for the
+request) on success. Destination column `renders.finish_elapsed_ms` (migration
+0017) is ready; core must read `elapsedMs` and write the column (companion PR).
+Does NOT reuse `execution_time_ms` (that is GPU job time, live in the panel).
 ### Docs / honesty
 - **runpod_job_log migration comment matches module submit path (cf#315 item 1).** Core no longer submits to RunPod; table exists for module workers. Item 2 (`RUNPOD_ENDPOINT_ID` Env) deliberately untouched -- still live for modules / train path. Item 3 is vivijure-core.
 - **preflight handler comment:** envelope is `storyboard` + `castBindings` + `motionBackend`/`quality`; `bundleKey`/`audioKey` are not read (mcp#26).
