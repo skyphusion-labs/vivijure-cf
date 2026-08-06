@@ -86,9 +86,9 @@ Each kind of change moves the same set of artifacts together, in one PR, with th
 
 | Change | Typed-source edits (all in the same PR as this doc) |
 |--------|-----------------------------------------------------|
-| **New hook** | Add to `HookName` union + `HOOK_NAMES` + `HOOK_CARDINALITY` + `HOOK_BLURBS`; add a named `XInput` / `XOutput` interface in `src/modules/types.ts`; add a branch to `HOOK_OUTPUT_CHECKS` in `src/modules/conformance.ts` (tsc's `Record<HookName, ...>` FORCES this, so a missing branch fails the typecheck gate); orchestrate it; add a section here. |
-| **New manifest config field type** | Add to the `ConfigField` union in `src/modules/types.ts`; add to `FIELD_TYPES` + a `checkConfigField` branch in `src/modules/conformance.ts`; document it in section 4.1 here. |
-| **New config field scope** | Add to the `ConfigScope` union in `src/modules/types.ts`; add to `FIELD_SCOPES` in `src/modules/conformance.ts`; if it needs a new value source, wire it into the invoke path; document it in section 4.1.1 here. |
+| **New hook** | Add to `HookName` union + `HOOK_NAMES` + `HOOK_CARDINALITY` + `HOOK_BLURBS`; add a named `XInput` / `XOutput` interface in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add a branch to `HOOK_OUTPUT_CHECKS` in `<vivijure-core>/src/modules/conformance.ts` (tsc's `Record<HookName, ...>` FORCES this, so a missing branch fails the typecheck gate); orchestrate it; add a section here. |
+| **New manifest config field type** | Add to the `ConfigField` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_TYPES` + a `checkConfigField` branch in `<vivijure-core>/src/modules/conformance.ts`; document it in section 4.1 here. |
+| **New config field scope** | Add to the `ConfigScope` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_SCOPES` in `<vivijure-core>/src/modules/conformance.ts`; if it needs a new value source, wire it into the invoke path; document it in section 4.1.1 here. |
 | **New / changed API route** | Add to `API_ROUTES` (or the inline dispatch) in `src/index.ts` with its handler; document the full request/response schema + status codes in section 2 here. |
 | **New hook field** | Add to the `XInput`/`XOutput` interface; if required, add to the conformance validator; update the field table here. |
 | **New render quality tier / render projection field** | Edit `QUALITY_TIERS` / `RenderConfigProjection` in `src/render-module-config.ts`; update section 2.2.1 / 2.2 here. |
@@ -148,7 +148,7 @@ flowchart TD
   BESPOKE --> S5[notify: toggle]
 ```
 
-There are **11 hooks** (extension points). A hook is either:
+There are **12 hooks** (extension points). A hook is either:
 - **`pick_one`** -- exactly one installed module serves it (rendered as a chooser), or
 - **`chain`** -- every installed module serving it runs in order, each consuming the previous output
   (rendered as stacked config blocks).
@@ -1188,12 +1188,12 @@ sequenceDiagram
 
 ---
 
-## 3. The 11 hooks
+## 3. The 12 hooks
 
 The hooks are the typed contract between the core and module workers. Source of truth: `HOOK_NAMES`,
-`HOOK_CARDINALITY`, `HOOK_BLURBS`, and the `*Input` / `*Output` interfaces in `src/modules/types.ts`.
+`HOOK_CARDINALITY`, `HOOK_BLURBS`, and the `*Input` / `*Output` interfaces in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`).
 The core invokes a hook with `InvokeRequest { hook, input, config, context }` and reads back an
-`InvokeResponse`. Conformance (`src/modules/conformance.ts`) enforces the REQUIRED output fields per
+`InvokeResponse`. Conformance (`<vivijure-core>/src/modules/conformance.ts`) enforces the REQUIRED output fields per
 hook; optional hint fields are not demanded.
 
 ### 3.0 Hook summary
@@ -1207,6 +1207,7 @@ hook; optional hint fields are not demanded.
 | `dialogue` | pick_one | spoken lines -> per-character voice (TTS) |
 | `speech` | chain | clean / enhance dialogue audio |
 | `plan.enhance` | chain | LLM auto-direction |
+| `image.generate` | pick_one | prompt -> a single generated image |
 | `cast.image` | pick_one | character refs from a portrait + bible |
 | `notify` | chain | render-complete notification (email / webhook) |
 | `master` | chain | film-level audio mastering: music upscale + loudness |
@@ -1558,6 +1559,12 @@ Enrich a storyboard before render (LLM auto-direction). Structural passthrough: 
 | `storyboard` | `PlanEnhanceStoryboard` | yes | The enriched storyboard. |
 | `notes?` | string[] | no | Human-readable notes on what it did. |
 
+### 3.x `image.generate` (pick_one)
+
+Prompt -> a single generated image. Served by modules such as `image-generate` (and any future
+provider module on this hook). I/O: `ImageGenerateInput` / `ImageGenerateOutput` in
+`@skyphusion-labs/vivijure-core` `modules/types`.
+
 ### 3.8 cast.image (pick_one)
 
 Cast-prep: generate LoRA training reference images from a portrait + bible. Upstream of keyframe.
@@ -1849,7 +1856,7 @@ selected). A `chain` hook renders as **stacked config blocks** (every installed 
 
 ```mermaid
 flowchart TD
-  R[GET /api/modules] --> CAT[catalog: 11 hooks + cardinality]
+  R[GET /api/modules] --> CAT[catalog: 12 hooks + cardinality]
   R --> HK[hooks: hook -> module names, pre-sorted]
   R --> MODS[modules: manifests + config_schema]
   R --> RND[render: quality_tiers]

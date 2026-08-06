@@ -62,6 +62,7 @@ delivered. Closes the observability gap that left a predicted-vs-delivered delta
 Fields appear on live poll only after the host pins the core release that adds them; this entry
 is the wire-contract half. Distinct from `finish_elapsed_ms` (CPU wall-clock, cf#268) and from
 plan `duration_seconds`.
+- **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 
 ## v1.20.1 -- 2026-08-05
 
