@@ -3,6 +3,21 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+### feat(renders): record motion_backend + keyframe_backend on the render library row (cf#393)
+
+A completed render carried no motion backend, so "which backend rendered this film?" was
+unanswerable from stored data (searching for `own-gpu` or `seedance` returned zero even when
+those backends had run). Clip keys are GPU-assigned and are not a substitute.
+
+- Migration `0018_render_motion_backend.sql`: additive `renders.motion_backend` + `keyframe_backend` TEXT.
+- Submit/finalize/from-keyframes/film insert paths pass the resolved module names into `insertRender`.
+- Read path is in vivijure-core (companion PR); hosts pin after core publishes.
+
+**Dual-panel:** vivijure-local needs the same SQLite columns later.
+
+
 **Dual-panel release gate:** every studio feature ships to vivijure-cf and vivijure-local in the
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
