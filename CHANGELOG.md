@@ -11,6 +11,11 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ### Docs
 - **`host.render.available` is config-armed, not live door health (cf#28).** Documented in `docs/demo-studio.md` and the `demoRenderEnabled` comment so the public shop window is not read as a health signal.
+### docs: Gate 3 instrumentation closeout (cf#279, cf#295)
+
+Evidence disposition: both original defects are shipped (14/14 job-log writers; 26/26 `/ready`).
+Residuals are structural (wan-train core seam) or documented (tenant catalog population 4).
+See `docs/gate3-instrumentation-closeout.md`.
 ### docs(verify): R2 same-key A/B must not trust CF API object-GET (cf#300)
 
 The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
