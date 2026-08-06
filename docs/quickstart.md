@@ -28,7 +28,7 @@ You need two accounts and one tool:
 > the full standard install fits Cloudflare's **free** plan. You can install it free and render films
 > free; you pay only for what you use (RunPod GPU seconds, cloud render API calls, and the AI Gateway
 > credits the planner spends, or $0 if you render on your own GPU). This is live-proven: a brand-new
-> free-plan account ran the whole 27-binding standard MODULE_* set (wrangler.toml.example) and rendered finished 1080p films on all
+> free-plan account ran the full 27 MODULE_* service bindings from wrangler.toml.example and rendered finished 1080p films on all
 > three render paths (own GPU, cloud, and local GPU). The one thing that needs Cloudflare's **Workers
 > Paid** plan ($5/month) is the three GPU "finish" satellites (sharper video, lip-sync); everything on
 > this page runs free. One caveat: a plan change (free to paid, or back) only takes effect after you
