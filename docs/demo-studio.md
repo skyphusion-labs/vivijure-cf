@@ -110,9 +110,15 @@ SERIAL (one box, global concurrency 1) with an honest FIFO queue: `GET /api/demo
 enqueue past ~10 ("queue is full"); per-IP + global daily caps (`demo_counter`) + the per-IP burst limiter
 (`SPEND_RATE_LIMITER`) bound abuse. The box reads the seeded keyframe from an **isolated demo R2 prefix**
 and writes the clip there; the demo builds the artifact URL as `DEMO_ARTIFACT_ORIGIN/<clip_key>` and binds
-**no** R2 itself. When the box is offline (`DEMO_RENDER_ENABLED != "true"` or `MODULE_LOCAL_GPU` unbound)
-the demo reports **renders paused** (`host.render.available=false`); browse keeps working and submit is
-refused plainly -- the swappable-backend state for the box's ~2026-08-04 credit horizon.
+**no** R2 itself. When the box is **unconfigured** (`DEMO_RENDER_ENABLED != "true"` or `MODULE_LOCAL_GPU`
+unbound) the demo reports **renders paused** (`host.render.available=false`); browse keeps working and
+submit is refused plainly -- the swappable-backend state for the box's ~2026-08-04 credit horizon.
+
+**Honesty (`host.render.available`, cf#28):** that flag is **configured**, not **live-healthy**. It is
+true when the var is set and the door binding exists; it does **not** ping propagandhi (or any door
+box). A configured-but-down box still advertises `available=true` and fails honestly at submit. Spend
+stays safe (caps before spend, seeded scenes only, no RunPod). Prefer a real door health signal later
+if the public shop window needs greyed CTAs; until then, treat `available` as "armed in config".
 
 **CSAM by construction (constraint 4).** The visitor's ENTIRE input is a seeded scene id -- no free text,
 no uploads. Every prompt + keyframe is curator-vetted, so the bright line is satisfied structurally, not by

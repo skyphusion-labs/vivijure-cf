@@ -703,6 +703,10 @@ type routes the response:
 
 ### 2.14 Score / narration bed generation (async)
 
+> **Config shape (cf#390):** module knobs go under a nested **`config`** object. See
+> [api-config-conventions.md](api-config-conventions.md) shape C. Top-level fields other than the
+> table below are not module knobs.
+
 **POST `/api/storyboard/score-bed`** (alias **POST `/api/storyboard/music-generate`**) -- start an
 audio-bed generation. Body:
 
@@ -766,6 +770,11 @@ module. The `{ models: [...] }` envelope is deliberately stable.
 ### 2.17 POST /api/audio/analyze
 
 Analyze an audio bed for beat / duration slicing.
+
+> **Config shape (cf#390):** knobs are **top-level camelCase** on the body (`clipSeconds`, `mode`,
+> `forceShots`, ...). There is **no** nested `config` object and no snake_case at this boundary.
+> Nested `{ config: { mode, force_shots } }` is silently ignored and the module runs on defaults --
+> the expensive wrong-shape mode. See [api-config-conventions.md](api-config-conventions.md) shape D.
 
 **Request body** (`AudioAnalyzeRequest` + `module?`):
 
@@ -897,12 +906,12 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Records the film's quality tier on its renders-history row (#762). The ACTUAL render tier is driven by the baked `keyframe_config.quality_tier` (read by the keyframe module) + `motion_config`; this top-level field is what makes the recorded row LABEL honest (before #762 the row hardcoded `"final"`, mislabeling a draft film). An absent / invalid value defaults `"final"`. Slate should send this alongside the baked configs. |
 | `motion_backend` | string | yes | -- | Motion module choice. An omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#504; this route has no keyframes-only mode, so the check is unconditional). |
 | `keyframe_backend` | string | no | `ui.order`-first keyframe module | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. |
-| `keyframe_config` | object | no | -- | Keyframe module config. |
-| `motion_config` | object | no | -- | Motion module config; judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
-| `finish_config` | `{ [moduleName]: object }` | no | -- | Per-finish-module config (the per-shot `finish` chain). |
-| `speech_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `speech` chain (per-shot dialogue-audio cleanup, post-dialogue, pre-finish). |
-| `film_finish_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `film.finish` chain on the assembled, muxed film. Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. |
-| `master_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `master` chain (audio bed mastering, pre-mux). |
+| `keyframe_config` | object | no | -- | **Flat** keyframe module knobs (cf#390 shape A). |
+| `motion_config` | object | no | -- | **Flat** motion module knobs (shape A); judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
+| `finish_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-finish-module config (shape B; per-shot `finish` chain). |
+| `speech_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-module config for the `speech` chain (shape B). |
+| `film_finish_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-module config for the `film.finish` chain (shape B). Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. |
+| `master_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-module config for the `master` chain (shape B). Full map: [api-config-conventions.md](api-config-conventions.md). |
 | `audio_key` | string | no | -- | Staged audio bed (score/narration) to mux after assemble; absent => silent film. |
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
