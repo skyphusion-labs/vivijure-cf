@@ -15,6 +15,21 @@ All five CPU finish containers return integer `elapsedMs` (wall clock for the
 request) on success. Destination column `renders.finish_elapsed_ms` (migration
 0017) is ready; core must read `elapsedMs` and write the column (companion PR).
 Does NOT reuse `execution_time_ms` (that is GPU job time, live in the panel).
+### Docs / honesty
+- **runpod_job_log migration comment matches module submit path (cf#315 item 1).** Core no longer submits to RunPod; table exists for module workers. Item 2 (`RUNPOD_ENDPOINT_ID` Env) deliberately untouched -- still live for modules / train path. Item 3 is vivijure-core.
+- **preflight handler comment:** envelope is `storyboard` + `castBindings` + `motionBackend`/`quality`; `bundleKey`/`audioKey` are not read (mcp#26).
+### Docs
+- **`host.render.available` is config-armed, not live door health (cf#28).** Documented in `docs/demo-studio.md` and the `demoRenderEnabled` comment so the public shop window is not read as a health signal.
+### docs: Gate 3 instrumentation closeout (cf#279, cf#295)
+
+Evidence disposition: both original defects are shipped (14/14 job-log writers; 26/26 `/ready`).
+Residuals are structural (wan-train core seam) or documented (tenant catalog population 4).
+See `docs/gate3-instrumentation-closeout.md`.
+### docs(verify): R2 same-key A/B must not trust CF API object-GET (cf#300)
+
+The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
+object. Documented as a HARD RULE in `docs/r2-verification.md`, linked from `CLAUDE.md` and the
+cf#278 harness README. Gate 3 kickoff: instrument defects before metering evidence.
 
 ## v1.20.1 -- 2026-08-05
 
