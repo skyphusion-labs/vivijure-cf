@@ -54,6 +54,14 @@ See `docs/gate3-instrumentation-closeout.md`.
 The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
 object. Documented as a HARD RULE in `docs/r2-verification.md`, linked from `CLAUDE.md` and the
 cf#278 harness README. Gate 3 kickoff: instrument defects before metering evidence.
+### Docs: `FilmSummary.assemble_ms` + `output_ms` (cf#365)
+
+CONTRACT 2.21 documents the poll-surface content-length fields that vivijure-core projects from
+the already-persisted `film_output_seconds` map: assemble-stage (pre-film.finish) vs last-writer
+delivered. Closes the observability gap that left a predicted-vs-delivered delta unexplained.
+Fields appear on live poll only after the host pins the core release that adds them; this entry
+is the wire-contract half. Distinct from `finish_elapsed_ms` (CPU wall-clock, cf#268) and from
+plan `duration_seconds`.
 
 ## v1.20.1 -- 2026-08-05
 
