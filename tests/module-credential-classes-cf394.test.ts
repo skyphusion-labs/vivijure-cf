@@ -96,6 +96,10 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   EMAIL: { path: "operator-only", note: "send_email binding on the operator account" },
   DIALOGUE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   SCORE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
+  // CF AI i2v modules (cf-hh1-r2v / cf-seedance / cf-grok-video / cf-flux-3-video): same class as
+  // dialogue/score -- the Workflow class ships with the operator module script; plane has no
+  // mediated tenant path for Workflow bindings today.
+  I2V_WORKFLOW: { path: "operator-only", note: "Workflow binding for CF AI Gateway i2v modules; gen runs in the Workflow step, not waitUntil (#155)" },
   AUDIO_MASTER_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   AUDIO_BEAT_SYNC_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   VIDEO_FINISH_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
