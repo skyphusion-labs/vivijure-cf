@@ -9,6 +9,15 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.8.0
+
+Brings finish_elapsed_ms read/write path (cf#268), FilmSummary assemble/output_ms,
+cast family readiness, install-patch dropped keys, and the untrained-LoRA voice path
+copy. **REQUIRES** migration 0017 applied on host D1 before deploy (landed #427).
+Fixture: `finish_elapsed_ms: null` on keyframes-only RenderRow; cast-loras message
+assertion updated for core#156 wording.
+
+
 ### feat(finish): containers emit elapsedMs for CPU capacity telemetry (cf#268)
 
 All five CPU finish containers return integer `elapsedMs` (wall clock for the
