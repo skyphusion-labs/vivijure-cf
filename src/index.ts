@@ -1162,9 +1162,11 @@ const hAdoptRender: Handler = async (req, env) =>
 
 // --- validation ----------------------------------------------------------
 // Pre-render preflight. The client (planner.js `runPreflight`) POSTs the
-// envelope { storyboard, castBindings?, bundleKey?, audioKey? } and expects a
+// envelope { storyboard, castBindings?, motionBackend?, quality? } and expects a
 // PreflightResult { ok, counts, issues[] } (see ./preflight): it renders the
 // issues, shows the counts, and gates the bundle button on counts.error.
+// bundleKey / audioKey are NOT read here (mcp#26 / cf#315 honesty): do not re-add
+// them to the envelope docs without wiring validation.
 //
 // Two things this handler must get right (both were wrong before #242):
 //   1. Unwrap `.storyboard` from the envelope. The previous code validated the
