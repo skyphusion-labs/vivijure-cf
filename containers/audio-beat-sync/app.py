@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 
 import librosa
 import numpy as np
@@ -25,12 +26,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("audio-beat-sync")
 
 
+def _elapsed_ms(t0: float) -> int:
+    """Wall-clock ms since t0 (cf#268 capacity telemetry). Integer, never negative."""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
+
+
 async def health(_req):
     # Cheap readiness probe; does NOT touch librosa.
     return web.json_response({"ok": True})
 
 
 async def analyze(req):
+    t0 = time.monotonic()
     try:
         body = await req.json()
     except Exception:
@@ -76,6 +83,7 @@ async def analyze(req):
         plan = await loop.run_in_executor(
             None, _compute, path, clip_s, mode, min_scene_s, max_scene_s, force_shots, audio_key
         )
+        plan = {**plan, "elapsedMs": _elapsed_ms(t0)}  # cf#268 capacity telemetry
         return web.json_response({"ok": True, **plan})
     except Exception as e:  # noqa: BLE001 - surface any analysis failure as 500
         log.exception("analyze failed")
