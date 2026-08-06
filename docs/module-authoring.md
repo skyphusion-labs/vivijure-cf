@@ -316,7 +316,7 @@ the core invokes it through your hook. Nothing else is hardcoded.
 ## Prove it conforms
 
 Before you bind a module, run the **conformance harness** against it (see
-[`@skyphusion-labs/vivijure-core modules/conformance`](../@skyphusion-labs/vivijure-core modules/conformance)) to confirm it honors the contract --
+[`@skyphusion-labs/vivijure-core` conformance harness](https://github.com/skyphusion-labs/vivijure-core/blob/main/src/modules/conformance.ts)) to confirm it honors the contract --
 a valid manifest, a well-formed `InvokeResponse`, and graceful degradation on a bad request:
 
 ```

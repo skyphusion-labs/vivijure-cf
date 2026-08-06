@@ -110,7 +110,7 @@ opt-in because it needs your own local GPU box.
 
 **Cloudflare plan: free vs Workers Paid (#521).** The full standard install runs on Cloudflare's
 **free** plan: install free, render free. This is live-proven -- a brand-new free-plan account stood up
-the whole 21-module standard bundle (core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
+the whole 27-binding standard MODULE_* set (wrangler.toml.example) (core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
 media stack) and rendered finished 1080p24 films on all three render paths (own GPU on RunPod, cloud
 i2v, and a local-GPU door). You pay only usage: RunPod GPU seconds, cloud render API calls, AI Gateway
 credits for the planner, or $0 on your own hardware. **Workers Paid ($5/month) is required only for the
