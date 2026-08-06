@@ -3,6 +3,21 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+### feat(renders): record motion_backend + keyframe_backend on the render library row (cf#393)
+
+A completed render carried no motion backend, so "which backend rendered this film?" was
+unanswerable from stored data (searching for `own-gpu` or `seedance` returned zero even when
+those backends had run). Clip keys are GPU-assigned and are not a substitute.
+
+- Migration `0018_render_motion_backend.sql`: additive `renders.motion_backend` + `keyframe_backend` TEXT.
+- Submit/finalize/from-keyframes/film insert paths pass the resolved module names into `insertRender`.
+- Read path is in vivijure-core (companion PR); hosts pin after core publishes.
+
+**Dual-panel:** vivijure-local needs the same SQLite columns later.
+
+
 **Dual-panel release gate:** every studio feature ships to vivijure-cf and vivijure-local in the
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
@@ -39,6 +54,14 @@ See `docs/gate3-instrumentation-closeout.md`.
 The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
 object. Documented as a HARD RULE in `docs/r2-verification.md`, linked from `CLAUDE.md` and the
 cf#278 harness README. Gate 3 kickoff: instrument defects before metering evidence.
+### Docs: `FilmSummary.assemble_ms` + `output_ms` (cf#365)
+
+CONTRACT 2.21 documents the poll-surface content-length fields that vivijure-core projects from
+the already-persisted `film_output_seconds` map: assemble-stage (pre-film.finish) vs last-writer
+delivered. Closes the observability gap that left a predicted-vs-delivered delta unexplained.
+Fields appear on live poll only after the host pins the core release that adds them; this entry
+is the wire-contract half. Distinct from `finish_elapsed_ms` (CPU wall-clock, cf#268) and from
+plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 
 ## v1.20.1 -- 2026-08-05

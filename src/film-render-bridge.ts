@@ -20,6 +20,13 @@ import type { NewRenderRow } from "@skyphusion-labs/vivijure-core/renders-db";
 /** Map core film row seed into the D1 renders-table insert shape. */
 export function filmRowFromJob(job: FilmJob): NewRenderRow {
   const seed: FilmRenderRowSeed = filmRenderRowSeedFromJob(job);
+  // cf#393: pass resolved backends. Core FilmRenderRowSeed / NewRenderRow gain these fields;
+  // until the host pins that core, cast keeps typecheck green against ^1.7.2.
+  const seedExtra = seed as FilmRenderRowSeed & {
+    motionBackend?: string | null;
+    keyframeBackend?: string | null;
+  };
+  const jobExtra = job as FilmJob & { keyframe_backend?: string | null };
   return {
     jobId: seed.jobId,
     project: seed.project,
@@ -28,5 +35,7 @@ export function filmRowFromJob(job: FilmJob): NewRenderRow {
     status: seed.status,
     mode: seed.mode,
     parentId: seed.parentId,
-  };
+    motionBackend: seedExtra.motionBackend ?? job.motion_backend ?? null,
+    keyframeBackend: seedExtra.keyframeBackend ?? jobExtra.keyframe_backend ?? null,
+  } as NewRenderRow;
 }
