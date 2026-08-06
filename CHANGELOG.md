@@ -9,6 +9,8 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
+### Docs
+- **`host.render.available` is config-armed, not live door health (cf#28).** Documented in `docs/demo-studio.md` and the `demoRenderEnabled` comment so the public shop window is not read as a health signal.
 ### docs: Gate 3 instrumentation closeout (cf#279, cf#295)
 
 Evidence disposition: both original defects are shipped (14/14 job-log writers; 26/26 `/ready`).
