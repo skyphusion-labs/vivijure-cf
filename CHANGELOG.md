@@ -24,10 +24,14 @@ same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 
 ## Unreleased
 
-### chore(deps): pin @skyphusion-labs/vivijure-core ^1.8.0
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.8.1
 
-Brings finish_elapsed_ms read/write path (cf#268), FilmSummary assemble/output_ms,
-cast family readiness, install-patch dropped keys, and the untrained-LoRA voice path
+Brings PollResponse failure fields (`outcome` / `runpodStatus` / `errorType`), keyframe
+provenance `bundle_key` (cf#388), render `motion_backend`/`keyframe_backend` read path
+(cf#393; requires migration 0018 applied before deploy), scatter D1-empty dialogue
+fallback, plus everything already in 1.8.0 (finish_elapsed_ms, FilmSummary
+assemble/output_ms, cast family readiness, install-patch dropped keys, untrained-LoRA
+voice path)
 copy. **REQUIRES** migration 0017 applied on host D1 before deploy (landed #427).
 Fixture: `finish_elapsed_ms: null` on keyframes-only RenderRow; cast-loras message
 assertion updated for core#156 wording.
