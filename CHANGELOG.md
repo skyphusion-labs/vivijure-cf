@@ -5,6 +5,17 @@ for new features). Newest first.
 
 ## Unreleased
 
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.9.0
+
+Homelab SDXL cast train on `LOCAL_BACKEND_URL` (POST `/run` `action:train_lora`) without a
+RunPod train endpoint; `pollCastLoraJob` prefers the door after Wan EP. Also includes tar
+mtime epoch default (cf#460) for stable content-addressed bundle keys.
+
+Keeps finish-blender (and the rest of the module surface) on the current core contract line.
+**No new host migration** for this pin alone (1.8.1 still needs 0017/0018 if not applied).
+
+## Unreleased
+
 ### feat(renders): record motion_backend + keyframe_backend on the render library row (cf#393)
 
 A completed render carried no motion backend, so "which backend rendered this film?" was
