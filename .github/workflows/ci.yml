@@ -295,6 +295,14 @@ jobs:
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}
           VPC_AUDIO_BEAT_SYNC_ID: ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}
+          # OPTIONAL (cf#482/#480). UNSET IS THE NORMAL STATE and is what ships today: an unset id
+          # makes fill-module-placeholders.sh STRIP the door's [[vpc_services]] and
+          # [[secrets_store_secrets]] blocks, so finish-upscale and speech-upscale deploy exactly as
+          # they do now, on RunPod. Referencing a secret that does not exist yields "" here, which
+          # IS the unset state -- so adding these lines changes nothing until someone creates the
+          # secret. Set one only once the matching connectivity-directory service exists.
+          VPC_FINISH_UPSCALE_ID: ${{ secrets.VPC_FINISH_UPSCALE_ID }}
+          VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
           # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
           # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
           # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name
