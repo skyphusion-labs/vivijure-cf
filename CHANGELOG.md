@@ -5,6 +5,18 @@ for new features). Newest first.
 
 ## Unreleased
 
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.10.0
+
+Picks up the RunPod ROUTE contract (cp#321 step 1, core#169): a call goes through the control-plane
+proxy when `RUNPOD_PROXY_BASE` is bound, and to `api.runpod.ai` with `RUNPOD_API_KEY` when it is
+not. The branch is on the base being BOUND and is never a failover; the unbound path is the
+self-host door and is permanently supported.
+
+**Pin only. Nothing in this repo imports the new module yet** -- adopting it (replacing
+`modules/_shared/runpod-route.ts` with a re-export of core's) is cp#321 step 2 and lands separately.
+This PR is a no-op for every module and every tenant: 1.10.0 is a superset of 1.9.0 on every symbol
+cf already uses.
+
 ### chore(deps): pin @skyphusion-labs/vivijure-core ^1.9.0
 
 Homelab SDXL cast train on `LOCAL_BACKEND_URL` (POST `/run` `action:train_lora`) without a
