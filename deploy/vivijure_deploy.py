@@ -742,7 +742,8 @@ BACKEND_IMAGE_TAG = "1.0.2"        # ghcr.io/skyphusion-labs/vivijure-backend
 UPSCALE_IMAGE_TAG = "1.0.1"        # ghcr.io/skyphusion-labs/vivijure-upscale
 MUSETALK_IMAGE_TAG = "1.0.0"       # ghcr.io/skyphusion-labs/vivijure-musetalk
 AUDIO_UPSCALE_IMAGE_TAG = "1.0.0"  # ghcr.io/skyphusion-labs/vivijure-audio-upscale
-BLENDER_IMAGE_TAG = "0.1.0"        # ghcr.io/skyphusion-labs/vivijure-blender (optional; not in RUNPOD_ENDPOINTS)
+# Optional finish satellite (finish-blender): provision via vivijure-blender/deploy.sh, not
+# RUNPOD_ENDPOINTS / runpod_images() auto-install. Image tag narrative: 0.1.0.
 
 
 def runpod_images() -> dict:
@@ -753,8 +754,6 @@ def runpod_images() -> dict:
         "vivijure-upscale": ("ghcr.io/skyphusion-labs/vivijure-upscale", UPSCALE_IMAGE_TAG),
         "vivijure-musetalk": ("ghcr.io/skyphusion-labs/vivijure-musetalk", MUSETALK_IMAGE_TAG),
         "vivijure-audio-upscale": ("ghcr.io/skyphusion-labs/vivijure-audio-upscale", AUDIO_UPSCALE_IMAGE_TAG),
-        # Optional; not in RUNPOD_ENDPOINTS auto-provision list.
-        "vivijure-blender": ("ghcr.io/skyphusion-labs/vivijure-blender", BLENDER_IMAGE_TAG),
     }
 
 
