@@ -1,0 +1,51 @@
+-- runpod_job_log: RunPod's OWN timing for a job, so cost work stops guessing from wall-clock.
+--
+-- WHY. Measured 2026-08-07 against live billing (cp#274): the only per-job duration we hold today is
+-- wall-clock, `terminal_at - submitted_at`, and it is not a bound in either direction. It INCLUDES
+-- queue wait, cold start and our own poll latency; it EXCLUDES idle-timeout, which RunPod bills. The
+-- implied per-second rate derived from it swung 1.39x to 1.69x WITHIN a single endpoint across three
+-- consecutive days, and 2.55x once endpoints were pooled together. RunPod reports both numbers we are
+-- missing in the same `/status` envelope the poll path already parses to decide terminality, and we
+-- were dropping them.
+--
+-- NULL, NEVER ZERO, AND THAT IS THE WHOLE POINT. A CANCELLED job's payload carries neither field at
+-- all. A 0 written here would read as a real measurement of a job that took no time, and would
+-- under-count every total silently. This follows the convention already shipped on the plane side
+-- (vivijure-control-plane src/runpod-proxy.ts, `NULL-NOT-ZERO IS ENFORCED HERE, once, so no caller
+-- can reintroduce a zero`) rather than inventing a second one, and it is the same posture `error_type`
+-- takes in 0015: absent means "not told", never "told, and it was zero".
+--
+-- WHAT THESE COLUMNS DO **NOT** CAPTURE. Read this before treating them as a cost record.
+--
+--   1. IDLE-TIMEOUT TIME IS BILLED AND IS NOT HERE. RunPod bills a worker across three phases: start
+--      time, execution time, and the idle-timeout window a worker stays running AFTER a request
+--      completes. `execution_ms` is phase two only. Phase three belongs to the WORKER's lifecycle,
+--      not to any job, and on a pooled endpoint the worker kept warm by one tenant serves the next
+--      one. It is unattributable by construction, not a probe anyone is missing.
+--   2. `delay_ms` IS NOT THE BILLED START PHASE. It mixes queue wait, which is not billed to us as
+--      compute, with cold start, which is. Using it as a proxy for phase one over-charges; dropping
+--      it under-charges every cold start. It is recorded because it is the only visibility we have
+--      into that split, not because it resolves it.
+--   3. NEITHER SAYS WHICH GPU RAN THE JOB. Our backend endpoint declares two GPU classes and RunPod
+--      picks by availability; the published per-second rates for those classes differ by roughly
+--      1.5x. `/status` never reports the choice, so `execution_ms` alone cannot be priced.
+--
+-- So these columns are an INPUT to a cost model and are not themselves a cost. Anything multiplying
+-- `execution_ms` by a rate and calling the result spend is wrong in at least three named ways.
+--
+-- A MISSING TERMINAL WRITE STILL LOOKS MISSING. These columns are written only by the terminal write,
+-- which the module doc already records as losable: once the core advances past the poll phase nothing
+-- polls the job again, so a row can stay `submitted` with `terminal_at` NULL forever. Such a row
+-- carries NULL here too. That is correct and must stay legible -- a NULL here means "no terminal
+-- observation", exactly as `terminal_at IS NULL` already does, and the two agree by construction.
+-- Nothing in these columns implies the table is complete.
+--
+-- HISTORICAL ROWS ARE NOT BACKFILLED. RunPod deletes async results roughly 30 minutes after
+-- completion and has no job-history API, so the timing for every row written before this migration is
+-- already gone from the vendor and cannot be recovered by any later query. Old rows stay honestly
+-- NULL rather than being reconstructed from wall-clock, which would manufacture exactly the
+-- confidence this migration exists to stop.
+--
+-- Additive (ADD COLUMN only, no default, no rewrite) -> rides the normal auto-apply; no manual gate.
+ALTER TABLE runpod_job_log ADD COLUMN execution_ms INTEGER;
+ALTER TABLE runpod_job_log ADD COLUMN delay_ms INTEGER;
