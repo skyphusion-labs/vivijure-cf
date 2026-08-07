@@ -6,6 +6,14 @@
 #
 # Requires: SECRETS_STORE_ID, D1_DATABASE_ID, VPC_VIDEO_FINISH_ID, VPC_AUDIO_BEAT_SYNC_ID,
 # VPC_AUDIO_MASTER_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (wrangler).
+#
+# OPTIONAL (cf#482): VPC_FINISH_UPSCALE_ID, VPC_SPEECH_UPSCALE_ID. Unset is the NORMAL state and
+# deploys unchanged -- the module keeps its RunPod path and its [[vpc_services]] block is stripped.
+# Set one only when the matching connectivity-directory service exists (cf#480).
+#
+# Placeholder filling lives in scripts/fill-module-placeholders.sh so it is reachable by
+# tests/deploy-placeholders-cf482.test.ts. This script runs ONLY on a tag deploy, which is the
+# worst possible moment to discover a defect in it.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
@@ -53,13 +61,12 @@ for toml in modules/*/wrangler.toml; do
     continue
   fi
   echo "Deploying vivijure-module-${module}..."
-  sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/${SECRETS_STORE_ID}/g" "$toml"
-  sed -i "s/REPLACE_WITH_D1_DATABASE_ID/${D1_DATABASE_ID}/g" "$toml"
-  sed -i "s/REPLACE_WITH_VPC_VIDEO_FINISH_ID/${VPC_VIDEO_FINISH_ID}/g;s/REPLACE_WITH_VPC_AUDIO_BEAT_SYNC_ID/${VPC_AUDIO_BEAT_SYNC_ID}/g;s/REPLACE_WITH_VPC_AUDIO_MASTER_ID/${VPC_AUDIO_MASTER_ID}/g" "$toml"
-  if grep -q "REPLACE_WITH_" "$toml"; then
-    echo "::error::store_id placeholder survived in $toml"
-    exit 1
-  fi
+  # cf#482: one seam for every placeholder, required and optional, plus a COMMENT-AWARE survivor
+  # check that names what survived and where. The old inline version used a bare
+  # `grep -q "REPLACE_WITH_"`, which matches inside a `#` comment and `exit 1`s the whole loop, so
+  # a single commented-out example block in one module toml failed the deploy for every module
+  # after it -- and its message said "store_id placeholder survived" while guarding five families.
+  sh "$ROOT/scripts/fill-module-placeholders.sh" "$toml"
   n=0
   until npx wrangler deploy -c "$toml"; do
     n=$((n + 1))

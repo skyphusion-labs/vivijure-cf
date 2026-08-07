@@ -44,5 +44,29 @@ binding = "RUNPOD_ENDPOINT_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID"
 
+
+# --- OPTIONAL (cf#480): the always-on upscale door on our own GPU iron, reached over a Workers VPC
+# --- service. UNSET IS THE NORMAL STATE and deploys unchanged: both blocks below are stripped and
+# --- this module uses RunPod exactly as it always has. Set VPC_FINISH_UPSCALE_ID only once the
+# --- matching connectivity-directory service exists.
+# ---
+# --- Both blocks carry the marker `cf482-optional:VPC_FINISH_UPSCALE_ID` so the stripper knows this
+# --- binding's full extent. Stripping only the [[vpc_services]] block would leave wrangler
+# --- resolving a Secrets Store entry that need not exist -- a half-strip that fails at deploy.
+# ---
+# --- The module branches on the binding being BOUND, never on RunPod failing
+# --- (modules/_shared/finish-door.ts); a failover would silently re-rent the GPU this removes.
+[[vpc_services]]
+# cf482-optional:VPC_FINISH_UPSCALE_ID
+binding = "FINISH_UPSCALE_VPC"
+service_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"
+remote = true
+
+[[secrets_store_secrets]]
+# cf482-optional:VPC_FINISH_UPSCALE_ID
+binding = "FINISH_DOOR_TOKEN"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "FINISH_DOOR_TOKEN"
+
 [vars]
 RUNPOD_WORKERS_MAX = "2"
