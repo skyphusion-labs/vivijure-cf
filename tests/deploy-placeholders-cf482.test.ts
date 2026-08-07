@@ -227,6 +227,9 @@ describe("DENOMINATOR: the shipped tomls and the script's optional list agree", 
 
 // ------------------------------------------------------------------------------------------- 5.
 describe("the REAL shipped tomls render clean with no door configured (today's state)", () => {
+  /** Every `binding = "X"` in a toml, in order. */
+  const bindings = (s: string) => (s.match(/^binding = "([^"]+)"/gm) ?? []).map((l) => l.split('"')[1]);
+
   for (const m of ["finish-upscale", "speech-upscale"]) {
     it(`${m} fills with zero survivors and no door binding`, () => {
       const r = run(readFileSync(`modules/${m}/wrangler.toml`, "utf8"), REQ);
@@ -234,8 +237,68 @@ describe("the REAL shipped tomls render clean with no door configured (today's s
       expect(r.text).not.toContain("REPLACE_WITH_");
       expect(r.text).not.toContain("_UPSCALE_VPC");
       expect(r.text).not.toContain("DOOR_TOKEN");
-      // and the module is otherwise intact
       expect(r.text).toContain(`name = "vivijure-module-${m}"`);
     });
+
+    // cf#484. THE ASSERTION THAT WAS MISSING, and its absence let a real defect merge: the case
+    // above checks the door bindings are GONE and the module NAME survives, which is what I was
+    // thinking about -- it says nothing about the module's OTHER bindings. The stripper was
+    // deleting RUNPOD_ENDPOINT_ID from finish-upscale (5 bindings -> 2 where 3 is correct),
+    // because a sentence in the toml mentioning the marker sits ABOVE [[vpc_services]] and comment
+    // lines preceding a header belong to the block BEFORE it. On a tag deploy that module ships
+    // with no endpoint id and every upscale job soft-degrades to passthrough -- a silent
+    // capability loss.
+    //
+    // DERIVED, not a hand-written expected list: read the bindings out of the source, subtract the
+    // ones the marked blocks declare, and require exactly that. A hardcoded list would have to be
+    // updated by the same person who broke this, at the same moment.
+    it(`${m} loses EXACTLY its door bindings and nothing else`, () => {
+      const src = readFileSync(`modules/${m}/wrangler.toml`, "utf8");
+      const before = bindings(src);
+      const r = run(src, REQ);
+      const after = bindings(r.text);
+
+      // The bindings declared inside a block that carries a whole-line marker.
+      const doorBindings = new Set<string>();
+      for (const block of src.split(/^(?=\[)/m)) {
+        if (/^[ \t]*#[ \t]*cf482-optional:[A-Z0-9_]+[ \t]*$/m.test(block)) {
+          for (const b of bindings(block)) doorBindings.add(b);
+        }
+      }
+      expect(doorBindings.size, "no marked blocks found -- the derivation is vacuous").toBeGreaterThan(0);
+
+      expect(after).toEqual(before.filter((b) => !doorBindings.has(b)));
+      // Named explicitly too, because this is the one that was actually lost and a set comparison
+      // reads past a single missing element easily.
+      expect(after).toContain("RUNPOD_ENDPOINT_ID");
+    });
   }
+
+  it("PROSE mentioning a marker does not arm the strip (cf#484 root cause)", () => {
+    // The exact shape that shipped: a sentence naming the marker, sitting above the marked block
+    // and therefore inside the PRECEDING one. Before the fix this deleted the preceding block.
+    const t = `name = "x"
+
+[[secrets_store_secrets]]
+binding = "KEEP_ME"
+secret_name = "KEEP_ME"
+# Both blocks carry the marker \`cf482-optional:VPC_FINISH_UPSCALE_ID\` so the stripper knows.
+
+[[vpc_services]]
+# cf482-optional:VPC_FINISH_UPSCALE_ID
+binding = "GO_AWAY"
+service_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"
+`;
+    const r = run(t, REQ);
+    expect(r.status).toBe(0);
+    expect(r.text).toContain('binding = "KEEP_ME"');   // the block the prose landed in
+    expect(r.text).not.toContain('binding = "GO_AWAY"');
+  });
+
+  it("an indented whole-line marker still arms it, so the fix did not over-tighten", () => {
+    const t = `name = "x"\n\n[[vpc_services]]\n   # cf482-optional:VPC_FINISH_UPSCALE_ID\nbinding = "GO_AWAY"\nservice_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"\n`;
+    const r = run(t, REQ);
+    expect(r.status).toBe(0);
+    expect(r.text).not.toContain("GO_AWAY");
+  });
 });

@@ -39,8 +39,8 @@ MUTATIONS = [
         id="A3-strip-keyed-on-block-type",
         why="the stripper drops only [[vpc_services]], leaving the bearer's Secrets Store block",
         f=AWK,
-        old="  if (!first && buf ~ MARKER) {",
-        new="  if (!first && buf ~ MARKER && lines[1] ~ /^\\[\\[vpc_services\\]\\]/) {",
+        old="  if (!first && marked) {",
+        new="  if (!first && marked && lines[1] ~ /^\\[\\[vpc_services\\]\\]/) {",
         victims=["UNSET strips BOTH of its blocks and deploys"],
     ),
     dict(
@@ -52,11 +52,22 @@ MUTATIONS = [
         victims=["REFUSES when the marker is present but no block carries it"],
     ),
     dict(
+        id="A7-marker-matched-anywhere-in-block",
+        why="cf#484: the marker arms on a PROSE mention, so a sentence above the block deletes the block before it",
+        f=AWK,
+        old="  if ($0 ~ marker_line) marked = 1;",
+        new="  if (index($0, MARKER) > 0) marked = 1;",
+        victims=[
+            "loses EXACTLY its door bindings and nothing else",
+            "PROSE mentioning a marker does not arm the strip",
+        ],
+    ),
+    dict(
         id="A5-preamble-guard-removed",
         why="a marker in a header comment deletes the file's name/main/compatibility_date",
         f=AWK,
-        old="  if (!first && buf ~ MARKER) {",
-        new="  if (buf ~ MARKER) {",
+        old="  if (!first && marked) {",
+        new="  if (marked) {",
         victims=["never drops the PREAMBLE"],
     ),
     dict(

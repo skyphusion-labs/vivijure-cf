@@ -20,9 +20,18 @@
 # later: a `[` at column 0 INSIDE a multi-line array value would read as a new table. No module
 # toml in this repo has one, and the survivor check downstream would catch the damage.
 #
+# THE MARKER MUST BE A WHOLE COMMENT LINE AND NOTHING ELSE (cf#484). Matching the marker anywhere
+# in a block's text is what the first version did, and it deleted a binding it must not touch: the
+# comment lines PRECEDING a table header belong to the block BEFORE it, so a sentence in the toml
+# explaining what the marker does landed inside the previous [[secrets_store_secrets]] block and
+# armed the strip on it. finish-upscale went from 5 bindings to 2, losing RUNPOD_ENDPOINT_ID, which
+# on a tag deploy makes every upscale job soft-degrade to passthrough -- a silent capability loss.
+# Its sibling escaped only because its block was appended at EOF. Requiring the marker to occupy a
+# comment line ALONE makes prose inert by construction rather than by whoever writes it next.
+#
 # THE PREAMBLE IS NEVER DROPPED. Everything before the first table header (the file's header
-# comments, `name`, `main`, `compatibility_date`) is one pseudo-block, and a MARKER mentioned in a
-# header comment must not delete the file's identity. Guarded explicitly rather than left to luck.
+# comments, `name`, `main`, `compatibility_date`) is one pseudo-block, and a MARKER on its own line
+# there must not delete the file's identity. Guarded explicitly rather than left to luck.
 #
 # EXIT 3 WHEN NOTHING WAS DROPPED. A filter that matches nothing emits its input unchanged, which is
 # byte-identical to a successful no-op strip -- so silence here would let a renamed marker deploy
@@ -32,19 +41,28 @@
 
 function flush(   i) {
   if (n == 0) return;
-  if (!first && buf ~ MARKER) {
+  if (!first && marked) {
     dropped++;
   } else {
     for (i = 1; i <= n; i++) print lines[i];
   }
-  first = 0; n = 0; buf = "";
+  first = 0; n = 0; buf = ""; marked = 0;
 }
 
-BEGIN { first = 1 }
+BEGIN {
+  first = 1;
+  # The marker as a WHOLE comment line: optional indent, `#`, optional spaces, the marker, nothing
+  # after it but whitespace. A sentence that merely mentions the marker cannot match.
+  marker_line = "^[ \t]*#[ \t]*" MARKER "[ \t]*$";
+}
 
 /^\[/ { flush() }
 
-{ lines[++n] = $0; buf = buf "\n" $0 }
+{
+  lines[++n] = $0;
+  buf = buf "\n" $0;
+  if ($0 ~ marker_line) marked = 1;
+}
 
 END {
   flush();
