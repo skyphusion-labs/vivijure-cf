@@ -407,6 +407,9 @@ describe("filmRowFromJob (#164 -- film jobs in render history)", () => {
       status: "IN_PROGRESS",
       mode: "full",
       parentId: null,
+      // cf#393: backends carried onto the render row seed
+      motionBackend: "own-gpu",
+      keyframeBackend: null,
     });
   });
 
