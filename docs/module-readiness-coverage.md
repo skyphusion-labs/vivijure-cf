@@ -15,16 +15,28 @@ the modules, that test fails.
 | 1 | Modules in this repo | **27** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **15** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **16** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
-| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **7** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts` |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **15** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **7 of 27**.
+Population 4 is the one an operator actually sees, and it is **15 of 27**.
 
-**Populations 3 and 4 diverged again on 2026-08-03, deliberately, and the gap is the point.** They
-were briefly equal -- 7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane
-could not add a single further module without a studio release first. cf#394 published nine more
-(the eight cost-door modules and `image-generate`), so 3 is now 16 and 4 is 7. **A published bundle
-with no catalog row uploads nothing to anybody**; it exists so the plane can add a row when it is
-ready, instead of the two repos taking turns.
+**Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
+another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
+against the plane on every CI run by `scripts/check-tenant-module-catalog.mjs`, which fetches the
+authority over public HTTPS and fails closed on a fetch error or an empty parse. Before that check
+existed the copy lived as a literal inside the test that asserted its length, so the assertion
+compared the copy against itself: the catalog went 6 to 7 to 15 and nothing ever failed. **If you
+are correcting this page, correct the mirror in the same commit; the test asserts they agree.**
+
+**Populations 3 and 4 are one module apart, and the gap is the point.** They were briefly equal --
+7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane could not add a single
+further module without a studio release first. cf#394 published nine more (the eight cost-door
+modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine, taking 4
+to 15. **A published bundle with no catalog row uploads nothing to anybody**; it exists so the plane
+can add a row when it is ready, instead of the two repos taking turns.
+
+The one remaining gap is **`image-generate`**: published, not catalogued, because it reads
+`OPENAI_API_KEY` -- an operator-scoped credential -- and is gated on #401. That is a live product
+decision, not drift.
 
 ## The table
 
@@ -32,8 +44,8 @@ ready, instead of the two repos taking turns.
 
 | Module | `/ready` | Reports `telemetry.job_log` | Writes job-log rows | Published to tenants (3) | Provisioned to tenants (4) |
 |---|---|---|---|---|---|
-| alibaba-wan | yes | yes | yes | **yes** | no |
-| alibaba-wan-lora | yes | yes | yes | **yes** | no |
+| alibaba-wan | yes | yes | yes | **yes** | **yes** |
+| alibaba-wan-lora | yes | yes | yes | **yes** | **yes** |
 | audio-master | yes | no | no | no | no |
 | beat-sync | yes | no | no | no | no |
 | cast-image | yes | no | no | no | no |
@@ -44,29 +56,32 @@ ready, instead of the two repos taking turns.
 | finish-lipsync | yes | yes | yes | yes | yes |
 | finish-rife | yes | yes | yes | yes | yes |
 | finish-upscale | yes | yes | yes | yes | yes |
-| google-veo | yes | yes | yes | **yes** | no |
+| google-veo | yes | yes | yes | **yes** | **yes** |
 | image-generate | yes | no | no | **yes** | no |
 | keyframe | yes | yes | yes | yes | yes |
-| kling | yes | yes | yes | **yes** | no |
+| kling | yes | yes | yes | **yes** | **yes** |
 | local-gpu | yes | no | no | no | no |
-| minimax-hailuo | yes | yes | yes | **yes** | no |
+| minimax-hailuo | yes | yes | yes | **yes** | **yes** |
 | music-gen | yes | no | no | no | no |
-| narration-gen | yes | yes | yes | **yes** | no |
+| narration-gen | yes | yes | yes | **yes** | **yes** |
 | notify-email | yes | no | no | no | no |
 | own-gpu | yes | yes | yes | yes | yes |
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
-| seedance | yes | yes | yes | **yes** | no |
+| seedance | yes | yes | yes | **yes** | **yes** |
 | speech-upscale | yes | yes | yes | yes | yes |
 | subtitle | yes | no | no | no | no |
-| vidu-q3 | yes | yes | yes | **yes** | no |
+| vidu-q3 | yes | yes | yes | **yes** | **yes** |
 
 ## The two asymmetries, and why each is fine
 
-**`finish-rife` writes job-log rows and is published, but is NOT provisioned.** So on the hosted door
-its jobs are not unrecorded, they **do not exist**. Do not read its absence from a `module-readiness`
-result as a missing binding; the control plane carries the same warning at
-`tenant-modules.ts:100-104` precisely because the natural reading is the wrong one. Whether hosted
-should carry it is a product question and is not settled here.
+**`image-generate` is published as a bundle but is NOT provisioned.** So on the hosted door its jobs
+are not unrecorded, they **do not exist**. Do not read its absence from a `module-readiness` result
+as a missing binding; the control plane carries the same warning at `tenant-modules.ts` precisely
+because the natural reading is the wrong one. It is held out on #401 because it reads
+`OPENAI_API_KEY`, which is operator-scoped; whether hosted should carry it is a product question and
+is not settled here. (`finish-rife` used to be the module in this paragraph. cp#284 catalogued it,
+so it is now published AND provisioned AND recording, and this text is the record of a state that
+lasted from cf#295 to cp#284.)
 
 **`plan-enhance` is provisioned and askable but writes no job-log row.** It is not endpoint-backed:
 it reaches Anthropic through our AI Gateway, so there is no RunPod job to record. Its `/ready`
@@ -83,14 +98,24 @@ holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, six of twenty-six. A route that
-reports a subset without saying so is the same defect one layer up, which is why the denominator is
-published here rather than left to be re-derived.
+`module-readiness` looks complete while speaking for population 4, fifteen of twenty-seven. A route
+that reports a subset without saying so is the same defect one layer up, which is why the
+denominator is published here rather than left to be re-derived.
+
+**And then this page did it to itself (cf#470).** The published denominator sat at 7 while the real
+value was 15, and the sentence below asserting that a tenant could not reach the GPUless cost door
+was false about eight modules for four days. A page that terminates a search is worse than no page,
+so the number is now mirrored as data and checked against the authority in CI rather than
+maintained by hand here.
 
 ## What a green `module-readiness` does NOT tell you
 
-- **Anything about the other 20 modules.** They are not provisioned to tenants and a tenant provision
-  cannot reach them. This includes the entire GPUless cost door.
+- **Anything about the other 12 modules** (27 minus the 15 in population 4). They are not
+  provisioned to tenants, so a tenant provision does not reach them. **This no longer excludes the
+  GPUless cost door**: all eight cost-door modules were catalogued by cp#317 and a tenant reaches
+  them through the plane-side proxy. The 12 are `audio-master`, `beat-sync`, `cast-image`,
+  `cloud-keyframe`, `dialogue-gen`, `film-titles`, `finish-blender`, `image-generate`, `local-gpu`,
+  `music-gen`, `notify-email`, `subtitle`.
 - **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
   module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
   fail every invocation.
@@ -101,6 +126,6 @@ published here rather than left to be re-derived.
 ## Reporting rule
 
 **A readiness sweep must print its denominator and name what it could not probe.** A result that
-says "all green" without saying "6 of 26 provisioned modules" will be read as a clean fleet by
+says "all green" without saying "15 of 27 provisioned modules" will be read as a clean fleet by
 whoever was not in the conversation. That is the whole lesson of cf#295 and it applies to this page
 too: if you quote the table, quote the population you are quoting.
