@@ -225,7 +225,8 @@ export async function runpodRoute(env: RunpodRouteEnv): Promise<RunpodRoute> {
 // ------------------------------------------------------------------------------------------------
 
 /** Emitted by the plane on a plane-AUTHORED refusal; its value is the reason. Must stay byte-equal
- *  to `PLANE_REFUSAL_HEADER` in vivijure-control-plane/src/runpod-proxy-poll.ts. */
+ *  to `PLANE_REFUSAL_HEADER` in vivijure-control-plane/src/runpod-proxy-poll.ts. Dual-repo pin:
+ *  tests/plane-refusal-header-contract.test.ts (mirrored on the plane; cf#403). */
 export const PLANE_REFUSAL_HEADER = "x-vivijure-plane-refusal";
 
 /** Only what this needs off a Response, so a test can hand in a plain object and so nothing here
