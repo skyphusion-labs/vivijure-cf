@@ -56,6 +56,25 @@ jobs:
       - name: Test
         run: npm test
 
+      # cf#470. The tenant module catalog is defined in vivijure-control-plane and MIRRORED here
+      # at scripts/tenant-module-catalog.txt, because this repo cannot import the other one. That
+      # mirror used to be a literal inside the readiness test with its length asserted beside it,
+      # so the test compared the copy against itself: the catalog went 6 -> 7 -> 15 and nothing
+      # failed once, while the published denominator and a reach-boundary claim in the docs were
+      # wrong for four days.
+      #
+      # This is the only step that can detect that, because it is the only one that reads the
+      # authority. It fetches raw.githubusercontent.com with NO credential (all three repos are
+      # public, so it runs on fork PRs too) and FAILS CLOSED: a fetch error, an empty parse on
+      # either side, or a self-control that does not fire is a non-zero exit, never a skip.
+      #
+      # A step of the required `ci` job, deliberately: a catalog change in the plane turns this
+      # repo red until the mirror and the population-4 numbers in docs/module-readiness-coverage.md
+      # are corrected. That is the work the silence was hiding. A non-blocking version of this is a
+      # cross-reference, not a control.
+      - name: Tenant module catalog matches the control plane (cf#470)
+        run: npm run check:catalog
+
       # deploy/ has a pytest suite (installer/teardown control plane). Without this step,
       # Python regressions in vivijure_deploy.py pass CI silently (#26).
       - uses: actions/setup-python@v7

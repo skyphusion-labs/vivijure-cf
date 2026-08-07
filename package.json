@@ -28,6 +28,7 @@
     "deploy:mcp": "wrangler deploy -c wrangler.mcp.toml",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json && tsc -p tsconfig.tests.json",
     "guard:resolve": "node scripts/resolve-guard.mjs",
+    "check:catalog": "node scripts/check-tenant-module-catalog.mjs",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
