@@ -384,7 +384,17 @@ describe("the call genuinely TRANSITS the base: one stub, two configs, opposite 
 // ------------------------------------------------------------------------------------------- 4.
 describe("DENOMINATOR: every RunPod-reaching module routes through the shared helper", () => {
   const MODULES_DIR = "modules";
-  const HELPER = "modules/_shared/runpod-route.ts";
+  // WHERE THE DIRECT BASE LITERAL NOW LIVES (cp#321 step 2). It used to be declared in
+  // modules/_shared/runpod-route.ts; that file is now a re-export of vivijure-core and declares
+  // nothing, so the positive control below follows the literal to core's SHIPPED artifact rather
+  // than to the pointer that replaced it.
+  //
+  // This control going red on the move is the control working: it is anchored to a file that must
+  // carry the literal, and the moment that stopped being true it said so instead of passing
+  // vacuously. Re-pointing it at the installed package keeps that property AND adds one: it now
+  // also proves the dependency actually ships the base, so a bad publish cannot read as a clean
+  // sweep either.
+  const HELPER = "node_modules/@skyphusion-labs/vivijure-core/dist/runpod-route.js";
 
   /**
    * One module's source, as CODE.
