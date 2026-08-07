@@ -11,8 +11,13 @@
 # STUDIO_API_TOKEN secret, and gates itself with the MCP_TOKEN secret. Both are seeded out-of-band:
 #   wrangler secret put STUDIO_API_TOKEN -c wrangler.mcp.toml   # the studio bearer (vivijure #423)
 #   wrangler secret put MCP_TOKEN         -c wrangler.mcp.toml   # the gate for MCP clients
-# Either unset => the Worker fails closed (STUDIO_API_TOKEN unset -> every tool errors; MCP_TOKEN
+# Either unset => the Worker fails closed (STUDIO_API_TOKEN unset -> studio tools error; MCP_TOKEN
 # unset -> every /mcp request 401s).
+#
+# Optional hosted control-plane admin door (vivijure-mcp 1.3+ cp_* tools):
+#   CONTROL_PLANE_URL = "https://studio.vivijure.com"   # [vars], public
+#   wrangler secret put CONTROL_PLANE_ADMIN_TOKEN -c wrangler.mcp.toml
+# Omit both for self-host / local-only MCP.
 
 name = "vivijure-studio-mcp"
 main = "node_modules/@skyphusion-labs/vivijure-mcp/dist/mcp.js"
@@ -31,6 +36,7 @@ enabled = true
 # The studio base URL this MCP proxies to. PUBLIC (a hostname, not a secret). Rendered from MCP_STUDIO_URL
 # in CI, or set literally when copying this file by hand (e.g. "https://vivijure.skyphusion.org").
 STUDIO_URL = "${MCP_STUDIO_URL}"
+# Optional: CONTROL_PLANE_URL = "https://studio.vivijure.com"
 
 # --- Deploy / routing ---
 # The MCP host. Rendered from MCP_HOST in CI, or set literally by hand (e.g. "studio-mcp.example.com").
