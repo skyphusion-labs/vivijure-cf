@@ -97,6 +97,10 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   DIALOGUE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   SCORE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   AUDIO_MASTER_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
+  FINISH_UPSCALE_VPC: { path: "operator-only", note: "cf#480: VPC service into the operator's always-on upscale door on our own GPU iron. A tenant CANNOT hold this today and the blocker is measured, not assumed: the plane's uploadTenantModules binds no vpc_service at any of its bindings.push sites, because TenantModuleDeps carries the provisioner credential and CF will not let an API-created token mint one with Connectivity Directory scope (cp#359). Classified here rather than left to prose so a future attempt to add these modules to TENANT_MODULE_CATALOG turns this red" },
+  FINISH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the upscale door's own bearer (LOCAL_FINISH_TOKEN on the container). Operator infrastructure credential; same class as the VPC binding it authenticates against, and read ONLY when that binding is bound" },
+  SPEECH_UPSCALE_VPC: { path: "operator-only", note: "cf#480: VPC service into the operator's always-on speech-enhance door. Same cp#359 tenant blocker as FINISH_UPSCALE_VPC" },
+  SPEECH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the speech door's own bearer. Read only when SPEECH_UPSCALE_VPC is bound" },
   AUDIO_BEAT_SYNC_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   VIDEO_FINISH_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
 

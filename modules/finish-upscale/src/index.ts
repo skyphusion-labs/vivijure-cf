@@ -31,6 +31,7 @@ import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-cor
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
+import { doorRoute, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -45,6 +46,14 @@ interface Env {
   /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
+  /** cf#480: the always-on upscale door on our own GPU iron, over a Workers VPC service.
+   *  Bound -> every job goes here and RunPod is not called at all. Unbound -> the RunPod path
+   *  below, byte for byte. The branch is BOUND-ness and NEVER a RunPod failure; see
+   *  modules/_shared/finish-door.ts for why a failover would silently undo this. */
+  FINISH_UPSCALE_VPC?: DoorBinding;
+  /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN` on the container). Only read when the
+   *  binding above is bound. */
+  FINISH_DOOR_TOKEN?: SecretsStoreSecret | string;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -79,6 +88,44 @@ function auth(route: RunpodRoute) {
   return runpodHeaders(route, MANIFEST.name);
 }
 
+/** cf#480. ONE transport interface over two wire-identical services, so submit and poll have a
+ *  single body rather than two that drift. The door is the same image as the RunPod endpoint
+ *  behind a serve overlay, so `/run`, `/status/<id>` and `/cancel/<id>` carry the same envelopes
+ *  and every RunPod-shaped helper below applies unchanged.
+ *
+ *  The RunPod arm is deliberately a pure re-expression of the calls that were already here: same
+ *  URL, same headers, same method. If it is not, that is a regression in the untouched path and
+ *  tests/finish-door-cf480.test.ts asserts it byte for byte. */
+interface Transport {
+  /** True only on our own iron. */
+  door: boolean;
+  /** Recorded into the poll token; "" on the RunPod arm (see PollState.door). */
+  name: string;
+  call(path: string, init?: RequestInit): Promise<Response>;
+}
+
+function runpodTransport(route: RunpodRoute, endpointId: string): Transport {
+  return {
+    door: false,
+    name: "",
+    call: (path, init) => fetch(runpodBase(route, endpointId) + path, {
+      ...init,
+      headers: { ...auth(route), ...(init?.headers as Record<string, string> | undefined) },
+    }),
+  };
+}
+
+function doorTransport(route: DoorRoute): Transport {
+  return {
+    door: true,
+    name: DOOR_ROUTE_NAME,
+    call: (path, init) => route.binding!.fetch(doorUrl(path), {
+      ...init,
+      headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
+    }),
+  };
+}
+
 /** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
  *  Returns "" if unset/unreadable so the existing "not configured" guards still fire. */
 async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
@@ -90,6 +137,12 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
     console.warn("secrets-store get failed: " + (e as Error).message);
     return "";
   }
+}
+
+/** Resolve the on-iron door route once per request (cf#480). */
+async function doorFor(env: Env): Promise<DoorRoute> {
+  if (!env.FINISH_UPSCALE_VPC) return doorRoute(null, "");
+  return doorRoute(env.FINISH_UPSCALE_VPC, await secretValue(env.FINISH_DOOR_TOKEN));
 }
 
 /** Resolve both RunPod secrets once per request. */
@@ -127,9 +180,14 @@ function credentialDegradeReason(route: RunpodRoute, endpointId: string): string
 
 /** Is the endpoint still in its virgin cold start (no worker has ever come up)? Best-effort: any
  *  transport/HTTP failure reads as "not cold" so the #141 verdict still fires. */
-async function endpointStillCold(route: RunpodRoute, endpointId: string): Promise<boolean> {
+async function endpointStillCold(t: Transport): Promise<boolean> {
+  // cf#480: not a door concept. The door is an ALWAYS-ON resident container -- there is no virgin
+  // cold start to be tolerant of, and its /health answers a liveness question, not a worker-pool
+  // one. Returning false here keeps the #141 verdict firing on the door route, which is correct:
+  // a door that has lost a job really has lost it.
+  if (t.door) return false;
   try {
-    const r = await fetch(runpodBase(route, endpointId) + "/health", { headers: auth(route) });
+    const r = await t.call("/health");
     if (!r.ok) return false;
     return workersStillCold(await r.json());
   } catch {
@@ -140,9 +198,10 @@ async function endpointStillCold(route: RunpodRoute, endpointId: string): Promis
 /** Best-effort cancel of a RunPod job we are about to fail: a hung-error job otherwise HOLDS the
  *  billed worker until someone cancels it by hand (F17 spend leak). Never throws; the honest
  *  failure below is the point, the cancel is damage control. */
-async function cancelRunpodJobBestEffort(route: RunpodRoute, endpointId: string, jobId: string): Promise<void> {
+async function cancelRunpodJobBestEffort(t: Transport, jobId: string): Promise<void> {
   try {
-    await fetch(runpodBase(route, endpointId) + "/cancel/" + jobId, { method: "POST", headers: auth(route) });
+    // The door serves /cancel/<id> too (runpod_http_serve.py), so this is not RunPod-only.
+    await t.call("/cancel/" + jobId, { method: "POST" });
   } catch {
     /* best-effort */
   }
@@ -167,6 +226,20 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   if (!input?.shot_id || !input?.clip_key) {
     return { ok: false, error: "finish-upscale: input needs shot_id and clip_key" };
   }
+
+  // cf#480: our own always-on iron first, and ONLY on bound-ness. RunPod is not consulted, not
+  // probed and not billed when the binding is present -- there is no failover, by design, because
+  // a failover would quietly restore the rented dependency this exists to remove and every signal
+  // would stay green while it happened (same rule as the plane proxy, cp#321).
+  const door = await doorFor(env);
+  if (doorBound(door)) {
+    const problem = doorProblem(door);
+    // Bound binding, token not visible yet: propagation, not misconfiguration (the cf#114
+    // distinction, applied to the door's own credential). Degrade and SAY WHICH.
+    if (problem) return passthrough(input, problem);
+    return submitVia(env, req, doorTransport(door));
+  }
+
   const { route, apiKey, endpointId } = await runpodCreds(env);
   if (!route.credential || !endpointId) {
     // Degrade, but say WHICH: absent-key-with-endpoint is propagation, not misconfiguration (cf#114).
@@ -190,25 +263,44 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
     }
   }
 
+  return submitVia(env, req, runpodTransport(route, endpointId));
+}
+
+/** The submit body, shared by both transports. Everything below here was the RunPod path verbatim;
+ *  the only additions are the route label on the poll token and the degrade reasons naming which
+ *  service answered, because "runpod-run-failed" on a job that never touched RunPod is exactly the
+ *  kind of lie that sends an operator to the wrong dashboard. */
+async function submitVia(
+  env: Env,
+  req: InvokeRequest<FinishInput>,
+  t: Transport,
+): Promise<InvokeResponse<FinishOutput>> {
+  const input = req.input;
   const cfg = coerceConfig(req.config);
+  const where = t.door ? "door" : "runpod";
   try {
-    const r = await fetch(runpodBase(route, endpointId) + "/run", {
+    const r = await t.call("/run", {
       method: "POST",
-      headers: { ...auth(route), "content-type": "application/json" },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(input, "runpod-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) return passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status });
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
-    // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
+    // cf#279: neither service can enumerate jobs, so an id not recorded at submit is unreachable
     // permanently -- and a failure RATE needs this denominator, not only the failures.
     const submittedAt = Date.now();
     await recordRunpodJob(env.TELEMETRY_DB, { jobId, module: MANIFEST.name, outcome: "submitted", submittedAtMs: submittedAt });
     return {
       ok: true,
       pending: true,
-      poll: encodePoll({ jobId, shotId: input.shot_id, srcFps: input.src_fps ?? 24, frames: input.frames ?? 0, submittedAt }),
-      jobId,  // cf#289/#296: RunPod cannot enumerate jobs, so a caller that is not handed the id at submit can never reach it.
+      poll: encodePoll({
+        jobId, shotId: input.shot_id, srcFps: input.src_fps ?? 24, frames: input.frames ?? 0, submittedAt,
+        // cf#480 affinity. Undefined on the RunPod arm, which is what every pre-existing token
+        // carries, so old tokens and RunPod tokens stay the same object.
+        door: t.name || undefined,
+      }),
+      jobId,  // cf#289/#296: neither service can enumerate jobs, so a caller that is not handed the id at submit can never reach it.
     };
   } catch (e) {
     return passthrough(input, "exception", { detail: (e as Error).message });
@@ -218,19 +310,45 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "finish-upscale: bad poll token" };
-  const { route, endpointId } = await runpodCreds(env);
-  const credProblem = credentialProblem(route, endpointId);
-  if (credProblem) return { ok: false, error: "finish-upscale: " + credProblem };
+  // cf#480. The transport is decided by the TOKEN, not by what is bound right now. Polling the
+  // other service would 404 (a door job id is a uuid4 from a per-process registry; a RunPod job id
+  // is unknown to the door), `runpodJobGone` would read that as a GC'd job, and past the grace
+  // window the shot would FAIL -- destroying finished work with every component behaving correctly.
+  let t: Transport;
+  let route: RunpodRoute | null = null;
+  if (tokenTookDoor(st.door)) {
+    const door = await doorFor(env);
+    if (!doorBound(door)) {
+      // The binding was removed while this job was in flight. Refusing to guess is the only honest
+      // answer: a poll against RunPod would 404 and fail the shot, and there is nothing to degrade
+      // to -- this module's poll token carries shotId/srcFps/frames but NOT the input clip_key, so
+      // a poll-time passthrough cannot reconstruct the clip it would be passing through. (Its
+      // sibling speech-upscale CAN degrade here, because its token does carry audio_key. Same
+      // rule, different answer, decided by what the token holds and not by preference.)
+      return { ok: false, error: "finish-upscale: door binding removed while job " + st.jobId + " was in flight; cannot poll (cf#480)" };
+    }
+    const problem = doorProblem(door);
+    if (problem) return { ok: false, error: "finish-upscale: " + problem };
+    t = doorTransport(door);
+  } else {
+    const { route: rp, endpointId } = await runpodCreds(env);
+    const credProblem = credentialProblem(rp, endpointId);
+    if (credProblem) return { ok: false, error: "finish-upscale: " + credProblem };
+    route = rp;
+    t = runpodTransport(rp, endpointId);
+  }
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
   try {
-    const resp = await fetch(runpodBase(route, endpointId) + "/status/" + st.jobId, { headers: auth(route) });
+    const resp = await t.call("/status/" + st.jobId);
     // cf#398: a plane-AUTHORED refusal is NOT an upstream status and must never read as
     // pending. Checked before the body is interpreted, so it does not rest on the refusal
     // body parsing. No header (direct route, a normal response, or a proxy 502 that could
     // not reach RunPod) leaves every branch below byte for byte unchanged.
-    const refusal = planeRefusalReason(route, resp);
+    // Only meaningful on the RunPod arm: the refusal header is authored by the PLANE proxy, which
+    // is not in the door's path at all. `route` is non-null exactly when that arm was taken.
+    const refusal = route ? planeRefusalReason(route, resp) : null;
     if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
     httpStatus = resp.status;
     s = await resp.json() as typeof s;
@@ -248,7 +366,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
       // polling up to the cold cap instead of false-failing the first-ever job.
       if (
         classifyGoneState(st.submittedAt, now, RUNPOD_COLD_GRACE_MS) === "gone-grace" &&
-        (await endpointStillCold(route, endpointId))
+        (await endpointStillCold(t))
       ) {
         return { ok: true, pending: true };
       }
@@ -282,7 +400,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     // terminal error. Surface the REAL error (never "not found") and cancel to stop the spend.
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
-      await cancelRunpodJobBestEffort(route, endpointId, st.jobId);
+      await cancelRunpodJobBestEffort(t, st.jobId);
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output), ...timingFromStatus(s) });
       return { ok: false, error: "finish-upscale backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
@@ -321,8 +439,13 @@ export default {
     // with. Gating it would make it unusable for its one purpose while protecting nothing.
     if (request.method === "GET" && url.pathname === "/ready") {
       const { route, endpointId } = await runpodCreds(env);
+      const door = await doorFor(env);
+      const onDoor = doorBound(door);
       return json({
-        ok: Boolean(route.credential && endpointId),
+        // cf#480: on the door route RunPod credentials are irrelevant -- requiring them would make
+        // a correctly-configured on-iron module report NOT READY, which is the readiness probe
+        // reporting the opposite of the truth. On the door arm `ok` is the door's own readiness.
+        ok: onDoor ? !doorProblem(door) : Boolean(route.credential && endpointId),
         // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
@@ -330,6 +453,11 @@ export default {
         // cf#394: which route answered. Additive -- the plane parses runpod_api_key and
         // refuses a module whose /ready omits it, so that field keeps its name.
         runpod_proxied: route.proxied,
+        // cf#480: PRESENT ONLY WHEN A DOOR IS BOUND, so an unbound module's /ready is byte-identical
+        // to what it served before this change and the module-agnostic shape contract holds. When it
+        // IS present, it distinguishes bound-with-token from bound-without-token, which behave
+        // completely differently and are indistinguishable from outside otherwise.
+        ...(onDoor ? { door: { bound: true, token: !doorProblem(door), route: DOOR_ROUTE_NAME } } : {}),
         // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
         // otherwise an empty job log is indistinguishable from a clean run, which is the exact
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
