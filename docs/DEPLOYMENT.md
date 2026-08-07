@@ -342,6 +342,7 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 | ------------------------------ | -------------------------------------- | --------------- |
 | own-gpu, keyframe, finish-rife | `BACKEND_RUNPOD_ENDPOINT_ID`           | main backend    |
 | finish-upscale                 | `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`     | video upscale   |
+| finish-blender                 | `BLENDER_RUNPOD_ENDPOINT_ID`           | compositor grade |
 | finish-lipsync                 | `MUSETALK_RUNPOD_ENDPOINT_ID`          | MuseTalk        |
 | speech-upscale                 | `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`     | audio upscale   |
 
@@ -395,6 +396,7 @@ npx wrangler secrets-store secret create $S --name BACKEND_RUNPOD_ENDPOINT_ID   
 npx wrangler secrets-store secret create $S --name VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
 npx wrangler secrets-store secret create $S --name MUSETALK_RUNPOD_ENDPOINT_ID      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
+npx wrangler secrets-store secret create $S --name BLENDER_RUNPOD_ENDPOINT_ID      --scopes workers --remote  # optional finish-blender
 ```
 
 **Defensive seed (recommended): strip the value so a bad paste cannot poison the store.** Stage the

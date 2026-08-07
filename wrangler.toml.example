@@ -270,11 +270,12 @@ service = "vivijure-module-finish-rife"
 
 
 # >>> SATELLITE: finish-blender -- Blender compositor on a SEPARATE RunPod endpoint
-# Optional finish-chain grade (headless Blender). After lipsync, before upscale. Not required
-# for the satellites profile -- opt-in only.
-# [[services]]
-# binding = "MODULE_FINISH_BLENDER"
-# service = "vivijure-module-finish-blender"
+# Optional finish-chain grade (headless Blender). After lipsync, before upscale.
+# Needs store secret BLENDER_RUNPOD_ENDPOINT_ID + module worker vivijure-module-finish-blender.
+# Kept inside SATELLITE markers: only ships when VIVIJURE_PROFILE=satellites (or a hand-edit).
+[[services]]
+binding = "MODULE_FINISH_BLENDER"
+service = "vivijure-module-finish-blender"
 # <<< SATELLITE: finish-blender
 
 # >>> SATELLITE: finish-upscale -- Real-ESRGAN upscale on a SEPARATE RunPod endpoint
