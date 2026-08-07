@@ -3,7 +3,7 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## v1.21.0 -- 2026-08-07
 
 ### fix(deploy): comment-aware placeholder guard, and OPTIONAL VPC service ids (#482)
 
@@ -89,7 +89,6 @@ mtime epoch default (cf#460) for stable content-addressed bundle keys.
 Keeps finish-blender (and the rest of the module surface) on the current core contract line.
 **No new host migration** for this pin alone (1.8.1 still needs 0017/0018 if not applied).
 
-## Unreleased
 
 ### feat(renders): record motion_backend + keyframe_backend on the render library row (cf#393)
 
@@ -108,7 +107,6 @@ those backends had run). Clip keys are GPU-assigned and are not a substitute.
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
-## Unreleased
 
 ### chore(deps): pin @skyphusion-labs/vivijure-core ^1.8.1
 
