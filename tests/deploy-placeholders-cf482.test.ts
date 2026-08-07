@@ -18,16 +18,26 @@
 // dangles the deploy, so if the block cannot be REMOVED when its id is unset, the module's unbound
 // branch is unreachable in production and the compatibility guarantee it rests on is fiction.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SCRIPT = "scripts/fill-module-placeholders.sh";
 
+// Every case needs a scratch copy, because the script edits IN PLACE. Left behind, that is one
+// directory per case per run, local and in CI, forever -- 234 had accumulated on the crew box
+// before a close-out sweep found them. A suite that leaks debris also makes the NEXT person's
+// debris audit lie about who owns what, so it is tracked and removed rather than left to /tmp.
+const scratch: string[] = [];
+afterAll(() => {
+  for (const d of scratch) rmSync(d, { recursive: true, force: true });
+});
+
 function run(toml: string, env: Record<string, string>): { status: number; out: string; text: string } {
-  const dir = mkdtempSync(join(tmpdir(), "rollins-cf482-"));
+  const dir = mkdtempSync(join(tmpdir(), "vivijure-cf482-"));
+  scratch.push(dir);
   const path = join(dir, "wrangler.toml");
   writeFileSync(path, toml);
   try {
