@@ -30,6 +30,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
+import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
 import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
@@ -63,6 +64,14 @@ const CASES: Case[] = [
     hook: "keyframe",
     env: RUNPOD_ENV,
     input: { project: "p_test", bundle_key: "renders/p_test/bundle.json" },
+    config: {},
+  },
+  {
+    name: "finish-blender",
+    worker: finishBlenderWorker as unknown as Worker,
+    hook: "finish",
+    env: RUNPOD_ENV,
+    input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" },
     config: {},
   },
   {

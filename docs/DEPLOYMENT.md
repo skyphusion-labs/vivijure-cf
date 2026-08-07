@@ -110,7 +110,7 @@ opt-in because it needs your own local GPU box.
 
 **Cloudflare plan: free vs Workers Paid (#521).** The full standard install runs on Cloudflare's
 **free** plan: install free, render free. This is live-proven -- a brand-new free-plan account stood up
-the whole 23-module standard bundle (core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
+the whole 27 MODULE_* service bindings in wrangler.toml.example (plus core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
 media stack) and rendered finished 1080p24 films on all three render paths (own GPU on RunPod, cloud
 i2v, and a local-GPU door). You pay only usage: RunPod GPU seconds, cloud render API calls, AI Gateway
 credits for the planner, or $0 on your own hardware. **Workers Paid ($5/month) is required only for the
@@ -342,6 +342,7 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 | ------------------------------ | -------------------------------------- | --------------- |
 | own-gpu, keyframe, finish-rife | `BACKEND_RUNPOD_ENDPOINT_ID`           | main backend    |
 | finish-upscale                 | `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`     | video upscale   |
+| finish-blender                 | `BLENDER_RUNPOD_ENDPOINT_ID`           | compositor grade |
 | finish-lipsync                 | `MUSETALK_RUNPOD_ENDPOINT_ID`          | MuseTalk        |
 | speech-upscale                 | `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`     | audio upscale   |
 
@@ -395,6 +396,7 @@ npx wrangler secrets-store secret create $S --name BACKEND_RUNPOD_ENDPOINT_ID   
 npx wrangler secrets-store secret create $S --name VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
 npx wrangler secrets-store secret create $S --name MUSETALK_RUNPOD_ENDPOINT_ID      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
+npx wrangler secrets-store secret create $S --name BLENDER_RUNPOD_ENDPOINT_ID      --scopes workers --remote  # optional finish-blender
 ```
 
 **Defensive seed (recommended): strip the value so a bad paste cannot poison the store.** Stage the

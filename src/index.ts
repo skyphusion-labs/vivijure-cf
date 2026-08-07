@@ -829,7 +829,10 @@ const hSubmitRender: Handler = async (req, env) => {
     status: view.status,
     mode: b.keyframesOnly ? "keyframes-only" : "full",
     projectId: await resolveProjectRef(env, b.projectId),
-  };
+    // cf#393: resolved backends known at submit (motion undefined on keyframes-only).
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: mapped.keyframe_backend ?? null,
+  } as NewRenderRow;
   await insertRenderBestEffort(env, row);
   return json(view, 201);
 };
@@ -942,7 +945,10 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     status: view.status,
     mode: "finalized",
     projectId: await resolveProjectRef(env, b.projectId),
-  });
+    // cf#393: from-keyframes has motion, no keyframe module pass.
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: null,
+  } as NewRenderRow);
   return json(view, 201);
 };
 const hRegenShot: Handler = async (req, env, _c, p) => {
@@ -1167,9 +1173,11 @@ const hAdoptRender: Handler = async (req, env) =>
 
 // --- validation ----------------------------------------------------------
 // Pre-render preflight. The client (planner.js `runPreflight`) POSTs the
-// envelope { storyboard, castBindings?, bundleKey?, audioKey? } and expects a
+// envelope { storyboard, castBindings?, motionBackend?, quality? } and expects a
 // PreflightResult { ok, counts, issues[] } (see ./preflight): it renders the
 // issues, shows the counts, and gates the bundle button on counts.error.
+// bundleKey / audioKey are NOT read here (mcp#26 / cf#315 honesty): do not re-add
+// them to the envelope docs without wiring validation.
 //
 // Two things this handler must get right (both were wrong before #242):
 //   1. Unwrap `.storyboard` from the envelope. The previous code validated the
@@ -1809,8 +1817,10 @@ function demoChatCaps(env: StudioEnv): DemoChatCaps {
   };
 }
 
-/** Is the demo render backend armed? DEMO_RENDER_ENABLED="true" AND the demo-scoped local-gpu door is
- *  bound. Post-credits the operator unsets the var (or unbinds the door) -> renders paused, no outage. */
+/** Is the demo render backend armed in config? DEMO_RENDER_ENABLED="true" AND the demo-scoped
+ *  local-gpu door is bound. This is NOT a live door-box healthcheck (cf#28): a down box still
+ *  reports available=true and fails at submit. Post-credits the operator unsets the var (or unbinds
+ *  the door) -> renders paused, no outage. */
 function demoRenderEnabled(env: StudioEnv): boolean {
   return (env.DEMO_RENDER_ENABLED || "").trim() === "true"
     && !!resolveFetcher(env as unknown as Record<string, unknown>, "MODULE_LOCAL_GPU");
