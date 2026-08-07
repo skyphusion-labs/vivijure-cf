@@ -5,6 +5,36 @@ for new features). Newest first.
 
 ## Unreleased
 
+### feat(finish): hosted upscale on our own always-on GPU iron (#480)
+
+`finish-upscale` and `speech-upscale` take an optional Workers VPC service binding
+(`FINISH_UPSCALE_VPC` / `SPEECH_UPSCALE_VPC`) into the always-on door on our own GPU hardware.
+**Bound, every job goes there and RunPod is not called at all. Unbound, the RunPod path is byte for
+byte what shipped before** -- pinned in the suite on URL, method, authorization and content-type,
+because a merged header object is exactly how a content-type gets dropped in a path nobody re-checks.
+
+**The branch is BOUND-ness and never a failover** (the cp#321 rule). A door-to-RunPod failover would
+silently re-rent the GPU this removes, at the moment nobody is watching, with every signal green. A
+door failure soft-degrades the polish step and names the DOOR in the reason.
+
+**The poll token now records which transport minted the job.** This is not an optimisation: the door
+keeps job state in a per-process registry, so a cross-route poll 404s, which reads as a GC'd job and
+past the grace window FAILS THE SHOT. Affinity is what stops finished work being destroyed by
+components all behaving correctly. An absent label means RunPod, which is what every pre-existing
+token carries, so old tokens are unaffected.
+
+`GET /ready` reports the door **only when one is bound**, leaving the module-agnostic `/ready` shape
+byte-identical for the seven modules the control plane's prober reads.
+
+**Operator panel only.** A tenant studio cannot bind this today (cp#359); the four new bindings are
+classified `operator-only` in the cf#394 tenant-reachability register, so adding these modules to
+`TENANT_MODULE_CATALOG` turns CI red rather than shipping a binding a tenant cannot hold.
+
+**Not yet live, and deliberately so:** no `[[vpc_services]]` block ships here, because the
+connectivity-directory services do not exist yet and `scripts/deploy-module-workers.sh` hard-refuses
+any toml still matching `REPLACE_WITH_`. Guards are mutation-proven (6 of 6, each red for its named
+reason); see `docs/cf480-door-mutations.md`, which also states plainly what the stubs cannot prove.
+
 ### chore(deps): pin @skyphusion-labs/vivijure-core ^1.10.0
 
 Picks up the RunPod ROUTE contract (cp#321 step 1, core#169): a call goes through the control-plane
