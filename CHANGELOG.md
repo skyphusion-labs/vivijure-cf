@@ -5,6 +5,39 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(deploy): comment-aware placeholder guard, and OPTIONAL VPC service ids (#482)
+
+Two defects in `scripts/deploy-module-workers.sh`, plus the capability they were blocking.
+
+**The survivor check was comment-blind.** A bare `grep -q "REPLACE_WITH_"` followed by `exit 1`
+matches inside a `#` comment and aborts the whole module loop, so **one commented-out example block
+in one module toml failed the deploy for every module after it**. Verified with both controls. Its
+message also said `store_id placeholder survived` while guarding five placeholder families, sending
+an operator to the Secrets Store for a VPC problem; it now names the file and every survivor.
+
+**VPC service ids are now two declared classes.** REQUIRED (audio-master, beat-sync, film-titles,
+subtitle) reach their containers ONLY over their binding, so an unset id still refuses -- unbound
+they soft-degrade and the film ships without that phase. OPTIONAL (#480's doors) are an alternative
+to a path that still works, so an unset id **strips the binding's blocks and deploys**. Making every
+id optional would have been the smaller diff and would have deleted a working guard.
+
+An unset optional id has to STRIP rather than leave the block, because a `[[vpc_services]]` block
+naming a nonexistent service dangles the deploy: optional must mean optional all the way down, or
+the module's unbound branch is unreachable in production. The strip is **marker-driven, not
+block-type-driven** -- a door needs a `[[vpc_services]]` block AND a `[[secrets_store_secrets]]`
+block for its bearer, and stripping only the first is a half-strip that fails at deploy.
+
+**The fill is now its own script** (`scripts/fill-module-placeholders.sh`, no network, no wrangler)
+so it is testable: `deploy-module-workers.sh` runs only on a tag, so every defect in it was
+invisible until a release. 16 new cases drive the shipped script and the shipped awk. **Three
+defects were found by those tests and none by reading**, including one control that passed for the
+wrong reason. Guards mutation-proven 6 of 6, each red for its named victim
+(`scripts/cf482-mutation-proof.py`).
+
+**#480's door bindings are now declared in both module tomls.** Safe before the connectivity
+-directory service exists, which is the point: with the id unset -- today's state, and every
+operator without a door -- both blocks are stripped and the module deploys byte-identical to now.
+
 ### feat(finish): hosted upscale on our own always-on GPU iron (#480)
 
 `finish-upscale` and `speech-upscale` take an optional Workers VPC service binding
