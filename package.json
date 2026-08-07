@@ -18,7 +18,7 @@
   "type": "module",
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
-    "@skyphusion-labs/vivijure-core": "^1.7.2",
+    "@skyphusion-labs/vivijure-core": "^1.9.0",
     "@skyphusion-labs/vivijure-mcp": "^1.2.1"
   },
   "scripts": {
@@ -43,6 +43,7 @@
     "wrangler": "^4.118.0"
   },
   "overrides": {
-    "sharp": "0.35.3"
+    "sharp": "0.35.3",
+    "undici": "7.29.0"
   }
 }
