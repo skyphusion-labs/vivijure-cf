@@ -19,7 +19,7 @@ one row per job, upserted on `job_id`:
 |---|---|
 | `job_id` | the RunPod job id (upsert key) |
 | `module` | the module worker name, a compile-time constant, already public in its `/module.json` |
-| `outcome` | `submitted` / `completed` / `backend-error` / `failed` / `gone` / `cancelled` |
+| `outcome` | `submitted` / `completed` / `backend-error` / `failed` / `gone` / `cancelled` / `unknown` |
 | `detail` | the backend error text on a fault, bounded to 160 chars |
 | `submitted_at` | unix seconds; NULL only for a legacy poll token that carried no submit time |
 | `terminal_at` | unix seconds; NULL while the outcome is `submitted` |
@@ -160,17 +160,20 @@ row count, not a hunch.
 ```sql
 SELECT module,
        COUNT(*)                                                   AS jobs,
-       SUM(outcome = completed)                                 AS completed,
-       SUM(outcome IN (failed, backend-error, gone))        AS faults,
-       SUM(outcome = cancelled)                                 AS cancelled,
-       SUM(outcome = submitted)                                 AS never_resolved
+       SUM(outcome = 'completed')                               AS completed,
+       SUM(outcome IN ('failed', 'backend-error', 'gone'))      AS faults,
+       SUM(outcome = 'cancelled')                               AS cancelled,
+       SUM(outcome = 'unknown')                                 AS unknown_after_retention,
+       SUM(outcome = 'submitted')                               AS never_resolved
 FROM runpod_job_log
 WHERE submitted_at >= ?
 GROUP BY module;
 ```
 
 `never_resolved` is signal, not noise: a row still open long after its window is a job whose end we
-never observed, which the lifetime counters cannot show either.
+never observed, which the lifetime counters cannot show either. `unknown` is different: we tried
+reconcile past retention and still had no answer, so the denominator is honest rather than open
+forever.
 
 ## `cancelled`, and what it is NOT (cf#298)
 
@@ -231,19 +234,39 @@ would be worse than the honest absence.
 that is supposed to be structured would manufacture exactly the confidence that data does not
 support. Anything summarising by `error_type` must treat NULL as unknown, never as a fourth category.
 
-## The lost terminal write is REDUCED, not closed (cf#298)
+## Closing a lost terminal write (cf#298)
 
 The terminal write happens on the module POLL path. Once the core advances past that phase nothing
-polls the job again, so a terminal write lost to a transient D1 error is lost permanently and the row
-reads as an in-flight job forever. Measured at 2 of 20 module jobs in a run with zero actual faults:
-a perfect run presenting as ten percent unexplained.
+polls the job again, so a terminal write lost to a transient D1 error used to be permanent and the
+row read as an in-flight job forever. Measured at 2 of 20 module jobs in a run with zero actual
+faults: a perfect run presenting as ten percent unexplained.
 
-What is in place now is ONE bounded retry inside the existing timeout budget, so the caller's
-worst-case delay is unchanged. That narrows the window. It does not close it: a D1 outage longer than
-the budget still loses the row, and nothing revisits a row after the fact.
+**Two layers:**
 
-The real fix is a reconciler that re-asks RunPod for rows with `terminal_at IS NULL`, and it has a
-hard constraint that must not be designed around: RunPod keeps async results for roughly 30 minutes
-and has no job-history API, so a reconciler running later than that cannot learn the outcome at all
-and must record it as unknown rather than guess. Two jobs from the original report returned COMPLETED
-inside the window and 404 afterwards. That is filed separately and is NOT done here.
+1. **Bounded write retry** inside the existing `RUNPOD_JOB_LOG_TIMEOUT_MS` budget (one delay of
+   `RUNPOD_JOB_LOG_RETRY_DELAY_MS`). Narrows the window; does not close a longer D1 outage.
+
+2. **Reconciler** (`reconcileOpenRunpodJobs` / `reconcileOpenRunpodJobsBestEffort` in
+   `modules/_shared/runpod-job-log.ts`). On each poll of a wired module, fire-and-forget: list open
+   rows for that module older than `RECONCILE_MIN_AGE_SEC` (90s), re-query RunPod `/status/<id>`,
+   and write the terminal outcome found. First-terminal-write-wins still holds.
+
+   | RunPod answer | row outcome |
+   |---|---|
+   | `COMPLETED` / `FAILED` / `CANCELLED` / `TIMED_OUT` | matching terminal (same map as the poll path) |
+   | job not found / 404 | `gone` |
+   | still `IN_QUEUE` / `IN_PROGRESS` | leave open |
+   | transient fetch/D1 error | leave open |
+   | age past `RECONCILE_UNKNOWN_AFTER_SEC` (25 min) with no terminal answer | `unknown` |
+
+   Hard constraint that must not be designed around: RunPod keeps async results ~30 minutes and has
+   no job-history API. Past that window we record `unknown` rather than inventing `completed`. Two
+   jobs from the original report returned COMPLETED inside the window and 404 afterwards.
+
+**Wiring (first ship):** only **keyframe** and **own-gpu** call the best-effort reconciler from
+`/poll` -- those are the two modules that produced the measured stuck rows. Other modules can adopt
+the same one-liner later; there is no cross-module cron in this PR.
+
+**Best-effort forever:** the reconciler never throws, never rejects, never gates the render poll.
+`tests/runpod-job-log.test.ts` covers status mapping, deliberately dropped terminal writes closing
+after re-query, `unknown` after retention, and non-throwing failure modes.

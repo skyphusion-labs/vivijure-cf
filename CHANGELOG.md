@@ -80,6 +80,19 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298)
+
+A terminal write lost on the poll path used to leave the row at `submitted` forever (measured 2/20
+in a clean run). Retry already narrowed the window; this closes the gap for rows still open:
+
+- Shared reconciler in `modules/_shared/runpod-job-log.ts`: list open rows, re-query RunPod, write
+  terminal outcome; past ~25 min with no answer write `unknown` (new outcome; honest vs inventing
+  completed). Best-effort, never gates render.
+- Wired on **keyframe** and **own-gpu** `/poll` only (the two modules that produced the measured
+  stuck rows). Other modules can adopt later.
+- Docs: `docs/runpod-job-log.md`. Tests: status map, dropped terminal write, retention `unknown`.
+
+Hosted module telemetry (RunPod). Dual-panel N/A for vivijure-local studio door.
 
 ## v1.20.1 -- 2026-08-05
 
