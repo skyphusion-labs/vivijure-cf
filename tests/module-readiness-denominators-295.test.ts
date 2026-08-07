@@ -150,9 +150,11 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(ENTRIES.length).toBe(27);
     expect(WRITES_JOB_LOG.length).toBe(15);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
-    // tenant bundle. A bundle with no catalog row uploads nothing, so publishing is inert until the
-    // plane adds rows; it exists to remove the cross-repo serialisation, not to change behaviour.
-    expect(publishedToTenants().length).toBe(16);
+    // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
+    // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
+    // nothing, so publishing is inert until the plane adds rows; it exists to remove the
+    // cross-repo serialisation, not to change behaviour.
+    expect(publishedToTenants().length).toBe(20);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are
@@ -174,14 +176,29 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(WRITES_JOB_LOG).not.toContain("plan-enhance");
 
     // cf#394 published nine modules ahead of the catalog; cp#317 has since catalogued eight of
-    // them, so the published-not-provisioned set is now `image-generate` alone -- gated on #401
-    // because it reads OPENAI_API_KEY, an operator-scoped credential.
+    // them. cf#396 then published the four own-iron finishing modules ahead of the catalog for a
+    // DIFFERENT reason, so the set now has two distinct causes and neither is drift:
+    //
+    //   - `image-generate` -- gated on #401, because it reads OPENAI_API_KEY, an operator-scoped
+    //     credential.
+    //   - `audio-master`, `beat-sync`, `film-titles`, `subtitle` -- each reaches the finishing
+    //     swarm over a Workers VPC service binding, and `uploadTenantModules` binds no
+    //     `vpc_service` (measured: zero occurrences of "vpc" in the plane's tenant-modules.ts,
+    //     against a matcher proven on three sibling files). Catalogue them before that exists and
+    //     three degrade to a tagged passthrough while `beat-sync` returns ok:false on every score
+    //     invoke. Published first so the bundles exist; the row waits on the binding.
     //
     // ASSERTED AS A SET DIFFERENCE, not as a hand-listed loop (cp#314). A loop over names somebody
     // typed re-encodes the same stale list this file was fixed for: it keeps passing as the two
     // populations move, and reports nothing about the members nobody thought to add.
     const publishedNotProvisioned = publishedToTenants().filter((m) => !CATALOG.includes(m));
-    expect(publishedNotProvisioned).toEqual(["image-generate"]);
+    expect(publishedNotProvisioned).toEqual([
+      "audio-master",
+      "beat-sync",
+      "film-titles",
+      "image-generate",
+      "subtitle",
+    ]);
     for (const m of ["seedance", "kling", "google-veo"]) {
       expect(publishedToTenants(), m).toContain(m);
       expect(CATALOG, m).toContain(m);

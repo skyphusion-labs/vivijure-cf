@@ -14,7 +14,7 @@ the modules, that test fails.
 |---|---|---|---|
 | 1 | Modules in this repo | **27** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **15** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
-| 3 | Modules PUBLISHED as tenant bundles by a studio release | **16** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
+| 3 | Modules PUBLISHED as tenant bundles by a studio release | **20** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **15** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
 Population 4 is the one an operator actually sees, and it is **15 of 27**.
@@ -27,16 +27,27 @@ existed the copy lived as a literal inside the test that asserted its length, so
 compared the copy against itself: the catalog went 6 to 7 to 15 and nothing ever failed. **If you
 are correcting this page, correct the mirror in the same commit; the test asserts they agree.**
 
-**Populations 3 and 4 are one module apart, and the gap is the point.** They were briefly equal --
-7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane could not add a single
-further module without a studio release first. cf#394 published nine more (the eight cost-door
-modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine, taking 4
-to 15. **A published bundle with no catalog row uploads nothing to anybody**; it exists so the plane
-can add a row when it is ready, instead of the two repos taking turns.
+**Populations 3 and 4 are five modules apart, and the gap is the point.** They were briefly equal
+-- 7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane could not add a
+single further module without a studio release first. cf#394 published nine more (the eight
+cost-door modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine,
+taking 4 to 15. cf#396 published four more, taking 3 to 20. **A published bundle with no catalog row
+uploads nothing to anybody**; it exists so the plane can add a row when it is ready, instead of the
+two repos taking turns.
 
-The one remaining gap is **`image-generate`**: published, not catalogued, because it reads
-`OPENAI_API_KEY` -- an operator-scoped credential -- and is gated on #401. That is a live product
-decision, not drift.
+The five in the gap are published-not-catalogued **for two different reasons, and neither is drift.**
+
+- **`image-generate`** reads `OPENAI_API_KEY`, an operator-scoped credential, and is gated on #401.
+  A live product decision.
+- **`audio-master`, `beat-sync`, `film-titles`, `subtitle`** each reach the finishing swarm over a
+  Workers VPC service binding, and the plane's `uploadTenantModules` binds no `vpc_service` at all
+  (measured 2026-08-07: zero occurrences of `vpc` across the 1295 lines of the plane's
+  `src/tenant-modules.ts`, with the matcher proven against three sibling files that do carry it).
+  **A catalog row without that binding is worse than no row**: `audio-master`, `film-titles` and
+  `subtitle` fall to their unbound guard and return a tagged, degraded passthrough -- the film keeps
+  its bytes and gains no mastering, no titles and no subtitles -- while `beat-sync` has no unbound
+  guard at all and returns `ok:false` on every `score` invoke. So the hook would read as covered
+  while producing nothing. Published first so the bundles exist; the row waits on the binding.
 
 ## The table
 
@@ -46,12 +57,12 @@ decision, not drift.
 |---|---|---|---|---|---|
 | alibaba-wan | yes | yes | yes | **yes** | **yes** |
 | alibaba-wan-lora | yes | yes | yes | **yes** | **yes** |
-| audio-master | yes | no | no | no | no |
-| beat-sync | yes | no | no | no | no |
+| audio-master | yes | no | no | **yes** | no |
+| beat-sync | yes | no | no | **yes** | no |
 | cast-image | yes | no | no | no | no |
 | cloud-keyframe | yes | no | no | no | no |
 | dialogue-gen | yes | no | no | no | no |
-| film-titles | yes | no | no | no | no |
+| film-titles | yes | no | no | **yes** | no |
 | finish-blender | yes | yes | yes | no | no |
 | finish-lipsync | yes | yes | yes | yes | yes |
 | finish-rife | yes | yes | yes | yes | yes |
@@ -69,7 +80,7 @@ decision, not drift.
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
 | seedance | yes | yes | yes | **yes** | **yes** |
 | speech-upscale | yes | yes | yes | yes | yes |
-| subtitle | yes | no | no | no | no |
+| subtitle | yes | no | no | **yes** | no |
 | vidu-q3 | yes | yes | yes | **yes** | **yes** |
 
 ## The two asymmetries, and why each is fine
