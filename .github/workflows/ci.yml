@@ -489,6 +489,12 @@ jobs:
       # (STUDIO_API_TOKEN, MCP_TOKEN) are seeded ONCE out-of-band (see docs/mcp.md), never in CI --
       # same doctrine as the module secrets, so no secret value passes through GitHub. POSIX sh
       # (BusyBox ash in node:22-alpine); no bash-isms.
+      #
+      # cf#328: this job deploys ONLY vivijure-studio-mcp (production). The propagandhi / local
+      # door (wrangler.mcp.propagandhi.toml, script vivijure-studio-mcp-flatliners) is INTENTIONAL,
+      # hand-deployed, and must NOT share this path -- different STUDIO_URL + fleet secrets CI must
+      # not hold. Package/serverInfo drift for both configs is guarded by tests/mcp-doors-328.test.ts;
+      # live lag after a pin bump is closed by hand redeploy (docs/mcp.md).
       - name: Deploy Studio MCP Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -44,6 +44,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("video-finish")
 
 
+def _elapsed_ms(t0: float) -> int:
+    """Wall-clock ms since t0 (cf#268 capacity telemetry). Integer, never negative."""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
+
+
 # ---------------------------------------------------------------------------
 # Async job+poll mode (#602). A film.finish encode (subtitle burn / title cards)
 # on a long film can outlast a single Worker request budget; the synchronous
@@ -154,6 +159,7 @@ async def _download(session, url, path, cap):
 
 
 async def finish(req):
+    t0 = time.monotonic()
     try:
         body = await req.json()
     except Exception:
@@ -273,6 +279,8 @@ async def finish(req):
             "height": height,
             # ACTUAL per-clip assembled seconds in submit order (#697/#698); null on the remux path.
             "clipDurations": clip_durations,
+            # cf#268: CPU finish wall clock for capacity planning (not GPU job time).
+            "elapsedMs": _elapsed_ms(t0),
         })
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -755,6 +763,7 @@ async def _film_titles_work(body):
     """The /film-titles work: validate, download the film, prepend/append cards,
     PUT the result. Shared by the synchronous route and the async job runner.
     Raises _JobError(status, message) on any failure; returns the result dict."""
+    t0 = time.monotonic()
     video_url = body.get("videoUrl")
     output_url = body.get("outputUrl")
     output_key = body.get("outputKey", "")
@@ -823,6 +832,7 @@ async def _film_titles_work(body):
             "key": output_key,
             "bytes": len(out_bytes),
             "durationSeconds": round(secs, 3),
+            "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -946,6 +956,7 @@ async def _subtitle_work(body):
     """The /subtitle work: burn a time-synced SRT onto the film and/or write a
     soft .srt sidecar. Shared by the synchronous route and the async job runner.
     Raises _JobError(status, message) on failure; returns the result dict."""
+    t0 = time.monotonic()
     srt_text = body.get("srt")
     mode = str(body.get("mode", "burn"))
     video_url = body.get("videoUrl")
@@ -1048,6 +1059,7 @@ async def _subtitle_work(body):
             "sidecar": sidecar_done,
             "sidecarKey": sidecar_key if sidecar_done else "",
             "durationSeconds": round(out_secs, 3),
+            "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -4,8 +4,10 @@
 -- ends and, before this table, wrote neither. RunPod cannot enumerate jobs (the whole surface is
 -- /run, /status, /stream, /cancel, /retry, /purge-queue, /health, and /status is by id only), so an
 -- id we do not keep is unreachable permanently. The `renders` table does not close the gap: its
--- job_id is written only for jobs the CORE submits to the render endpoint, so no job on the
--- musetalk, video-upscale or audio-upscale endpoints has ever had a row anywhere.
+-- job_id was historically written only for jobs the CORE submitted to a single render endpoint, and
+-- the CORE no longer submits to RunPod at all (every /run submitter is a module worker). Module-
+-- submitted jobs (keyframe, own-gpu, musetalk, video-upscale, audio-upscale, finish-*, ...) are
+-- exactly the population this table was added for (cf#279, cf#315).
 --
 -- WHY A SUBMIT ROW AND NOT ONLY A FAILURE ROW. cf#277 asks for a failure RATE per endpoint. A rate
 -- needs a denominator, and the endpoint health counters cannot supply one: they bucket four terminal
