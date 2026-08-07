@@ -1,0 +1,32 @@
+# finish-blender module worker (vivijure-module/2): Blender headless compositor on the dedicated
+# vivijure-blender RunPod endpoint. Bound into the core as MODULE_FINISH_BLENDER.
+#
+# account_id is read from CLOUDFLARE_ACCOUNT_ID (env). No R2 creds on this worker -- the endpoint
+# reads/writes the shared bucket by key.
+
+name = "vivijure-module-finish-blender"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "TELEMETRY_DB"
+database_name = "vivijure-studio"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[secrets_store_secrets]]
+binding = "RUNPOD_API_KEY"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "RUNPOD_API_KEY"
+
+[[secrets_store_secrets]]
+binding = "RUNPOD_ENDPOINT_ID"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "BLENDER_RUNPOD_ENDPOINT_ID"
+
+[vars]
+RUNPOD_WORKERS_MAX = "2"

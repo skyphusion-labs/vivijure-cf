@@ -116,6 +116,9 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     # instead of a transparent PNG -- an honest degradation, not a failure. The module treats the
     # placeholder below as ABSENT precisely so that degradation still happens; see its secretValue().
     "IMAGE_GENERATE_OPENAI_API_KEY",
+    # Optional Blender compositor satellite (finish-blender). Not auto-provisioned with the
+    # four render endpoints; operator runs vivijure-blender/deploy.sh and replaces this.
+    "BLENDER_RUNPOD_ENDPOINT_ID",
 )
 STORE_BINDING_NAMES = AUTO_STORE_NAMES + OPERATOR_STORE_NAMES
 
@@ -739,6 +742,7 @@ BACKEND_IMAGE_TAG = "1.0.2"        # ghcr.io/skyphusion-labs/vivijure-backend
 UPSCALE_IMAGE_TAG = "1.0.1"        # ghcr.io/skyphusion-labs/vivijure-upscale
 MUSETALK_IMAGE_TAG = "1.0.0"       # ghcr.io/skyphusion-labs/vivijure-musetalk
 AUDIO_UPSCALE_IMAGE_TAG = "1.0.0"  # ghcr.io/skyphusion-labs/vivijure-audio-upscale
+BLENDER_IMAGE_TAG = "0.1.0"        # ghcr.io/skyphusion-labs/vivijure-blender (optional; not in RUNPOD_ENDPOINTS)
 
 
 def runpod_images() -> dict:
@@ -749,6 +753,8 @@ def runpod_images() -> dict:
         "vivijure-upscale": ("ghcr.io/skyphusion-labs/vivijure-upscale", UPSCALE_IMAGE_TAG),
         "vivijure-musetalk": ("ghcr.io/skyphusion-labs/vivijure-musetalk", MUSETALK_IMAGE_TAG),
         "vivijure-audio-upscale": ("ghcr.io/skyphusion-labs/vivijure-audio-upscale", AUDIO_UPSCALE_IMAGE_TAG),
+        # Optional; not in RUNPOD_ENDPOINTS auto-provision list.
+        "vivijure-blender": ("ghcr.io/skyphusion-labs/vivijure-blender", BLENDER_IMAGE_TAG),
     }
 
 

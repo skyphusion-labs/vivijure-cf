@@ -268,6 +268,15 @@ service = "vivijure-module-keyframe"
 binding = "MODULE_FINISH_RIFE"
 service = "vivijure-module-finish-rife"
 
+
+# >>> SATELLITE: finish-blender -- Blender compositor on a SEPARATE RunPod endpoint
+# Optional finish-chain grade (headless Blender). After lipsync, before upscale. Not required
+# for the satellites profile -- opt-in only.
+# [[services]]
+# binding = "MODULE_FINISH_BLENDER"
+# service = "vivijure-module-finish-blender"
+# <<< SATELLITE: finish-blender
+
 # >>> SATELLITE: finish-upscale -- Real-ESRGAN upscale on a SEPARATE RunPod endpoint
 # Upscale: a finish-chain module (Real-ESRGAN 2x/4x spatial upscale) on the dedicated vivijure-upscale
 # RunPod endpoint (CUDA, separate from vivijure-backend). Folds after finish-rife in ui.order.
