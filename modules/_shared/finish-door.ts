@@ -93,9 +93,20 @@ export function doorBound(route: DoorRoute): boolean {
 /** Resolve the door route for a request. `token` is already-resolved plaintext (the module owns
  *  Secrets Store resolution; this file never touches a secret binding, so it stays testable with
  *  plain values and cannot leak one by accident). */
+/** The self-host installer seeds an operator-supplied secret as this MARKED placeholder so the
+ *  module deploy resolves, and the operator replaces it afterwards (deploy/vivijure_deploy.py).
+ *  Treated as ABSENT here, exactly as modules/image-generate does for its BYOK key and for the
+ *  same stated reason: presenting `REPLACE_ME__...` as a bearer gets a 401 from the door, which
+ *  this module would report as `door-run-failed: HTTP 401` -- a TRANSPORT verdict for what is
+ *  actually an unfinished configuration. Reading it as absent produces
+ *  `door-token-not-yet-visible`, which names the real state and is the same propagation-vs-
+ *  misconfiguration distinction cf#114 drew for the RunPod credentials. */
+const OPERATOR_PLACEHOLDER = "REPLACE_ME__vivijure-deploy-operator-secret";
+
 export function doorRoute(binding: DoorBinding | undefined | null, token: string): DoorRoute {
   if (!binding) return { binding: null, name: "", token: "" };
-  return { binding, name: DOOR_ROUTE_NAME, token: token || "" };
+  const usable = token.trim() === OPERATOR_PLACEHOLDER ? "" : token;
+  return { binding, name: DOOR_ROUTE_NAME, token: usable || "" };
 }
 
 /** Bearer headers for the door. Separate from `runpodHeaders` on purpose: this is a different

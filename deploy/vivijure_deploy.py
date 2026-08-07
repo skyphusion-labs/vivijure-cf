@@ -119,6 +119,19 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     # Optional Blender compositor satellite (finish-blender). Not auto-provisioned with the
     # four render endpoints; operator runs vivijure-blender/deploy.sh and replaces this.
     "BLENDER_RUNPOD_ENDPOINT_ID",
+    # cf#480/#482: bearers for the OPTIONAL always-on finish doors on the operator's own GPU
+    # hardware. Optional in the IMAGE_GENERATE_OPENAI_API_KEY sense rather than the
+    # BLENDER_RUNPOD_ENDPOINT_ID sense: left unreplaced the module degrades honestly instead of
+    # failing, because finish-door.ts treats this placeholder as ABSENT (same three lines
+    # image-generate uses, and for the same reason).
+    #
+    # Seeded even though a BASE self-host install cannot reach a door: render_module_toml strips
+    # [[vpc_services]] wholesale, but it does NOT strip [[secrets_store_secrets]], so the door's
+    # bearer block survives into the rendered toml and an unseeded name is a dangling binding
+    # (10182 at deploy). The two halves of one optional binding are stripped by DIFFERENT rules on
+    # the self-host path, which is why this needs seeding and the VPC id does not.
+    "FINISH_DOOR_TOKEN",
+    "SPEECH_DOOR_TOKEN",
 )
 STORE_BINDING_NAMES = AUTO_STORE_NAMES + OPERATOR_STORE_NAMES
 
