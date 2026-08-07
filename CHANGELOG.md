@@ -3,6 +3,42 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.21.1 -- 2026-08-07
+
+### fix(studio): pull finish-blender out of the hosted finish chain
+
+**Every hosted render was failing.** Two real renders FAILED at `MODULE_FINISH_BLENDER`
+after delivering their clip cleanly (1/1, 5s, 120 frames), with
+`R2 mode needs R2_ENDPOINT_URL + R2_ACCESS_KEY_ID/SECRET in the endpoint env`.
+
+Three beliefs behind shipping it were wrong, and all three are worth stating because each
+one alone would have stopped this:
+
+- **The finish chain runs every SERVING module, not only those named in `finish_config`.**
+  A render passing only `finish-upscale` still invoked blender. "Opt-in" describes the
+  BINDING, not the per-render config.
+- **It does not soft-degrade.** We believed a failed blender job passed the clip through and
+  that the blast radius was therefore bounded. It fails the whole film. That was asserted,
+  repeated, and never verified.
+- **It is not a cf defect.** Probing the endpoint DIRECTLY reproduces it
+  (`runsync 0uc4dmpxmn8jop` -> FAILED, workerId `8d84om1ludraah`, executionTime 87ms) with
+  the env visibly set on the template, so the `{{ RUNPOD_SECRET_* }}` references are not
+  resolving inside the container. No cf change fixes that.
+
+Removal is the exact inverse of cf#468: the `[[services]]` block binding
+`MODULE_FINISH_BLENDER` is commented out again, returning it to opt-in. `MODULE_*` service
+bindings are how `src/platform/cf-module-transport.ts` discovers modules, so an unbound
+module is not in the chain at all.
+
+**Not** done by unsetting `BLENDER_RUNPOD_ENDPOINT_ID`: that module carries no
+`cf482-optional` marker, so an unset id would leave a binding to a missing Secrets Store
+entry and fail the deploy rather than strip the block.
+
+The blender image defect is separately fixed and published (`0.1.1`, blender#5) and the
+endpoint is re-pinned to it. The secret-resolution defect is filed and is not addressed here.
+
+Refs fleet-chezmoi#1592.
+
 ## v1.21.0 -- 2026-08-07
 
 ### fix(deploy): comment-aware placeholder guard, and OPTIONAL VPC service ids (#482)
