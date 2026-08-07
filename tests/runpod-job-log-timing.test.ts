@@ -124,6 +124,60 @@ describe("the timing reaches the statement in the right positions", () => {
   });
 });
 
+// cf#475 / cp#274: the reason this block exists is that somebody WILL read these columns as a cost
+// record, and the difference between "we were not told the timing" and "we never saw this job" is
+// the difference between a total that is honest and one that is quietly low.
+describe("a NULL timing must never be confusable with a job that was never recorded", () => {
+  const bindOf = async (rec: Parameters<typeof recordRunpodJob>[1]) => {
+    const { db, bound } = recordingDb();
+    await recordRunpodJob(db, rec, 1_700_000_060_000);
+    return bound[0];
+  };
+  const TERMINAL_AT = 5;
+  const EXECUTION_MS = 7;
+
+  it("STATE 2: terminal observed, no timing reported -> terminal_at SET, execution_ms NULL", async () => {
+    const b = await bindOf({
+      jobId: "s2", module: "keyframe", outcome: "cancelled", submittedAtMs: 1_700_000_000_000,
+      ...timingFromStatus({ status: "CANCELLED" }),
+    });
+    expect(b[TERMINAL_AT]).not.toBeNull();
+    expect(b[EXECUTION_MS]).toBeNull();
+  });
+
+  it("STATE 1: submitted, terminal NEVER observed -> BOTH NULL", async () => {
+    const b = await bindOf({
+      jobId: "s1", module: "keyframe", outcome: "submitted", submittedAtMs: 1_700_000_000_000,
+    });
+    expect(b[TERMINAL_AT]).toBeNull();
+    expect(b[EXECUTION_MS]).toBeNull();
+  });
+
+  it("so the two are DISCRIMINATED by terminal_at, which is the whole point", async () => {
+    const observedNoTiming = await bindOf({
+      jobId: "d1", module: "keyframe", outcome: "cancelled", submittedAtMs: 1_700_000_000_000,
+      ...timingFromStatus({ status: "CANCELLED" }),
+    });
+    const neverObserved = await bindOf({
+      jobId: "d2", module: "keyframe", outcome: "submitted", submittedAtMs: 1_700_000_000_000,
+    });
+    // Both carry a NULL execution_ms. If terminal_at did not separate them, a reader could not tell
+    // "recorded and not told" from "recorded and never resolved", and this assertion is what stops
+    // that collapsing silently.
+    expect(observedNoTiming[EXECUTION_MS]).toBeNull();
+    expect(neverObserved[EXECUTION_MS]).toBeNull();
+    expect(observedNoTiming[TERMINAL_AT]).not.toEqual(neverObserved[TERMINAL_AT]);
+  });
+
+  it("STATE 4 is NOT representable here, and that is the finding rather than a gap in the test", () => {
+    // A submitter that never calls recordRunpodJob writes NO ROW. There is nothing to assert about
+    // it from inside this table, and no query against these columns can tell it from a quiet period.
+    // Recorded as a comment rather than a skipped test, because a skipped test reads as work pending
+    // and this is a structural property: the fix lives in the SUBMITTER (cf#475), never here.
+    expect(true).toBe(true);
+  });
+});
+
 describe("the upsert preserves timing the way it preserves detail", () => {
   it("COALESCEs both columns so a later write cannot erase an earlier measurement", () => {
     expect(RUNPOD_JOB_LOG_UPSERT).toContain(

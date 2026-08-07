@@ -46,6 +46,32 @@
 -- NULL rather than being reconstructed from wall-clock, which would manufacture exactly the
 -- confidence this migration exists to stop.
 --
+-- FOUR STATES, AND ONLY THREE OF THEM ARE VISIBLE FROM THIS TABLE. Read this before summing the
+-- column, because the invisible one is the reason a total here can be quietly low.
+--
+--   terminal_at  execution_ms   what it means
+--   -----------  ------------   -------------------------------------------------------------------
+--   NULL         NULL           Recorded at submit, terminal state NEVER OBSERVED. The losable
+--                               terminal write. The job may well have run and cost money.
+--   NOT NULL     NULL           Terminal state observed, and RunPod reported no timing for it. A
+--                               CANCELLED job carries neither field; the 404 `gone` path has no
+--                               envelope to read at all.
+--   NOT NULL     NOT NULL       Terminal state observed WITH timing. The only fully known row.
+--   (no row)     (no row)       NEVER RECORDED. STRUCTURALLY INVISIBLE HERE.
+--
+-- The invariant that makes the first two distinguishable is enforced in the writer: any outcome
+-- other than `submitted` sets terminal_at, so a NULL in this column NEVER means "we did not record
+-- this job" -- it means "we recorded it and were not told". Asserted in
+-- tests/runpod-job-log-timing.test.ts so it cannot regress into ambiguity.
+--
+-- THE FOURTH ROW IS THE DANGEROUS ONE AND IT IS NOT FIXABLE HERE. A submitter that never calls the
+-- writer produces no row, and no query against this table can tell that from a quiet period. That is
+-- not hypothetical: vivijure-cf#475 records live GPU spend on an endpoint with ZERO rows here,
+-- measured at 14.5% and 21.9% of two days' GPU cost. EVERY ROW THAT IS PRESENT IS CORRECT, which is
+-- exactly why an attribution built on this table under-counts SILENTLY and in the flattering
+-- direction. Anything reporting a total from these columns must state which submitters write here,
+-- or it is asserting completeness it does not have.
+--
 -- Additive (ADD COLUMN only, no default, no rewrite) -> rides the normal auto-apply; no manual gate.
 ALTER TABLE runpod_job_log ADD COLUMN execution_ms INTEGER;
 ALTER TABLE runpod_job_log ADD COLUMN delay_ms INTEGER;
