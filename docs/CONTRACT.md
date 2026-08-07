@@ -86,9 +86,9 @@ Each kind of change moves the same set of artifacts together, in one PR, with th
 
 | Change | Typed-source edits (all in the same PR as this doc) |
 |--------|-----------------------------------------------------|
-| **New hook** | Add to `HookName` union + `HOOK_NAMES` + `HOOK_CARDINALITY` + `HOOK_BLURBS`; add a named `XInput` / `XOutput` interface in `src/modules/types.ts`; add a branch to `HOOK_OUTPUT_CHECKS` in `src/modules/conformance.ts` (tsc's `Record<HookName, ...>` FORCES this, so a missing branch fails the typecheck gate); orchestrate it; add a section here. |
-| **New manifest config field type** | Add to the `ConfigField` union in `src/modules/types.ts`; add to `FIELD_TYPES` + a `checkConfigField` branch in `src/modules/conformance.ts`; document it in section 4.1 here. |
-| **New config field scope** | Add to the `ConfigScope` union in `src/modules/types.ts`; add to `FIELD_SCOPES` in `src/modules/conformance.ts`; if it needs a new value source, wire it into the invoke path; document it in section 4.1.1 here. |
+| **New hook** | Add to `HookName` union + `HOOK_NAMES` + `HOOK_CARDINALITY` + `HOOK_BLURBS`; add a named `XInput` / `XOutput` interface in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add a branch to `HOOK_OUTPUT_CHECKS` in `<vivijure-core>/src/modules/conformance.ts` (tsc's `Record<HookName, ...>` FORCES this, so a missing branch fails the typecheck gate); orchestrate it; add a section here. |
+| **New manifest config field type** | Add to the `ConfigField` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_TYPES` + a `checkConfigField` branch in `<vivijure-core>/src/modules/conformance.ts`; document it in section 4.1 here. |
+| **New config field scope** | Add to the `ConfigScope` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_SCOPES` in `<vivijure-core>/src/modules/conformance.ts`; if it needs a new value source, wire it into the invoke path; document it in section 4.1.1 here. |
 | **New / changed API route** | Add to `API_ROUTES` (or the inline dispatch) in `src/index.ts` with its handler; document the full request/response schema + status codes in section 2 here. |
 | **New hook field** | Add to the `XInput`/`XOutput` interface; if required, add to the conformance validator; update the field table here. |
 | **New render quality tier / render projection field** | Edit `QUALITY_TIERS` / `RenderConfigProjection` in `src/render-module-config.ts`; update section 2.2.1 / 2.2 here. |
@@ -148,7 +148,7 @@ flowchart TD
   BESPOKE --> S5[notify: toggle]
 ```
 
-There are **11 hooks** (extension points). A hook is either:
+There are **12 hooks** (extension points). A hook is either:
 - **`pick_one`** -- exactly one installed module serves it (rendered as a chooser), or
 - **`chain`** -- every installed module serving it runs in order, each consuming the previous output
   (rendered as stacked config blocks).
@@ -703,6 +703,10 @@ type routes the response:
 
 ### 2.14 Score / narration bed generation (async)
 
+> **Config shape (cf#390):** module knobs go under a nested **`config`** object. See
+> [api-config-conventions.md](api-config-conventions.md) shape C. Top-level fields other than the
+> table below are not module knobs.
+
 **POST `/api/storyboard/score-bed`** (alias **POST `/api/storyboard/music-generate`**) -- start an
 audio-bed generation. Body:
 
@@ -766,6 +770,11 @@ module. The `{ models: [...] }` envelope is deliberately stable.
 ### 2.17 POST /api/audio/analyze
 
 Analyze an audio bed for beat / duration slicing.
+
+> **Config shape (cf#390):** knobs are **top-level camelCase** on the body (`clipSeconds`, `mode`,
+> `forceShots`, ...). There is **no** nested `config` object and no snake_case at this boundary.
+> Nested `{ config: { mode, force_shots } }` is silently ignored and the module runs on defaults --
+> the expensive wrong-shape mode. See [api-config-conventions.md](api-config-conventions.md) shape D.
 
 **Request body** (`AudioAnalyzeRequest` + `module?`):
 
@@ -897,12 +906,12 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Records the film's quality tier on its renders-history row (#762). The ACTUAL render tier is driven by the baked `keyframe_config.quality_tier` (read by the keyframe module) + `motion_config`; this top-level field is what makes the recorded row LABEL honest (before #762 the row hardcoded `"final"`, mislabeling a draft film). An absent / invalid value defaults `"final"`. Slate should send this alongside the baked configs. |
 | `motion_backend` | string | yes | -- | Motion module choice. An omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#504; this route has no keyframes-only mode, so the check is unconditional). |
 | `keyframe_backend` | string | no | `ui.order`-first keyframe module | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. |
-| `keyframe_config` | object | no | -- | Keyframe module config. |
-| `motion_config` | object | no | -- | Motion module config; judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
-| `finish_config` | `{ [moduleName]: object }` | no | -- | Per-finish-module config (the per-shot `finish` chain). |
-| `speech_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `speech` chain (per-shot dialogue-audio cleanup, post-dialogue, pre-finish). |
-| `film_finish_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `film.finish` chain on the assembled, muxed film. Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. |
-| `master_config` | `{ [moduleName]: object }` | no | -- | Per-module config for the `master` chain (audio bed mastering, pre-mux). |
+| `keyframe_config` | object | no | -- | **Flat** keyframe module knobs (cf#390 shape A). |
+| `motion_config` | object | no | -- | **Flat** motion module knobs (shape A); judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
+| `finish_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-finish-module config (shape B; per-shot `finish` chain). |
+| `speech_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-module config for the `speech` chain (shape B). |
+| `film_finish_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-module config for the `film.finish` chain (shape B). Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. |
+| `master_config` | `{ [moduleName]: object }` | no | -- | **Nested** per-module config for the `master` chain (shape B). Full map: [api-config-conventions.md](api-config-conventions.md). |
 | `audio_key` | string | no | -- | Staged audio bed (score/narration) to mux after assemble; absent => silent film. |
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
@@ -958,6 +967,8 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `film_finish` | object \| undefined | Outcome of the `film.finish` chain (title/credit cards): `degraded` marks a film that reached `done` WITHOUT cards (the container was unreachable; fail-safe by design), `sidecar_key` (#663/#669) carries the re-timed soft `.srt` subtitle sidecar's R2 key when one was produced. Absent until `film.finish` runs. |
 | `finish_unavailable` | `{ at, reason, delivered }` \| undefined | Loud degrade when the video-finish tier was UNAVAILABLE (#519): the film COMPLETED delivering `clips` (at assemble; plus the deliverable `clips[]` with presigned URLs) or `silent_film` (at mux) instead of the finished film. Absent on a normal render. |
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
+| `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
+| `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
 | `download_url` | string \| undefined | Presigned GET of the finished film (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; a later poll re-issues a fresh one), added only when `phase === "done"` and `film_key` is set. |
 
 **404** `{ "error": "film job not found" }` for an unknown id.
@@ -1177,12 +1188,12 @@ sequenceDiagram
 
 ---
 
-## 3. The 11 hooks
+## 3. The 12 hooks
 
 The hooks are the typed contract between the core and module workers. Source of truth: `HOOK_NAMES`,
-`HOOK_CARDINALITY`, `HOOK_BLURBS`, and the `*Input` / `*Output` interfaces in `src/modules/types.ts`.
+`HOOK_CARDINALITY`, `HOOK_BLURBS`, and the `*Input` / `*Output` interfaces in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`).
 The core invokes a hook with `InvokeRequest { hook, input, config, context }` and reads back an
-`InvokeResponse`. Conformance (`src/modules/conformance.ts`) enforces the REQUIRED output fields per
+`InvokeResponse`. Conformance (`<vivijure-core>/src/modules/conformance.ts`) enforces the REQUIRED output fields per
 hook; optional hint fields are not demanded.
 
 ### 3.0 Hook summary
@@ -1196,6 +1207,7 @@ hook; optional hint fields are not demanded.
 | `dialogue` | pick_one | spoken lines -> per-character voice (TTS) |
 | `speech` | chain | clean / enhance dialogue audio |
 | `plan.enhance` | chain | LLM auto-direction |
+| `image.generate` | pick_one | prompt -> a single generated image |
 | `cast.image` | pick_one | character refs from a portrait + bible |
 | `notify` | chain | render-complete notification (email / webhook) |
 | `master` | chain | film-level audio mastering: music upscale + loudness |
@@ -1547,6 +1559,12 @@ Enrich a storyboard before render (LLM auto-direction). Structural passthrough: 
 | `storyboard` | `PlanEnhanceStoryboard` | yes | The enriched storyboard. |
 | `notes?` | string[] | no | Human-readable notes on what it did. |
 
+### 3.x `image.generate` (pick_one)
+
+Prompt -> a single generated image. Served by modules such as `image-generate` (and any future
+provider module on this hook). I/O: `ImageGenerateInput` / `ImageGenerateOutput` in
+`@skyphusion-labs/vivijure-core` `modules/types`.
+
 ### 3.8 cast.image (pick_one)
 
 Cast-prep: generate LoRA training reference images from a portrait + bible. Upstream of keyframe.
@@ -1838,7 +1856,7 @@ selected). A `chain` hook renders as **stacked config blocks** (every installed 
 
 ```mermaid
 flowchart TD
-  R[GET /api/modules] --> CAT[catalog: 11 hooks + cardinality]
+  R[GET /api/modules] --> CAT[catalog: 12 hooks + cardinality]
   R --> HK[hooks: hook -> module names, pre-sorted]
   R --> MODS[modules: manifests + config_schema]
   R --> RND[render: quality_tiers]
