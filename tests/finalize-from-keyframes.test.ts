@@ -40,6 +40,13 @@ const previewRow = (over: Partial<RenderRow> = {}): RenderRow => ({
   // honest value for a keyframes-only preview row: NOT MEASURED, and never 0 (which would mean a
   // film of no length).
   output_ms: null,
+  // core 1.8.0: finish_elapsed_ms on the same read path (cf#268). null = NOT MEASURED for a
+  // keyframes-only preview (no CPU finish ran).
+  finish_elapsed_ms: null,
+  // core 1.8.1: motion_backend / keyframe_backend required on RenderRow (cf#393). null = not
+  // recorded (keyframes-only preview may omit motion; never invent a module name).
+  motion_backend: null,
+  keyframe_backend: null,
   output: null,
   error: null,
   execution_time_ms: null,

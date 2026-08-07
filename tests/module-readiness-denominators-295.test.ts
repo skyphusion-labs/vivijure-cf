@@ -114,15 +114,15 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // cf#305: was 6. The eight cost-door submitters (seedance, kling, vidu-q3, google-veo,
     // minimax-hailuo, alibaba-wan, alibaba-wan-lora, narration-gen) wrote NO row at all, so a
     // census of the table showed six healthy lanes and could not mention the other eight.
-    expect(WRITES_JOB_LOG.length).toBe(14);
+    expect(WRITES_JOB_LOG.length).toBe(15);
     for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
     }
   });
 
   it("the four populations are the sizes the published table claims", () => {
-    expect(ENTRIES.length).toBe(26);
-    expect(WRITES_JOB_LOG.length).toBe(14);
+    expect(ENTRIES.length).toBe(27);
+    expect(WRITES_JOB_LOG.length).toBe(15);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. A bundle with no catalog row uploads nothing, so publishing is inert until the
     // plane adds rows; it exists to remove the cross-repo serialisation, not to change behaviour.
