@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from io import BytesIO
 
 from aiohttp import ClientSession, ClientTimeout, web
@@ -37,6 +38,12 @@ MAX_INPUT_BYTES = 32 * 1024 * 1024  # 32 MB upper bound on a portrait
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("image-prep")
 
+
+def _elapsed_ms(t0: float) -> int:
+    """Wall-clock ms since t0 (cf#268 capacity telemetry). Integer, never negative."""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
+
+
 # Lazily-created ORT session, guarded so the background warm task and a
 # concurrent first request don't both build it.
 _SESSION = None
@@ -61,6 +68,7 @@ async def health(_req):
 
 
 async def prep(req):
+    t0 = time.monotonic()
     try:
         body = await req.json()
     except Exception:
@@ -110,6 +118,7 @@ async def prep(req):
         "width": w,
         "height": h,
         "background": background,
+        "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
     })
 
 

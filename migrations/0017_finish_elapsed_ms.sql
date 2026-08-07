@@ -1,0 +1,15 @@
+-- renders.finish_elapsed_ms: CPU finish container wall-clock per job (cf#268).
+--
+-- Capacity planning for owned-swarm finish iron. NOT billing (CPU finish is off
+-- the tenant meter by ruling). NOT GPU job time -- that is execution_time_ms,
+-- written from RunPod's envelope and already shown in the history panel as
+-- "ran <duration>". Writing CPU finish into execution_time_ms would corrupt a
+-- live user-facing number silently.
+--
+-- Containers emit `elapsedMs` (integer milliseconds) on success payloads.
+-- Core persistence lands in a companion vivijure-core change; this column is
+-- the destination. NULL means not measured (pre-deploy rows, or a path that
+-- has not yet been wired). Never coalesce NULL to 0.
+--
+-- Additive ADD COLUMN only -> rides normal auto-apply.
+ALTER TABLE renders ADD COLUMN finish_elapsed_ms INTEGER;

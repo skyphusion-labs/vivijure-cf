@@ -1,6 +1,6 @@
 # The Public Demo Studio (`demo.vivijure.com`)
 
-The demo studio is a **read-only, zero-spend** deployment of the SAME studio Worker
+The demo studio is a **browse-first; Phase B adds capped click-to-render + assistant** deployment of the SAME studio Worker
 (`src/index.ts`), running at **demo.vivijure.com** so anyone can browse the real catalog and watch
 finished showcase films without an account, an operator token, or a single GPU second billed.
 
@@ -11,7 +11,7 @@ It is a separate deploy from the production studio: its own Worker (`vivijure-de
 
 `AUTH_MODE=demo` (a `[vars]` entry, EXPLICIT -- the gate fails closed on an unknown mode, v0.12.1)
 flips three behaviors from ONE normalization (`isDemoMode` in `src/auth-gate.ts`; the structural twin
-`isDemoEnv` in `src/modules/registry.ts` -- change both together):
+`isDemoEnv` in `@skyphusion-labs/vivijure-core modules/registry` -- change both together):
 
 - **Reads open, writes denied.** Every `GET`/`HEAD` on `/api/*` is served; every mutation is denied
   at the gate with `403 {"error":"demo studio is read-only: mutations are disabled on this
@@ -61,7 +61,7 @@ All commands run with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` in the en
    # paste the returned database_id into wrangler.demo.toml (or the D1_DEMO_DATABASE_ID CI var)
    ```
 
-2. **Apply the base schema** (the numbered migrations `0001..0010`):
+2. **Apply the base schema** (the numbered migrations `0001..0016 (apply every numbered migration under migrations/)`):
 
    ```bash
    wrangler d1 migrations apply vivijure-demo --remote -c wrangler.demo.toml
@@ -94,7 +94,7 @@ All commands run with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` in the en
    wrangler deploy -c wrangler.demo.toml
    ```
 
-   A green deploy prints exactly three bindings: `DB (vivijure-demo)`, `ASSETS`, and
+   A green deploy prints the Phase A core bindings (Phase B adds more): `DB (vivijure-demo)`, `ASSETS`, and
    `AUTH_MODE ("demo")`. If it prints any other binding, the config drifted -- stop.
 
 ## Phase B: click-to-render + assistant (#631)
@@ -110,9 +110,15 @@ SERIAL (one box, global concurrency 1) with an honest FIFO queue: `GET /api/demo
 enqueue past ~10 ("queue is full"); per-IP + global daily caps (`demo_counter`) + the per-IP burst limiter
 (`SPEND_RATE_LIMITER`) bound abuse. The box reads the seeded keyframe from an **isolated demo R2 prefix**
 and writes the clip there; the demo builds the artifact URL as `DEMO_ARTIFACT_ORIGIN/<clip_key>` and binds
-**no** R2 itself. When the box is offline (`DEMO_RENDER_ENABLED != "true"` or `MODULE_LOCAL_GPU` unbound)
-the demo reports **renders paused** (`host.render.available=false`); browse keeps working and submit is
-refused plainly -- the swappable-backend state for the box's ~2026-08-04 credit horizon.
+**no** R2 itself. When the box is **unconfigured** (`DEMO_RENDER_ENABLED != "true"` or `MODULE_LOCAL_GPU`
+unbound) the demo reports **renders paused** (`host.render.available=false`); browse keeps working and
+submit is refused plainly -- the swappable-backend state for the box's ~2026-08-04 credit horizon.
+
+**Honesty (`host.render.available`, cf#28):** that flag is **configured**, not **live-healthy**. It is
+true when the var is set and the door binding exists; it does **not** ping propagandhi (or any door
+box). A configured-but-down box still advertises `available=true` and fails honestly at submit. Spend
+stays safe (caps before spend, seeded scenes only, no RunPod). Prefer a real door health signal later
+if the public shop window needs greyed CTAs; until then, treat `available` as "armed in config".
 
 **CSAM by construction (constraint 4).** The visitor's ENTIRE input is a seeded scene id -- no free text,
 no uploads. Every prompt + keyframe is curator-vetted, so the bright line is satisfied structurally, not by
@@ -172,7 +178,7 @@ zero routes to two; the Phase A verdict does not carry over).
 | 6 | `GET /api/demo/menu` | `200`, `scenes: [...]` seeded; `available` reflects `DEMO_RENDER_ENABLED` + the door |
 | 7 | `POST /api/demo/render {scene:<seeded id>}` when paused | `503` reason `paused` (renders paused; browse still 200) |
 | 8 | `POST /api/render/film` (a prod write route) | `403` read-only (the carve-out is ONLY the two demo routes) |
-| 9 | `GET /api/modules` in Phase B | `host.render.available` present; `host.assistant.{model,note}` present when `AI` is bound |
+| 9 | `GET /api/modules` in Phase B | `host.render.available` present; `host.assistant.{model,note}` present when `aiGatewayReady` (AI + gateway usable) |
 | 10 | `GET /api/storyboard/models` | `200` with `{"models":[]}` -- a demo never advertises frontier planning models it cannot invoke |
 | 11 | `GET /api/voices` | `200` with `{"voices":[]}` -- the same honesty rule for the TTS voice catalog |
 

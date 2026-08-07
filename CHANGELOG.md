@@ -3,12 +3,83 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.9.0
+
+Homelab SDXL cast train on `LOCAL_BACKEND_URL` (POST `/run` `action:train_lora`) without a
+RunPod train endpoint; `pollCastLoraJob` prefers the door after Wan EP. Also includes tar
+mtime epoch default (cf#460) for stable content-addressed bundle keys.
+
+Keeps finish-blender (and the rest of the module surface) on the current core contract line.
+**No new host migration** for this pin alone (1.8.1 still needs 0017/0018 if not applied).
+
+## Unreleased
+
+### feat(renders): record motion_backend + keyframe_backend on the render library row (cf#393)
+
+A completed render carried no motion backend, so "which backend rendered this film?" was
+unanswerable from stored data (searching for `own-gpu` or `seedance` returned zero even when
+those backends had run). Clip keys are GPU-assigned and are not a substitute.
+
+- Migration `0018_render_motion_backend.sql`: additive `renders.motion_backend` + `keyframe_backend` TEXT.
+- Submit/finalize/from-keyframes/film insert paths pass the resolved module names into `insertRender`.
+- Read path is in vivijure-core (companion PR); hosts pin after core publishes.
+
+**Dual-panel:** vivijure-local needs the same SQLite columns later.
+
+
 **Dual-panel release gate:** every studio feature ships to vivijure-cf and vivijure-local in the
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
 
 ## Unreleased
 
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.8.1
+
+Brings PollResponse failure fields (`outcome` / `runpodStatus` / `errorType`), keyframe
+provenance `bundle_key` (cf#388), render `motion_backend`/`keyframe_backend` read path
+(cf#393; requires migration 0018 applied before deploy), scatter D1-empty dialogue
+fallback, plus everything already in 1.8.0 (finish_elapsed_ms, FilmSummary
+assemble/output_ms, cast family readiness, install-patch dropped keys, untrained-LoRA
+voice path)
+copy. **REQUIRES** migration 0017 applied on host D1 before deploy (landed #427).
+Fixture: `finish_elapsed_ms: null` on keyframes-only RenderRow; cast-loras message
+assertion updated for core#156 wording.
+
+
+### feat(finish): containers emit elapsedMs for CPU capacity telemetry (cf#268)
+
+All five CPU finish containers return integer `elapsedMs` (wall clock for the
+request) on success. Destination column `renders.finish_elapsed_ms` (migration
+0017) is ready; core must read `elapsedMs` and write the column (companion PR).
+Does NOT reuse `execution_time_ms` (that is GPU job time, live in the panel).
+### Docs / honesty
+- **runpod_job_log migration comment matches module submit path (cf#315 item 1).** Core no longer submits to RunPod; table exists for module workers. Item 2 (`RUNPOD_ENDPOINT_ID` Env) deliberately untouched -- still live for modules / train path. Item 3 is vivijure-core.
+- **preflight handler comment:** envelope is `storyboard` + `castBindings` + `motionBackend`/`quality`; `bundleKey`/`audioKey` are not read (mcp#26).
+### Docs
+- **`host.render.available` is config-armed, not live door health (cf#28).** Documented in `docs/demo-studio.md` and the `demoRenderEnabled` comment so the public shop window is not read as a health signal.
+### docs: Gate 3 instrumentation closeout (cf#279, cf#295)
+
+Evidence disposition: both original defects are shipped (14/14 job-log writers; 26/26 `/ready`).
+Residuals are structural (wan-train core seam) or documented (tenant catalog population 4).
+See `docs/gate3-instrumentation-closeout.md`.
+### docs(verify): R2 same-key A/B must not trust CF API object-GET (cf#300)
+
+The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
+object. Documented as a HARD RULE in `docs/r2-verification.md`, linked from `CLAUDE.md` and the
+cf#278 harness README. Gate 3 kickoff: instrument defects before metering evidence.
+### Docs: `FilmSummary.assemble_ms` + `output_ms` (cf#365)
+
+CONTRACT 2.21 documents the poll-surface content-length fields that vivijure-core projects from
+the already-persisted `film_output_seconds` map: assemble-stage (pre-film.finish) vs last-writer
+delivered. Closes the observability gap that left a predicted-vs-delivered delta unexplained.
+Fields appear on live poll only after the host pins the core release that adds them; this entry
+is the wire-contract half. Distinct from `finish_elapsed_ms` (CPU wall-clock, cf#268) and from
+plan `duration_seconds`.
+- **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
+### Fixed
+- **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
 ### Fixed
 - **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
 
