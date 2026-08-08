@@ -278,6 +278,13 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
+
+Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
+guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
+Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
+operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
+(vivijure-core, unreleased).
 
 ## v1.20.1 -- 2026-08-05
 
