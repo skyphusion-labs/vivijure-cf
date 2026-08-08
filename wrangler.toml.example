@@ -293,9 +293,9 @@ service = "vivijure-module-finish-rife"
 # Re-enable only after the endpoint completes a job end to end. The image is fixed and
 # published (0.1.1, blender#5) and the endpoint is re-pinned to it; the secret-resolution
 # defect is separate and filed.
-# [[services]]
-# binding = "MODULE_FINISH_BLENDER"
-# service = "vivijure-module-finish-blender"
+[[services]]
+binding = "MODULE_FINISH_BLENDER"
+service = "vivijure-module-finish-blender"
 # <<< SATELLITE: finish-blender
 
 # >>> SATELLITE: finish-upscale -- Real-ESRGAN upscale on a SEPARATE RunPod endpoint
