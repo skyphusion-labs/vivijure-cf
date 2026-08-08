@@ -132,6 +132,11 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     # the self-host path, which is why this needs seeding and the VPC id does not.
     "FINISH_DOOR_TOKEN",
     "SPEECH_DOOR_TOKEN",
+    # cf#489: the blender door bearer. Same rule as the two above, and it needs seeding for
+    # the same reason: render_module_toml strips [[vpc_services]] wholesale but NOT
+    # [[secrets_store_secrets]], so on a BASE self-host install this bearer block survives
+    # into the rendered toml and an unseeded name is a dangling binding at deploy.
+    "BLENDER_DOOR_TOKEN",
 )
 STORE_BINDING_NAMES = AUTO_STORE_NAMES + OPERATOR_STORE_NAMES
 
