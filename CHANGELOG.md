@@ -278,6 +278,11 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
+
+`runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
+refusals. Bound raised to 480; cuts end in `...` so a reader knows the string is incomplete.
+`boundDetail` is the single place this happens.
 
 ## v1.20.1 -- 2026-08-05
 
