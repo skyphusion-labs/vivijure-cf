@@ -278,6 +278,8 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+### Fixed
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
 
 ## v1.20.1 -- 2026-08-05
 
