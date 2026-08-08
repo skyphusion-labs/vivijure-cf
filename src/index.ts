@@ -650,15 +650,26 @@ async function animatePreviewHandler(
 
 const hFinalizePreview: Handler = async (req, env, _c, p) => {
   let audioKey: string | undefined;
+  let motionBackend: string | undefined;
+  let castLoras: Record<string, string> | undefined;
   try {
-    const b = await readBody<{ audioKey?: string; castLoras?: Record<string, string> }>(req);
+    const b = await readBody<{
+      audioKey?: string;
+      castLoras?: Record<string, string>;
+      motion_backend?: string;
+      motionBackend?: string;
+    }>(req);
     audioKey = b.audioKey;
+    castLoras = b.castLoras;
+    // cf#347: accept snake_case (panel) or camelCase
+    const raw = b.motion_backend ?? b.motionBackend;
+    motionBackend = typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
   } catch { /* empty body ok */ }
-  // No motionBackend: animateFromPreview ignores it for "finalized" mode and resolves the gpu
-  // door from the registry by locality (the old hardcoded "own-gpu" here was dead config).
   return animatePreviewHandler(env, await resolveRenderId(env, p.id), {
     deriveMode: "finalized",
     audioKey,
+    motionBackend,
+    castLoras,
   });
 };
 
@@ -835,7 +846,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   const b = await readBody<{
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
-    motion_backend?: string;
+    motion_backend?: string; castLoras?: Record<string, unknown>;
   }>(req);
   // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
   //
@@ -913,6 +924,17 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     throw badRequest(fromKfPre.refusal.message);
   }
 
+  // cf#334: derive dialogue from the bundle so RFK is not silent-by-default on a voiced package.
+  let fromKfDialogue: DialogueLine[] | undefined;
+  try {
+    const { voices } = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
+    let lines = dialogueLinesFromBundleScenes(parsedScenes, voices);
+    if (lines.length) {
+      lines = resolveExplicitLineVoices(lines, parsedScenes, voices);
+      fromKfDialogue = lines;
+    }
+  } catch { /* best-effort */ }
+
   const job = await startFilmFromKeyframes(env, {
     project,
     bundle_key: fromKfBundleKey,
@@ -926,7 +948,8 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     master_config: mapped.master_config,
     derive_mode: "finalized",
     audio_key: b.audioKey,
-  }, modules);
+    dialogue_lines: fromKfDialogue,
+  } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
     return json({ error: job.error || "render from keyframes failed" }, 422);
   }
