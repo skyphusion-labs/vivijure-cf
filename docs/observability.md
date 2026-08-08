@@ -64,8 +64,13 @@ service = "vivijure-tail"
 
 Both are live on the deployed `vivijure-studio` worker today
 (`observability.logs.enabled = true, persist = true, invocation_logs = true`;
-`tail_consumers = [{ service = "vivijure-tail" }]`). The tail worker is deployed
-separately and reaches Loki through its `LOKI_VPC` `vpc_service` binding.
+`tail_consumers = [{ service = "vivijure-tail" }]`). The tail worker is
+**OUR-fleet-only** (stripped for self-host / WfP tenants) and is deployed by hand
+via `scripts/deploy-tail.sh`, which renders `tail/wrangler.toml` from
+`tail/wrangler.toml.example` (`LOKI_VPC_ID` injected; cf#294 / PR #309). It is not
+part of `deploy.sh` or the tag-gated CI release job -- it changes rarely and has
+no meaning outside this fleet. The worker reaches Loki through its `LOKI_VPC`
+`vpc_service` binding.
 
 ## Loki labels (the tail extracts these from the JSON)
 
