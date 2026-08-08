@@ -56,9 +56,36 @@ declared default rather than passed upstream, where it would surface as an opaqu
 |---|---|---|
 | `AI` | yes | Workers AI. FLUX 2 runs direct (multipart, gateway-incompatible); proxied and plain `@cf` models ride the gateway when `GATEWAY_ID` is set. |
 | `GATEWAY_ID` | no | AI Gateway slug, from the Secrets Store. Without it models still run, ungatewayed. |
-| `OPENAI_API_KEY` | no | Per-function key enabling the only path to a **transparent PNG** on `openai/gpt-image-1.5` -- the Unified Billing proxy 7003-rejects `background`/`output_format`. Absent, that model returns an opaque image: an honest degradation, not a failure. |
+| `OPENAI_API_KEY` | no | Operator / self-host BYOK only. Enables the only path to a **transparent PNG** on `openai/gpt-image-1.5` -- the Unified Billing proxy 7003-rejects `background`/`output_format`. Absent, that model returns an opaque image: an honest degradation, not a failure. **Ignored when `TENANT_ID` is set** (cf#401). |
+| `TENANT_ID` | no | Hosted attribution (plain text, plane-bound). Presence forces the AI Gateway path for `openai/*` and suppresses direct `api.openai.com`. Absent on self-host. |
 
 No R2 bucket, by design (see above).
+
+## Third-party outbound (cf#401)
+
+This module is one of a small **third-party class**: it can call an external vendor HTTPS endpoint
+with its own auth shape (`https://api.openai.com/v1/images/generations`), not RunPod and not our
+finishing swarm. The plane's RunPod proxy (`modules/_shared/runpod-route.ts`) has **no vocabulary**
+for that class; inventing a full OpenAI proxy is out of scope here.
+
+| path | when | destination | metering |
+|---|---|---|---|
+| AI Gateway / Workers AI binding | always for `@cf/*`, `google/*`, `recraft/*`; for `openai/*` when no BYOK **or** when `TENANT_ID` is set | CF AI / Unified Billing | plane-bound `AI` + optional `GATEWAY_ID` / `CF_AIG_TOKEN` |
+| Direct OpenAI BYOK | operator / self-host only: `OPENAI_API_KEY` set **and** `TENANT_ID` absent | `api.openai.com` | the operator's own key |
+
+**Hosted tenants** must never leave on the operator OpenAI key. The module enforces that in code
+(`mayUseOpenAIDirectByok`): even if `OPENAI_API_KEY` is wrongly bound into a tenant namespace, the
+direct path stays off and `openai/*` rides the gateway (opaque PNG). Transparent PNG remains an
+operator / self-host capability only until a mediated third-party path exists.
+
+**Catalog vs publish.** This module is published as a tenant bundle (`scripts/tenant-release-modules.txt`)
+so the plane can add a catalog row without a studio release first. Publishing is **not** provisioning:
+it is still absent from `TENANT_MODULE_CATALOG` until the plane is ready. The tenant-safety gate above
+is what makes a future catalog row not place unmediated OpenAI spend on our key.
+
+The durable half of cf#401 (correlating the plane catalog with unmediated outbound) is guarded in
+this repo by `tests/module-credential-classes-cf394.test.ts` (`OPENAI_API_KEY` = `operator-only`)
+and by the `TENANT_ID` branch in `image-gen.ts`.
 
 ## Adding a model
 

@@ -36,11 +36,14 @@ binding = "GATEWAY_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "GATEWAY_ID"
 
-# OPENAI_API_KEY is OPTIONAL and per-function: it enables the only path to a TRANSPARENT PNG on
-# openai/gpt-image-1.5, because the Unified Billing proxy 7003-rejects background/output_format.
-# Absent, that model still works through the proxy and returns an OPAQUE image -- an honest
-# degradation, not a failure. Its own store secret (IMAGE_GENERATE_OPENAI_API_KEY), distinct from any
-# other consumer's, so rotating one never touches another.
+# OPENAI_API_KEY is OPTIONAL and per-function: operator/self-host BYOK for a TRANSPARENT PNG on
+# openai/gpt-image-1.5 (Unified Billing 7003-rejects background/output_format). Absent, that model
+# still works through the proxy and returns an OPAQUE image -- an honest degradation, not a failure.
+# cf#401: the direct api.openai.com path is a third-party class the RunPod plane proxy cannot
+# mediate. When the plane binds TENANT_ID (plain text, not declared here -- same pattern as
+# plan-enhance), image-gen.ts refuses the direct path even if this secret is present. Do NOT bind
+# this secret into a hosted-tenant module namespace; the code gate is defense in depth, not a license.
+# Its own store secret (IMAGE_GENERATE_OPENAI_API_KEY), distinct from any other consumer's.
 # NEW store secret to seed (optional): IMAGE_GENERATE_OPENAI_API_KEY
 [[secrets_store_secrets]]
 binding = "OPENAI_API_KEY"

@@ -90,7 +90,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   RUNPOD_WORKERS_MAX: { path: "module-var", note: "capacity hint; the reconcile it feeds is gated to !route.proxied, so it is inert for a tenant" },
 
   // --- operator-scoped: a tenant cannot reach these today ---
-  OPENAI_API_KEY: { path: "operator-only", note: "image-generate. An OPERATOR-held third-party vendor key with no mediated tenant path -- the same class as the pre-cf394 own-gpu RunPod key, and the one live instance of it. Not in TENANT_MODULE_CATALOG, so not exposed today" },
+  OPENAI_API_KEY: { path: "operator-only", note: "image-generate. Operator/self-host BYOK for transparent PNG on openai/*; direct api.openai.com is a third-party class the RunPod plane proxy cannot mediate (cf#401). mayUseOpenAIDirectByok refuses the path when TENANT_ID is set, so a wrongly-bound key cannot place unmediated spend on a hosted tenant. Not in TENANT_MODULE_CATALOG today; published as a bundle only" },
   R2_RENDERS: { path: "operator-only", note: "bound to the OPERATOR bucket in wrangler.toml. The plane binds no R2 at all; catalog modules avoid it via the per-job tenant R2 credential on the invoke envelope (needs_tenant_r2, cp#270)" },
   IMAGES: { path: "operator-only", note: "Cloudflare Images binding on the operator account" },
   EMAIL: { path: "operator-only", note: "send_email binding on the operator account" },
