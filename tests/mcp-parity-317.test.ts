@@ -429,10 +429,10 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 86, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
+  routes: 87, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
   tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
   curatedCovered: 41, // route entries reached by a CURATED tool
-  panelReachable: 65, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70)
+  panelReachable: 66, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70)
 };
 
 describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
