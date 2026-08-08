@@ -278,6 +278,11 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+### feat(modules): keyframe + own-gpu poll report wait accepted|running (cf#307)
+
+Optional additive `wait` on pending `/poll` responses. Maps RunPod `IN_QUEUE`/`SUBMITTED` ->
+`accepted`, `IN_PROGRESS` -> `running`. Host core 1.8+ (PR core#144) stores and surfaces IN_QUEUE
+for accepted. Modules that omit wait keep prior behaviour.
 
 ## v1.20.1 -- 2026-08-05
 
