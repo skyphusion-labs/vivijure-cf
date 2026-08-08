@@ -52,6 +52,7 @@ describe("speech-upscale: buildRunPodBody (R2 mode on audio_key)", () => {
     expect(input.audio_key).toBe(SAMPLE_INPUT.audio_key);
     expect(input.output_key).toBe("renders/neon/dialogue/shot_01_enh.wav");
     expect(input.denoise).toBe(true);
+    expect(input.audio_url).toBeUndefined();
   });
 
   it("threads the caller project into the body, not a hardcoded placeholder", () => {
@@ -59,6 +60,23 @@ describe("speech-upscale: buildRunPodBody (R2 mode on audio_key)", () => {
     const b = buildRunPodBody(SAMPLE_INPUT, coerceConfig({ enable: true }), "project_b");
     expect(a.input.project).toBe("project_a");
     expect(b.input.project).toBe("project_b");
+  });
+
+  it("cf#312: prefers presigned audio_url/output_url and omits audio_key (credentialless branch)", () => {
+    const { input } = buildRunPodBody(
+      {
+        ...SAMPLE_INPUT,
+        audio_url: "https://r2.example/a",
+        output_url: "https://r2.example/o",
+        output_key: "renders/neon/dialogue/shot_01_enh.wav",
+      },
+      coerceConfig({ enable: true, denoise: false }),
+      "neon",
+    );
+    expect(input.audio_url).toBe("https://r2.example/a");
+    expect(input.output_url).toBe("https://r2.example/o");
+    expect(input.output_key).toBe("renders/neon/dialogue/shot_01_enh.wav");
+    expect(input.audio_key).toBeUndefined();
   });
 });
 

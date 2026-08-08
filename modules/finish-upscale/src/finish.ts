@@ -57,17 +57,36 @@ export function upscaledKey(clipKey: string): string {
   return dot > clipKey.lastIndexOf("/") ? `${clipKey.slice(0, dot)}_up${clipKey.slice(dot)}` : `${clipKey}_up`;
 }
 
-/** The RunPod /run body for the dedicated vivijure-upscale endpoint (R2 mode: it reads `clip_key`
- *  and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does for finish). */
+/** TTL used by the core when it presigns finish satellite URLs (cf#312). Documented here so a
+ *  module-side reader sees the same envelope; the core is the authority that mints the URLs. */
+export const PRESIGN_TTL_SECONDS = 1800;
+
+/** The RunPod /run body for vivijure-upscale.
+ *  cf#312: when the core hands video_url + output_url, use the credentialless presigned branch
+ *  (no clip_key -- the handler routes on which keys are present). Otherwise R2 shared-bucket mode. */
 export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project: string): { input: Record<string, unknown> } {
+  const output_key = input.output_key ?? upscaledKey(input.clip_key);
+  const common = {
+    project,
+    output_key,
+    scale: cfg.scale,
+    model: cfg.model,
+    ...(input.output_hash ? { output_hash: input.output_hash } : {}),
+  };
+  if (input.video_url && input.output_url) {
+    return {
+      input: {
+        ...common,
+        video_url: input.video_url,
+        output_url: input.output_url,
+        ...(input.hash_url ? { hash_url: input.hash_url } : {}),
+      },
+    };
+  }
   return {
     input: {
-      project,
+      ...common,
       clip_key: input.clip_key,
-      output_key: upscaledKey(input.clip_key),
-      scale: cfg.scale,
-      model: cfg.model,
-      ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
     },
   };
 }

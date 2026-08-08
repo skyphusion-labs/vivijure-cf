@@ -69,6 +69,7 @@ describe("finish-lipsync: buildRunPodBody (#583 sidecar stamp)", () => {
     expect(input.clip_key).toBe(SAMPLE_INPUT.clip_key);
     expect(input.audio_key).toBe(SAMPLE_INPUT.audio_key);
     expect(input.output_key).toBe("renders/lighthouse/clips/shot_01_seedance_ls.mp4");
+    expect(input.video_url).toBeUndefined();
   });
 
   it("forwards output_hash verbatim when present, omits it when absent", () => {
@@ -76,6 +77,25 @@ describe("finish-lipsync: buildRunPodBody (#583 sidecar stamp)", () => {
     expect(withHash.input.output_hash).toBe("abc123");
     const without = buildRunPodBody({ ...SAMPLE_INPUT, audio_key: "renders/neon/dialogue/shot_01.wav" }, coerceConfig({}), "neon");
     expect("output_hash" in without.input).toBe(false);
+  });
+
+  it("cf#312: prefers presigned URLs and omits clip_key/audio_key (credentialless branch)", () => {
+    const { input } = buildRunPodBody(
+      {
+        ...SAMPLE_INPUT,
+        video_url: "https://r2.example/v",
+        audio_url: "https://r2.example/a",
+        output_url: "https://r2.example/o",
+        output_key: "renders/lighthouse/clips/shot_01_seedance_ls.mp4",
+      },
+      coerceConfig({}),
+      "lighthouse",
+    );
+    expect(input.video_url).toBe("https://r2.example/v");
+    expect(input.audio_url).toBe("https://r2.example/a");
+    expect(input.output_url).toBe("https://r2.example/o");
+    expect(input.clip_key).toBeUndefined();
+    expect(input.audio_key).toBeUndefined();
   });
 });
 
