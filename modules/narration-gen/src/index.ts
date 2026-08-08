@@ -34,6 +34,8 @@ import {
   decodePoll,
   audioKey,
   appliedTags,
+  sniffAudioFormat,
+  appliedTagsForDelivered,
   normalizeConfig,
   textFromScoreInput,
   runpodJobGone,
@@ -258,22 +260,29 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
   const url = extractAudioUrl(s.output);
   if (!url) return { ok: false, error: "narration-gen output had no audio url" };
   let bytes: ArrayBuffer;
-  let mime: string;
+  let headerMime: string | null = null;
   try {
     const a = await fetch(url);
     if (!a.ok) return { ok: false, error: "fetch narration audio -> " + a.status };
-    mime = a.headers.get("content-type")?.split(";")[0]?.trim() || mimeForFormat(st.format);
+    headerMime = a.headers.get("content-type")?.split(";")[0]?.trim() || null;
     bytes = await a.arrayBuffer();
   } catch (e) {
     return { ok: false, error: "download narration audio failed: " + (e as Error).message };
   }
-  const key = audioKey(st.job_id, st.format);
+  // cf#389: key/mime/applied follow the BYTES, not the request. Minimax has ignored format=wav
+  // and returned ID3/MP3 while we labeled everything wav.
+  const actualFormat = sniffAudioFormat(bytes, headerMime);
+  const mime = mimeForFormat(actualFormat);
+  const key = audioKey(st.job_id, actualFormat);
   try {
     await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: mime } });
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { film_key: st.film_key, applied: [...st.applied, `audio:${key}`] } };
+  // Replace any pre-submit format:* tags with honesty about what the bytes are.
+  const kept = st.applied.filter((t) => !t.startsWith("format:") && !t.startsWith("format_requested:"));
+  const applied = [...kept, ...appliedTagsForDelivered(st.format, actualFormat), `audio:${key}`];
+  return { ok: true, output: { film_key: st.film_key, applied } };
 }
 
 export default {
