@@ -14,8 +14,8 @@ export function clampTier(v: unknown): Tier {
 
 /** The render_overrides.keyframe block, built from the module config -- only fields the user set,
  *  so the backend's own defaults stand otherwise. */
-function keyframeOverrides(cfg: Record<string, unknown>): Record<string, number> {
-  const o: Record<string, number> = {};
+function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
   const num = (k: string, src: string) => {
     if (typeof cfg[src] === "number" && Number.isFinite(cfg[src] as number)) o[k] = cfg[src] as number;
   };
@@ -25,6 +25,10 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, number>
   num("guidance_scale", "guidance_scale");
   // seed: -1 means "let the backend randomize", so only pass a real seed
   if (typeof cfg.seed === "number" && (cfg.seed as number) >= 0) o.seed = cfg.seed as number;
+  // cf#299: backend KeyframeConfig.identity_method (ip_adapter default | instantid).
+  // Only forward known values so typos never invent a method on the wire.
+  const im = cfg.identity_method;
+  if (im === "instantid" || im === "ip_adapter") o.identity_method = im;
   return o;
 }
 
