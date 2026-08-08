@@ -1009,6 +1009,20 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     return json({ ok: false, error: job.error || "regen submit failed" }, 422);
   }
   const view = filmJobToPollView(job, null);
+  // cf#339: every other startFilmJob / startFilmFromKeyframes caller writes a renders row.
+  // This door spent GPU with nothing in the history panel. parent_id links the regen child to
+  // the COMPLETED row that supplied the shot; mode is keyframes-only (this path never motion-renders).
+  await insertRenderBestEffort(env, {
+    jobId: view.jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: tier,
+    renderOverrides: row.render_overrides ?? undefined,
+    status: view.status,
+    mode: "keyframes-only",
+    projectId: row.project_id,
+    parentId: row.id,
+  });
   return json({ ok: true, jobId: view.jobId, status: view.status });
 };
 const hPollRender: Handler = async (_req, env, ctx, p) => {
