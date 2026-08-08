@@ -3,6 +3,30 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.22.1 -- 2026-08-08
+
+### fix(ci): pass VPC_FINISH_BLENDER_ID to the module deploy (cf#489)
+
+**v1.22.0 deployed green and silently stripped the blender door.** The repo secret was set and
+correct; it never reached the deploy job, because the deploy env lists the VPC ids explicitly and
+this one was not on that list. Referencing a secret the job cannot see yields empty, which IS the
+unset state, so the strip is byte-indistinguishable from a normal no-door deploy.
+
+The only tell is one line in the deploy log:
+
+    modules/finish-blender/wrangler.toml: VPC_FINISH_BLENDER_ID unset -- stripped its
+    optional blocks; this module keeps its RunPod path
+
+**This was the FIFTH registration site for one door binding and the first that no test caught.**
+The other four each have a denominator test (the cf482 marker and its strip branch, the credential
+classification table, the deploy store-binding union). Nothing asserts this workflow env list
+against the module tomls that declare the markers, and unlike the other four this one fails
+SILENTLY at deploy rather than loudly at CI, leaving an artifact that looks correct.
+
+No behaviour change for anyone: finish-blender is still unbound from the hosted chain (its
+MODULE_FINISH_BLENDER service binding has been commented out since v1.21.1), so this only makes
+the door reachable once that binding is restored.
+
 ## v1.22.0 -- 2026-08-08
 
 ### feat(finish-blender): reach the on-iron blender door over a Workers VPC service (cf#489)

@@ -303,6 +303,11 @@ jobs:
           # secret. Set one only once the matching connectivity-directory service exists.
           VPC_FINISH_UPSCALE_ID: ${{ secrets.VPC_FINISH_UPSCALE_ID }}
           VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
+          # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
+          # deploy stayed GREEN while silently stripping the door blocks. The log line reading
+          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks is the ONLY tell, and
+          # nothing asserts this list against the module tomls that declare the markers.
+          VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
           # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
           # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
           # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name
