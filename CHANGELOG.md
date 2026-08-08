@@ -3,6 +3,34 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.23.0 -- 2026-08-08
+
+### feat(studio): finish-blender is back in the hosted finish chain, on our own iron (cf#489)
+
+**THE SWITCH-ON.** Restores the MODULE_FINISH_BLENDER service binding that v1.21.1 commented out.
+The chain runs every SERVING module rather than only those named in finish_config, so this puts
+finish-blender in the finish chain of EVERY hosted render. Opt-in here means the BINDING, never
+the per-render config.
+
+**What changed since it was pulled.** It was removed because it failed every render: the RunPod
+endpoint could not serve it, and the module does NOT soft-degrade, so a failed blender job fails
+the whole film. Two real renders died that way after delivering their clips cleanly. The work now
+runs on our own hardware instead: an always-on door on the finishing tier, reached over a Workers
+VPC service (v1.22.0), with the deploy actually passing the service id (v1.22.1). The RunPod
+endpoint stays at workersMax 0 as the rollback and is not coming back.
+
+**Rollback is two levers and they are not equal.** Re-commenting this block removes the module from
+the chain entirely and is the STRONGER one; it is what v1.21.1 used. Unsetting VPC_FINISH_BLENDER_ID
+only strips the door, leaving the module bound and RunPod-only, which with an endpoint at
+workersMax 0 means every hosted film HANGS rather than errors. Under pressure people reach for the
+first lever they read, so the order matters.
+
+**Shipped as its own tag, deliberately.** v1.22.1 made the door reachable while blender was still
+out of every render, so a mistake there cost nothing; this is the only step that puts it in the
+path of a hosted film. Splitting them is what caught the door being silently stripped in v1.22.0 --
+had these landed together, blender would have re-entered every render with no door and hung the
+pipeline.
+
 ## v1.22.1 -- 2026-08-08
 
 ### fix(ci): pass VPC_FINISH_BLENDER_ID to the module deploy (cf#489)
