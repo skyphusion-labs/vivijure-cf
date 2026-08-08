@@ -3,6 +3,43 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.22.0 -- 2026-08-08
+
+### feat(finish-blender): reach the on-iron blender door over a Workers VPC service (cf#489)
+
+**finish-blender now prefers our own hardware.** It gains the SINGLE-door transport that
+finish-upscale and speech-upscale already carry (#480): one binding, one door, no pool and no
+rotation. Bound means the door; unbound is the untouched RunPod path, byte for byte.
+
+**The branch is BOUND-ness and never a failover**, the same cp#321 rule as its siblings, and it
+matters more here for two blender-specific reasons. The blender RunPod endpoint is parked at
+workersMax 0 as the rollback, so a failover would HANG rather than merely cost money. And unlike
+the polish steps, this module does not soft-degrade: a failed blender job fails the whole film,
+which is why it was pulled from the hosted chain in v1.21.1. A silent second path is the worst
+possible thing for it to have.
+
+**The poll token records which transport minted the job.** The door keeps job state in a
+per-process registry, so a door job id means nothing to RunPod and the reverse, and the miss does
+not read as a miss: both answer 404, which runpodJobGone classifies as a GC job and, past the
+grace window, FAILS THE SHOT. ABSENT means RunPod, so every pre-existing token keeps working
+unchanged.
+
+**Where the door runs.** Not the GPU twins. Blender is CPU-only, proven rather than assumed, so it
+runs on the finishing tier (descendents, badbrains, jello) as its own swarm stack, published PER
+NODE rather than through the service VIP. The VIP round-robins while the door keeps job state per
+process: measured before per-node addressing landed, twelve polls of ONE job id returned found=4,
+404=8. Exactly one node is bound and the other two are warm spares, the same arrangement fatmike
+is to propagandhi.
+
+It runs in its own stack rather than joining vivijure-media because that stack states it is
+credential-free, and blender needs an R2 credential. Keeping the invariant TRUE where it is
+written beat quietly making it false.
+
+**One new binding needed registration in FOUR places**, and three were found by tests rather than
+by reading: the toml marker, the strip branch in fill-module-placeholders.sh, the credential
+classification table, and the deploy store-binding map. Recorded because the fifth door binding
+will hit the same four.
+
 ## v1.21.1 -- 2026-08-07
 
 ### fix(studio): pull finish-blender out of the hosted finish chain
