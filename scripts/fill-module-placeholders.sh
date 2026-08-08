@@ -71,7 +71,7 @@ done
 # [[secrets_store_secrets]] block for its bearer. Each block carries the marker
 # `cf482-optional:<VAR>` in a comment, so the binding declares its own extent and the stripper does
 # not have to guess which block types belong to it.
-for v in VPC_FINISH_UPSCALE_ID VPC_SPEECH_UPSCALE_ID; do
+for v in VPC_FINISH_UPSCALE_ID VPC_SPEECH_UPSCALE_ID VPC_FINISH_BLENDER_ID; do
   marker="cf482-optional:${v}"
   grep -q "$marker" "$toml" || continue               # this module does not declare that binding
   eval "val=\${$v:-}"
