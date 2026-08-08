@@ -319,6 +319,8 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `hooks` | `{ [hook]: string[] }` | Map of hook name -> module **names** serving it, **pre-sorted** in canonical `ui.order` then name order (section 5). The frontend consumes this verbatim and never re-sorts. A hook with no installed module is absent from the map. |
 | `catalog` | `HookCatalogEntry[]` | Every hook (independent of what is installed): `{ name, blurb, cardinality }`. |
 | `render` | `RenderConfigProjection` | Core-owned render config: `{ quality_tiers: { value, label, blurb }[], default_tier }`. See 2.3.1. |
+| `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
+| `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
 
 `HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" }`.
 `PublicModule` = the `ModuleManifest` (section 4) with `binding` removed.
