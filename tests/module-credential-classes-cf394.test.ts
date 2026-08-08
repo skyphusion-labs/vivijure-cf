@@ -101,6 +101,8 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   FINISH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the upscale door's own bearer (LOCAL_FINISH_TOKEN on the container). Operator infrastructure credential; same class as the VPC binding it authenticates against, and read ONLY when that binding is bound" },
   SPEECH_UPSCALE_VPC: { path: "operator-only", note: "cf#480: VPC service into the operator's always-on speech-enhance door. Same cp#359 tenant blocker as FINISH_UPSCALE_VPC" },
   SPEECH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the speech door's own bearer. Read only when SPEECH_UPSCALE_VPC is bound" },
+  FINISH_BLENDER_VPC: { path: "operator-only", note: "cf#489: VPC service into the operator always-on blender door on our own iron. Same cp#359 tenant blocker as FINISH_UPSCALE_VPC. Unlike the upscale doors this one is CPU-only work on the finishing tier, and it is addressed PER NODE rather than by service name, because the swarm VIP round-robins while the door keeps job state per process (measured: twelve polls of one job id gave found=4, 404=8)" },
+  BLENDER_DOOR_TOKEN: { path: "operator-only", note: "cf#489: the blender door own bearer (LOCAL_FINISH_TOKEN on the container), the same shared value the four GPU doors carry. Read ONLY when FINISH_BLENDER_VPC is bound" },
   AUDIO_BEAT_SYNC_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   VIDEO_FINISH_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
 
