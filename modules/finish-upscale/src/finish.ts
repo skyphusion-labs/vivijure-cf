@@ -27,6 +27,18 @@ export function passthroughOutput(
 export interface UpscaleConfig {
   scale: number;   // final factor: 2 | 4
   model: string;   // RealESRGAN_x4plus (photoreal/general) | realesr-animevideov3 (anime/fast)
+  /** Did the CALLER actually set `scale`, or is this the module default?
+   *
+   *  Load-bearing, and it is the third instance in this change of one rule: an absence must never
+   *  render as a value. Here the absence is "the user expressed no preference", and the old
+   *  `Number(cfg.scale ?? base.scale)` could not express it -- an explicit 2 and an absent one were
+   *  byte-identical, so a target-derived factor could not tell a choice from a default and would
+   *  have silently overridden the choice.
+   *
+   *  That is core#174 one field over: `resolveCastTrainFamily` treated an explicit `"wan"` as
+   *  identical to sending nothing and billed a user for a job they did not choose. `scale` has a UI
+   *  control, so setting it is a request actually made. */
+  scaleExplicit: boolean;
 }
 
 const MODELS = ["realesr-animevideov3", "RealESRGAN_x4plus"] as const;
@@ -38,16 +50,48 @@ const MODELS = ["realesr-animevideov3", "RealESRGAN_x4plus"] as const;
 // on a real render. The photoreal-texture rationale of #585 still stands -- the default follows
 // the handler's proven memory envelope, not the wish.
 export function defaultConfig(): UpscaleConfig {
-  return { scale: 2, model: "realesr-animevideov3" };
+  return { scale: 2, model: "realesr-animevideov3", scaleExplicit: false };
 }
 
 export function coerceConfig(cfg: Record<string, unknown>): UpscaleConfig {
   const base = defaultConfig();
-  const scale = Number(cfg.scale ?? base.scale);
+  const raw = Number(cfg?.scale);
+  // A usable number is a PREFERENCE. Garbage is not a choice: treating a typo as explicit would pin
+  // the user to a factor they never expressed and suppress derivation on the strength of it.
+  const scaleExplicit = Number.isFinite(raw) && raw > 0;
+  const scale = scaleExplicit ? raw : base.scale;
   return {
     scale: scale >= 4 ? 4 : 2,   // integer factors; the handler clamps to 2/4 as well
     model: (MODELS as readonly string[]).includes(String(cfg.model)) ? String(cfg.model) : base.model,
+    scaleExplicit,
   };
+}
+
+/** The factor this job will actually request, and WHERE IT CAME FROM.
+ *
+ *  EXPLICIT ALWAYS WINS. Derivation exists to choose sensibly for someone who did not choose;
+ *  someone who chose is not that person. Overriding them would be silent -- a user who set 4 and
+ *  got 2 sees a correct-looking film, no error, no degrade tag, nothing to notice.
+ *
+ *  An explicit factor that CANNOT reach the delivery target is honoured AND the shortfall is
+ *  reported. Not silently overridden ("we ignored you") and not silently under-delivered ("we did
+ *  what you asked and said nothing about what it means"). */
+export function resolveUpscaleScale(
+  cfg: UpscaleConfig,
+  src: { width?: unknown; height?: unknown },
+  target: { width?: unknown; height?: unknown },
+): ScaleChoice {
+  if (cfg.scaleExplicit) {
+    const probe = chooseUpscaleScale(src, target);
+    return {
+      scale: cfg.scale as UpscaleFactor,
+      derived: false,
+      // Only meaningful when the comparison was possible at all; an unmeasurable source cannot
+      // shortfall against anything, and claiming it could would be a guess.
+      undershoots: probe.derived ? cfg.scale < probe.scale || probe.undershoots : false,
+    };
+  }
+  return chooseUpscaleScale(src, target);
 }
 
 /** The only factors the shipped handler will honour. MEASURED at vivijure-upscale origin/main,
@@ -124,12 +168,24 @@ export function upscaledKey(clipKey: string): string {
 /** The RunPod /run body for the dedicated vivijure-upscale endpoint (R2 mode: it reads `clip_key`
  *  and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does for finish). */
 export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project: string): { input: Record<string, unknown> } {
+  // cf#507b: the factor now comes from resolveUpscaleScale rather than straight off the config.
+  // TWO QUANTITIES, kept distinct: input.width/height are the MEASURED source (what this clip is),
+  // input.delivery_* is the DECIDED target (what the film ships at). A blind 2x on an 864x496 draft
+  // lands at 1728x992, below a 1080p delivery, and ffmpeg stretches it back up -- after the handler
+  // had already computed a 4x result on the GPU and discarded it down to 992 lines.
+  //
+  // Explicit config still wins; this only decides for a caller who did not.
+  const chosen = resolveUpscaleScale(
+    cfg,
+    { width: input.width, height: input.height },
+    { width: input.delivery_width, height: input.delivery_height },
+  );
   return {
     input: {
       project,
       clip_key: input.clip_key,
       output_key: upscaledKey(input.clip_key),
-      scale: cfg.scale,
+      scale: chosen.scale,
       model: cfg.model,
       ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
     },
