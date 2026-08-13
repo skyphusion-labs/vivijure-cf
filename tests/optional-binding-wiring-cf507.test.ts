@@ -16,6 +16,25 @@
 // agreement (N120/N227). ci.yml's half is irreducibly hand-maintained -- GitHub Actions cannot
 // enumerate `secrets.*` dynamically -- which is precisely why it needs an assertion rather than a
 // convention.
+//
+// THE THIRD CONSUMER, AND WHY IT IS NOT ASSERTED HERE. An optional binding is declared in a module
+// toml and consumed in THREE places: the stripper's var loop and ci.yml's env block (both asserted
+// below), and `deploy/vivijure_deploy.py`'s STORE_BINDING_NAMES, which seeds the self-host install.
+// The third is deliberately NOT mirrored here, for a reason worth stating rather than leaving to
+// inference:
+//
+//   deploy/test_secret_map.py::test_store_binding_names_equal_the_toml_union already asserts SET
+//   EQUALITY between that map and the union of every `secret_name` in every module toml.
+//
+// Equality over the FULL secret population is strictly stronger than anything this file can say --
+// these markers cover only the OPTIONAL bindings, a strict subset -- and it fails on GROWTH as well
+// as on removal, which is the direction that actually happens. It proved that on cf#507's own first
+// growth event, catching the missing pair in 0.21s. A second assertion here would be a duplicate
+// with no added coverage, in a different language from the file it guards, free to drift. So this
+// is a POINTER, which cannot drift, rather than a copy, which can.
+//
+// If you are adding a door: the toml is the authority; the three consumers are the stripper loop,
+// ci.yml, and deploy/vivijure_deploy.py. The first two are asserted below, the third by that pytest.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
