@@ -3,6 +3,62 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.25.0 -- 2026-08-14
+
+### feat(finish-upscale): derive the upscale factor from the delivery target, explicit wins (cf#507b)
+
+**The upscale applied a blind 2x and the draft path scaled twice.** 864x496 at 2x lands at 1728x992,
+BELOW a 1080p delivery, so ffmpeg stretched it back up -- after the handler had already computed a
+4x result on the GPU and discarded it down to 992 lines. Downsample then upsample, in one pipeline.
+
+The factor is now chosen against the film's delivery target: the smallest factor that clears it on
+both axes. Measured from the shipped handler, both models are 4x NATIVE and a scale-2 request runs
+the same model then rescales down on the GPU, so choosing 4 costs no more model memory than 2 --
+#585's CUDA-OOM was a MODEL decision and is untouched.
+
+**An explicitly configured `scale` always wins.** Derivation exists to choose for a caller who did
+not choose; someone who chose is not that person. This is core#174 one field over, where an explicit
+`model_family` was treated as byte-identical to sending nothing and a user was billed for a job they
+did not choose. An explicit factor that cannot reach the target is HONOURED and the shortfall
+recorded, rather than silently overridden or silently under-delivered.
+
+**Operator-visible:** a shot whose source dimensions and delivery target are both known may now be
+requested at 4x where it previously requested 2x. This increases GPU seconds per shot on owned iron,
+which has no marginal cost, and removes a naive upscale from the output. With no target on the wire,
+or no measured source, the factor is the module default -- byte-identical to previous behaviour.
+
+### chore(deps): core ^1.11.0 -- the panel can finally SEE a degraded finish stage (cf#507b)
+
+**This ships an observability capability, not a version number.** Until this release an all-degraded
+finish stage and a clean one were BYTE-IDENTICAL in the summary the panel reads:
+
+```
+clean     { total: 5, done: 5, failed: 0, pending: 0, adopted: 0 }
+degraded  { total: 5, done: 5, failed: 0, pending: 0, adopted: 0 }
+```
+
+A soft degrade is a SUCCESS by design (#249/#77: a polish step never fails the chain), so it lands
+in `done` and nothing counted it. `summarizeFilm(...).finish` now carries a `degraded` count, which
+is what `src/index.ts` answers the panel with.
+
+**Why it needed a release rather than a merge.** #511 merged the `^1.11.0` bump on 2026-08-13, but
+`npm ci` installs the LOCKFILE, not the manifest range -- so `v1.24.0` shipped with core **1.10.0**
+and production had no counter. A caret permits a newer version; it does not deploy one. The
+verification for this release is therefore the DEPLOYED artifact: `v1.25.0:package-lock.json` must
+read `vivijure-core 1.11.0`.
+
+**Two semantics an operator reading these numbers needs, because both are easy to misread:**
+
+- It counts `adopted` as well as `applied`, so a shot whose degraded step was REUSED from R2 rather
+  than re-run is still counted. Adoption is the normal completion route on the async drive path, so
+  without that arm a re-driven film would under-report.
+- It counts SHOTS, not STEPS. A shot that degraded at two chain steps counts once. That is the right
+  unit for "how many shots shipped without their polish", but it is not a count of failures, and
+  comparing it against a per-step figure compares two populations.
+
+Counted from the persisted `passthrough:` tag rather than a stored field, so it reads correctly on
+job documents written BEFORE the change -- past renders are comparable, not only future ones.
+
 ## v1.24.0 -- 2026-08-14
 
 ### feat(upscale): serve finish- and speech-upscale from BOTH GPU doors (cf#507)
