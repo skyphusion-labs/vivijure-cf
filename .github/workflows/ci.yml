@@ -308,6 +308,12 @@ jobs:
           # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks is the ONLY tell, and
           # nothing asserts this list against the module tomls that declare the markers.
           VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
+          # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
+          # normal state and strips the blocks, so adding these lines changes nothing until the
+          # secrets exist. They are listed HERE because an id missing from this list is the cf#489
+          # failure: the deploy stays GREEN and silently strips the door it was meant to bind.
+          VPC_FINISH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_FINISH_UPSCALE_PROPAGANDHI_ID }}
+          VPC_SPEECH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_SPEECH_UPSCALE_PROPAGANDHI_ID }}
           # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
           # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
           # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name

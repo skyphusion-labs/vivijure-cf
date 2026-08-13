@@ -132,6 +132,15 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     # the self-host path, which is why this needs seeding and the VPC id does not.
     "FINISH_DOOR_TOKEN",
     "SPEECH_DOOR_TOKEN",
+    # cf#507: the SECOND door's bearer on each upscale module. Same rule and the SAME reason as the
+    # pair above -- render_module_toml strips [[vpc_services]] wholesale but NOT
+    # [[secrets_store_secrets]], so on a BASE self-host install this bearer block survives into the
+    # rendered toml and an unseeded name is a dangling binding (10182 at deploy). Given its own name
+    # rather than sharing the first door's: two doors are two services, and one bearer binding that
+    # happens to work for both is a coupling nobody declared. An operator may point both at the same
+    # store value; that is their decision, not a schema one.
+    "FINISH_DOOR_TOKEN_PROPAGANDHI",
+    "SPEECH_DOOR_TOKEN_PROPAGANDHI",
     # cf#489: the blender door bearer. Same rule as the two above, and it needs seeding for
     # the same reason: render_module_toml strips [[vpc_services]] wholesale but NOT
     # [[secrets_store_secrets]], so on a BASE self-host install this bearer block survives

@@ -71,3 +71,26 @@ remote = true
 binding = "SPEECH_DOOR_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "SPEECH_DOOR_TOKEN"
+
+# --- OPTIONAL (cf#507): the SECOND speech door, on the other GPU box. Same shape, same rules as
+# --- the block above, and independently optional: unset is a clean deploy with one door, which is
+# --- byte-for-byte the cf#480 behaviour. Set VPC_SPEECH_UPSCALE_PROPAGANDHI_ID only once the
+# --- matching connectivity-directory service exists.
+# ---
+# --- Both blocks carry the marker `cf482-optional:VPC_SPEECH_UPSCALE_PROPAGANDHI_ID` so the
+# --- stripper knows this binding's full extent; a half-strip fails at deploy.
+# ---
+# --- Its own bearer, rather than sharing the first door's: two doors are two services, and one
+# --- token binding that happens to work for both is a coupling nobody declared. Point both at the
+# --- same store secret if they do share a bearer -- that is an operator decision, not a schema one.
+[[vpc_services]]
+# cf482-optional:VPC_SPEECH_UPSCALE_PROPAGANDHI_ID
+binding = "SPEECH_UPSCALE_VPC_PROPAGANDHI"
+service_id = "REPLACE_WITH_VPC_SPEECH_UPSCALE_PROPAGANDHI_ID"
+remote = true
+
+[[secrets_store_secrets]]
+# cf482-optional:VPC_SPEECH_UPSCALE_PROPAGANDHI_ID
+binding = "SPEECH_DOOR_TOKEN_PROPAGANDHI"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "SPEECH_DOOR_TOKEN_PROPAGANDHI"

@@ -31,7 +31,7 @@ import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-cor
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorRoute, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -51,6 +51,11 @@ interface Env {
    *  below, byte for byte. The branch is BOUND-ness and NEVER a RunPod failure; see
    *  modules/_shared/finish-door.ts for why a failover would silently undo this. */
   FINISH_UPSCALE_VPC?: DoorBinding;
+  /** cf#507: the SECOND always-on upscale door. Both boxes run the same image and both are bound
+   *  when their ids are set; jobs round-robin across them and a poll returns to the box that took
+   *  it. Unset is a clean deploy with one door, which is exactly the cf#480 behaviour. */
+  FINISH_UPSCALE_VPC_PROPAGANDHI?: DoorBinding;
+  FINISH_DOOR_TOKEN_PROPAGANDHI?: SecretsStoreSecret | string;
   /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN` on the container). Only read when the
    *  binding above is bound. */
   FINISH_DOOR_TOKEN?: SecretsStoreSecret | string;
@@ -118,7 +123,10 @@ function runpodTransport(route: RunpodRoute, endpointId: string): Transport {
 function doorTransport(route: DoorRoute): Transport {
   return {
     door: true,
-    name: DOOR_ROUTE_NAME,
+    // cf#507: the door's OWN name, not a constant. This is the field that makes a poll return to
+    // the box that holds the job; a constant here would send every poll to whichever door the
+    // deploy happens to list first, which reads as a GC'd job on the other box.
+    name: route.name,
     call: (path, init) => route.binding!.fetch(doorUrl(path), {
       ...init,
       headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
@@ -139,10 +147,28 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
   }
 }
 
-/** Resolve the on-iron door route once per request (cf#480). */
-async function doorFor(env: Env): Promise<DoorRoute> {
-  if (!env.FINISH_UPSCALE_VPC) return doorRoute(null, "");
-  return doorRoute(env.FINISH_UPSCALE_VPC, await secretValue(env.FINISH_DOOR_TOKEN));
+/** Round-robin cursor. Module scope, so it is per-isolate: within an isolate this is a true
+ *  rotation, and across isolates the doors still share the load because each starts wherever it
+ *  starts. Deliberately NOT health-aware -- that is the filed `orderDoors` work in core (cf#480),
+ *  and two known-healthy doors do not need a probe. */
+let doorCursor = 0;
+
+/** Resolve the on-iron door POOL once per request (cf#480, pooled cf#507).
+ *
+ *  The legacy door keeps the bare `DOOR_ROUTE_NAME` label deliberately. Renaming it to
+ *  `vpc-fatmike` would have left every in-flight poll token resolving through the back-compat
+ *  fallback for the length of the longest job; keeping it means an old token's label IS this
+ *  door's name, so back-compat is structural rather than a special case. The fallback still exists
+ *  for a deploy that binds only the newer door. */
+async function doorsFor(env: Env): Promise<DoorRoute[]> {
+  const [legacyToken, propagandhiToken] = await Promise.all([
+    secretValue(env.FINISH_DOOR_TOKEN),
+    secretValue(env.FINISH_DOOR_TOKEN_PROPAGANDHI),
+  ]);
+  return doorPool([
+    { name: DOOR_ROUTE_NAME, binding: env.FINISH_UPSCALE_VPC, token: legacyToken, legacy: true },
+    { name: doorName("propagandhi"), binding: env.FINISH_UPSCALE_VPC_PROPAGANDHI, token: propagandhiToken },
+  ]);
 }
 
 /** Resolve both RunPod secrets once per request. */
@@ -231,13 +257,20 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   // probed and not billed when the binding is present -- there is no failover, by design, because
   // a failover would quietly restore the rented dependency this exists to remove and every signal
   // would stay green while it happened (same rule as the plane proxy, cp#321).
-  const door = await doorFor(env);
-  if (doorBound(door)) {
-    const problem = doorProblem(door);
-    // Bound binding, token not visible yet: propagation, not misconfiguration (the cf#114
-    // distinction, applied to the door's own credential). Degrade and SAY WHICH.
-    if (problem) return passthrough(input, problem);
-    return submitVia(env, req, doorTransport(door));
+  // cf#507: the branch is still BOUND-ness and nothing else. `pool` is every BOUND door; a door
+  // whose bearer has not propagated yet is IN it, so a module mid-propagation cannot read as
+  // having no door and fall through to RunPod. Which door serves the job is decided among the
+  // USABLE ones, and that selection is door-to-door only -- never door-to-RunPod.
+  const pool = await doorsFor(env);
+  if (pool.length > 0) {
+    const usable = usableDoors(pool);
+    if (usable.length === 0) {
+      // Every bound door is still waiting on its bearer. Propagation, not misconfiguration
+      // (the cf#114 distinction). Degrade and SAY WHICH -- never re-rent RunPod for it.
+      return passthrough(input, doorProblem(pool[0]) ?? "door-token-not-yet-visible");
+    }
+    const chosen = pickDoor(usable, doorCursor++)!;
+    return submitVia(env, req, doorTransport(chosen));
   }
 
   const { route, apiKey, endpointId } = await runpodCreds(env);
@@ -317,15 +350,18 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   let t: Transport;
   let route: RunpodRoute | null = null;
   if (tokenTookDoor(st.door)) {
-    const door = await doorFor(env);
-    if (!doorBound(door)) {
+    // cf#507: resolve BY NAME, never re-pick. Job state on a door is per-process RAM, so a poll
+    // landing on the other box 404s, `runpodJobGone` reads that as a GC'd job, and past the grace
+    // window the shot FAILS while the box that actually holds it is still working.
+    const door = resolveDoor(await doorsFor(env), st.door);
+    if (!door) {
       // The binding was removed while this job was in flight. Refusing to guess is the only honest
       // answer: a poll against RunPod would 404 and fail the shot, and there is nothing to degrade
       // to -- this module's poll token carries shotId/srcFps/frames but NOT the input clip_key, so
       // a poll-time passthrough cannot reconstruct the clip it would be passing through. (Its
       // sibling speech-upscale CAN degrade here, because its token does carry audio_key. Same
       // rule, different answer, decided by what the token holds and not by preference.)
-      return { ok: false, error: "finish-upscale: door binding removed while job " + st.jobId + " was in flight; cannot poll (cf#480)" };
+      return { ok: false, error: "finish-upscale: door " + st.door + " is not bound; job " + st.jobId + " was in flight on it; cannot poll (cf#480/#507)" };
     }
     const problem = doorProblem(door);
     if (problem) return { ok: false, error: "finish-upscale: " + problem };
@@ -439,13 +475,13 @@ export default {
     // with. Gating it would make it unusable for its one purpose while protecting nothing.
     if (request.method === "GET" && url.pathname === "/ready") {
       const { route, endpointId } = await runpodCreds(env);
-      const door = await doorFor(env);
-      const onDoor = doorBound(door);
+      const pool = await doorsFor(env);
+      const onDoor = pool.length > 0;
       return json({
         // cf#480: on the door route RunPod credentials are irrelevant -- requiring them would make
         // a correctly-configured on-iron module report NOT READY, which is the readiness probe
         // reporting the opposite of the truth. On the door arm `ok` is the door's own readiness.
-        ok: onDoor ? !doorProblem(door) : Boolean(route.credential && endpointId),
+        ok: onDoor ? usableDoors(pool).length > 0 : Boolean(route.credential && endpointId),
         // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
@@ -457,7 +493,20 @@ export default {
         // to what it served before this change and the module-agnostic shape contract holds. When it
         // IS present, it distinguishes bound-with-token from bound-without-token, which behave
         // completely differently and are indistinguishable from outside otherwise.
-        ...(onDoor ? { door: { bound: true, token: !doorProblem(door), route: DOOR_ROUTE_NAME } } : {}),
+        // cf#507: `route` stays the legacy door's label so a single-door deploy reports exactly
+        // what it reported before. `routes` names every bound door with its own readiness, so two
+        // bound doors cannot be reported as one -- a pool that reads as a single door is how a
+        // silently-unbound second box survives for days.
+        ...(onDoor
+          ? {
+              door: {
+                bound: true,
+                token: usableDoors(pool).length > 0,
+                route: (pool.find((d) => d.legacy) ?? pool[0]).name,
+                routes: pool.map((d) => ({ name: d.name, token: !doorProblem(d) })),
+              },
+            }
+          : {}),
         // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
         // otherwise an empty job log is indistinguishable from a clean run, which is the exact
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is

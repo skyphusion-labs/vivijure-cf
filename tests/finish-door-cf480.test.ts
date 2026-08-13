@@ -306,7 +306,9 @@ describe("the binding removed while a job is in flight", () => {
       token({ jobId: DOOR_JOB, shotId: "shot_01", srcFps: 24, frames: 96, submittedAt: Date.now(), door: DOOR_ROUTE_NAME })));
 
     expect(res.ok).toBe(false);
-    expect(String(res.error)).toContain("door binding removed");
+    // cf#507 reworded this to name WHICH door is unbound, since there is now more than one. The
+    // assertion tracks the substance (an honest refusal naming the door), not the old phrasing.
+    expect(String(res.error)).toContain("door vpc is not bound");
     // Falling through to RunPod would 404 and, past the grace window, fail the shot with
     // "GC'd or never ran" -- a true-sounding verdict about a job RunPod never had.
     expect(rp.calls.length).toBe(0);
@@ -346,14 +348,23 @@ describe("GET /ready", () => {
     // No RunPod credential at all here. Requiring one would make a correctly-configured on-iron
     // module report NOT READY -- a readiness probe reporting the opposite of the truth.
     expect(b.ok).toBe(true);
-    expect(b.door).toEqual({ bound: true, token: true, route: DOOR_ROUTE_NAME });
+    // cf#507: `route` still reports the legacy label, so a one-door deploy reads exactly as it did
+    // before the pool landed. `routes` is the new per-door detail, and with one door bound it has
+    // exactly one row -- two bound doors reported as one is the failure this key exists to prevent.
+    expect(b.door).toEqual({
+      bound: true, token: true, route: DOOR_ROUTE_NAME,
+      routes: [{ name: DOOR_ROUTE_NAME, token: true }],
+    });
   });
 
   it("BOUND but tokenless is NOT ready, and says which half is missing", async () => {
     const door = doorStub(() => runOk(DOOR_JOB));
     const b = await ready(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT, FINISH_UPSCALE_VPC: door.binding });
     expect(b.ok).toBe(false);
-    expect(b.door).toEqual({ bound: true, token: false, route: DOOR_ROUTE_NAME });
+    expect(b.door).toEqual({
+      bound: true, token: false, route: DOOR_ROUTE_NAME,
+      routes: [{ name: DOOR_ROUTE_NAME, token: false }],
+    });
   });
 
   it("never leaks the door token in any form", async () => {
