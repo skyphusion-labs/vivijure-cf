@@ -50,6 +50,70 @@ export function coerceConfig(cfg: Record<string, unknown>): UpscaleConfig {
   };
 }
 
+/** The only factors the shipped handler will honour. MEASURED at vivijure-upscale origin/main,
+ *  handler.py:446/:623/:714, three identical call sites:
+ *
+ *    final_scale = 4 if int(inp.get("scale", 2) or 2) >= 4 else 2
+ *
+ *  It hard-clamps to 2 or 4 AND `int()` truncates, so a fractional request is silently rounded
+ *  DOWN rather than refused -- asking for 2.18 yields 2 with no error. That is why this module
+ *  chooses deliberately from a closed set instead of computing the exact ratio: a float would be
+ *  a plausible wrong value, which is the same failure shape as the `?? 1920` default this work
+ *  exists to fix. */
+export const UPSCALE_FACTORS = [2, 4] as const;
+export type UpscaleFactor = (typeof UPSCALE_FACTORS)[number];
+
+export interface ScaleChoice {
+  scale: UpscaleFactor;
+  /** True only when BOTH source and target dimensions were known and the factor came from them.
+   *  A defaulted factor and a derived one must never be the same observation -- that exact
+   *  indistinguishability is how a blind `?? 1920` survived in the film path with nothing able to
+   *  flag it. The caller reports this rather than asserting it targeted anything. */
+  derived: boolean;
+  /** True when even the largest factor the handler accepts still lands below the target on some
+   *  axis. Reported, never silently absorbed: downstream will stretch it and the operator should
+   *  know the shortfall came from the source, not from this choice. */
+  undershoots: boolean;
+}
+
+function usableDim(n: unknown): number {
+  const v = Number(n);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** Choose the upscale factor that reaches the DELIVERY target in one learned pass.
+ *
+ *  Smallest factor that clears the target on BOTH axes; the largest available if none does.
+ *  Overshooting is fine and is the point: the downstream resize to the delivery resolution is
+ *  then a DOWNSAMPLE (supersampling) rather than a second, naive upscale.
+ *
+ *  The bug this replaces: a blind 2x on a 864x496 draft clip lands at 1728x992, below a 1080p
+ *  delivery, so ffmpeg stretches it back up -- and the handler had already computed a 4x result on
+ *  the GPU and discarded it down to 992 lines first. Downsample then upsample, in one pipeline.
+ *
+ *  Choosing 4 is a RESIZE decision, not a memory one: both models are 4x native (handler.py:10)
+ *  and a scale-2 request runs the same model then rescales down on the GPU, so 4 costs no more
+ *  model memory than 2. #585's CUDA-OOM was a MODEL decision (RealESRGAN_x4plus, the heavy RRDB)
+ *  and this does not touch the model. */
+export function chooseUpscaleScale(
+  src: { width?: unknown; height?: unknown },
+  target: { width?: unknown; height?: unknown },
+): ScaleChoice {
+  const sw = usableDim(src?.width), sh = usableDim(src?.height);
+  const tw = usableDim(target?.width), th = usableDim(target?.height);
+
+  // Not derivable. Say so; do not dress a default as a measurement.
+  if (!sw || !sh || !tw || !th) {
+    return { scale: defaultConfig().scale as UpscaleFactor, derived: false, undershoots: false };
+  }
+
+  for (const f of UPSCALE_FACTORS) {
+    if (sw * f >= tw && sh * f >= th) return { scale: f, derived: true, undershoots: false };
+  }
+  const largest = UPSCALE_FACTORS[UPSCALE_FACTORS.length - 1];
+  return { scale: largest, derived: true, undershoots: true };
+}
+
 /** The upscaled clip lands beside the source with a `_up` suffix, so the original survives and the
  *  chain passes the new key downstream. `renders/p/clips/shot.mp4` -> `renders/p/clips/shot_up.mp4`. */
 export function upscaledKey(clipKey: string): string {
