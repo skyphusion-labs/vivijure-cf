@@ -3,6 +3,79 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.24.0 -- 2026-08-14
+
+### feat(upscale): serve finish- and speech-upscale from BOTH GPU doors (cf#507)
+
+**Both upscale modules can now be served by TWO on-iron GPU doors instead of one.** propagandhi and
+fatmike both run the upscale serve containers; until this release the panel bound a single door and
+the second box sat idle. `modules/_shared/finish-door.ts` grows a door POOL (`doorPool`,
+`usableDoors`, `pickDoor`, `resolveDoor`, `doorName`) over the seam cf#480 left for it in v1.21.0.
+The single-door `doorRoute()` is untouched, so finish-blender is unaffected.
+
+**THE SECOND DOOR IS INERT UNLESS ITS BINDING AND TOKEN ARE CONFIGURED.** With
+`VPC_FINISH_UPSCALE_PROPAGANDHI_ID` and `VPC_SPEECH_UPSCALE_PROPAGANDHI_ID` unset, the deploy
+stripper removes the new blocks and behaviour is byte-identical to v1.23.0: one door, or the
+untouched RunPod path when nothing is bound. Turning the second door on is a deploy-time act, never
+a code change.
+
+**Poll affinity is mandatory, not an optimisation.** A door keeps job state in per-process RAM, so a
+poll for an id that process does not hold answers 404, which the client classifies as TERMINAL "job
+gone". A poll landing on the wrong box therefore does not error; it reports a live job as
+finished-and-vanished while the other box is still burning GPU, and past the grace window the shot
+FAILS. So each submit picks a door round-robin and records THAT door's name in the poll token, and
+the poll resolves BY NAME and never re-picks. Transport-level stickiness cannot substitute: the poll
+is a separate Worker invocation with no cookie and no stable source address.
+
+**Bound-ness is still the only door-vs-RunPod branch.** The door branch is taken when the pool is
+NON-EMPTY, never when some door is USABLE. A bound door whose bearer has not propagated stays IN the
+pool and degrades with a named reason; falling through to RunPod there would silently re-rent the
+GPU this exists to stop renting. Door-to-door selection is not failover.
+
+**Back-compat is structural rather than a special case.** The existing door keeps the bare `vpc`
+label instead of being renamed, so an in-flight token's label IS that door's name and no in-flight
+poll is routed through a fallback for the length of the longest job. A legacy fallback still covers
+a deploy that binds only the newer door.
+
+**Self-host installs need the new bearer names seeded.** Each door gets its OWN
+`[[secrets_store_secrets]]` bearer (`FINISH_DOOR_TOKEN_PROPAGANDHI`, `SPEECH_DOOR_TOKEN_PROPAGANDHI`)
+rather than sharing the first door's, because two doors are two services and a shared bearer is a
+coupling nobody declared; an operator may still point both at the same store value. Both names are
+seeded in `deploy/vivijure_deploy.py`. The base self-host render strips `[[vpc_services]]` wholesale
+but does NOT strip `[[secrets_store_secrets]]`, so an unseeded name is a DANGLING BINDING and both
+upscale modules would have failed to deploy on that path.
+
+**The deploy wiring is now asserted, which closes the cf#489 failure.** The optional-VPC id lists in
+`.github/workflows/ci.yml` and `scripts/fill-module-placeholders.sh` are hand-maintained, and cf#489
+is the case where a missed entry deployed GREEN while silently stripping the door, with a single
+deploy log line as the only tell. `tests/optional-binding-wiring-cf507.test.ts` now DERIVES the
+authority from the `cf482-optional:<VAR>` markers the module tomls carry, matched with the same
+whole-comment-line shape `strip-vpc-block.awk` requires so the test and the stripper cannot disagree
+about what a marker is, and asserts both lists against it. A membership list whose right-hand side is
+a second hand-written copy can only fail when an entry is REMOVED; this one fails in the direction
+that actually happens, which is the population GROWING. `deploy/vivijure_deploy.py` is deliberately
+not mirrored there: `deploy/test_secret_map.py` already asserts set EQUALITY over the full secret
+population, which is strictly stronger, and it caught this growth on its first event.
+
+### fix(cast): point the Wan LoRA button at the explicit Wan route (vivijure-local#329, core#174)
+
+**A live consent defect, not a pending regression.** The /cast Wan LoRA button showed a confirm
+dialog promising a Wan 2.2 expert training job at 35 to 45 minutes and a 2-to-4 dollar GPU spend,
+then POSTed the SHARED `/api/cast/:id/train-lora` route with no body at all. That route resolves the
+model family from HOST CONFIG when the body omits `model_family`, so on a host with no Wan training
+endpoint wired the button silently trained SDXL and returned 200. The user agreed to a specific
+model, cost and duration and got a different one, with nothing in the response saying so.
+
+The button now POSTs `/api/cast/:id/train-wan-lora`, which hardcodes family `wan` and answers 501
+when Wan is not wired. The SDXL button is untouched. The 501 renders product language rather than
+forwarding the server's body, which is written for the OPERATOR and names a binding a tenant cannot
+reach; every other failure keeps its server-supplied message unchanged. No core pin bump is needed:
+that route is already served at the pinned `@skyphusion-labs/vivijure-core` 1.10.0.
+
+### deps: bump rembg 2.0.77 -> 2.0.78 in containers/image-prep (#499)
+
+Dependabot, pip-minor-patch group, patch only.
+
 ## v1.23.0 -- 2026-08-08
 
 ### feat(studio): finish-blender is back in the hosted finish chain, on our own iron (cf#489)
