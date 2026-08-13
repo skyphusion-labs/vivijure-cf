@@ -7,7 +7,8 @@
 # Requires: SECRETS_STORE_ID, D1_DATABASE_ID, VPC_VIDEO_FINISH_ID, VPC_AUDIO_BEAT_SYNC_ID,
 # VPC_AUDIO_MASTER_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (wrangler).
 #
-# OPTIONAL (cf#482): VPC_FINISH_UPSCALE_ID, VPC_SPEECH_UPSCALE_ID. Unset is the NORMAL state and
+# OPTIONAL (cf#482): VPC_FINISH_UPSCALE_ID, VPC_SPEECH_UPSCALE_ID, and their cf#507 second-door
+# siblings VPC_FINISH_UPSCALE_PROPAGANDHI_ID / VPC_SPEECH_UPSCALE_PROPAGANDHI_ID. Unset is the NORMAL state and
 # deploys unchanged -- the module keeps its RunPod path and its [[vpc_services]] block is stripped.
 # Set one only when the matching connectivity-directory service exists (cf#480).
 #

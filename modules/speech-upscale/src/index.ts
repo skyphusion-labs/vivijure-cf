@@ -37,7 +37,7 @@ import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-cor
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorRoute, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -56,6 +56,10 @@ interface Env {
    *  Bound -> every job goes here and RunPod is not called at all. Unbound -> the RunPod path,
    *  byte for byte. Bound-ness, never failover (modules/_shared/finish-door.ts). */
   SPEECH_UPSCALE_VPC?: DoorBinding;
+  /** cf#507: the SECOND always-on speech door. Same image, same wire contract; jobs round-robin
+   *  across both and a poll returns to the box that took it. Unset = one door = cf#480 exactly. */
+  SPEECH_UPSCALE_VPC_PROPAGANDHI?: DoorBinding;
+  SPEECH_DOOR_TOKEN_PROPAGANDHI?: SecretsStoreSecret | string;
   /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN`). Read only when the binding is bound. */
   SPEECH_DOOR_TOKEN?: SecretsStoreSecret | string;
 }
@@ -105,7 +109,9 @@ function runpodTransport(route: RunpodRoute, endpointId: string): Transport {
 function doorTransport(route: DoorRoute): Transport {
   return {
     door: true,
-    name: DOOR_ROUTE_NAME,
+    // cf#507: the door's OWN name. A constant here would send a poll to whichever door is listed
+    // first rather than to the box holding the job, which reads as a GC'd job on the other one.
+    name: route.name,
     call: (path, init) => route.binding!.fetch(doorUrl(path), {
       ...init,
       headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
@@ -113,10 +119,21 @@ function doorTransport(route: DoorRoute): Transport {
   };
 }
 
-/** Resolve the on-iron door route once per request (cf#480). */
-async function doorFor(env: Env): Promise<DoorRoute> {
-  if (!env.SPEECH_UPSCALE_VPC) return doorRoute(null, "");
-  return doorRoute(env.SPEECH_UPSCALE_VPC, await secretValue(env.SPEECH_DOOR_TOKEN));
+/** Round-robin cursor; per-isolate, deliberately not health-aware (see finish-upscale). */
+let doorCursor = 0;
+
+/** Resolve the on-iron door POOL once per request (cf#480, pooled cf#507). The legacy door keeps
+ *  the bare `DOOR_ROUTE_NAME` label so an in-flight poll token's label IS this door's name and
+ *  back-compat is structural rather than a special case. */
+async function doorsFor(env: Env): Promise<DoorRoute[]> {
+  const [legacyToken, propagandhiToken] = await Promise.all([
+    secretValue(env.SPEECH_DOOR_TOKEN),
+    secretValue(env.SPEECH_DOOR_TOKEN_PROPAGANDHI),
+  ]);
+  return doorPool([
+    { name: DOOR_ROUTE_NAME, binding: env.SPEECH_UPSCALE_VPC, token: legacyToken, legacy: true },
+    { name: doorName("propagandhi"), binding: env.SPEECH_UPSCALE_VPC_PROPAGANDHI, token: propagandhiToken },
+  ]);
 }
 
 function auth(route: RunpodRoute) {
@@ -219,11 +236,11 @@ async function submit(env: Env, req: InvokeRequest<SpeechInput>): Promise<Invoke
 
   // cf#480: our own always-on iron first, and ONLY on bound-ness. No failover to RunPod -- that
   // would restore the rented dependency this removes, silently, with every signal still green.
-  const door = await doorFor(env);
-  if (doorBound(door)) {
-    const problem = doorProblem(door);
+  const pool = await doorsFor(env);
+  if (pool.length > 0) {
+    const problem = usableDoors(pool).length > 0 ? null : (doorProblem(pool[0]) ?? "door-token-not-yet-visible");
     if (problem) return passthrough(input, problem);   // bound, token not visible yet (cf#114 shape)
-    return submitVia(env, req, cfg, doorTransport(door));
+    return submitVia(env, req, cfg, doorTransport(pickDoor(usableDoors(pool), doorCursor++)!));
   }
 
   const { route, apiKey, endpointId } = await runpodCreds(env);
@@ -293,11 +310,12 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<SpeechOut
   let t: Transport;
   let route: RunpodRoute | null = null;
   if (tokenTookDoor(st.door)) {
-    const door = await doorFor(env);
+    // cf#507: resolve BY NAME, never re-pick -- a poll on the wrong box 404s and reads as GC'd.
+    const door = resolveDoor(await doorsFor(env), st.door);
     // Binding removed mid-flight. Unlike its finish sibling this token DOES carry the input
     // audio_key, so the honest answer is the module's own soft degrade rather than a hard error --
     // the chain keeps the original dialogue audio and the reason is recorded, never a fake tag.
-    if (!doorBound(door)) return pollPassthrough(st, "door-unbound-mid-job");
+    if (!door) return pollPassthrough(st, "door-unbound-mid-job");
     if (doorProblem(door)) return pollPassthrough(st, "door-token-not-yet-visible");
     t = doorTransport(door);
   } else {
@@ -399,13 +417,13 @@ export default {
     // with. Gating it would make it unusable for its one purpose while protecting nothing.
     if (request.method === "GET" && url.pathname === "/ready") {
       const { route, endpointId } = await runpodCreds(env);
-      const door = await doorFor(env);
-      const onDoor = doorBound(door);
+      const pool = await doorsFor(env);
+      const onDoor = pool.length > 0;
       return json({
         // cf#480: on the door route RunPod credentials are irrelevant -- requiring them would make
         // a correctly-configured on-iron module report NOT READY, which is a readiness probe
         // reporting the opposite of the truth.
-        ok: onDoor ? !doorProblem(door) : Boolean(route.credential && endpointId),
+        ok: onDoor ? usableDoors(pool).length > 0 : Boolean(route.credential && endpointId),
         // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
@@ -417,7 +435,18 @@ export default {
         // to what it served before this change and the module-agnostic shape contract holds. When it
         // IS present, it distinguishes bound-with-token from bound-without-token, which behave
         // completely differently and are indistinguishable from outside otherwise.
-        ...(onDoor ? { door: { bound: true, token: !doorProblem(door), route: DOOR_ROUTE_NAME } } : {}),
+        // cf#507: `route` keeps the legacy label so a one-door deploy reports what it always did;
+        // `routes` names every bound door so two doors cannot be reported as one.
+        ...(onDoor
+          ? {
+              door: {
+                bound: true,
+                token: usableDoors(pool).length > 0,
+                route: (pool.find((d) => d.legacy) ?? pool[0]).name,
+                routes: pool.map((d) => ({ name: d.name, token: !doorProblem(d) })),
+              },
+            }
+          : {}),
         // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
         // otherwise an empty job log is indistinguishable from a clean run, which is the exact
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
