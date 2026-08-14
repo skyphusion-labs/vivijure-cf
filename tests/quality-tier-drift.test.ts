@@ -16,9 +16,12 @@
 // meta-test (#20).
 import { describe, it, expect } from "vitest";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
-import { MANIFEST as KEYFRAME_MANIFEST } from "../modules/keyframe/src/index";
-import { MANIFEST as OWN_GPU_MANIFEST } from "../modules/own-gpu/src/index";
-import { MANIFEST as LOCAL_GPU_MANIFEST } from "../modules/local-gpu/src/index";
+// cf#285: import data-only manifest.ts leaves, not entrypoints, so this guard does not
+// inherit the runpod-job-log / tenant-r2 import graph (and so core/local sparse checkouts
+// need only the leaf + contract, not modules/_shared).
+import { MANIFEST as KEYFRAME_MANIFEST } from "../modules/keyframe/src/manifest";
+import { MANIFEST as OWN_GPU_MANIFEST } from "../modules/own-gpu/src/manifest";
+import { MANIFEST as LOCAL_GPU_MANIFEST } from "../modules/local-gpu/src/manifest";
 import type { ConfigField, ModuleManifest } from "@skyphusion-labs/vivijure-core/modules/types";
 
 const CORE_TIERS = QUALITY_TIERS.map((t) => t.value).slice().sort();

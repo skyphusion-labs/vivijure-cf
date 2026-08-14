@@ -139,8 +139,15 @@ describe("the population under test is the whole one (cf#296)", () => {
         // `hooks: ["motion.backend"]` matched eight modules and silently dropped local-gpu, which
         // is dual-hook. A name filter that agrees with your expectation is the one nobody rechecks.
         try {
-          const src = readFileSync(join(dir, e.name, "src", "index.ts"), "utf8");
-          return /hooks:\s*\[[^\]]*"motion\.backend"/.test(src);
+          // cf#285 moved some modules' MANIFEST (incl. the `hooks` array) out of index.ts into a
+          // data-only manifest.ts leaf file. Read both -- a module post-extraction has nothing in
+          // index.ts and everything in manifest.ts; a not-yet-extracted module is the reverse.
+          const indexSrc = readFileSync(join(dir, e.name, "src", "index.ts"), "utf8");
+          let manifestSrc = "";
+          try {
+            manifestSrc = readFileSync(join(dir, e.name, "src", "manifest.ts"), "utf8");
+          } catch { /* not extracted; index.ts carries it */ }
+          return /hooks:\s*\[[^\]]*"motion\.backend"/.test(indexSrc + manifestSrc);
         } catch { return false; }
       })
       .map((e) => e.name);
