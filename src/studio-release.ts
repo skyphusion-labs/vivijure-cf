@@ -17,7 +17,7 @@
 // Absent means the field is omitted; never invent a sha.
 
 /** Keep in sync with package.json "version". tests/studio-release-287.test.ts pins the pair. */
-export const PACKAGE_VERSION = "1.26.0";
+export const PACKAGE_VERSION = "1.27.0";
 
 export interface StudioReleaseIdentity {
   /** The studio release / build id. Prefer the `vX.Y.Z` tag form when STUDIO_RELEASE is set. */
