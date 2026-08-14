@@ -142,7 +142,13 @@ Deploy is **tag-gated**: merging to `main` runs CI only, and pushing a SemVer ta
 deploy job. So:
 
 ```bash
-# 1. Release PR on main: bump package.json, add the CHANGELOG section. Merge it.
+# 1. Release PR on main: bump package.json, add the "## vX.Y.Z -- <date>" CHANGELOG heading.
+#    Then pull in every changelog.d/ fragment accumulated since the last release (cf#539) --
+#    this deletes the consumed fragments and appends their bodies into the section you just
+#    added, refusing loudly if the version does not match what you just wrote:
+python3 scripts/changelog-assemble.py v1.26.0
+#    Commit the version bump, the heading, the assembled CHANGELOG.md, and the deleted fragment
+#    files together, in the same release-prep commit. Merge it.
 # 2. Tag the merged commit and push.
 git tag -a v1.26.0 -m "vivijure-studio v1.26.0" && git push origin v1.26.0
 # 3. Watch BOTH workflows. A `v*` tag fires TWO of them, not one:

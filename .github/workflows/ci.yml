@@ -87,6 +87,18 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+      # cf#539. Ported from vivijure-control-plane's changelog-fragment convention: every entry
+      # appending to the same top CHANGELOG.md section made the open-PR queue quadratic (measured
+      # 2026-08-14: 7 open PRs, one section, none bumping package.json -- merging any one
+      # re-conflicted the other six). changelog.d/ fragments remove the shared anchor; these two
+      # prove the assembler and the merge-time guard rather than assume them, same discipline as
+      # the container-tests job above (plain scripts, non-zero exit on any failed assertion).
+      - name: Changelog-entry guard, and the control that reproduces its old false pass
+        run: python3 tests/changelog-entry-required.test.py
+
+      - name: Changelog fragment assembler, byte-correct against fixtures
+        run: python3 tests/changelog-assemble.test.py
+
   # CONTAINER TESTS (cf#325): the CPU containers ship their own test_*.py files and NONE of them
   # ran anywhere -- this workflow's only pytest invocation above is scoped to deploy/. A suite
   # nothing runs is indistinguishable from a suite that passes; both produce a green pipeline and

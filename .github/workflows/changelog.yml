@@ -1,0 +1,54 @@
+name: changelog
+
+# Guards cf#510: a PR touching src/, public/, or modules/ code with no CHANGELOG.md entry and no
+# changelog.d/ fragment. Ported from vivijure-control-plane's changelog.yml (cp#147), same shape.
+#
+# Deliberately narrow, per cp#147 (same reasoning applies here unchanged):
+#   - src/, public/, modules/ only. Tests, docs, and workflow-only changes do not need an entry; a
+#     check that fires on everything gets bypassed on reflex, which is worse than no check.
+#   - Touch, not content. No parsing of the entry, no format enforcement. The check exists to
+#     make the author STOP and decide, not to grade prose.
+#   - The escape hatch is LOUD: the `no-changelog` label, so a deliberate skip is a recorded
+#     decision on the PR rather than a silent one.
+#
+# Not part of the aviation-grade-main required-check set (ci / coverage / CodeQL); this job id
+# can be renamed freely, unlike those three.
+#
+# THREE-DOT, NOT TWO. This job compares `git diff BASE...HEAD`, which diffs from the merge base --
+# see scripts/changelog-entry-required.py's own docstring for the false-pass class a two-dot
+# comparison against a moving base produces.
+#
+# cf#539: accepts EITHER a changelog.d/ fragment OR a direct CHANGELOG.md edit during the
+# migration window, so this does not break the PRs already open when it lands.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The logic lives in a SCRIPT, not here, so it can be driven by a test against a synthetic
+      # repository -- including a fixture that reproduces the false pass this class of job used to
+      # produce elsewhere. See tests/changelog-entry-required.test.py, which runs in ci.yml.
+      - name: CHANGELOG.md entry (or changelog.d/ fragment) required for src/, public/, or modules/ changes
+        env:
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/changelog-entry-required.py . "$BASE_SHA" "$HEAD_SHA" "$LABELS_JSON"
