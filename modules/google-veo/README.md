@@ -46,6 +46,9 @@ Operator settings to self-host this module.
 
 **Model / endpoint**: fixed in code -- `ENDPOINT = https://api.runpod.ai/v2/google-veo3-1-fast-i2v`.
 Selecting a different model means binding a different `motion.backend` module, not changing a knob.
+Slug existence (zero-spend `/health` probe) and published rates ($0.10/sec without audio, $0.15/sec
+with audio; Conrad 2026-08-03) are recorded in `docs/runpod-public-endpoint-slugs.md` (cf#267).
+Audio is a billing dimension; this module defaults `generate_audio` **off**.
 
 **Render knobs** (`config_schema`, set per render in the planner; the core clamps against the
 schema):

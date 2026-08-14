@@ -139,7 +139,9 @@ describe("film-titles module invoke (#602 async + #207 regression)", () => {
     const json = (await res.json()) as { ok: boolean; output: { film_key: string; applied: string[]; degraded?: string } };
     expect(json.ok).toBe(true);
     expect(json.output.film_key).toBe("renders/film-x/film_titled.mp4"); // the carded film, not the original
-    expect(json.output.applied).toEqual(["film-titles"]);
+    expect(json.output.applied).toContain("film-titles");
+    // cf#396: wall-clock fleet VPC attribution on success (job elapsed from submit -> terminal)
+    expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
     expect(json.output.degraded).toBeUndefined();
   });
 
@@ -150,7 +152,8 @@ describe("film-titles module invoke (#602 async + #207 regression)", () => {
     expect(calls.map((c) => new URL(c).pathname)).toEqual(["/async/film-titles", "/film-titles"]);
     expect(json.ok).toBe(true);
     expect(json.output.film_key).toBe("renders/film-x/film_titled.mp4");
-    expect(json.output.applied).toEqual(["film-titles"]);
+    expect(json.output.applied).toContain("film-titles");
+    expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
   });
 
   it("poll surfaces a container job FAILURE (ok:false -> the core soft-degrades, fail-safe)", async () => {
@@ -275,7 +278,8 @@ describe("film-titles prepend_seconds reporting (#663)", () => {
   it("the SYNC fallback also reports prepend_seconds with a title card", async () => {
     const { env } = vpcEnv({ asyncSupported: false });
     const out = (await (await worker.fetch(invokeCfg(withTitle(), {}), env)).json()) as { output: { prepend_seconds?: number; applied: string[] } };
-    expect(out.output.applied).toEqual(["film-titles"]);
+    expect(out.output.applied).toContain("film-titles");
+    expect(out.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
     expect(out.output.prepend_seconds).toBe(3); // default title_seconds
   });
 

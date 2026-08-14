@@ -45,6 +45,7 @@ Shapes live in `@skyphusion-labs/vivijure-core` (`modules/types`).
 | `dialogue` | Per-shot dialogue lines -> speech audio (TTS, one voice per cast member). Runs after clips, before finish; its audio feeds the lip-sync finish module. | pick one |
 | `speech` | Per-shot dialogue AUDIO -> cleaned/enhanced dialogue audio (e.g. speech upscale). Runs after `dialogue`, before `finish`, so lip-sync consumes the improved track. | chain (0..n) |
 | `plan.enhance` | Expand a storyboard before render: LLM auto-direction, camera/lighting enrichment. | chain (0..n) |
+| `image.generate` | prompt -> single image | pick one |
 | `cast.image` | Portrait + bible -> LoRA training reference images. | pick one |
 | `notify` | Film done -> deliver a render-complete notification (email, webhook, ...). | chain (0..n) |
 | `master` | Assembled film's audio bed -> mastered audio (music upscale + LUFS loudness). Film-level, runs after the audio mix is built (assemble), before the final mux; fail-safe (a master miss muxes the un-mastered bed). The audio sibling of `finish` (clips) and the dialogue/speech lane (per-shot voice). | chain (0..n) |

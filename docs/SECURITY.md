@@ -247,7 +247,7 @@ surface is public by design, and there is nothing to write.
   `migrations/demo/0001_demo_seed.sql` (the 26 captured module manifests + fictional projects/cast +
   completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
   can never auto-apply to prod (see the seed file header) and carries high explicit ids (>=9000).
-- **`host.readonly` projection (`src/modules/registry.ts` `isDemoEnv`, the structural twin of
+- **`host.readonly` projection (`@skyphusion-labs/vivijure-core modules/registry` `isDemoEnv`, the structural twin of
   `isDemoMode`; change both together).** `GET /api/modules` projects `host.readonly = true` in demo
   mode; the frontend read-only gate (`public/readonly-gate.js`) renders the honest banner and blocks
   mutations client-side BEFORE the network. The server gate is authoritative; the client gate is UX
@@ -372,7 +372,7 @@ Two operator knobs (both `[vars]`):
 
 A module is untrusted (community territory: the operator service-binds third-party Worker code).
 The core reads every `/invoke`, `/poll`, `/cancel`, and `/module.json` response through a
-size-capped reader (`MAX_MODULE_RESPONSE_BYTES`, 1MB; `src/modules/registry.ts`). Envelopes are
+size-capped reader (`MAX_MODULE_RESPONSE_BYTES`, 1MB; `@skyphusion-labs/vivijure-core modules/registry`). Envelopes are
 small JSON metadata -- heavy artifacts live in R2, referenced by KEY, never inline -- so the cap is
 generous. A response exceeding it (or an unreadable body) becomes an honest `ok:false` DEGRADE,
 never an unbounded buffer that could OOM/DoS the core Worker.

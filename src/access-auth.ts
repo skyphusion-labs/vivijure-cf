@@ -15,6 +15,7 @@
 // atob/TextEncoder, which the Workers runtime provides.
 
 import type { Env } from "./env";
+import type { Scope } from "./authz";
 
 export interface AccessConfig {
   teamDomain: string; // e.g. "skyphusion.cloudflareaccess.com"
@@ -22,7 +23,11 @@ export interface AccessConfig {
 }
 
 export type AccessDecision =
-  | { ok: true; sub: string | null; email: string | null }
+  // cf#520: `scope` is REQUIRED on the admit branch, deliberately. Admission used to be the whole
+  // answer, so every credential class was operator-equivalent once past the gate. Making the field
+  // required means every site that admits must say WHAT it admits to, and the compiler enumerates
+  // them (it found exactly six) rather than a grep anyone has to trust.
+  | { ok: true; sub: string | null; email: string | null; scope: Scope }
   | { ok: false; status: number; reason: string };
 
 // Read the (deploy-specific, non-secret) Access config from env. Returns null when unconfigured so
@@ -204,6 +209,10 @@ export async function verifyAccessRequest(
     ok: true,
     sub: typeof payload.sub === "string" ? payload.sub : null,
     email: typeof payload.email === "string" ? payload.email : null,
+    // cf#520: a verified Access JWT is the OPERATOR reaching his own studio through his own Zero
+    // Trust policy -- Access is how the operator logs in, and the policy is the boundary. Nothing
+    // about the Access path changes; it simply now states the authority it always carried.
+    scope: "operator",
   };
 }
 
@@ -238,7 +247,10 @@ export async function gateApiRequest(
         "access: ALLOW_UNAUTHENTICATED=true -> in-Worker Access verification DISABLED (edge gate only). NOT for a public/multi-tenant deploy; arm ACCESS_TEAM_DOMAIN + ACCESS_AUD instead.",
       );
     }
-    return { ok: true, sub: null, email: null };
+    // cf#520: the dev-only opt-out grants OPERATOR, which is exactly what it granted before this
+    // change -- it is a conscious "there is no boundary here" switch, and narrowing it would break
+    // local dev while protecting nothing (there is no credential to distinguish).
+    return { ok: true, sub: null, email: null, scope: "operator" };
   }
   return {
     ok: false,

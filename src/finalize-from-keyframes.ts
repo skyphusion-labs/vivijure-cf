@@ -7,6 +7,9 @@ import {
   servingForHook,
 } from "@skyphusion-labs/vivijure-core";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
+import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
+import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
+import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import {
   startFilmFromKeyframes,
   type FilmScene,
@@ -38,6 +41,8 @@ export interface AnimateFromPreviewArgs {
   defaultBackend?: "gpu" | "cloud";
   defaultCloudModel?: string;
   audioKey?: string;
+  /** Cast slot map for voicing derived dialogue_lines (cf#334). */
+  castLoras?: Record<string, string>;
 }
 
 function resolveCloudModel(requested: string | undefined, allowed: string[]): string | undefined {
@@ -176,7 +181,9 @@ export async function animateFromPreview(
     motionBackend = defaultCloud;
     perShotMotion = perShotMotionFromCloud(scenes, defaultCloud, normalized.perShot);
   } else {
-    motionBackend = mapped.motion_backend ?? gpuDoor;
+    // cf#347: honour a caller-supplied motion backend (panel sends motion_backend on finalize).
+    // Parent-row mapped override remains the fallback when the body omits one.
+    motionBackend = args.motionBackend ?? mapped.motion_backend ?? gpuDoor;
     if (!motionBackend) {
       return { ok: false, error: 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed', status: 400 };
     }
@@ -206,7 +213,9 @@ export async function animateFromPreview(
   // keyframe module.
   const finalizePre = await preflightRenderModules(productionRenderDoorDeps, env, {
     modules,
-    motionBackend,
+    // Prefer the caller's choice for #500 when present; fall back to resolved for config map keying.
+    motionBackend: args.motionBackend ?? motionBackend,
+    resolvedMotionBackend: motionBackend,
     // The RAW parent override bag, not mapped.motion_config. Clamping is what #577 exists to catch,
     // so judging the clamped value makes the guard unable to fire. Same mistake as door 3's, made
     // here in the same change and caught by the ledger cell rather than by review.
@@ -215,7 +224,8 @@ export async function animateFromPreview(
   }, {
     door: `panel ${args.deriveMode}`,
     hasMotionLeg: true,
-    requireExplicitMotionBackend: false,
+    // cf#347: enforce #500 when the caller named a backend; still optional when omitted (legacy).
+    requireExplicitMotionBackend: Boolean(args.motionBackend && String(args.motionBackend).trim()),
     checkLocalGpuPairing: false,
     requireKeyframeModule: false,
   });
@@ -223,6 +233,23 @@ export async function animateFromPreview(
     return { ok: false, error: finalizePre.refusal.message, status: finalizePre.refusal.status };
   }
 
+  // cf#334: from-keyframes doors dropped dialogue. Derive lines from the bundle storyboard
+  // (same helper as POST /api/render/film) so a voiced bundle does not finalize silent.
+  let dialogue_lines: DialogueLine[] | undefined;
+  try {
+    const bundleScenes = await readBundleScenes(env, args.parent.bundle_key);
+    const { voices } = await resolveCastLoras(env, args.castLoras ?? {});
+    let lines = dialogueLinesFromBundleScenes(bundleScenes, voices);
+    if (lines.length) {
+      lines = resolveExplicitLineVoices(lines, bundleScenes, voices);
+      dialogue_lines = lines;
+    }
+  } catch {
+    // best-effort: missing bundle dialogue must not block finalize
+  }
+
+  // dialogue_lines is runtime-supported on startFilmFromKeyframes (core >=1.6.0); published
+  // .d.ts lag omits it, so widen the arg type here rather than ship silent films (cf#334).
   const job = await startFilmFromKeyframes(
     env,
     {
@@ -240,7 +267,8 @@ export async function animateFromPreview(
       derive_mode: args.deriveMode,
       parent_render_id: args.parent.id,
       audio_key: args.audioKey,
-    },
+      dialogue_lines,
+    } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] },
     modules,
   );
 
@@ -255,7 +283,10 @@ export async function animateFromPreview(
     mode: args.deriveMode,
     parentId: args.parent.id,
     projectId: args.parent.project_id,
-  };
+    // cf#393: resolved motion backend for the finalize/animate child row.
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: null,
+  } as NewRenderRow;
   await insertRender(env, row);
 
   return { ok: true, view };

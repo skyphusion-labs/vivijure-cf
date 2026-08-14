@@ -13,8 +13,8 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **87** | Distinct `method` + `pattern` pairs the studio serves. 86 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
-| Panel-reachable | **66** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
+| Studio API route entries | **87** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Until cf#520, 85 were in the table and `GET /api/modules` was dispatched inline before it, so every consumer of this number had to compensate by hand; the route was moved into the table and the compensations deleted. cf#353 then added `POST /api/storyboard/renders/:id/retry`. |
+| Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
 | Reachable via `studio_request` | **83** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
@@ -143,11 +143,12 @@ are being reconciled in vivijure-cf#334. A curated submit tool with a blocked po
 capability, and 29 tools built on an unreconciled door would freeze the divergence. A test in
 `vivijure-mcp` asserts no curated tool aims at one, and is written to be deleted when #334 lands.
 
-The remaining 32 panel-reachable routes with no curated tool are, method-aware, **28**: the 9 blocked
-render-door routes plus the 19 deliberately left on `studio_request` (internal helpers, module
-config, session). Module config write stays on the hatch for a structural reason rather than a scope
-one: its body shape is per-module and discovered at runtime from `config_schema`, so a static
-`inputSchema` would be either uninformative or a frozen snapshot of one deploy's module set.
+The remaining 33 panel-reachable routes with no curated tool are, method-aware, **29**: the 9 blocked
+render-door routes, the 19 deliberately left on `studio_request` (internal helpers, module
+config, session), and `POST /api/cast/:id/train-wan-lora`, panel-reachable since vivijure-local#329
+and with no curated tool yet. Module config write stays on the hatch for a structural reason rather
+than a scope one: its body shape is per-module and discovered at runtime from `config_schema`,
+so a static `inputSchema` would be either uninformative or a frozen snapshot of one deploy's module set.
 
 ## Which way each number here can be wrong
 
@@ -155,7 +156,7 @@ Every measurement in this document can err in ONE direction, and a reader a year
 work that out from the number. Both instrument defects found while producing this revision ran in
 the flattering direction, which is exactly why they survived.
 
-- **Panel-reachable (66) can be too LOW.** Until cf#333 this was a path-only matcher published as
+- **Panel-reachable (67) can be too LOW.** Until cf#333 this was a path-only matcher published as
   **70**, and that number could only ever be too HIGH: it compared path segments and ignored METHOD,
   so a route entry inherited reachability from any panel call to its path. It is now derived from the
   panel's own call sites (`fetch`/`api` calls, `.href`/`.src` DOM assignments, one hop of variable
@@ -235,7 +236,7 @@ structurally invisible to the MCP.
 | `POST` | `/api/cast/:id/generate-refs` | yes | `generate_cast_refs` | json |
 | `GET` | `/api/cast/:id/refs-job/:jobId` | yes | `poll_cast_refs` | json |
 | `POST` | `/api/cast/:id/train-lora` | yes | `train_cast_lora` | json |
-| `POST` | `/api/cast/:id/train-wan-lora` | no | -- | json |
+| `POST` | `/api/cast/:id/train-wan-lora` | yes | -- | json |
 | `GET` | `/api/cast/:id/lora-status` | yes | `cast_lora_status` | json |
 | `POST` | `/api/upload` | yes | `upload_image` | json (**raw body IN**) |
 | `GET` | `/api/artifact/*key` | yes | `view_artifact` | **bytes** |
