@@ -106,7 +106,13 @@ function hostedRenderWorkflows(): { name: string; text: string }[] {
  * that no longer strips anything. Anchor on a line that RUNS it.
  */
 function invokesStrip(text: string): boolean {
-  return new RegExp(String.raw`^\s*sh\s+${SCRIPT.replace(/[.]/g, "\\.")}\s`, "m").test(text);
+  // NO REGEX BUILT FROM A STRING. The first version escaped `.` in SCRIPT and not `\`, which CodeQL
+  // correctly flagged as an incomplete sanitizer (js/incomplete-sanitization). It was inert only
+  // because SCRIPT happens to be a constant with no backslashes in it, and "inert because of a
+  // property of today's input" is not a property anything pins. A line-prefix test needs no
+  // escaping at all, so the whole class is unreachable by construction rather than by a correct
+  // escape routine -- and a property held by absence of a mechanism cannot regress.
+  return text.split("\n").some((line) => line.trim().startsWith(`sh ${SCRIPT} `));
 }
 
 describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render path calls it", () => {
