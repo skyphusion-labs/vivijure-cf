@@ -20,6 +20,7 @@ import {
   normalizeConfig,
   parseContainerResponse,
 } from "./beat-sync";
+import { timedVpcFetch, withVpcElapsedApplied } from "../../_shared/vpc-call-log";
 
 interface Env {
   AUDIO_BEAT_SYNC_VPC: Fetcher;
@@ -27,7 +28,7 @@ interface Env {
 
 const MANIFEST: ModuleManifest = {
   name: "beat-sync",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["score"],
   provides: [{ id: "librosa-beat-sync", label: "Beat sync (librosa, fleet VPC)" }],
@@ -90,17 +91,30 @@ async function runAnalyze(
   const config = normalizeConfig(req.config);
   const body = buildAnalyzeBody(config, audioUrl, audioKey);
 
-  let resp: Response;
-  try {
-    resp = await env.AUDIO_BEAT_SYNC_VPC.fetch("http://audio-beat-sync/analyze", {
+  // cf#396: wall-clock start + duration on every fleet VPC hop (structured log + applied tag).
+  const timed = await timedVpcFetch(
+    (url, init) => env.AUDIO_BEAT_SYNC_VPC.fetch(url, init),
+    {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    },
+    {
+      module: MANIFEST.name,
+      service: "audio-beat-sync",
+      binding: "AUDIO_BEAT_SYNC_VPC",
+      url: "http://audio-beat-sync/analyze",
+      mode: "sync",
+      filmKey: filmKey,
+      project: req.context?.project,
+      contextJobId: req.context?.job_id,
+    },
+  );
+  if (timed.err || !timed.resp) {
+    const msg = timed.err instanceof Error ? timed.err.message : String(timed.err ?? "unreachable");
     return { ok: false, error: "score: beat-sync VPC fetch failed: " + msg.slice(0, 200) };
   }
+  const resp = timed.resp;
 
   let raw: unknown;
   try {
@@ -118,7 +132,7 @@ async function runAnalyze(
     ok: true,
     output: {
       film_key: filmKey,
-      applied: appliedTags(config.mode),
+      applied: withVpcElapsedApplied(appliedTags(config.mode), timed.elapsedMs),
       beat_plan: parsed.plan,
     },
   };

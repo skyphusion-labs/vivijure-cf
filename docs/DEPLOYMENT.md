@@ -131,6 +131,86 @@ or understand exactly what the script does.
 
 ---
 
+## Cutting a release (tag an existing studio)
+
+Everything below section 1 is about standing a studio UP. This section is the other job: shipping a
+new version to one that already exists. They are different reading paths, and a step written only in
+the install flow will not be read by the person cutting a tag -- which is exactly how the cf#520
+migration step below nearly got missed.
+
+Deploy is **tag-gated**: merging to `main` runs CI only, and pushing a SemVer tag `v*` fires the
+deploy job. So:
+
+```bash
+# 1. Release PR on main: bump package.json, add the CHANGELOG section. Merge it.
+# 2. Tag the merged commit and push.
+git tag -a v1.26.0 -m "vivijure-studio v1.26.0" && git push origin v1.26.0
+# 3. Watch BOTH workflows. A `v*` tag fires TWO of them, not one:
+#      ci.yml            -> the `deploy` job; applies `wrangler d1 migrations apply --remote`
+#      studio-release.yml -> publishes the GitHub release ASSET and mirrors it to R2
+#    The second is a separate workflow run, so an operator watching "the deploy" does not see it.
+#    If it fails the studio still deploys and the tag still looks shipped, but the release asset is
+#    the PUBLIC SOURCE OF TRUTH under the parity ruling and the control plane's provisioner and
+#    upgrade path fetch the tenant studio bundle BY TAG -- so TENANT provisioning breaks at the next
+#    upgrade, with nothing on the deploy job saying so.
+# 4. RUN ANY OPERATOR-ONLY MIGRATION THE TAG NEEDS -- see below. Nothing does this for you.
+# 5. Verify at the ARTIFACT: the deployed worker's modified_on, and a live request. A green
+#    pipeline is the pipeline's opinion of itself, not evidence the thing shipped.
+```
+
+### Operator-only migrations: the step no gate will remind you about
+
+`migrations/manual/*.sql` is deliberately excluded from the auto-apply and from the tenant release
+bundle (`scripts/build-studio-release.ts` reads the top level only, non-recursively). That exclusion
+is a security property, not an oversight -- see `post-0020-set-live-token-scopes.sql`'s header for
+why a name-matching UPDATE in a bundled migration would escalate a TENANT's own token.
+
+The cost of that property is that **these files only ever run because a human runs them.** Before
+tagging, check whether the release contains one:
+
+```bash
+git diff --name-status <previous-tag> HEAD -- migrations/manual/
+```
+
+**`--name-status`, not `--name-only`, and the letter is the whole point.** At v1.26.0 that
+command returns TWO rows:
+
+```
+M   migrations/manual/0004_drop_user_email.sql
+A   migrations/manual/post-0020-set-live-token-scopes.sql
+```
+
+Only the `A` is new and needs running. The `M` is `0004`, which was comment-edited in this release
+to carry a `migrations-gate: skip` marker -- and whose own header reads *"DESTRUCTIVE (drops
+columns / recreates a table -- irreversible)"*. With `--name-only` an operator sees two bare paths
+and nothing distinguishing "new, run this" from "old, touched, do NOT run". That is a bad thing to
+hand someone at the end of a deploy.
+
+Do NOT reach for `--diff-filter=A` to make the M disappear. A modified operator-run migration is
+something you should SEE and decide about; a command that silently drops it is trading one wrong
+answer for a quieter one.
+
+**For v1.26.0 specifically**, immediately after the deploy job finishes:
+
+```bash
+npx wrangler d1 execute vivijure-studio --remote \
+  --file migrations/manual/post-0020-set-live-token-scopes.sql
+```
+
+Migration `0020` adds `api_tokens.scope` defaulting to `consumer`, so from the moment it applies
+every named token is demoted and 403s on operator routes. Until the file above runs: slate loses
+`!install-config`; crew-mcp loses all 8 operator tools including `POST /api/storage/reconcile`; the
+panel and both mobile clients fail to load or save module config **with no re-auth prompt**, because
+`AUTHZ_DENY_REASON` deliberately does not match the paste-once regex at `public/auth-token.js:124`
+(the token is genuinely fine) and the mobile clients carry no such prompt at all.
+
+Every denial is a **403** -- this gate has no 401 path -- with
+`{"ev":"authz.deny",...,"required":"operator","held":"consumer"}` in the log.
+
+**The deploy goes GREEN throughout.** No check fails, no alert fires, and the first symptom is a
+person reporting that the settings page stopped working. That is the entire reason this section
+exists.
+
 ## 1. Accounts you need
 
 | Provider | What it is | Sign up |
@@ -300,6 +380,21 @@ npx wrangler d1 migrations apply vivijure-studio --remote
 # migrations/manual/0004_drop_user_email.sql must apply that file once (see its header).
 # scripts/verify-migration-squash.sh proves fresh chain == prod history.
 
+# 3c-bis. REQUIRED ON THE ESTATE DEPLOY, IMMEDIATELY AFTER THE TAG (cf#520).
+# 0020 adds api_tokens.scope with a DEFAULT of 'consumer', so the moment it applies, every named
+# token is demoted and starts returning 403 on operator routes. This file restores the four live
+# estate scopes. It is NOT applied automatically and NOT bundled into tenant releases -- that is
+# deliberate (its header explains why a name-matching UPDATE in the bundle would escalate a
+# TENANT's own token), and it is why the window exists at all. Run it as the next command after
+# the deploy job finishes, not later:
+npx wrangler d1 execute vivijure-studio --remote \
+  --file migrations/manual/post-0020-set-live-token-scopes.sql
+# Until it runs: slate loses !install-config; crew-mcp loses all 8 operator tools and any
+# studio_request at those paths; the panel and both mobile clients fail to load or save module
+# config WITH NO RE-AUTH PROMPT. Every denial is a 403 (there is no 401 path in this gate) with
+# {"ev":"authz.deny",...,"required":"operator","held":"consumer"}. The deploy itself goes GREEN
+# throughout, so nothing else will tell you this step was missed.
+
 # 3d. Deploy. Module workers MUST deploy before the core (the core binds each as a service;
 #     a binding to a not-yet-deployed module makes the core deploy fail).
 # The standard modules (this list mirrors STANDARD_MODULES in deploy.sh; the last five are the
@@ -342,6 +437,7 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 | ------------------------------ | -------------------------------------- | --------------- |
 | own-gpu, keyframe, finish-rife | `BACKEND_RUNPOD_ENDPOINT_ID`           | main backend    |
 | finish-upscale                 | `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`     | video upscale   |
+| finish-blender                 | `BLENDER_RUNPOD_ENDPOINT_ID`           | compositor grade |
 | finish-lipsync                 | `MUSETALK_RUNPOD_ENDPOINT_ID`          | MuseTalk        |
 | speech-upscale                 | `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`     | audio upscale   |
 
@@ -395,6 +491,7 @@ npx wrangler secrets-store secret create $S --name BACKEND_RUNPOD_ENDPOINT_ID   
 npx wrangler secrets-store secret create $S --name VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
 npx wrangler secrets-store secret create $S --name MUSETALK_RUNPOD_ENDPOINT_ID      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
+npx wrangler secrets-store secret create $S --name BLENDER_RUNPOD_ENDPOINT_ID      --scopes workers --remote  # optional finish-blender
 ```
 
 **Defensive seed (recommended): strip the value so a bad paste cannot poison the store.** Stage the

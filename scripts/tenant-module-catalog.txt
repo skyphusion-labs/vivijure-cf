@@ -1,0 +1,48 @@
+# TENANT_MODULE_CATALOG, mirrored. THIS IS A COPY, AND THE COPY IS THE POINT.
+#
+# The authority is vivijure-control-plane/src/tenant-modules.ts, one array bounded by
+# `export const TENANT_MODULE_CATALOG ... = [` and its closing `];`. This repo cannot import it,
+# so a copy has to exist somewhere. cf#470 is what happens when that copy lives as a literal
+# inside a test that also asserts its length: the assertion compares the copy against itself, so
+# it holds a stale value in place and goes RED if somebody corrects it. It drifted 6 -> 7 -> 15
+# with nothing failing at any point.
+#
+# So the copy moved here, and the drift check moved OUT of the offline suite and into
+# scripts/check-tenant-module-catalog.mjs, which FETCHES the authority over public HTTPS (all
+# three repos are public, so this needs no credential and runs on fork PRs) and asserts
+# set-equality against this file. That check FAILS CLOSED: a fetch error, an empty parse on
+# either side, or a control that does not fire is a non-zero exit, never a silent pass. An
+# unreachable authority must not read as agreement.
+#
+# WHAT THE OFFLINE SUITE STILL PROVES ABOUT THIS FILE, without reaching the network:
+#   - every name here is a module directory in this repo (a catalog row we cannot ship is a defect)
+#   - every name here is in scripts/tenant-release-modules.txt (a provisioned module with no
+#     published bundle fails every provision at modules_upload -- cp#187's assertion A, restated
+#     on the side where the bundle list lives)
+#   - docs/module-readiness-coverage.md publishes this file's LENGTH as population 4
+#
+# It does NOT assert this list's length against a number typed nearby. That is the cf#470 defect,
+# and a length derived from the catalog and compared to the catalog is cp#314's tautology.
+#
+# TO UPDATE: read the array's BOUNDS in the plane (not `grep -c 'module:'` -- the file carries 25
+# such occurrences and only 15 are inside the array), edit this list, update the provenance below,
+# and correct the population-4 numbers in docs/module-readiness-coverage.md.
+#
+# provenance: skyphusion-labs/vivijure-control-plane @ main, src/tenant-modules.ts:155-197
+# read-at: 2026-08-07, plane origin/main
+# count: 15
+alibaba-wan
+alibaba-wan-lora
+finish-lipsync
+finish-rife
+finish-upscale
+google-veo
+keyframe
+kling
+minimax-hailuo
+narration-gen
+own-gpu
+plan-enhance
+seedance
+speech-upscale
+vidu-q3
