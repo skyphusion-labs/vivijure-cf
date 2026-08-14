@@ -207,6 +207,47 @@ jobs:
       - name: Apply migrations to throwaway local D1
         run: npx wrangler d1 migrations apply DB --local --config wrangler.migrations-gate.toml
 
+      # cf#520: migrations/manual/ had ZERO automated coverage. wrangler's migrations_dir scan is
+      # non-recursive by design (that is what keeps these files out of the auto-apply and out of the
+      # tenant release bundle), but the side effect was that an operator-run file could carry a
+      # syntax error or a stale column reference all the way to the moment it is pasted into a
+      # terminal -- which for post-0020-set-live-token-scopes.sql is mid-outage, with four
+      # credentials already 403ing. The gate above cannot catch it and never claimed to.
+      #
+      # These are replayed AFTER the numbered chain, against the same throwaway local D1, because
+      # that is the state they are written for. The DB is discarded, so no rollback is needed.
+      #
+      # A file that is NOT applicable to a freshly-migrated chain opts out explicitly with
+      # `-- migrations-gate: skip <reason>` in its header. The skip is printed, so an opt-out is
+      # visible in the log rather than silent -- an unexercised file that looks exercised is the
+      # failure this step exists to prevent.
+      - name: Replay operator-run migrations/manual/ against the same local D1
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(migrations/manual/*.sql)
+          echo "manual files found: ${#files[@]}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no files in migrations/manual/ -- this step is matching nothing, which is not the same as passing"
+            exit 1
+          fi
+          checked=0; skipped=0
+          for f in "${files[@]}"; do
+            if reason=$(grep -m1 -oP '(?<=-- migrations-gate: skip ).*' "$f"); then
+              echo "SKIP  $f -- $reason"
+              skipped=$((skipped+1))
+              continue
+            fi
+            echo "CHECK $f"
+            npx wrangler d1 execute DB --local --config wrangler.migrations-gate.toml --file "$f"
+            checked=$((checked+1))
+          done
+          echo "manual/ replay: ${checked} checked, ${skipped} skipped, ${#files[@]} total"
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::every manual file opted out -- this step would pass while exercising nothing"
+            exit 1
+          fi
+
   # SECURITY GATE (fc#859): a v* tag can point at ANY commit, including one that never merged.
   # The org tag ruleset enforces deletion + non_fast_forward only, so `git tag v9.9.9 <unmerged>
   # && git push origin v9.9.9` would deploy unreviewed code to prod, routing around branch

@@ -3,7 +3,12 @@
 -- OPERATOR-RUN, AGAINST THE ESTATE DB ONLY. Run it by hand at v1.26.0 tag time:
 --
 --     npx wrangler d1 execute vivijure-studio --remote \
---       --file migrations/manual/0021_set_live_token_scopes.sql
+--       --file migrations/manual/post-0020-set-live-token-scopes.sql
+--
+-- DELIBERATELY NOT NUMBERED. The next top-level migration is naturally 0021, and two files both
+-- called 0021 distinguished only by their directory is a trap for an operator running SQL by hand
+-- during a live 403 window. The name states the dependency instead: it runs AFTER 0020, and it is
+-- the only ordering constraint that exists.
 --
 -- WHY THIS IS NOT A TOP-LEVEL MIGRATION. It was one, briefly, and that was a security defect
 -- caught in review. Top-level migrations/*.sql are bundled into the studio release
