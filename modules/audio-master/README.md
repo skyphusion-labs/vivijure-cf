@@ -4,7 +4,8 @@ A **`master`**-chain module (vivijure-module/2). It masters a film's audio at **
 **music upscale** (VHQ soxr resample to 48 kHz + a gentle high-shelf "air" lift) followed by **two-pass
 LUFS loudness normalization** to a web target -- via the always-on **audio-master CPU container** on the
 fleet over **Workers VPC** (CPU ffmpeg, no GPU; CPU mastering must never touch a GPU/RunPod -- GPU money
-is for GPU work only).
+is for GPU work only). Every VPC hop records wall-clock start + duration (`vpc.call` structured log +
+optional `vpc:elapsed_ms=N` applied tag; cf#396).
 
 It is the audio sibling of **`finish`** (which polishes a clip) and the **dialogue / speech** lane
 (which polishes per-shot voice). Where `finish` and `speech` work per shot, `master` runs **once, on the

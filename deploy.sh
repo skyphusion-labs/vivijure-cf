@@ -130,6 +130,13 @@ alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video film-titles sub
 SATELLITE_MODULES="finish-upscale finish-lipsync speech-upscale"
 MODULES="$STANDARD_MODULES"
 [ "$VIVIJURE_PROFILE" = satellites ] && MODULES="$STANDARD_MODULES $SATELLITE_MODULES"
+# Optional finish-blender: only when the endpoint id is present (not part of the required triad).
+if [ -n "${BLENDER_RUNPOD_ENDPOINT_ID:-}" ]; then
+  case " $MODULES " in
+    *" finish-blender "*) ;;
+    *) MODULES="$MODULES finish-blender" ;;
+  esac
+fi
 # Opt-in: the local-GPU door module (only deployed when you run your own local backend).
 [ "$INSTALL_LOCAL_GPU" = "1" ] && MODULES="$MODULES local-gpu"
 
@@ -220,6 +227,10 @@ if [ "$VIVIJURE_PROFILE" = satellites ]; then
   seed_secret VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID "$VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID"
   seed_secret MUSETALK_RUNPOD_ENDPOINT_ID      "$MUSETALK_RUNPOD_ENDPOINT_ID"
   seed_secret AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID  "$AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID"
+fi
+# Optional blender grade satellite (shared RUNPOD_API_KEY; own endpoint id).
+if [ -n "${BLENDER_RUNPOD_ENDPOINT_ID:-}" ]; then
+  seed_secret BLENDER_RUNPOD_ENDPOINT_ID "$BLENDER_RUNPOD_ENDPOINT_ID"
 fi
 
 # local-gpu door: seed the two backend secrets the module worker binds from the store (required +

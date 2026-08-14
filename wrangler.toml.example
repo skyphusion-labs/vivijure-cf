@@ -268,6 +268,36 @@ service = "vivijure-module-keyframe"
 binding = "MODULE_FINISH_RIFE"
 service = "vivijure-module-finish-rife"
 
+
+# >>> SATELLITE: finish-blender -- Blender compositor on a SEPARATE RunPod endpoint
+# Optional finish-chain grade (headless Blender). After lipsync, before upscale.
+# Needs store secret BLENDER_RUNPOD_ENDPOINT_ID + module worker vivijure-module-finish-blender.
+# Kept inside SATELLITE markers: only ships when VIVIJURE_PROFILE=satellites (or a hand-edit).
+#
+# DISABLED 2026-08-07 (Conrad: "just please take the module out for now").
+# Binding it put blender in the finish chain of EVERY hosted render, and its endpoint cannot
+# run: the worker reports `R2 mode needs R2_ENDPOINT_URL + R2_ACCESS_KEY_ID/SECRET in the
+# endpoint env` even with those set on the template, so the `{{ RUNPOD_SECRET_* }}` references
+# are not resolving inside the container. Confirmed by probing the endpoint DIRECTLY
+# (runsync 0uc4dmpxmn8jop -> FAILED, workerId 8d84om1ludraah, executionTime 87ms), so it is
+# not a cf defect and no cf change fixes it.
+#
+# It does NOT soft-degrade. Two real renders FAILED at MODULE_FINISH_BLENDER after delivering
+# the clip cleanly (1/1, 5s, 120 frames). We had believed a failed blender job passed the clip
+# through; that was asserted and never verified, and it is why this shipped.
+#
+# The chain runs every SERVING module, not only those named in finish_config -- a render
+# passing only `finish-upscale` still invoked blender. So "opt-in" here means the BINDING,
+# not the per-render config.
+#
+# Re-enable only after the endpoint completes a job end to end. The image is fixed and
+# published (0.1.1, blender#5) and the endpoint is re-pinned to it; the secret-resolution
+# defect is separate and filed.
+[[services]]
+binding = "MODULE_FINISH_BLENDER"
+service = "vivijure-module-finish-blender"
+# <<< SATELLITE: finish-blender
+
 # >>> SATELLITE: finish-upscale -- Real-ESRGAN upscale on a SEPARATE RunPod endpoint
 # Upscale: a finish-chain module (Real-ESRGAN 2x/4x spatial upscale) on the dedicated vivijure-upscale
 # RunPod endpoint (CUDA, separate from vivijure-backend). Folds after finish-rife in ui.order.
