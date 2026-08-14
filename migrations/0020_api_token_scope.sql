@@ -57,6 +57,25 @@ ALTER TABLE api_tokens
 --                        regression rather than a credential problem. Recorded as a DECISION, not a
 --                        measurement, so a later reader does not mistake it for one.
 --
+-- THE CALLER POPULATION IS FIVE SURFACES, NOT THREE. The first sweep behind this was handed a
+-- population (slate, mcp, web panel) instead of deriving one, and its file filter listed
+-- .ts/.js/.mjs/.py/.json/.md/.sh -- structurally blind to .kt and .swift. Enumerating all 49 org
+-- repos found two more first-party clients that drive the ENTIRE operator surface:
+--   vivijure-android  8 of 8  VivijureClient.kt:359-378      Bearer via HttpJson.kt:46
+--   vivijure-ios      8 of 8  VivijureClient.swift:660-734   Bearer via HTTPClient.swift:58
+-- Neither holds a fifth named token: both take a USER-PASTED Bearer (Android
+-- EncryptedSharedPreferences/TokenStore.kt, iOS Keychain + SecureField in OnboardingView.swift),
+-- so they present whichever of the four rows below a person pastes. That leaves this UPDATE
+-- unchanged and makes `joan` operator for a second, independent reason: a person on mobile drives
+-- all eight operator routes, not just settings.html, and the mobile clients carry no paste-once
+-- prompt in any form -- on the web the missing prompt is a design choice, on mobile there is
+-- nothing to suppress.
+--
+-- MEASURED NEGATIVE, worth keeping: vivijure-control-plane touches three operator surfaces on
+-- TENANT studios (src/tenant-modules.ts:788,837,864) but rides STUDIO_API_TOKEN, the operator
+-- SECRET (provisioner.ts:846, injected routing.ts:119). auth-gate.ts:158 returns operator for the
+-- secret path, which 0020 does not touch, so tenant provisioning does not break at the tag.
+--
 -- Revoked rows are deliberately left at the `consumer` default: they authenticate nothing.
 UPDATE api_tokens
    SET scope = 'operator'
