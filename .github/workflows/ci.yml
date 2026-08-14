@@ -446,6 +446,14 @@ jobs:
           # Deploy-by-default via scripts/deploy-module-workers.sh (canonical list in
           # scripts/finish-satellite-modules.txt when FINISH_SATELLITES_ONLY=1). DO NOT reintroduce
           # a hardcoded include-list: that is what drifted finish-upscale on live (cf#197).
+          # cf#560: the HOSTED studio never deploys the local-gpu module worker. Its own manifest
+          # blurb names vivijure-cf -- this deploy -- as where commercial use belongs INSTEAD of that
+          # door, so binding it here contradicts the door's own licence text.
+          #
+          # EXCLUDE rather than an include-list, deliberately: the comment above records that a
+          # hardcoded include-list is what drifted finish-upscale off live in cf#197. An exclude of
+          # one named module keeps deploy-by-default for everything else.
+          export EXCLUDE="${EXCLUDE:-} local-gpu"
           chmod +x scripts/deploy-module-workers.sh
           scripts/deploy-module-workers.sh
 
@@ -501,7 +509,33 @@ jobs:
           R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
           R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
           VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET'
-          envsubst "$VARS" < wrangler.toml.example > wrangler.toml
+          # cf#560: STRIP THE LOCAL-GPU BLOCK. The hosted studio must never bind local-gpu.
+          #
+          # The door's own manifest blurb says "Self-host only ... Commercial use of Vivijure is
+          # supported via vivijure-cf (Cloudflare partner channels), not this door" -- and
+          # vivijure-cf IS this deploy. It was bound here anyway, and because it sorts at ui.order 4
+          # it was the FIRST entry in both `motion.backend` and `keyframe` on the live registry.
+          #
+          # The control existed and was on the wrong path. `deploy.sh` (SELF-HOST, where local-gpu is
+          # ALLOWED) strips this block unless INSTALL_LOCAL_GPU=1. This render (HOSTED, where it is
+          # FORBIDDEN) had no strip at all -- a bare envsubst. So the path that permits it defaults it
+          # OFF and the path that forbids it had no switch, which is the inversion rather than a gap.
+          #
+          # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour. SATELLITE
+          # and SELFHOST-SKIP blocks are deliberately NOT stripped -- hosted wants the satellite
+          # finish doors, and SELFHOST-SKIP marks our-fleet-only blocks, which hosted IS.
+          awk '
+            /^# >>> LOCAL-GPU:/ { skip=1; next }
+            /^# <<< LOCAL-GPU:/ { skip=0; next }
+            !skip { print }
+          ' wrangler.toml.example > .wrangler.hosted.toml
+          # Refuse rather than deploy if the strip did nothing: a renamed marker would silently
+          # reintroduce the binding, and "the block is gone" must not be inferred from "awk ran".
+          if grep -q 'MODULE_LOCAL_GPU' .wrangler.hosted.toml; then
+            echo "::error::cf#560: LOCAL-GPU block survived the strip -- refusing to deploy the hosted studio with local-gpu bound"; exit 1
+          fi
+          envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
+          rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a
           # literal ${...}); comment-prose mentioning ${...} is fine, and -F keeps the pattern
           # literal on every grep (the v0.16.2 MCP-guard lesson: '${' as a regex is grep-dependent).
