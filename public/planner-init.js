@@ -390,14 +390,29 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.35.2: pause auto-refresh while the tab is backgrounded; resume on
   // return with an immediate refresh so the list catches up after a long
   // hidden interval (which the auto-refresh loop intentionally skips).
+  //
+  // cf#515: the RENDER poll now pauses here too. It did not, and that was the
+  // whole of defect 2 -- this handler cleared historyRefreshTimer and never
+  // renderState.pollTimer, so a backgrounded tab polled the render route
+  // forever and a load run could never shed load. The render poll is not a
+  // read (it drives advanceFilmJob and closes the film's DB row), so a hidden
+  // tab was doing real server work nobody was looking at.
+  //
+  // Deliberately ONE handler rather than a second listener in
+  // planner-render.js: two visibility handlers are two things that can fail
+  // separately and disagree about whether the tab is hidden. The render-poll
+  // logic still lives with the render poll (pauseRenderPoll / resumeRenderPoll
+  // are defined there); only the event wiring is shared.
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       if (historyRefreshTimer) {
         clearTimeout(historyRefreshTimer);
         historyRefreshTimer = null;
       }
+      pauseRenderPoll();
     } else {
       loadHistory();
+      resumeRenderPoll();
     }
   });
 
