@@ -479,6 +479,7 @@ plan `duration_seconds`.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
 - **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
 ### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
 
 `runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
