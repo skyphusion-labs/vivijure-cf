@@ -19,6 +19,7 @@ import {
   runpodWalkedPastOutcome,
   terminalOutcomeFromRunpodStatus,
   reconcileOpenRunpodJobs,
+  reconcileOpenRunpodJobsBestEffort,
   LIST_OPEN_RUNPOD_JOBS_SQL,
   RECONCILE_MIN_AGE_SEC,
   RECONCILE_UNKNOWN_AFTER_SEC,
@@ -360,6 +361,56 @@ describe("terminalOutcomeFromRunpodStatus (cf#298)", () => {
 });
 
 describe("reconcileOpenRunpodJobs (cf#298)", () => {
+  // cf#298: the pass must be handed to the runtime, not left dangling. An unregistered background
+  // promise can be torn down as soon as the response returns, and under load -- exactly when open
+  // rows accumulate -- that is the normal case. These drive the registration itself, because a
+  // waitUntil I have never watched fire is indistinguishable from one that never fires.
+  it("registers the pass with ctx.waitUntil when a context is supplied", async () => {
+    const seen: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => { seen.push(p); } };
+    const { db, upserts } = reconcileDb([
+      { job_id: "reg", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    reconcileOpenRunpodJobsBestEffort(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    }, ctx);
+    expect(seen).toHaveLength(1);
+    await seen[0]; // the registered promise is the real pass, not a stand-in
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0][2]).toBe("completed");
+  });
+
+  it("still runs, and still never throws, when no context is available", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "noctx", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    expect(() =>
+      reconcileOpenRunpodJobsBestEffort(db, {
+        module: "keyframe",
+        fetchStatus: async () => "COMPLETED",
+        nowMs,
+      }),
+    ).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(upserts).toHaveLength(1);
+  });
+
+  // A ctx whose waitUntil is missing/not callable must not take the handler down.
+  it("falls back rather than throwing when ctx carries no usable waitUntil", async () => {
+    const { db } = reconcileDb([
+      { job_id: "badctx", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    expect(() =>
+      reconcileOpenRunpodJobsBestEffort(db, {
+        module: "keyframe",
+        fetchStatus: async () => "COMPLETED",
+        nowMs,
+      }, {} as unknown as { waitUntil(p: Promise<unknown>): void }),
+    ).not.toThrow();
+  });
+
   const nowMs = 1_700_000_600_000; // fixed clock
   const nowSec = Math.floor(nowMs / 1000);
 
@@ -417,6 +468,62 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
     const result = await reconcileOpenRunpodJobs(db, {
       module: "keyframe",
       fetchStatus: async () => "IN_PROGRESS",
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(upserts).toHaveLength(0);
+  });
+
+  // cf#298: THE CASE THE TEST ABOVE CANNOT SEE. That one sits INSIDE the retention window, so its
+  // `closed: 0` comes from the age gate whether or not the status is ever consulted -- deleting the
+  // entire status-handling block leaves it green. Here the age gate FIRES, so the only thing that
+  // can keep the row open is the affirmative IN_PROGRESS, and a reconciler that concludes from age
+  // alone books a job RunPod just told us is alive as terminally `unknown`.
+  //
+  // That write is not recoverable: the upsert carries `WHERE runpod_job_log.terminal_at IS NULL`, so
+  // the real `completed` arriving later is a silent no-op and the row stays `unknown` forever. The
+  // pipeline's own ceiling is 90 minutes (RUNPOD_COLD_GRACE_MS commentary) against a 25-minute
+  // window, so long renders are exactly the population this would mislabel.
+  it("leaves a row open when RunPod says IN_PROGRESS even PAST the retention window", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 3600); // an hour past the window
+    const { db, upserts } = reconcileDb([
+      { job_id: "long-render", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => "IN_PROGRESS", // RunPod affirmatively reports it alive
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(upserts).toHaveLength(0);
+  });
+
+  // The other side of the same gate, so the fix cannot be "never write unknown": when RunPod could
+  // not tell us anything AND the row is past retention, the honest close still happens.
+  it("still writes unknown past retention when RunPod could NOT tell us (status null)", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 3600);
+    const { db, upserts } = reconcileDb([
+      { job_id: "no-answer", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => null,
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 1, unknown: 1 });
+    expect(upserts[0][2]).toBe("unknown");
+  });
+
+  // A non-terminal status that is not IN_PROGRESS must behave the same way -- the gate is "did RunPod
+  // answer", not a list of blessed strings.
+  it("leaves a row open past retention on any non-terminal answer, not just IN_PROGRESS", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 3600);
+    const { db, upserts } = reconcileDb([
+      { job_id: "queued", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => "IN_QUEUE",
       nowMs,
     });
     expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });

@@ -421,7 +421,16 @@ export async function reconcileOpenRunpodJobs(
           out.closed += 1;
           continue;
         }
+        // RunPod ANSWERED and the answer is non-terminal (IN_QUEUE / IN_PROGRESS / anything else we
+        // do not map): the job is alive, and that is a measurement. Age is a reason to LOOK, never a
+        // reason to CONCLUDE -- falling through here would write `unknown` over a running job, and
+        // the upsert's `WHERE runpod_job_log.terminal_at IS NULL` makes that permanent, so the real
+        // terminal write arriving later is a silent no-op. Leave it open; the next pass re-asks.
+        continue;
       }
+      // Only reached when RunPod could not tell us anything (status === null: a transient error, or
+      // a job that aged out of retention). THAT is what `unknown` means, and it is the only path to
+      // it. A row still inside the window is left open for the next pass.
       if (ageSec >= unknownAfter) {
         await recordRunpodJob(db, {
           jobId,
@@ -444,10 +453,24 @@ export async function reconcileOpenRunpodJobs(
 export function reconcileOpenRunpodJobsBestEffort(
   db: D1Database | undefined,
   args: Parameters<typeof reconcileOpenRunpodJobs>[1],
+  /**
+   * The request's ExecutionContext. REGISTER the pass with the runtime rather than leaving a
+   * dangling promise: an unregistered background task can be torn down the moment the response is
+   * returned, and under load -- which is when open rows accumulate and the reconciler earns its
+   * keep -- that is the common case, not the edge case. Structurally typed so this file does not
+   * depend on the worker types.
+   */
+  ctx?: { waitUntil(promise: Promise<unknown>): void },
 ): void {
-  void reconcileOpenRunpodJobs(db, args).catch((e: unknown) => {
+  const pass = reconcileOpenRunpodJobs(db, args).catch((e: unknown) => {
     warn("reconcile best-effort rejected (module=" + args.module + "): " + describe(e));
   });
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(pass);
+    return;
+  }
+  // No context available (a caller that cannot supply one): still best-effort, never awaited.
+  void pass;
 }
 
 // ---------------------------------------------------------------------------------------------

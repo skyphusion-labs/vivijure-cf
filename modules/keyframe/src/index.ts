@@ -232,7 +232,7 @@ async function submit(
   }
 }
 
-async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeOutput>> {
+async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promise<PollResponse<KeyframeOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "keyframe: bad poll token" };
   const { route, endpointId } = await runpodCreds(env);
@@ -248,7 +248,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   reconcileOpenRunpodJobsBestEffort(env.TELEMETRY_DB, {
     module: MANIFEST.name,
     fetchStatus: (jobId) => fetchRunpodStatusForReconcile(route, endpointId, jobId),
-  });
+  }, ctx);
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -355,7 +355,10 @@ async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  // ctx is OPTIONAL only so the handler stays directly invocable from a test without a stub;
+  // the Workers runtime always supplies one, and reconcileOpenRunpodJobsBestEffort falls back to
+  // today's unregistered behaviour when it is absent rather than refusing.
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
     // GET /ready (cf#114): does the version the edge is ACTUALLY SERVING read its credentials?
@@ -410,7 +413,7 @@ export default {
         return json({ ok: false, error: "invalid JSON body" } as PollResponse);
       }
       if (!body || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as PollResponse);
-      return json(await poll(env, body));
+      return json(await poll(env, body, ctx));
     }
     if (request.method === "POST" && url.pathname === "/cancel") {
       let body: CancelRequest;

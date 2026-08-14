@@ -218,7 +218,7 @@ async function submit(
 
 /** /poll: check the RunPod job; on completion the backend has already stored the clip in R2, so we
  *  just surface the clip_key it reported. No download, no re-upload. */
-async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBackendOutput>> {
+async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promise<PollResponse<MotionBackendOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "own-gpu: bad poll token" };
   const { route, endpointId } = await runpodCreds(env);
@@ -232,7 +232,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   reconcileOpenRunpodJobsBestEffort(env.TELEMETRY_DB, {
     module: MANIFEST.name,
     fetchStatus: (jobId) => fetchRunpodStatusForReconcile(route, endpointId, jobId),
-  });
+  }, ctx);
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -311,7 +311,10 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  // ctx is OPTIONAL only so the handler stays directly invocable from a test without a stub;
+  // the Workers runtime always supplies one, and reconcileOpenRunpodJobsBestEffort falls back to
+  // today's unregistered behaviour when it is absent rather than refusing.
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
     // GET /ready (cf#114): does the version the edge is ACTUALLY SERVING read its credentials?
@@ -370,7 +373,7 @@ export default {
       if (!body || typeof body.poll !== "string") {
         return json({ ok: false, error: "poll token required" } as PollResponse);
       }
-      return json(await poll(env, body));
+      return json(await poll(env, body, ctx));
     }
 
     return json({ ok: false, error: "not found" }, 404);
