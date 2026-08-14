@@ -520,6 +520,20 @@ null still read ready and could be bound for keyframes with no identity LoRA (si
 - Legacy `lora_status` retained and documented as shared training-job state only.
 - Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
 - Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
+### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
+
+`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
+view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
+required R2 archaeology. The host now:
+
+- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
+  injected or cap-dropped;
+- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
+  (`GET/POST /api/render/film`), and the scatter 201 body;
+- emits `film.wan_lora_projection` structured lines (docs/observability.md).
+
+Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
+bump.
 
 ## v1.20.1 -- 2026-08-05
 

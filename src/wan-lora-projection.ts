@@ -8,6 +8,7 @@
 // projection is the ONLY place that reads wanPretrained on the render side, so a Wan cast and an SDXL
 // cast can never cross-wire: an SDXL cast has an empty wanPretrained and is skipped here; a Wan cast
 // has an empty `pretrained` and never touches pretrained_loras.
+import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { Env } from "./env";
 import { presignR2Get } from "./r2-presign";
 
@@ -151,4 +152,96 @@ export async function projectWanLorasIntoModuleConfig(
     motionConfig.low_noise_loras = JSON.stringify(low);
   }
   return { injected, dropped, applied: injected > 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Surfacing (cf#392)
+//
+// projectWanLorasIntoModuleConfig returns {injected, dropped, applied} but until #392 no API,
+// poll view, or structured event carried those counts -- phase-1 verification could only dig
+// through R2 / config archaeology to learn whether a Wan cast pair was actually injected or
+// silently dropped by the pass cap. The honest-reporting pattern already exists for clip
+// duration (`clip_deliveries`) and partial keyframes (`keyframes_incomplete`); this is the
+// same shape for the Wan motion adapter.
+// ---------------------------------------------------------------------------
+
+/** Durable, poll-visible surface of a projection result. Only the two counts verification needs. */
+export interface WanLoraProjectionSurface {
+  injected: number;
+  dropped: number;
+}
+
+/** Film-job field name. Host-owned (not yet on core FilmJob); advance/parse preserves unknown keys. */
+export const WAN_LORA_PROJECTION_FIELD = "wan_lora_projection" as const;
+
+/** True when the result is worth recording: at least one slot injected or dropped. Pure no-ops
+ *  (wrong backend / empty wanPretrained) stay absent so non-Wan renders do not grow a zero field. */
+export function hasWanLoraProjection(result: WanProjectionResult): boolean {
+  return result.injected > 0 || result.dropped > 0;
+}
+
+/** Map a projection result to the durable surface, or undefined when nothing happened. */
+export function wanLoraProjectionSurface(
+  result: WanProjectionResult,
+): WanLoraProjectionSurface | undefined {
+  if (!hasWanLoraProjection(result)) return undefined;
+  return { injected: result.injected, dropped: result.dropped };
+}
+
+/** Read a previously persisted surface off a film/scatter job (or any object). Returns undefined
+ *  when the field is missing or malformed so a corrupt doc never fabricates counts. */
+export function readWanLoraProjection(
+  job: { [WAN_LORA_PROJECTION_FIELD]?: unknown } | null | undefined,
+): WanLoraProjectionSurface | undefined {
+  const raw = job?.[WAN_LORA_PROJECTION_FIELD];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as { injected?: unknown; dropped?: unknown };
+  if (typeof o.injected !== "number" || typeof o.dropped !== "number") return undefined;
+  if (!Number.isFinite(o.injected) || !Number.isFinite(o.dropped)) return undefined;
+  return { injected: o.injected, dropped: o.dropped };
+}
+
+/** Emit the greppable structured event (docs/observability.md). Never throws. */
+export function emitWanLoraProjectionEvent(args: {
+  film_id?: string;
+  scatter_id?: string;
+  project?: string;
+  result: WanProjectionResult;
+}): void {
+  const surface = wanLoraProjectionSurface(args.result);
+  if (!surface) return;
+  try {
+    console.log(
+      JSON.stringify({
+        ev: "film.wan_lora_projection",
+        ...(args.film_id ? { film_id: args.film_id } : {}),
+        ...(args.scatter_id ? { scatter_id: args.scatter_id } : {}),
+        ...(args.project ? { project: args.project } : {}),
+        injected: surface.injected,
+        dropped: surface.dropped,
+        applied: args.result.applied,
+      }),
+    );
+  } catch {
+    // Serialization failure must not break the render path.
+  }
+}
+
+/** Attach the surface to a film job and re-persist the R2 doc so later polls can relay it.
+ *  No-ops when the projection was a pure skip. Emits `film.wan_lora_projection`. Returns the
+ *  surface that was written (or undefined). */
+export async function persistWanLoraProjectionOnFilm(
+  env: Env,
+  job: { film_id: string; project: string; [WAN_LORA_PROJECTION_FIELD]?: WanLoraProjectionSurface },
+  result: WanProjectionResult,
+): Promise<WanLoraProjectionSurface | undefined> {
+  const surface = wanLoraProjectionSurface(result);
+  if (!surface) return undefined;
+  job[WAN_LORA_PROJECTION_FIELD] = surface;
+  // Same key + content-type as core putFilm; extra field survives advance (JSON round-trip).
+  await env.R2_RENDERS.put(filmJobDocKey(job.film_id), JSON.stringify(job), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  emitWanLoraProjectionEvent({ film_id: job.film_id, project: job.project, result });
+  return surface;
 }
