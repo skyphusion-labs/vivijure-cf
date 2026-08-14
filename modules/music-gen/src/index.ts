@@ -9,9 +9,12 @@
 // exactly like the render pipeline's clips/finish reclaim.
 //   GET  /module.json -> manifest
 //   POST /invoke      -> validate ScoreInput, persist `running` state, START the workflow, return poll
-//   POST /poll        -> R2 state authoritative: pending until the workflow writes done -> ScoreOutput
+//                       (token carries submittedAt epoch ms, same as RunPod modules)
+//   POST /poll        -> R2 state authoritative: pending (with submitted_at + elapsed_ms) until the
+//                       workflow writes done -> ScoreOutput; failed / terminal workflow -> ok:false
 //
-// Failures are DATA (ok:false), never thrown across the wire.
+// Failures are DATA (ok:false), never thrown across the wire. Upstream AI Gateway errors must not
+// look like a healthy slow render (#391).
 
 import {
   MODULE_API,
@@ -33,6 +36,7 @@ import {
   mimeForFormat,
   encodePoll,
   decodePoll,
+  resolveSubmittedAtMs,
   stateKey,
   audioKey,
   appliedTags,
@@ -80,7 +84,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "music-gen",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["score"],
   provides: [{ id: "minimax-music", label: "MiniMax Music 2.6 (Workers AI)" }],
@@ -227,6 +231,9 @@ async function submit(
 
   const jobId = req.context?.job_id || crypto.randomUUID();
   const applied = appliedTags(config.format ?? "mp3", config);
+  // Record submit time ONCE at submit (ms), same field RunPod modules put on their poll tokens (#391).
+  // Wall-clock impressions after the fact are not a clock; this is.
+  const submittedAt = Date.now();
 
   // Start the durable workflow that does the (long, blocking) gen off the request path. No waitUntil,
   // no inline await -- the workflow owns execution and survives a recycle.
@@ -241,7 +248,7 @@ async function submit(
   try {
     await writeState(env, jobId, {
       status: "running",
-      started_at: Math.floor(Date.now() / 1000),
+      started_at: Math.floor(submittedAt / 1000),
       film_key: filmKey,
       applied,
       workflow_id: workflowId,
@@ -250,7 +257,19 @@ async function submit(
     return { ok: false, error: "score: could not persist run state: " + (e as Error).message };
   }
 
-  return { ok: true, pending: true, poll: encodePoll({ job_id: jobId }) };
+  return { ok: true, pending: true, poll: encodePoll({ job_id: jobId, submittedAt }) };
+}
+
+/** Pending poll body: always include a submit clock when one is recoverable (#391). */
+function pendingPoll(token: { job_id: string; submittedAt?: number }, state: RunState | null): PollResponse<ScoreOutput> {
+  const submittedAt = resolveSubmittedAtMs(token, state);
+  if (submittedAt === undefined) return { ok: true, pending: true };
+  return {
+    ok: true,
+    pending: true,
+    submitted_at: submittedAt,
+    elapsed_ms: Math.max(0, Date.now() - submittedAt),
+  };
 }
 
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutput>> {
@@ -259,10 +278,13 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
   const state = await readState(env, token.job_id);
   if (!state) return { ok: false, error: "score: run state not found (expired or bad token)" };
   if (state.status === "done") return { ok: true, output: readOutput(state) };
+  // Terminal failed R2 state is the honest surface for upstream AI Gateway / model errors (e.g.
+  // AiGatewayError 2002). Never leave those looking like a healthy slow render (#391).
   if (state.status === "failed") return { ok: false, error: state.error || "generation failed" };
 
   // status === "running": R2 presence is the authoritative done-signal, but if the workflow itself
-  // errored/terminated without writing a terminal state, surface that instead of pending-forever.
+  // reached a terminal status without a readable done/failed write, surface that instead of
+  // pending-forever (upstream AI Gateway / step failures must not look like a healthy slow render).
   if (state.workflow_id) {
     try {
       const instance = await env.SCORE_WORKFLOW.get(state.workflow_id);
@@ -270,9 +292,20 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
       if (ws === "errored" || ws === "terminated") {
         return { ok: false, error: `generation workflow ${ws}` };
       }
+      // "complete" races with the terminal R2 write on the success path: re-read once before treating
+      // it as a silent-exit failure. If R2 still says running after complete, the terminal write was
+      // lost and the job is stuck -- report ok:false, not pending (#391).
+      if (ws === "complete") {
+        const again = await readState(env, token.job_id);
+        if (again?.status === "done") return { ok: true, output: readOutput(again) };
+        if (again?.status === "failed") {
+          return { ok: false, error: again.error || "generation failed" };
+        }
+        return { ok: false, error: "generation workflow complete without a result" };
+      }
     } catch { /* instance not found yet / transient: keep polling */ }
   }
-  return { ok: true, pending: true };
+  return pendingPoll(token, state);
 }
 
 export default {
