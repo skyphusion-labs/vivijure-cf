@@ -56,6 +56,25 @@ jobs:
       - name: Test
         run: npm test
 
+      # cf#470. The tenant module catalog is defined in vivijure-control-plane and MIRRORED here
+      # at scripts/tenant-module-catalog.txt, because this repo cannot import the other one. That
+      # mirror used to be a literal inside the readiness test with its length asserted beside it,
+      # so the test compared the copy against itself: the catalog went 6 -> 7 -> 15 and nothing
+      # failed once, while the published denominator and a reach-boundary claim in the docs were
+      # wrong for four days.
+      #
+      # This is the only step that can detect that, because it is the only one that reads the
+      # authority. It fetches raw.githubusercontent.com with NO credential (all three repos are
+      # public, so it runs on fork PRs too) and FAILS CLOSED: a fetch error, an empty parse on
+      # either side, or a self-control that does not fire is a non-zero exit, never a skip.
+      #
+      # A step of the required `ci` job, deliberately: a catalog change in the plane turns this
+      # repo red until the mirror and the population-4 numbers in docs/module-readiness-coverage.md
+      # are corrected. That is the work the silence was hiding. A non-blocking version of this is a
+      # cross-reference, not a control.
+      - name: Tenant module catalog matches the control plane (cf#470)
+        run: npm run check:catalog
+
       # deploy/ has a pytest suite (installer/teardown control plane). Without this step,
       # Python regressions in vivijure_deploy.py pass CI silently (#26).
       - uses: actions/setup-python@v7
@@ -276,6 +295,25 @@ jobs:
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}
           VPC_AUDIO_BEAT_SYNC_ID: ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}
+          # OPTIONAL (cf#482/#480). UNSET IS THE NORMAL STATE and is what ships today: an unset id
+          # makes fill-module-placeholders.sh STRIP the door's [[vpc_services]] and
+          # [[secrets_store_secrets]] blocks, so finish-upscale and speech-upscale deploy exactly as
+          # they do now, on RunPod. Referencing a secret that does not exist yields "" here, which
+          # IS the unset state -- so adding these lines changes nothing until someone creates the
+          # secret. Set one only once the matching connectivity-directory service exists.
+          VPC_FINISH_UPSCALE_ID: ${{ secrets.VPC_FINISH_UPSCALE_ID }}
+          VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
+          # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
+          # deploy stayed GREEN while silently stripping the door blocks. The log line reading
+          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks is the ONLY tell, and
+          # nothing asserts this list against the module tomls that declare the markers.
+          VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
+          # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
+          # normal state and strips the blocks, so adding these lines changes nothing until the
+          # secrets exist. They are listed HERE because an id missing from this list is the cf#489
+          # failure: the deploy stays GREEN and silently strips the door it was meant to bind.
+          VPC_FINISH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_FINISH_UPSCALE_PROPAGANDHI_ID }}
+          VPC_SPEECH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_SPEECH_UPSCALE_PROPAGANDHI_ID }}
           # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
           # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
           # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name
@@ -489,6 +527,12 @@ jobs:
       # (STUDIO_API_TOKEN, MCP_TOKEN) are seeded ONCE out-of-band (see docs/mcp.md), never in CI --
       # same doctrine as the module secrets, so no secret value passes through GitHub. POSIX sh
       # (BusyBox ash in node:22-alpine); no bash-isms.
+      #
+      # cf#328: this job deploys ONLY vivijure-studio-mcp (production). The propagandhi / local
+      # door (wrangler.mcp.propagandhi.toml, script vivijure-studio-mcp-flatliners) is INTENTIONAL,
+      # hand-deployed, and must NOT share this path -- different STUDIO_URL + fleet secrets CI must
+      # not hold. Package/serverInfo drift for both configs is guarded by tests/mcp-doors-328.test.ts;
+      # live lag after a pin bump is closed by hand redeploy (docs/mcp.md).
       - name: Deploy Studio MCP Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

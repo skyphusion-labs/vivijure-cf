@@ -212,6 +212,22 @@ The poll path insert-if-missing heals the missing row on the next poll. A line h
 film started fine; a UI-list row lagged one poll", never a lost render. Polls themselves stay
 throwing (they are idempotent; a retry is safe there).
 
+## Poll-surface content length (cf#365) -- assemble vs delivered
+
+`GET /api/render/film/:id` / `poll_film` can expose two CONTENT-length fields (integer ms, absent =
+NOT MEASURED) once the host pins a vivijure-core that projects them:
+
+| Field | Meaning |
+|-------|---------|
+| `assemble_ms` | Pre-`film.finish` concat length at the deterministic `renders/<id>/film.mp4` key |
+| `output_ms` | DELIVERED length of `film_key` (last writer; same basis as `renders.output_ms`) |
+
+Both are already captured on the job as `film_output_seconds`; this is the read half that lets a
+predicted-vs-delivered delta be decomposed without D1. They are **not** wall-clock: CPU finish
+capacity is `finish_elapsed_ms` / container `elapsedMs` (cf#268). Plan `duration_seconds` is a third
+quantity (requested, not delivered). Non-final tiers are known to deliver clips shorter than plan
+(#698), so a gap between plan and `assemble_ms` can be real clip shortfall, not a finish-chain retiming.
+
 ## The assemble duration gate (#697) -- a hard fail, not an event
 
 Layer 1 `clip.validate` deliberately does NOT gate on duration (`expected_s` is context-only, since
