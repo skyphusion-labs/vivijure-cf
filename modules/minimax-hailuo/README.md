@@ -45,6 +45,8 @@ Operator settings to self-host this module.
 
 **Model / endpoint**: fixed in code -- `ENDPOINT = https://api.runpod.ai/v2/minimax-hailuo-2-3-fast`.
 Selecting a different model means binding a different `motion.backend` module, not changing a knob.
+Slug existence (zero-spend `/health` probe) and the published rate ($0.19/sec, Conrad 2026-08-03)
+are recorded in `docs/runpod-public-endpoint-slugs.md` (cf#267).
 
 **Render knobs** (`config_schema`, set per render in the planner; the core clamps against the
 schema):

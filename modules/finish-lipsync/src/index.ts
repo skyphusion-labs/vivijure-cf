@@ -31,7 +31,7 @@ import {
 } from "./lipsync";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
-import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 
 interface Env {
@@ -269,7 +269,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     return { ok: true, pending: true };
   }
   if (s.status === "FAILED") {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
     // #565: RunPod lifts the handler's top-level `error` into a job-level FAILED, so the backend's
     // structured soft-degrade ({ok:false} kept in output) arrives here, never at the COMPLETED
     // branch below. Pass the original clip through (recorded, #77) instead of failing the shot; a
@@ -301,7 +301,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // requirement.
   const walkedPast = runpodWalkedPastOutcome(s.status);
   if (walkedPast) {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
   }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
@@ -310,14 +310,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(route, endpointId, st.jobId);
-      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output), ...timingFromStatus(s) });
       return { ok: false, error: "finish-lipsync backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
     return { ok: true, pending: true };
   }
   // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
   // could use the output is a different fact and the chain response is what carries it.
-  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt });
+  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
 
   // The endpoint's R2-mode result: { ok, clip_key, applied, ... }. If the handler soft-degraded
   // (e.g. no detectable face), ok is false and clip_key is absent -> pass the original clip through.
