@@ -407,7 +407,19 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
         return { ok: true, pending: true };
       }
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "gone", submittedAtMs: st.submittedAt });
-      return { ok: false, error: "finish-upscale job not found on RunPod (GC'd or never ran); failing shot " + st.shotId + " (#141)" };
+      // cf#480 made this reachable on TWO transports, and the message named only one.
+      // A door keeps job state in per-process RAM, so a container restart drops it and the
+      // poll 404s exactly like a RunPod GC -- but telling an operator to check a RunPod
+      // dashboard for a job RunPod never saw sends them to another company's console at the
+      // moment they are debugging. `t` already knows which transport ran it, and on the door
+      // arm `t.name` is the specific door, which a two-door deploy needs.
+      return {
+        ok: false,
+        error: t.door
+          ? "finish-upscale job not found on the on-iron door " + t.name +
+            " (job state is per-process, so a door restart drops it); failing shot " + st.shotId + " (#141)"
+          : "finish-upscale job not found on RunPod (GC'd or never ran); failing shot " + st.shotId + " (#141)",
+      };
     }
     return { ok: true, pending: true };
   }
