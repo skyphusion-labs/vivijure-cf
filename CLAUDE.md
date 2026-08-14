@@ -63,6 +63,7 @@ of these areas, update the matching doc.
 
 - `docs/module-api.md` -- prose for the typed hook contract (`vivijure-module/2`); **SoT types in vivijure-core**.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
+- `docs/api-config-conventions.md` -- the four studio HTTP config-passing shapes (flat / nested / `config` / top-level camelCase); wrong shape fails silently (cf#390).
 - `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
@@ -71,6 +72,9 @@ of these areas, update the matching doc.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
 - Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.
+- `docs/real-run-confirmations.md` -- phase-2 standing list: properties only a real run can confirm (#369).
+- `docs/runpod-public-endpoint-slugs.md` -- free slug existence probe + measured rates for cloud i2v (#267).
+- `docs/vendor-runpod-badge.md` -- RunPod badge API 500 on Hub-manifest repos; vendor disposition (#249).
 
 ## Commands
 
@@ -89,6 +93,10 @@ that a module must pass to be installable -- a module that implements the interf
 conformance is not done. For end-to-end render behavior, verify against a live `wrangler dev` and
 assert on the structured event channel (`docs/observability.md`), not prose. Always `npm run typecheck`
 first, green, before considering a change done.
+
+**R2 same-key A/B (cf#300):** never prove an overwrite from the CF API object-GET alone -- it can
+serve a stale body while listing shows the new etag/size. Listing is identity authority; body GET is
+for eyeballing. Full rule: `docs/r2-verification.md` (also `harness/cf278/README.md`).
 
 ## Architecture
 

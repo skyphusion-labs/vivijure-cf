@@ -1,5 +1,8 @@
 alibaba-wan
 alibaba-wan-lora
+audio-master
+beat-sync
+film-titles
 finish-lipsync
 finish-rife
 finish-upscale
@@ -13,4 +16,5 @@ own-gpu
 plan-enhance
 seedance
 speech-upscale
+subtitle
 vidu-q3

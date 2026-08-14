@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import keyframeWorker from "../modules/keyframe/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
+import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
@@ -30,6 +31,7 @@ type Worker = { fetch(request: Request, env: never): Promise<Response> };
 const MODULES: { name: string; worker: Worker }[] = [
   { name: "keyframe", worker: keyframeWorker as unknown as Worker },
   { name: "own-gpu", worker: ownGpuWorker as unknown as Worker },
+  { name: "finish-blender", worker: finishBlenderWorker as unknown as Worker },
   { name: "finish-upscale", worker: finishUpscaleWorker as unknown as Worker },
   { name: "finish-lipsync", worker: finishLipsyncWorker as unknown as Worker },
   { name: "speech-upscale", worker: speechUpscaleWorker as unknown as Worker },
