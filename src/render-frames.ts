@@ -91,6 +91,13 @@ export function deriveFramesKey(sourceKey: string, count: number, at: number | n
  *  stack. The `route-not-served` case in particular is EXPECTED during a rollout window (the Worker
  *  ships before the container image is rebuilt and the always-on service rolled), and an operator who
  *  reads a generic error there will go hunting for a bug that does not exist. */
+
+/** Sidecar for reuse path (cf#330). Container PUT of the sheet cannot set customMetadata
+ *  we control, so we store frame_times + duration next to the jpeg under a deterministic key. */
+export function deriveFramesMetaKey(sheetKey: string): string {
+  return sheetKey + ".frames-meta.json";
+}
+
 export type FramesFailureState =
   | "tier-unavailable"
   | "route-not-served"
@@ -208,7 +215,23 @@ export async function buildFramesSheet(
   // tier check on purpose -- an existing sheet is serveable on a studio whose tier was later unbound.
   const existing = await env.R2_RENDERS.head(key);
   if (existing) {
-    return { ok: true, key, count, grid, frame_times: [], duration: null, reused: true };
+    // cf#330: restore sampling metadata written on first build. Empty frame_times on reuse
+    // left the payload claiming "sampled at frame_times" with no times.
+    let frame_times: number[] = [];
+    let duration: number | null = null;
+    try {
+      const metaObj = await env.R2_RENDERS.get(deriveFramesMetaKey(key));
+      if (metaObj) {
+        const meta = (await metaObj.json()) as { frame_times?: unknown; duration?: unknown };
+        if (Array.isArray(meta.frame_times)) {
+          frame_times = meta.frame_times.filter((n): n is number => typeof n === "number");
+        }
+        if (typeof meta.duration === "number") duration = meta.duration;
+      }
+    } catch {
+      // best-effort: sheet still serves; metadata stays empty rather than failing the request
+    }
+    return { ok: true, key, count, grid, frame_times, duration, reused: true };
   }
 
   const vpc = asFetcher(env.VIDEO_FINISH_VPC);
@@ -234,5 +257,15 @@ export async function buildFramesSheet(
     ? (r.body.frame_times as unknown[]).filter((n): n is number => typeof n === "number")
     : [];
   const duration = typeof r.body.duration === "number" ? r.body.duration : null;
+  // cf#330: persist for the reuse path (deterministic sheet key already exists in R2).
+  try {
+    await env.R2_RENDERS.put(
+      deriveFramesMetaKey(key),
+      JSON.stringify({ frame_times: times, duration }),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+  } catch {
+    // sheet is already written by the container; missing meta only weakens reuse, not first response
+  }
   return { ok: true, key, count, grid, frame_times: times, duration, reused: false };
 }
