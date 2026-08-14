@@ -522,7 +522,15 @@ export function reconcileOpenRunpodJobsBestEffort(
     ctx.waitUntil(pass);
     return;
   }
-  // No context available (a caller that cannot supply one): still best-effort, never awaited.
+  // NO CONTEXT. Still best-effort, but SAY SO. An unregistered pass can be torn down the moment the
+  // response returns, so this is a DEGRADED run, not an equivalent one, and the degrade is exactly
+  // what this argument exists to prevent. Falling back silently is how a future call site that omits
+  // ctx reintroduces the original defect with nothing anywhere reporting it: the reconciler would
+  // still "run", the rows would still look reconciled, and the only difference would be invisible.
+  warn(
+    "reconcile pass NOT registered (module=" + args.module + "): no ExecutionContext supplied, " +
+      "so the runtime may cancel it before it finishes",
+  );
   void pass;
 }
 

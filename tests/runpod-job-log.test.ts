@@ -386,6 +386,37 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
     expect(upserts[0][2]).toBe("completed");
   });
 
+  // The pair that makes the previous test a guard rather than a smoke test: absence must be LOUD,
+  // and presence must be QUIET. Asserting only that a warning appears would pass for a helper that
+  // warns unconditionally, which would train everyone to ignore the line.
+  it("SAYS SO when it could not register the pass", async () => {
+    const { db } = reconcileDb([
+      { job_id: "loud", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    reconcileOpenRunpodJobsBestEffort(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(warns.join("|")).toContain("NOT registered");
+    expect(warns.join("|")).toContain("keyframe");
+  });
+
+  it("says NOTHING about registration when a context IS supplied", async () => {
+    const seen: Promise<unknown>[] = [];
+    const { db } = reconcileDb([
+      { job_id: "quiet", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    reconcileOpenRunpodJobsBestEffort(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    }, { waitUntil: (p: Promise<unknown>) => { seen.push(p); } });
+    await Promise.all(seen);
+    expect(warns.join("|")).not.toContain("NOT registered");
+  });
+
   it("still runs, and still never throws, when no context is available", async () => {
     const { db, upserts } = reconcileDb([
       { job_id: "noctx", module: "keyframe", submitted_at: nowSec - 200 },
