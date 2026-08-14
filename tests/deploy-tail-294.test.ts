@@ -50,9 +50,24 @@ describe("cf#294: vivijure-tail config is rendered from the committed example", 
     expect(`${r.stdout}\n${r.stderr}`).toMatch(/CLOUDFLARE_ACCOUNT_ID|required but unset/);
   });
 
-  it(".gitignore stops tracking the rendered tail/wrangler.toml", () => {
-    const gi = src(GITIGNORE);
-    expect(gi).toMatch(/\/tail\/wrangler\.toml/);
-    expect(gi).toMatch(/tail\/wrangler\.toml\.example/);
+  it(".gitignore stops tracking the rendered tail/wrangler.toml, and does not ignore the example (cf#529)", () => {
+    // A substring match on GITIGNORE's source text is satisfied by a comment that merely MENTIONS
+    // the path, so it cannot tell "there is a rule" from "there is a sentence" -- cf#529, same
+    // class as core#190. `git check-ignore` answers the effective question instead: it is immune
+    // to comments and to rule ordering, and goes red if the rule is removed OR if a real ignore
+    // rule for the example is ever added (the exact regression this guard exists to catch).
+    //
+    // `--no-index` is not optional here, and it is the second half of the same defect class:
+    // tail/wrangler.toml.example is a TRACKED file, and `git check-ignore` without `--no-index`
+    // reports a tracked path as "not ignored" regardless of whether a pattern matches it, because
+    // gitignore rules are moot for a path already in the index. Verified live: planting a real
+    // `tail/wrangler.toml.example` rule in .gitignore left the index-aware form reporting exit 1
+    // (not ignored) UNCHANGED -- the exact false pass this guard exists to prevent, reproduced by
+    // the fix that was supposed to close it. `--no-index` evaluates the pattern against the raw
+    // path and correctly reports exit 0 once that rule is added.
+    const ignored = spawnSync("git", ["check-ignore", "-q", "--no-index", "tail/wrangler.toml"]);
+    expect(ignored.status, "tail/wrangler.toml must be ignored").toBe(0);
+    const notIgnored = spawnSync("git", ["check-ignore", "-q", "--no-index", "tail/wrangler.toml.example"]);
+    expect(notIgnored.status, "tail/wrangler.toml.example must NOT be ignored").not.toBe(0);
   });
 });

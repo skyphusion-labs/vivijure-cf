@@ -22,6 +22,10 @@ import seedanceWorker from "../modules/seedance/src/index";
 import viduQ3Worker from "../modules/vidu-q3/src/index";
 import dialogueGenWorker from "../modules/dialogue-gen/src/index";
 import musicGenWorker from "../modules/music-gen/src/index";
+import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
+import cfSeedanceWorker from "../modules/cf-seedance/src/index";
+import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
+import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
 import castImageWorker from "../modules/cast-image/src/index";
 import imageGenerateWorker from "../modules/image-generate/src/index";
@@ -107,6 +111,10 @@ describe.each(RUNPOD_ONLY)("$name: GET /ready (RunPod key, hard-required)", ({ n
 const GATEWAY_REQUIRED: { name: string; worker: Worker }[] = [
   { name: "dialogue-gen", worker: dialogueGenWorker as unknown as Worker },
   { name: "music-gen", worker: musicGenWorker as unknown as Worker },
+  { name: "cf-hh1-r2v", worker: cfHh1R2vWorker as unknown as Worker },
+  { name: "cf-seedance", worker: cfSeedanceWorker as unknown as Worker },
+  { name: "cf-grok-video", worker: cfGrokVideoWorker as unknown as Worker },
+  { name: "cf-flux-3-video", worker: cfFlux3VideoWorker as unknown as Worker },
 ];
 
 describe.each(GATEWAY_REQUIRED)("$name: GET /ready (GATEWAY_ID, hard-required)", ({ name, worker }) => {
@@ -236,7 +244,9 @@ describe("notify-email: GET /ready (EMAIL binding informational)", () => {
 });
 
 // ---- Cross-cutting: cf#295's actual complaint -- no more 404s for any of the 26 modules --------
-describe("cf#295: none of the newly-covered 20 modules 404 on GET /ready", () => {
+// Count includes the four CF AI Gateway i2v modules (cf-hh1-r2v / cf-seedance / cf-grok-video /
+// cf-flux-3-video) added to GATEWAY_REQUIRED.
+describe("cf#295: none of the newly-covered modules 404 on GET /ready", () => {
   const ALL: { name: string; worker: Worker }[] = [
     ...RUNPOD_ONLY, ...GATEWAY_REQUIRED,
     { name: "local-gpu", worker: localGpuWorker as unknown as Worker },
@@ -251,7 +261,7 @@ describe("cf#295: none of the newly-covered 20 modules 404 on GET /ready", () =>
     const { status } = await get(worker, {});
     expect(status).toBe(200);
   });
-  it("the roster itself is the expected 20 (positive control on this file's own coverage)", () => {
-    expect(ALL.length).toBe(20);
+  it("the roster itself is the expected 24 (positive control on this file's own coverage)", () => {
+    expect(ALL.length).toBe(24);
   });
 });
