@@ -149,7 +149,13 @@ describe("drift guard: no module serialises its own invoke request or input", ()
     // credential. Asserted per module, by name, so deleting the call in one of them fails here
     // rather than silently widening the window.
     for (const mod of ["keyframe", "own-gpu"]) {
-      const text = readFileSync(join(MODULES_DIR, mod, "src", "index.ts"), "utf8");
+      // cf#285 moved needs_tenant_r2 (part of MANIFEST) out of index.ts into manifest.ts for both
+      // of these modules; takeTenantR2(req) stays in index.ts (runtime code, not manifest data).
+      // Concatenate both files so this still asserts on the module as a whole.
+      let text = readFileSync(join(MODULES_DIR, mod, "src", "index.ts"), "utf8");
+      try {
+        text += readFileSync(join(MODULES_DIR, mod, "src", "manifest.ts"), "utf8");
+      } catch { /* not extracted */ }
       expect(text, `${mod} must call takeTenantR2`).toContain("takeTenantR2(req)");
       expect(text, `${mod} must declare needs_tenant_r2`).toContain("needs_tenant_r2: true");
     }
