@@ -339,7 +339,19 @@ jobs:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
     # (and no merge can bite an in-flight render). To release: push a SemVer tag vX.Y.Z.
-    needs: [ci, assert-on-main]
+    # cf#526 follow-up: `container-tests` and `migrations-gate` BOTH RUN on a tag push -- neither
+    # carries an `if:`, so the workflow's `tags: ["v*"]` trigger starts them -- and neither was in
+    # this list. A tag could therefore deploy to production with either one RED, and nothing would
+    # report that: the deploy job simply never looked.
+    #
+    # `migrations-gate` is the one that makes this urgent. It guards SCHEMA. A deploy that ships a
+    # worker whose migrations gate failed is the shape where the code arrives and the database it
+    # expects does not.
+    #
+    # Adding them cannot deadlock: both run unconditionally on this trigger, so `needs` will always
+    # resolve rather than wait on a job that never starts. That is the failure mode to check before
+    # widening a `needs` array, and it is why this is safe rather than merely stricter.
+    needs: [ci, container-tests, migrations-gate, assert-on-main]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: node:22-alpine
