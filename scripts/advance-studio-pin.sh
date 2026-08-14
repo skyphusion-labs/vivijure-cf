@@ -75,12 +75,34 @@ if [ "$older" = "${TAG#v}" ]; then
   exit 0
 fi
 
-code="$(curl -sS -o /tmp/advance-studio-pin-resp.txt -w '%{http_code}' -X PATCH "${auth[@]}" "$API" \
-  -d "$(jq -nc --arg v "$TAG" '{name:"STUDIO_RELEASE",value:$v}')")"
+# The response body goes to a PRIVATE temp file, never a fixed shared name.
+#
+# It used to be a hardcoded path under the shared temp directory. The first user to run this owns
+# that file; every later user gets `curl: (23) Failure writing output to destination` on the `-o`.
+# The failure is silent in the direction that matters: curl still PERFORMS the PATCH and only fails
+# writing the body, so the pin ADVANCES while this script reports FAILURE -- a real state change
+# reported as a no-op, which is the worst possible pairing for a value deciding what code a tenant
+# runs.
+#
+# Observed live, not theorised: one run left the file owned by another user, and five of this
+# script's own tests then failed with rc=23 for a different user on the same box.
+#
+# A private per-run file plus a trap, so concurrent runs cannot collide and nothing is left behind.
+resp="$(mktemp "${TMPDIR:-/tmp}/advance-studio-pin-resp.XXXXXX")"
+trap 'rm -f "$resp"' EXIT
+
+# The curl EXIT STATUS is checked separately from the HTTP code. A write error must never be
+# mistaken for a transport success, which is exactly how the old form hid a completed PATCH.
+if ! code="$(curl -sS -o "$resp" -w '%{http_code}' -X PATCH "${auth[@]}" "$API" \
+  -d "$(jq -nc --arg v "$TAG" '{name:"STUDIO_RELEASE",value:$v}')")"; then
+  echo "::error::the PATCH could not be completed locally (curl failed). The pin may or may not have"
+  echo "::error::been changed remotely -- re-run the drift check before assuming either way."
+  exit 1
+fi
 echo "PATCH STUDIO_RELEASE -> HTTP ${code}"
 if [ "$code" != "204" ]; then
   echo "::error::advancing the hosted pin to ${TAG} failed (HTTP ${code})."
-  cat /tmp/advance-studio-pin-resp.txt 2>/dev/null || true
+  cat "$resp" 2>/dev/null || true
   exit 1
 fi
 
