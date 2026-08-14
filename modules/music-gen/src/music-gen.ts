@@ -21,12 +21,16 @@ export interface MusicGenerateConfig {
   sample_rate?: number;
 }
 
+// submittedAt (epoch ms) is recorded at submit so /poll can expose a clock for caller-side timeouts
+// (#391). Optional for legacy tokens that only carried job_id.
 export interface PollToken {
   job_id: string;
+  submittedAt?: number;
 }
 
 // `running` carries the workflow instance id so /poll can surface an errored/terminated workflow as a
 // failure instead of pending-forever, even though R2 presence remains the authoritative done-signal (#155).
+// started_at is epoch seconds (R2 state clock); poll tokens use submittedAt in ms like RunPod modules.
 export type RunState =
   | { status: "running"; started_at: number; film_key: string; applied: string[]; workflow_id?: string }
   | { status: "done"; film_key: string; audio_key: string; mime: string; applied: string[] }
@@ -123,11 +127,30 @@ export function encodePoll(t: PollToken): string {
 export function decodePoll(token: string): PollToken | null {
   try {
     const o = JSON.parse(atob(token)) as PollToken;
-    if (o && typeof o.job_id === "string" && o.job_id.length > 0) return { job_id: o.job_id };
+    if (!o || typeof o.job_id !== "string" || o.job_id.length === 0) return null;
+    const out: PollToken = { job_id: o.job_id };
+    if (typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt)) {
+      out.submittedAt = o.submittedAt;
+    }
+    return out;
   } catch {
     /* fall through */
   }
   return null;
+}
+
+/** Prefer token.submittedAt (ms); fall back to R2 running.started_at (seconds) for legacy jobs. */
+export function resolveSubmittedAtMs(
+  token: PollToken,
+  state: RunState | null,
+): number | undefined {
+  if (typeof token.submittedAt === "number" && Number.isFinite(token.submittedAt)) {
+    return token.submittedAt;
+  }
+  if (state && state.status === "running" && typeof state.started_at === "number" && Number.isFinite(state.started_at)) {
+    return state.started_at * 1000;
+  }
+  return undefined;
 }
 
 export function stateKey(jobId: string): string {
