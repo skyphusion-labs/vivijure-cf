@@ -11,7 +11,7 @@ request body, so bytes never touch the Worker and the container holds no R2 bind
 After motion/i2v and the per-shot finish chain produce the finished clips, the core calls `/finish` to
 concat them (hard cut or film-style xfade) and mux the soundtrack into the MP4. Post-mux, the
 `film.finish` chain calls back into this same container: `/subtitle` (burn captions), then
-`/film-titles` (title + credit cards); `/overlay` is available for arbitrary text cards. Doing this on a
+`/film-titles` (title + credit cards). `/overlay` is **retired** (text-overlay module gone; returns 410). Doing this on a
 cheap CPU container replaces the GPU-billed `assemble.py` seconds the old pod used (GPU money is for GPU
 work only).
 
@@ -38,7 +38,7 @@ keeps the credentials.
 |---|---|---|
 | `/health` | GET | readiness probe (`{ok:true}`); does not shell out to ffmpeg |
 | `/finish` | POST | concat per-shot clips (cut/xfade) + mux soundtrack -> final MP4 |
-| `/overlay` | POST | burn a text overlay / card onto the film |
+| `/overlay` | POST | **retired** (410) -- text-overlay module gone; use film-titles / subtitle |
 | `/film-titles` | POST | prepend a title card + append credit cards |
 | `/subtitle` | POST | burn time-synced captions (and/or emit a soft `.srt` sidecar) |
 | `/async/{route}` | POST | #602: submit `film-titles` or `subtitle` as a BACKGROUND job -> `202 {ok, jobId}` |

@@ -513,6 +513,65 @@ function closeStream() {
   }
 }
 
+// cf#515: THE ONLY PLACE THE RENDER POLL IS ARMED.
+//
+// Before this there were four bare `setTimeout(pollRender, POLL_INTERVAL_MS)`
+// call sites and no jitter anywhere under public/ (Math.random appeared zero
+// times), so every open panel re-armed on a flat 8s boundary. Unjittered
+// self-rescheduling timers synchronise: clients that start inside one window
+// converge and stay converged, arriving as a spike.
+//
+// That matters more than it looks, because this poll is not a read. It drives
+// advanceFilmJob and therefore closes the film's DB row, so the poll cadence
+// is what sets observation lag -- the metric cf#512 insists must never be
+// folded into latency. Routing every arm through one function is what makes
+// the policy testable at all (tests/poll-schedule-515.test.ts drives it with
+// an injected random and an injected timer); four inline call sites were
+// unreachable from any seam.
+//
+// Keep it that way: if you need to re-arm the poll, call this. A raw
+// setTimeout(pollRender, ...) reintroduces the defect, and a test asserts
+// there are none left.
+function schedulePollRender() {
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+  const hidden = typeof document !== "undefined" && document.hidden === true;
+  renderState.pollTimer = pollSchedule.armPoll({
+    hidden: hidden,
+    errorStreak: renderState.pollErrorStreak,
+    run: pollRender,
+  });
+  // armPoll returns null when it refused because the tab is hidden. Record
+  // that as PAUSED rather than as "not polling", so the visibility handler
+  // knows there is something to resume.
+  renderState.pollPaused = renderState.pollTimer === null && !!renderState.jobId;
+}
+
+// cf#515: called from the single visibilitychange handler in planner-init.js.
+// A backgrounded tab used to poll forever, so a run could never shed load;
+// the pattern already existed one file over (planner-history-list.js guards on
+// document.hidden) and had simply never been applied to the render poll.
+function pauseRenderPoll() {
+  if (renderState.pollTimer) {
+    clearTimeout(renderState.pollTimer);
+    renderState.pollTimer = null;
+  }
+  if (renderState.jobId) renderState.pollPaused = true;
+}
+
+// Resume with an IMMEDIATE poll rather than a fresh delay, so a tab that was
+// hidden for ten minutes shows current state at once instead of after another
+// interval. Mirrors loadHistory() on the history side. Guarded on pollPaused
+// so returning to a tab whose render already finished does not restart a poll
+// loop against a terminal job.
+function resumeRenderPoll() {
+  if (!renderState.jobId || !renderState.pollPaused) return;
+  renderState.pollPaused = false;
+  pollRender();
+}
+
 async function pollRender() {
   if (!renderState.jobId) return;
   if (renderState.pollTimer) {
@@ -527,14 +586,16 @@ async function pollRender() {
     data = await resp.json();
   } catch (err) {
     setRenderStatus("poll network error: " + err.message + " (retrying)", "error");
-    renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+    renderState.pollErrorStreak += 1;   // cf#515: back off rather than re-arm flat
+    schedulePollRender();
     return;
   }
 
   if (!resp.ok || (data && data.ok === false)) {
     const errs = (data && data.errors) || [(data && data.error) || "HTTP " + resp.status];
     setRenderStatus("poll failed: " + errs.join("; ") + " (retrying)", "error");
-    renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+    renderState.pollErrorStreak += 1;   // cf#515: back off rather than re-arm flat
+    schedulePollRender();
     return;
   }
 
@@ -549,8 +610,15 @@ async function pollRender() {
   }
 
   // Keep polling.
-  setRenderStatus(data.status.toLowerCase() + "; polling every " + (POLL_INTERVAL_MS / 1000) + "s", "loading");
-  renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+  // cf#515: "about every Ns" because the interval is now jittered per client.
+  // Stating a flat number here would be a claim the scheduler no longer makes.
+  renderState.pollErrorStreak = 0;
+  setRenderStatus(
+    data.status.toLowerCase() + "; polling about every "
+      + Math.round(pollSchedule.POLL_BASE_MS / 1000) + "s",
+    "loading",
+  );
+  schedulePollRender();
 }
 
 function updateRenderProgress(data) {
@@ -956,8 +1024,11 @@ async function cancelRender() {
   } catch (err) {
     setRenderStatus("cancel network error: " + err.message, "error");
     cancelBtn.disabled = false;
-    // Resume polling so the UI keeps reflecting reality.
-    renderState.pollTimer = setTimeout(pollRender, POLL_INTERVAL_MS);
+    // Resume polling so the UI keeps reflecting reality. cf#515: the CANCEL
+    // call failed, not the poll, so the poll error streak is deliberately left
+    // alone -- backing the poll off for a cancel fault would slow the very
+    // updates the user is waiting on.
+    schedulePollRender();
     return;
   }
 

@@ -1,8 +1,9 @@
 // THE DENOMINATOR IS THE FINDING (cf#295).
 //
-// cf#295 measured 6 of 26 modules implementing /ready and named the danger: a sweep that cannot
+// cf#295 measured 6 of N modules implementing /ready and named the danger: a sweep that cannot
 // tell "not ready" from "no endpoint exists" answers with the reassuring one. That is FIXED --
-// all 26 implement it now, and tests/module-ready-coverage-291.test.ts holds that invariant.
+// every module implements it now, and tests/module-ready-coverage-291.test.ts holds that invariant.
+// N is the modules/ tree size (see ENTRIES); it grows when new modules land.
 //
 // THE GAP MOVED RATHER THAN CLOSING, and this file is about where it moved to. `module-readiness`
 // on the control plane iterates TENANT_MODULE_CATALOG, a strict subset of the tree. Every one of
@@ -129,7 +130,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(handler.includes('url.pathname === "/ready"')).toBe(true);
   });
 
-  it("all 26 modules implement an anchored /ready (cf#295's original defect, now fixed)", () => {
+  it("every module implements an anchored /ready (cf#295's original defect, now fixed)", () => {
     expect(READY.length).toBe(ENTRIES.length);
   });
 
@@ -147,7 +148,15 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   });
 
   it("the four populations are the sizes the published table claims", () => {
-    expect(ENTRIES.length).toBe(27);
+    // 31 = main's 27 (26 base + finish-blender, cf#470) + 4 new CF AI i2v modules
+    // (cf-hh1-r2v, cf-seedance, cf-grok-video, cf-flux-3-video). Recomputed against the
+    // merged tree, not summed from either branch in isolation (the dispatch's own "26->30"
+    // arithmetic missed main's independent finish-blender addition).
+    expect(ENTRIES.length).toBe(31);
+    // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
+    // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
+    // or report telemetry.job_log (verified against the merged module sources), so the
+    // population this counts is unchanged by this PR and 15 stands.
     expect(WRITES_JOB_LOG.length).toBe(15);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules

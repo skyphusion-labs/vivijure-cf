@@ -5,11 +5,14 @@ import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifes
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
+// cf#537: the agent door validates its own untrusted `finish_select` with the SAME parser the panel
+// door's overrides bag goes through, so the two doors cannot drift on what a valid selection is.
+import { parseHookSelection } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, summarizeFilm, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
-  normalizeFilmScenes, filterScenesByShotIds,
+  normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
 } from "./film-render-bridge";
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
@@ -27,8 +30,9 @@ import {
 } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import {
   listCast, getCastById, createCast, updateCast, deleteCast,
-  clearPortrait, getCastIdByPublicId, toPublicCast,
+  clearPortrait, getCastIdByPublicId,
 } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "./cast-public";
 import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
 import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
@@ -109,9 +113,24 @@ import { videoFinishHooksUnavailable } from "./video-finish-availability";
 import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
-import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
+import { resolveStudioRelease } from "./studio-release";
+import {
+  projectWanLorasIntoModuleConfig,
+  ensureModuleOverrideConfig,
+  shouldProjectWanLoras,
+  persistWanLoraProjectionOnFilm,
+  emitWanLoraProjectionEvent,
+  wanLoraProjectionSurface,
+  WAN_LORA_BACKEND,
+  WAN_LORA_PROJECTION_FIELD,
+} from "./wan-lora-projection";
 import { getUserPrefs, setUserPrefs } from "./user-prefs";
-import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "@skyphusion-labs/vivijure-core/operator-config";
+import {
+  loadInstallConfig,
+  setInstallConfig,
+  hasInstallConfig,
+  installFieldKeys,
+} from "@skyphusion-labs/vivijure-core/operator-config";
 import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
 import { startScoreBedGenerate, pollScoreBedGenerate } from "./score-bed";
 import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
@@ -823,7 +842,7 @@ const hSubmitRender: Handler = async (req, env) => {
   // paths). motionBackend is undefined on a keyframes-only preview, and non-Wan / no-Wan-cast renders
   // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
   // POST-clamp, keeps the JSON LoRA fields intact through startFilmJob.
-  await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
+  const wanProj = await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -833,6 +852,10 @@ const hSubmitRender: Handler = async (req, env) => {
     keyframe_config: mapped.keyframe_config,
     motion_config: mapped.motion_config,
     finish_config: mapped.finish_config,
+    // cf#537: which finish modules this render asked for. Resolved out of `renderOverrides.select`
+    // by the core, so it rides the SAME bag that `renders.render_overrides` already persists, and a
+    // derived render (regen-shot, finalize, animate-*) replays it with no schema change.
+    finish_select: mapped.finish_select,
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
@@ -845,6 +868,9 @@ const hSubmitRender: Handler = async (req, env) => {
     pretrained_loras: Object.keys(pretrained).length ? pretrained : undefined,
     cast_loras: Object.keys(castIds).length ? castIds : undefined,
   }, modules);
+  // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
+  // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
+  await persistWanLoraProjectionOnFilm(env, job, wanProj);
   const view = filmJobToPollView(job, null);
   const row: NewRenderRow = {
     jobId: view.jobId,
@@ -963,6 +989,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     motion_backend: motionBackend,
     motion_config: mapped.motion_config,
     finish_config: mapped.finish_config,
+    finish_select: mapped.finish_select, // cf#537
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
@@ -1052,6 +1079,20 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     return json({ ok: false, error: job.error || "regen submit failed" }, 422);
   }
   const view = filmJobToPollView(job, null);
+  // cf#339: every other startFilmJob / startFilmFromKeyframes caller writes a renders row.
+  // This door spent GPU with nothing in the history panel. parent_id links the regen child to
+  // the COMPLETED row that supplied the shot; mode is keyframes-only (this path never motion-renders).
+  await insertRenderBestEffort(env, {
+    jobId: view.jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: tier,
+    renderOverrides: row.render_overrides ?? undefined,
+    status: view.status,
+    mode: "keyframes-only",
+    projectId: row.project_id,
+    parentId: row.id,
+  });
   return json({ ok: true, jobId: view.jobId, status: view.status });
 };
 const hPollRender: Handler = async (_req, env, ctx, p) => {
@@ -1174,10 +1215,11 @@ const hScatterRender: Handler = async (req, env) => {
   // fields in the module schema, so they survive validateConfig and reach every shard. Without this a
   // Wan cast scatter would render LoRA-less SILENTLY while render/film worked (the exact Phase C gap).
   // scatterCast is the same resolveCastLoras result the readiness gate above used.
+  let scatterWanProj = { injected: 0, dropped: 0, applied: false as boolean };
   if (shouldProjectWanLoras(scatterBackend, scatterCast.wanPretrained)) {
     const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
     b.renderOverrides = injected.overrides;
-    await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
+    scatterWanProj = await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
   }
   try {
     const job = await startScatterRender(env, {
@@ -1194,7 +1236,22 @@ const hScatterRender: Handler = async (req, env) => {
         project_id: await resolveProjectRef(env, b.projectId),
     });
     const view = scatterJobToPollView(job);
-    return json({ ok: true, jobId: view.jobId, status: view.status }, 201);
+    // cf#392: scatter has no host-owned poll wrapper, so surface on the 201 + structured event.
+    // The LoRAs themselves ride render_overrides into every shard; the counts are for verification.
+    const scatterSurface = wanLoraProjectionSurface(scatterWanProj);
+    if (scatterSurface) {
+      emitWanLoraProjectionEvent({
+        scatter_id: view.jobId,
+        project,
+        result: scatterWanProj,
+      });
+    }
+    return json({
+      ok: true,
+      jobId: view.jobId,
+      status: view.status,
+      ...(scatterSurface ? { [WAN_LORA_PROJECTION_FIELD]: scatterSurface } : {}),
+    }, 201);
   } catch (e) {
     const msg = (e as Error).message || "scatter submit failed";
     return json({ ok: false, error: msg }, 422);
@@ -1457,7 +1514,7 @@ async function withFilmDownloadUrlBestEffort(
   }
 }
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1547,12 +1604,13 @@ const hStartFilm: Handler = async (req, env) => {
   // Wan cast adapters -> alibaba-wan-lora motion config, in place, before the job starts. hStartFilm
   // carries a.motion_config straight into startFilmJob unclamped, so the projected fields flow through.
   // Guarded so a non-Wan film never materializes an empty motion_config.
+  let filmWanProj = { injected: 0, dropped: 0, applied: false as boolean };
   if (shouldProjectWanLoras(a.motion_backend, resolvedLoras.wanPretrained)) {
     const filmMotionConfig: Record<string, unknown> =
       a.motion_config && typeof a.motion_config === "object" && !Array.isArray(a.motion_config)
         ? (a.motion_config as Record<string, unknown>)
         : {};
-    await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
+    filmWanProj = await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
     a.motion_config = filmMotionConfig;
   }
   const job = await startFilmJob(env, {
@@ -1561,7 +1619,14 @@ const hStartFilm: Handler = async (req, env) => {
     // audio_key: a staged bed (score-bed music/narration) to mux after assemble. startFilmJob runs it
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
     // silent even when the caller supplied a bed (the scored/narrated render path).
-    finish_config: a.finish_config, speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
+    finish_config: a.finish_config,
+    // cf#537: this door takes PRE-RESOLVED config maps and carries no renderOverrides bag (0
+    // mentions in its body type, against 3 for finish_config), so the selection is its own
+    // top-level field rather than a key inside a bag that does not exist here. The panel door and
+    // this one are two different pipelines; a selection wired only into the panel would leave the
+    // agent / MCP / Slate path on run-everything.
+    finish_select: parseHookSelection({ finish: a.finish_select })?.finish,
+    speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
     // TTS+lip-sync stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
     // which read job.dialogue_lines. cast_loras carries the speaking cast (slot -> cast id) so the
@@ -1580,11 +1645,14 @@ const hStartFilm: Handler = async (req, env) => {
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
   }, filmModules);
+  // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
+  // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
+  await persistWanLoraProjectionOnFilm(env, job, filmWanProj);
   // Write a renders-table row so this film shows in the history panel (#164), the same way
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
   await insertRenderBestEffort(env, filmRowFromJob(job));
-  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilm(job, null))) }, 201);
+  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))) }, 201);
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
   const r = await advanceFilmJob(env, p.id);
@@ -1599,7 +1667,8 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
     ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
     : undefined;
   await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob, kfDone), ctx);
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilm(r.job, r.clipJob))) });
+  // cf#392: host summarize relays wan_lora_projection from the job doc when present.
+  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(r.job, r.clipJob))) });
 };
 
 const hEnhance: Handler = async (req, env) => {
@@ -1733,6 +1802,20 @@ const hPatchModuleConfig: Handler = async (req, env, _ctx, p) => {
   if (!hasInstallConfig(mod.config_schema)) throw notFound("module has no install-scope config");
   const body = await readBody<Record<string, unknown>>(req);
   if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("body must be a config object");
+  // Strict write: refuse unknown / render-scope keys with 400 instead of silently clamping to a
+  // no-op (cf#387). Nested shapes like { config: { notify_email } } land here as dropped "config".
+  // (Core also exports droppedInstallKeys / clampInstallPatchDetailed for the same check.)
+  const allowed = installFieldKeys(mod.config_schema);
+  const allowedSet = new Set(allowed);
+  const dropped = Object.keys(body).filter((k) => !allowedSet.has(k));
+  if (dropped.length) {
+    throw badRequest(
+      `unknown or non-install config keys: ${dropped.join(", ")}`
+        + (allowed.length ? ` (allowed: ${allowed.join(", ")})` : ""),
+    );
+  }
+  // Empty object is an intentional no-op (returns current config). Non-empty body with zero
+  // install keys is already covered by the dropped check above.
   const config = await setInstallConfig(env, mod.name, mod.config_schema, body);
   return json({ ok: true, module: mod.name, config });
 };
@@ -2011,8 +2094,13 @@ const hModules: Handler = async (_req, env) => {
   // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
   // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
   // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
-  return json(
-    modulesResponse(modules, renderConfigProjection(), {
+  // cf#287: studio release / build identity is a TOP-LEVEL field on the modules projection
+  // (orthogonal to `host`, which is transport capability). Two tag deploys must never project a
+  // byte-identical registry. Spread AFTER modulesResponse so a future core field of the same name
+  // cannot silently win; the host is the authority on its own release.
+  const release = resolveStudioRelease(env);
+  return json({
+    ...modulesResponse(modules, renderConfigProjection(), {
       dispatch: !!env.MODULE_DISPATCH,
       ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
       // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
@@ -2031,7 +2119,9 @@ const hModules: Handler = async (_req, env) => {
           }
         : {}),
     }),
-  );
+    studio_release: release.studio_release,
+    ...(release.git_sha ? { git_sha: release.git_sha } : {}),
+  });
 };
 
 export const API_ROUTES: Route[] = [

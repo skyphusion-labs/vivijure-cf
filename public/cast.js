@@ -1328,6 +1328,22 @@
     el.className = "cast-gen-status" + (kind ? " is-" + kind : "");
   }
 
+  // Per-family readiness (cf#383): prefer API booleans; fall back to key presence.
+  // Shared lora_status === "ready" is NOT family-honest (Wan-only can still read ready).
+  function sdxlLoraReady(c) {
+    if (!c) return false;
+    if (typeof c.sdxl_lora_ready === "boolean") return c.sdxl_lora_ready;
+    return !!(c.lora_key && String(c.lora_key).indexOf("loras/") === 0);
+  }
+  function wanLoraReady(c) {
+    if (!c) return false;
+    if (typeof c.wan_lora_ready === "boolean") return c.wan_lora_ready;
+    return !!(
+      c.wan_lora_key_high && String(c.wan_lora_key_high).indexOf("loras/") === 0 &&
+      c.wan_lora_key_low && String(c.wan_lora_key_low).indexOf("loras/") === 0
+    );
+  }
+
   function renderLoraPane(c) {
     const badge = $("#cast-lora-badge");
     const meta = $("#cast-lora-meta");
@@ -1343,49 +1359,59 @@
       setLoraStatusText("");
       return;
     }
-    const status = c.lora_status || "idle";
-    badge.textContent = status;
-    badge.className = "cast-lora-badge cast-lora-badge-" + status;
-    // Meta text: ready -> "trained Xm ago, N.M MB"; training -> job id
-    // tail; failed -> show the error (truncated); idle -> nothing.
+    const jobStatus = c.lora_status || "idle";
+    const sdxlReady = sdxlLoraReady(c);
+    // Badge is THIS family's readiness, not the shared job status (cf#383).
+    const badgeStatus = jobStatus === "training" ? "training"
+      : sdxlReady ? "ready"
+      : jobStatus === "failed" && !sdxlReady ? "failed"
+      : "idle";
+    badge.textContent = badgeStatus;
+    badge.className = "cast-lora-badge cast-lora-badge-" + badgeStatus;
+    // Meta text: ready -> "trained Xm ago"; training -> job id tail;
+    // failed -> show the error (truncated); idle/absent -> nothing.
     let metaText = "";
-    if (status === "ready" && c.lora_trained_at) {
+    if (sdxlReady && c.lora_trained_at) {
       const trained = new Date(c.lora_trained_at + "Z");
       const ageS = (Date.now() - trained.getTime()) / 1000;
       metaText = "trained " + timeAgoSeconds(ageS) + " ago";
-    } else if (status === "training" && c.lora_job_id) {
+    } else if (jobStatus === "training" && c.lora_job_id) {
       metaText = "job " + c.lora_job_id.slice(0, 18) + "…";
-    } else if (status === "failed" && c.lora_error) {
+    } else if (jobStatus === "failed" && !sdxlReady && c.lora_error) {
       metaText = c.lora_error.slice(0, 120) + (c.lora_error.length > 120 ? "…" : "");
+    } else if (jobStatus === "ready" && !sdxlReady) {
+      metaText = "no SDXL adapter (Wan-only or key missing)";
     }
     meta.textContent = metaText;
     // Train button enabled when we have the inputs and no run is in
-    // flight. Retraining (status: ready / failed) is allowed.
-    const ready = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
-    btn.disabled = status === "training" || !ready;
-    btn.textContent = status === "ready" || status === "failed" ? "retrain SDXL LoRA" : "train SDXL LoRA";
-    if (status === "ready" && c.lora_key) {
+    // flight. Retraining (sdxl ready / failed) is allowed.
+    const inputsReady = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
+    btn.disabled = jobStatus === "training" || !inputsReady;
+    btn.textContent = sdxlReady || (jobStatus === "failed" && !sdxlReady) ? "retrain SDXL LoRA" : "train SDXL LoRA";
+    if (sdxlReady && c.lora_key) {
       dl.href = "/api/artifact/" + c.lora_key;
       dl.hidden = false;
     } else {
       dl.hidden = true;
       dl.href = "";
     }
-    if (!ready) {
+    if (!inputsReady) {
       setLoraStatusText(
         c.portrait_key
           ? "add at least 4 training references before training"
           : "save a portrait first",
         "warn"
       );
-    } else if (status === "idle") {
-      setLoraStatusText("");
-    } else if (status === "training") {
+    } else if (jobStatus === "training") {
       setLoraStatusText("training in progress, ~15-25 min on the GPU", "loading");
-    } else if (status === "ready") {
-      setLoraStatusText("LoRA ready to use in future renders", "success");
-    } else if (status === "failed") {
+    } else if (sdxlReady) {
+      setLoraStatusText("SDXL LoRA ready for keyframe identity", "success");
+    } else if (jobStatus === "failed" && !sdxlReady) {
       setLoraStatusText("training failed; see meta above", "error");
+    } else if (jobStatus === "ready" && !sdxlReady) {
+      setLoraStatusText("shared status ready but no SDXL key -- train SDXL for keyframes", "warn");
+    } else {
+      setLoraStatusText("");
     }
   }
 
@@ -1410,21 +1436,23 @@
       setWanLoraStatusText("");
       return;
     }
-    const status = c.lora_status || "idle";
-    const hasWan = !!(c.wan_lora_key_high && c.wan_lora_key_low);
-    if (hasWan && status === "ready") {
+    const jobStatus = c.lora_status || "idle";
+    const hasWan = wanLoraReady(c);
+    if (hasWan) {
       meta.textContent = "Wan experts ready (high + low noise)";
-    } else if (status === "training") {
+    } else if (jobStatus === "training") {
       meta.textContent = "training in progress (shared job slot)";
-    } else if (status === "failed" && c.lora_error) {
+    } else if (jobStatus === "failed" && !hasWan && c.lora_error) {
       meta.textContent = c.lora_error.slice(0, 120) + (c.lora_error.length > 120 ? "…" : "");
+    } else if (c.wan_lora_key_high || c.wan_lora_key_low) {
+      meta.textContent = "partial Wan keys (retrain recommended)";
     } else {
-      meta.textContent = hasWan ? "partial Wan keys (retrain recommended)" : "";
+      meta.textContent = "";
     }
-    const ready = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
-    btn.disabled = status === "training" || !ready;
-    btn.textContent = hasWan && status === "ready" ? "retrain Wan LoRA" : "train Wan LoRA";
-    if (status === "ready" && c.wan_lora_key_high && c.wan_lora_key_low) {
+    const inputsReady = !!c.portrait_key && Array.isArray(c.ref_keys) && c.ref_keys.length >= 4;
+    btn.disabled = jobStatus === "training" || !inputsReady;
+    btn.textContent = hasWan ? "retrain Wan LoRA" : "train Wan LoRA";
+    if (hasWan && c.wan_lora_key_high && c.wan_lora_key_low) {
       dlHigh.href = "/api/artifact/" + c.wan_lora_key_high;
       dlLow.href = "/api/artifact/" + c.wan_lora_key_low;
       dlHigh.hidden = false;
@@ -1435,18 +1463,18 @@
       dlHigh.href = "";
       dlLow.href = "";
     }
-    if (!ready) {
+    if (!inputsReady) {
       setWanLoraStatusText(
         c.portrait_key
           ? "add at least 4 training references before training"
           : "save a portrait first",
         "warn",
       );
-    } else if (status === "training") {
+    } else if (jobStatus === "training") {
       setWanLoraStatusText("Wan training in progress, ~35-45 min on the GPU", "loading");
-    } else if (hasWan && status === "ready") {
+    } else if (hasWan) {
       setWanLoraStatusText("Wan LoRA ready for alibaba-wan-lora renders", "success");
-    } else if (status === "failed") {
+    } else if (jobStatus === "failed" && !hasWan) {
       setWanLoraStatusText("training failed; see meta above", "error");
     } else {
       setWanLoraStatusText("");
