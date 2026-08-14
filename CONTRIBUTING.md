@@ -35,7 +35,27 @@ because in this repo the release-prep PR (bump `package.json`, add the `## vX.Y.
 heading) already has to land before feature PRs accumulate under it. See
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#cutting-a-release-tag-an-existing-studio).
 
-**Scope of the merge-time guard:** `src/`, `public/`, and `modules/` code (each module worker's
-own `src/`, plus `modules/_shared/`) need an entry. `modules/<name>/README.md` and
-`modules/<name>/wrangler.toml` do not -- docs and config, not shipped behaviour. The `no-changelog`
-label is a loud, recorded escape hatch for a deliberate skip.
+**On cf#542 (there is no `## Unreleased` heading on `main` at all, so entries land under a stale
+released heading instead of the version actually being cut -- measured: `cf#298` appears 6 times
+and `cf#320` twice in `CHANGELOG.md`, the copy-up-at-tag-time signature).** The version-mismatch
+refusal above closes the MECHANISM for any PR using a fragment, going forward: `assemble()` never
+positions a fragment's content anywhere except the CURRENT top heading, and refuses outright if
+the caller's asserted version does not match it, so a fragment cannot land under a stale heading
+even by mistake -- there is no "wrong position in the file" a fragment can be edited into, because
+it has no position until assembled. **It does not close the DIRECT-EDIT half during the migration
+window**: a hand edit to `CHANGELOG.md` can still be placed anywhere in the file by whoever writes
+it, same as today, until fragments are the only accepted form. It also does **not** retroactively
+repair the entries already sitting under stale headings in `CHANGELOG.md` today -- that is a
+one-time cleanup, separate from this convention landing.
+
+**Scope of the merge-time guard is a DELIBERATE ADAPTATION, not drift.** `vivijure-control-plane`
+scopes its guard to `src/` and `public/` only, because it has no `modules/` directory. This repo
+does, and each module worker's own `src/` (`modules/<name>/src/*.ts`) plus the shared module code
+at `modules/_shared/*.ts` are shipped code the same way `src/` and `public/` are -- a module worker
+change with no entry is exactly cf#510's own hazard, arriving through a directory control-plane
+never had to think about. `modules/<name>/README.md` and `modules/<name>/wrangler.toml` are
+deliberately OUT of scope -- docs and config, not shipped behaviour, matching the "touch, not
+content" philosophy this whole guard already applies to `src/` and `public/`. If a future sync
+with control-plane's version ever "corrects" this repo's scope back to `src/`+`public/` only, that
+sync is the regression, not this file. The `no-changelog` label is a loud, recorded escape hatch
+for a deliberate skip.
