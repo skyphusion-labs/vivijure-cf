@@ -62,6 +62,48 @@ export interface RunpodJobRecord {
    *  OMIT IT rather than passing a placeholder when the endpoint did not report one: NULL means
    *  "not told", which must stay distinguishable from "told, and it was not a refusal". */
   errorType?: string;
+  /** RunPod's OWN execution time in ms, from the `/status` envelope. NULL when RunPod did not report
+   *  it -- never 0. See `timingFromStatus`, which is the only thing that should produce this. */
+  executionMs?: number | null;
+  /** RunPod's OWN delay time in ms. Queue wait AND cold start together; the two are not separable
+   *  from this field and only one of them is billed as compute. NULL when not reported, never 0. */
+  delayMs?: number | null;
+}
+
+/** The timing half of a `/status` envelope, in the shape the record spreads in. */
+export interface RunpodJobTiming {
+  executionMs: number | null;
+  delayMs: number | null;
+}
+
+/**
+ * Read RunPod's own timing out of a `/status` envelope, or report that it was not there.
+ *
+ * NULL-NOT-ZERO IS ENFORCED HERE, once, so no caller can reintroduce a zero. This mirrors the
+ * plane-side rule in vivijure-control-plane `src/runpod-proxy.ts` deliberately rather than inventing
+ * a second convention for the same fact: a CANCELLED job's payload carries neither field at all, and
+ * a 0 would read as a real measurement of a job that took no time and under-count every total.
+ *
+ * ALWAYS returns an object so callers can spread it unconditionally. A caller with no envelope in
+ * hand (the 404 `gone` path) must simply not call this, rather than passing something empty: an
+ * absent call and a call that found nothing both land NULL, which is the same honest answer.
+ *
+ * A REPORTED ZERO IS KEPT AS ZERO. The rule is that ABSENT becomes NULL, not that zero is forbidden:
+ * a vendor saying "this took 0 ms" is a measurement, and rewriting it to NULL would destroy the very
+ * distinction this function exists to preserve, just pointed the other way.
+ *
+ * ONE DELIBERATE DIVERGENCE from the plane-side twin, flagged so it does not read as drift: this
+ * rejects NEGATIVE values, which the plane's version accepts because `Number.isFinite(-1)` is true.
+ * A negative duration is not a measurement, it is corruption, and NULL is the honest answer for it.
+ * The divergence is one comparison and it is strictly the safer direction; if the two are ever
+ * unified, unify on this one.
+ */
+export function timingFromStatus(status: unknown): RunpodJobTiming {
+  if (!status || typeof status !== "object") return { executionMs: null, delayMs: null };
+  const s = status as Record<string, unknown>;
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+  return { executionMs: num(s.executionTime), delayMs: num(s.delayTime) };
 }
 
 /** Same bound the module poll paths already apply to a backend error string. */
@@ -108,12 +150,17 @@ export const RUNPOD_JOB_LOG_RETRY_DELAY_MS = 150;
  * class an earlier write established.
  */
 export const RUNPOD_JOB_LOG_UPSERT =
-  "INSERT INTO runpod_job_log (job_id, module, outcome, detail, submitted_at, terminal_at, error_type) " +
-  "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) " +
+  "INSERT INTO runpod_job_log (job_id, module, outcome, detail, submitted_at, terminal_at, error_type, execution_ms, delay_ms) " +
+  "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) " +
   "ON CONFLICT(job_id) DO UPDATE SET " +
   "outcome = excluded.outcome, " +
   "detail = COALESCE(excluded.detail, runpod_job_log.detail), " +
   "error_type = COALESCE(excluded.error_type, runpod_job_log.error_type), " +
+  // Same COALESCE as detail and error_type, for the same reason: a later write carrying no timing
+  // must not erase timing an earlier one established. The terminal_at guard already makes the first
+  // terminal write win, so this is belt-and-braces rather than the primary mechanism.
+  "execution_ms = COALESCE(excluded.execution_ms, runpod_job_log.execution_ms), " +
+  "delay_ms = COALESCE(excluded.delay_ms, runpod_job_log.delay_ms), " +
   "terminal_at = excluded.terminal_at " +
   "WHERE runpod_job_log.terminal_at IS NULL";
 
@@ -146,6 +193,12 @@ export async function recordRunpodJob(
       rec.errorType === undefined || rec.errorType === null || rec.errorType === ""
         ? null
         : String(rec.errorType).slice(0, ERROR_TYPE_MAX);
+    // NULL-not-zero again at the boundary, so a caller that hand-built a record rather than using
+    // timingFromStatus still cannot write a 0 that means "not reported".
+    const nonNegative = (v: number | null | undefined): number | null =>
+      typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
+    const executionMs = nonNegative(rec.executionMs);
+    const delayMs = nonNegative(rec.delayMs);
     const terminalAt = rec.outcome === "submitted" ? null : Math.floor(nowMs / 1000);
     const submittedAt = rec.submittedAtMs === undefined ? null : Math.floor(rec.submittedAtMs / 1000);
     // .then(ok, err) rather than a bare await: the write promise must never be able to reject, or a
@@ -153,7 +206,7 @@ export async function recordRunpodJob(
     const attempt = (): Promise<"ok" | "failed"> =>
       db
         .prepare(RUNPOD_JOB_LOG_UPSERT)
-        .bind(rec.jobId, rec.module, rec.outcome, detail, submittedAt, terminalAt, errorType)
+        .bind(rec.jobId, rec.module, rec.outcome, detail, submittedAt, terminalAt, errorType, executionMs, delayMs)
         .run()
         .then(
           () => "ok" as const,

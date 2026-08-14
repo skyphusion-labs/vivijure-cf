@@ -83,6 +83,23 @@ export interface PollState {
   srcFps: number;
   frames: number;
   submittedAt?: number;
+  /** cf#489 AFFINITY. Which transport minted this job id, recorded so a poll cannot be served by
+   *  the other one. The on-iron door keeps job state in a PER-PROCESS registry (the JobRegistry in
+   *  runpod_http_serve.py is an in-memory dict keyed by a uuid4 hex), so a door job id means
+   *  nothing to RunPod and a RunPod job id means nothing to the door -- and the miss does not read
+   *  as a miss: both answer 404, which runpodJobGone correctly classifies as a GC job and, past
+   *  the grace window, FAILS THE SHOT. Cross-route polling would therefore destroy completed work
+   *  while every component behaved correctly.
+   *
+   *  ABSENT means RunPod. That is deliberate and it is what makes this backward compatible: a
+   *  token minted before this change carries no label, and a token minted on the RunPod route
+   *  carries no label, and those two cases want identical handling.
+   *
+   *  Measured on the swarm before per-node addressing landed: twelve polls of ONE job id through
+   *  the service VIP returned found=4, 404=8. This label is what makes that impossible to hit by
+   *  crossing routes, and per-node addressing is what makes it impossible to hit within one.
+   */
+  door?: string;
 }
 
 export function encodePoll(s: PollState): string {
@@ -99,6 +116,7 @@ export function decodePoll(token: string): PollState | null {
         srcFps: Number(o.srcFps) || 16,
         frames: Number(o.frames) || 0,
         submittedAt: typeof o.submittedAt === "number" ? o.submittedAt : undefined,
+        door: typeof o.door === "string" && o.door ? o.door : undefined,
       };
     }
   } catch { /* fall through */ }
