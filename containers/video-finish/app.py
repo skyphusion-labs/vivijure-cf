@@ -28,6 +28,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
+import photometric_gate
 
 PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
@@ -1127,6 +1128,66 @@ async def inspect(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# /photometric-check: pixel-level identity gate (cf#532). #523 Layer 2 (inspect_core, above) catches
+# STRUCTURAL noise -- a clip that does not resemble its conditioning keyframe. It cannot catch a
+# wrong-but-well-structured grade: vivijure-blender#14 shipped frames 3.3x darker with a colour
+# cast, correctly shaped, correctly counted, passing every structural gate and inspect_core's noise
+# heuristic, because keyframe similarity is scale/offset-invariant and a uniform darkening does not
+# move it. This decodes a source frame and its corresponding finished-clip frame and asserts their
+# luma ratio against a MEASURED tolerance (photometric_gate.RATIO_TOLERANCE; see that module's
+# docstring for the derivation). Presigned GET URLs only, read-only, no PUT; bytes never touch the
+# Worker, same shape as /inspect.
+#
+# NOT called automatically by any render today. This container receives only the ALREADY-GRADED
+# per-shot clips for concat/mux, never the pre-grade source, so nothing here can invoke this
+# unattended yet -- a caller that holds both URLs (present or future: the finish module itself, a
+# post-render panel check, a canary sampler) can call it directly. Deciding which layer calls it on
+# every render vs. a canary, and threading a source-clip reference to wherever that call happens, is
+# explicitly out of scope for this route; see cf#532 for the open question.
+#
+# could-not-decode FAILS LOUD as a 500, not a 200 with a skip/unknown verdict folded in --
+# photometric_gate.DecodeFailure is reported as its own error rather than silently becoming an "ok"
+# or a "wrecked" that never happened (cp#335's could-not-determine-is-not-a-determination rule).
+# ---------------------------------------------------------------------------
+async def photometric_check(req):
+    try:
+        body = await req.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    src_url = body.get("srcUrl")
+    output_url = body.get("outputUrl")
+    if not src_url or not output_url:
+        return web.json_response({"ok": False, "error": "srcUrl and outputUrl required"}, status=400)
+    work = tempfile.mkdtemp(prefix="pgate-")
+    try:
+        src_path = os.path.join(work, "src.mp4")
+        output_path = os.path.join(work, "output.mp4")
+        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+            ok, info = await _download(s, src_url, src_path, MAX_CLIP_BYTES)
+            if not ok:
+                sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                return web.json_response({"ok": False, "error": f"src {info}"}, status=sc)
+            ok, info = await _download(s, output_url, output_path, MAX_CLIP_BYTES)
+            if not ok:
+                sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                return web.json_response({"ok": False, "error": f"output {info}"}, status=sc)
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(None, photometric_gate.check_pair, src_path, output_path)
+        except photometric_gate.DecodeFailure as e:
+            log.warning("/photometric-check could not decode: %s", e)
+            return web.json_response({"ok": False, "error": f"could not decode: {e}"}, status=500)
+        except Exception as e:  # noqa: BLE001
+            log.exception("/photometric-check failed")
+            return web.json_response({"ok": False, "error": f"photometric-check failed: {e}"}, status=500)
+        log.info("/photometric-check verdict=%s ratio=%.4f src_frames=%d output_frames=%d",
+                 result["verdict"], result["ratio"], result["src_frames"], result["output_frames"])
+        return web.json_response({"ok": True, **result})
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 # --- cf#322: contact sheet -------------------------------------------------------------------
 # Sample frames out of a finished clip and tile them into ONE jpeg, so a caller whose transport can
 # carry an image but not a video can actually LOOK at motion output. The studio stores the result as
@@ -1279,6 +1340,7 @@ app.router.add_post("/overlay", overlay)
 app.router.add_post("/film-titles", film_titles)
 app.router.add_post("/subtitle", subtitle)
 app.router.add_post("/inspect", inspect)
+app.router.add_post("/photometric-check", photometric_check)
 app.router.add_post("/frames", frames)
 app.router.add_post("/async/{route}", async_submit)
 app.router.add_get("/async/status/{jobId}", async_status)
