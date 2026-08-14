@@ -131,6 +131,61 @@ or understand exactly what the script does.
 
 ---
 
+## Cutting a release (tag an existing studio)
+
+Everything below section 1 is about standing a studio UP. This section is the other job: shipping a
+new version to one that already exists. They are different reading paths, and a step written only in
+the install flow will not be read by the person cutting a tag -- which is exactly how the cf#520
+migration step below nearly got missed.
+
+Deploy is **tag-gated**: merging to `main` runs CI only, and pushing a SemVer tag `v*` fires the
+deploy job. So:
+
+```bash
+# 1. Release PR on main: bump package.json, add the CHANGELOG section. Merge it.
+# 2. Tag the merged commit and push.
+git tag -a v1.26.0 -m "vivijure-studio v1.26.0" && git push origin v1.26.0
+# 3. Watch the deploy job. It applies `wrangler d1 migrations apply --remote` for you.
+# 4. RUN ANY OPERATOR-ONLY MIGRATION THE TAG NEEDS -- see below. Nothing does this for you.
+# 5. Verify at the ARTIFACT: the deployed worker's modified_on, and a live request. A green
+#    pipeline is the pipeline's opinion of itself, not evidence the thing shipped.
+```
+
+### Operator-only migrations: the step no gate will remind you about
+
+`migrations/manual/*.sql` is deliberately excluded from the auto-apply and from the tenant release
+bundle (`scripts/build-studio-release.ts` reads the top level only, non-recursively). That exclusion
+is a security property, not an oversight -- see `post-0020-set-live-token-scopes.sql`'s header for
+why a name-matching UPDATE in a bundled migration would escalate a TENANT's own token.
+
+The cost of that property is that **these files only ever run because a human runs them.** Before
+tagging, check whether the release contains one:
+
+```bash
+git diff --name-only <previous-tag> HEAD -- migrations/manual/
+```
+
+**For v1.26.0 specifically**, immediately after the deploy job finishes:
+
+```bash
+npx wrangler d1 execute vivijure-studio --remote \
+  --file migrations/manual/post-0020-set-live-token-scopes.sql
+```
+
+Migration `0020` adds `api_tokens.scope` defaulting to `consumer`, so from the moment it applies
+every named token is demoted and 403s on operator routes. Until the file above runs: slate loses
+`!install-config`; crew-mcp loses all 8 operator tools including `POST /api/storage/reconcile`; the
+panel and both mobile clients fail to load or save module config **with no re-auth prompt**, because
+`AUTHZ_DENY_REASON` deliberately does not match the paste-once regex at `public/auth-token.js:124`
+(the token is genuinely fine) and the mobile clients carry no such prompt at all.
+
+Every denial is a **403** -- this gate has no 401 path -- with
+`{"ev":"authz.deny",...,"required":"operator","held":"consumer"}` in the log.
+
+**The deploy goes GREEN throughout.** No check fails, no alert fires, and the first symptom is a
+person reporting that the settings page stopped working. That is the entire reason this section
+exists.
+
 ## 1. Accounts you need
 
 | Provider | What it is | Sign up |
