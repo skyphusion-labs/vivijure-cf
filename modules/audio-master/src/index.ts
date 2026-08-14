@@ -34,6 +34,7 @@ import {
 import {
   coerceConfig, buildMasterBody, parseContainerResult, masterOutputFromResult, passthroughOutput,
 } from "./master";
+import { timedVpcFetch, withVpcElapsedApplied } from "../../_shared/vpc-call-log";
 
 interface Env {
   AUDIO_MASTER_VPC: { fetch(url: RequestInfo, init?: RequestInit): Promise<Response> };
@@ -41,7 +42,7 @@ interface Env {
 
 const MANIFEST: ModuleManifest = {
   name: "audio-master",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["master"],
   provides: [
@@ -80,20 +81,33 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
   if (!env.AUDIO_MASTER_VPC) return passthrough(input, "no-vpc-binding");  // not configured: degrade, but say so
 
   const cfg = coerceConfig(req.config);
-
-  let resp: Response;
-  try {
-    // Absolute URL (the host is the VPC service, ignored by the binding). A bare "/master" is not a valid
-    // URL and throws in the Workers runtime, which the catch below would mask as "container-unreachable",
-    // silently shipping the bed unmastered. (The #207 film-titles lesson, mirrored from subtitle.)
-    resp = await env.AUDIO_MASTER_VPC.fetch("http://audio-master/master", {
+  // Absolute URL (the host is the VPC service, ignored by the binding). A bare "/master" is not a valid
+  // URL and throws in the Workers runtime, which would mask as "container-unreachable", silently
+  // shipping the bed unmastered. (The #207 film-titles lesson, mirrored from subtitle.)
+  // cf#396: wall-clock start + duration on every fleet VPC hop (structured log + applied tag).
+  const timed = await timedVpcFetch(
+    (url, init) => env.AUDIO_MASTER_VPC.fetch(url, init),
+    {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(buildMasterBody(input, cfg)),
-    });
-  } catch (e) {
-    return passthrough(input, "container-unreachable", { detail: (e as Error).message });
+    },
+    {
+      module: MANIFEST.name,
+      service: "audio-master",
+      binding: "AUDIO_MASTER_VPC",
+      url: "http://audio-master/master",
+      mode: "sync",
+      filmKey: input.audio_key,
+      project: req.context?.project,
+      contextJobId: req.context?.job_id,
+    },
+  );
+  if (timed.err || !timed.resp) {
+    const msg = timed.err instanceof Error ? timed.err.message : String(timed.err ?? "unreachable");
+    return passthrough(input, "container-unreachable", { detail: msg });
   }
+  const resp = timed.resp;
   if (!resp.ok) return passthrough(input, "container-failed", { detail: "HTTP " + resp.status });
 
   let body: unknown;
@@ -106,7 +120,11 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
   if (!res || !res.ok) return passthrough(input, "container-failed");
   if (!res.key) return passthrough(input, "no-output-key", { detail: "container returned no mastered key" });
 
-  return { ok: true, output: masterOutputFromResult(input, res) };
+  const output = masterOutputFromResult(input, res);
+  return {
+    ok: true,
+    output: { ...output, applied: withVpcElapsedApplied(output.applied, timed.elapsedMs) },
+  };
 }
 
 export default {
