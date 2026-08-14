@@ -8,12 +8,26 @@
 -- WHY THIS IS NOT A TOP-LEVEL MIGRATION. It was one, briefly, and that was a security defect
 -- caught in review. Top-level migrations/*.sql are bundled into the studio release
 -- (scripts/build-studio-release.ts:209) and replayed into every TENANT D1
--- (vivijure-control-plane src/provisioner.ts:653 -- "the SAME migration files the studio ships,
--- applied only where missing"). 0009 creates api_tokens in every tenant as well, `name` is its
+-- on PROVISION (vivijure-control-plane src/provisioner.ts:653 -- "the SAME migration files the
+-- studio ships, applied only where missing") AND on UPGRADE (tenant-studio-upgrade.ts:359, the same
+-- applyStudioMigrations call), which is what makes it reach EXISTING tenants rather than only new
+-- ones. Upgrades are routine: provisioner.ts:1333 records STUDIO_RELEASE moving v1.13.0 -> v1.19.3
+-- in a single day on 2026-08-03. 0009 creates api_tokens in every tenant as well, `name` is its
 -- PRIMARY KEY, and studio-consumer-token.sh mint accepts any [a-z0-9][a-z0-9_-]{0,63}. `conrad`
 -- and `joan` are ordinary first names, so a tenant can legitimately hold rows with those names --
 -- and a name-matching UPDATE shipped in the bundle would SILENTLY PROMOTE that tenant's own
 -- credential to operator. That is precisely cf#520's hole re-opened under a name.
+--
+-- It is the DOCUMENTED workflow, too: vivijure-ios App/OnboardingView.swift:39 tells hosted-tenant
+-- users "Mint a token on the studio (operator or named consumer)." We instruct tenants to mint
+-- named tokens with human-chosen names, so a tenant with a team member called Joan produces the
+-- colliding row by following our own onboarding copy.
+--
+-- EXPOSURE AT THE TIME OF THE FIX, measured rather than assumed: 13 tenants have ever existed
+-- (11 deleted, 1 failed, 1 deleting); exactly one tenant D1 exists,
+-- vivijure-tenant-rollins-e2e, holding one token named `programmatic`; vivijure-demo's api_tokens
+-- table is present and empty. ZERO collisions against the four names below. The defect was latent
+-- with no live exposure -- and would have armed at the first real tenant.
 --
 -- The estate/tenant distinction is not expressible inside a D1 migration: nothing portable tells a
 -- migration which database it is running in. So the split has to be WHICH FILE it lives in, and

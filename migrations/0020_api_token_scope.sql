@@ -17,12 +17,22 @@
 -- THE VALUES LIVE IN migrations/manual/0021_set_live_token_scopes.sql AND MUST NOT BE MOVED HERE.
 -- Setting the four estate scopes in THIS file is the obvious shortcut and it is a security defect:
 -- top-level migrations/*.sql are bundled into the studio release (scripts/build-studio-release.ts:209)
--- and replayed into every TENANT D1 (vivijure-control-plane src/provisioner.ts:653, "the SAME
--- migration files the studio ships, applied only where missing"). 0009 creates api_tokens in every
+-- and replayed into every TENANT D1 -- on PROVISION (vivijure-control-plane src/provisioner.ts:653,
+-- "the SAME migration files the studio ships, applied only where missing") AND on UPGRADE
+-- (tenant-studio-upgrade.ts:359, same applyStudioMigrations call). The upgrade path is the one that
+-- makes this reach EXISTING tenants and not just new ones, and upgrades are not hypothetical:
+-- provisioner.ts:1333 records STUDIO_RELEASE moving v1.13.0 -> v1.19.3 in a single day on
+-- 2026-08-03. So every tenant runs this file whenever the release moves. 0009 creates api_tokens in every
 -- tenant too, `name` is its PRIMARY KEY, and `mint` accepts any [a-z0-9][a-z0-9_-]{0,63} -- so
 -- `conrad` and `joan` are names a TENANT can legitimately choose. A name-matching UPDATE here
 -- silently promotes that tenant's own token to operator: cf#520's hole, reopened under a name, in
 -- the one file whose header forbids exactly that.
+--
+-- AND IT IS THE DOCUMENTED WORKFLOW, not a corner case. vivijure-ios App/OnboardingView.swift:39
+-- tells hosted-tenant users in the product UI: "Mint a token on the studio (operator or named
+-- consumer). Hosted tenants use the token from control plane." We are instructing tenants to mint
+-- named tokens with human-chosen names on their own studio. A tenant with a team member called
+-- Joan, following our own onboarding copy, produces exactly the row a name-match would escalate.
 --
 -- The migrations-gate CANNOT catch this. It replays against a fresh local D1 where those rows do
 -- not exist, so the UPDATE matches zero rows and the gate is structurally incapable of going red.
