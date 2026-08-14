@@ -11,3 +11,10 @@ FORBIDDEN) had no strip at all. The path that permits it defaulted it off; the p
 had no switch. The hosted render now strips the block unconditionally and REFUSES to deploy if
 `MODULE_LOCAL_GPU` survives, and the module-worker deploy excludes `local-gpu` by name rather than by
 reintroducing an include-list (cf#197).
+
+The survival check asserts the MODULE_ line DELTA is exactly 1, not merely that
+`MODULE_LOCAL_GPU` is absent. An absence-only guard is one-sided: a removed or renamed CLOSING marker
+leaves the strip running to EOF, and the guard passes because the binding really is gone -- driven at
+481 lines -> 240 with MODULE_ 42 -> 4, and no downstream check catches it either, since every
+downstream-guarded key sits above the truncation point.
+
