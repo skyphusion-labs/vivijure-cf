@@ -230,6 +230,22 @@ The poll path insert-if-missing heals the missing row on the next poll. A line h
 film started fine; a UI-list row lagged one poll", never a lost render. Polls themselves stay
 throwing (they are idempotent; a retry is safe there).
 
+## Poll-surface content length (cf#365) -- assemble vs delivered
+
+`GET /api/render/film/:id` / `poll_film` can expose two CONTENT-length fields (integer ms, absent =
+NOT MEASURED) once the host pins a vivijure-core that projects them:
+
+| Field | Meaning |
+|-------|---------|
+| `assemble_ms` | Pre-`film.finish` concat length at the deterministic `renders/<id>/film.mp4` key |
+| `output_ms` | DELIVERED length of `film_key` (last writer; same basis as `renders.output_ms`) |
+
+Both are already captured on the job as `film_output_seconds`; this is the read half that lets a
+predicted-vs-delivered delta be decomposed without D1. They are **not** wall-clock: CPU finish
+capacity is `finish_elapsed_ms` / container `elapsedMs` (cf#268). Plan `duration_seconds` is a third
+quantity (requested, not delivered). Non-final tiers are known to deliver clips shorter than plan
+(#698), so a gap between plan and `assemble_ms` can be real clip shortfall, not a finish-chain retiming.
+
 ## The assemble duration gate (#697) -- a hard fail, not an event
 
 Layer 1 `clip.validate` deliberately does NOT gate on duration (`expected_s` is context-only, since
@@ -324,6 +340,65 @@ Workers Observability API instead**; both are reachable without it, and CF-obs
 already carries the invocation truth (status, timing, cron). Do not read an
 unreachable Loki as a missing-logs / broken-pipeline signal; confirm reachability
 first.
+
+## Fleet VPC call attribution (`vpc.call`, cf#396)
+
+Four module workers hold Workers VPC bindings into **our** finishing swarm (descendents /
+badbrains / jello). A consumer using them spends our capacity the same way a RunPod path spends
+our GPU account. cp#288 meters RunPod; until cf#396 nothing recorded wall-clock start or duration
+for these fleet hops.
+
+| module | binding | service |
+|---|---|---|
+| `film-titles` | `VIDEO_FINISH_VPC` | video-finish |
+| `subtitle` | `VIDEO_FINISH_VPC` | video-finish |
+| `audio-master` | `AUDIO_MASTER_VPC` | audio-master |
+| `beat-sync` | `AUDIO_BEAT_SYNC_VPC` | audio-beat-sync |
+
+Helper: `modules/_shared/vpc-call-log.ts`. Every real hop emits one structured line (Loki via
+vivijure-tail). Intermediate async status polls stay silent; only submit + terminal outcomes log.
+
+```
+{"ev":"vpc.call","module":"film-titles","service":"video-finish","binding":"VIDEO_FINISH_VPC","route":"/async/status/job-abc","mode":"async_poll","outcome":"completed","started_at_ms":1720000000000,"elapsed_ms":12,"job_elapsed_ms":45230,"http_status":200,"container_job_id":"job-abc","film_key":"renders/.../film.mp4"}
+```
+
+| field | meaning |
+|---|---|
+| `started_at_ms` | wall-clock start of this hop (or of the async job, on terminal poll) |
+| `elapsed_ms` | this hop's RTT (submit / sync / terminal poll) |
+| `job_elapsed_ms` | async only: submit token time -> terminal observation (fleet wall-clock) |
+| `mode` | `sync` \| `async_submit` \| `async_poll` |
+| `outcome` | `ok` / `submitted` / `completed` / `failed` / `error` / `unreachable` / `not_found` |
+
+On success the module also appends `vpc:elapsed_ms=N` to `applied` (sync: hop RTT; async: job
+wall-clock) so film job applied history carries the same number without a new billing column.
+
+LogQL examples (unwrap twice per the line-shape section above):
+
+```
+{worker=~"vivijure-module-.*"} |= `vpc.call`
+{worker=~"vivijure-module-.*"} |= `vpc.call` |= `film-titles`
+```
+
+### What this is NOT (remaining gap)
+
+This is **module-side observation**, not full metering:
+
+1. **No control-plane / per-tenant ledger.** Hosted-tenant spend attribution for fleet capacity still
+   needs a plane ruling (same breath as cp#288). We deliberately do not invent a D1 billing table
+   here.
+2. **These four are not hosted-tenant reachable today.** They have no `TENANT_MODULE_CATALOG` row
+   (bucket D in cf#394). The instrument lands before any catalog row makes the path live. Adding a
+   catalog row without a metering decision would re-open the unmetered-consumer hazard this issue
+   closed on the module side.
+3. **`local-gpu` is out of scope on purpose.** It reaches the user's own hardware; nothing of ours
+   to meter. Membership is "whose infrastructure absorbs the cost", not credential shape.
+4. **Core paths that also call the same containers** (assemble / mux / beat-analyze on the studio
+   Worker) are a separate surface; this ship covers the four *module* bindings named in #396.
+
+Requirement for any future catalog proposal: any consumer-reachable path into our infrastructure
+must already carry duration + start-time attribution (this helper, or a successor) before the row
+lands.
 
 ## Direct Loki API (from the monitoring host, no Grafana UI)
 

@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 from aiohttp import ClientSession, ClientTimeout, web
 
@@ -34,6 +35,11 @@ MAX_TRACKS = 16
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("audio-mix")
+
+
+def _elapsed_ms(t0: float) -> int:
+    """Wall-clock ms since t0 (cf#268 capacity telemetry). Integer, never negative."""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
 
 
 async def health(_req):
@@ -59,6 +65,7 @@ async def _download(session, url, path, cap):
 
 
 async def mix(req):
+    t0 = time.monotonic()
     try:
         body = await req.json()
     except Exception:
@@ -149,6 +156,7 @@ async def mix(req):
             "loudnessTargetLufs": target_lufs,
             "ducked": result["ducked"],
             "tracks": len(parsed),
+            "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         })
     finally:
         shutil.rmtree(work, ignore_errors=True)

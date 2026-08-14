@@ -1,4 +1,27 @@
-# Homelab MCP driver for vivijure-local on propagandhi (operator-specific; not CI-deployed).
+# Homelab MCP door for vivijure-local on propagandhi (operator-specific; NOT CI-deployed).
+#
+# ## Disposition (cf#328)
+#
+# This is the SECOND Studio MCP Worker in the account. It is INTENTIONAL and NEEDED: it is the
+# agent door for the propagandhi local-GPU studio (STUDIO_URL = vivijure-local.skyphusion.org).
+# It is NOT a leftover of the decommissioned "flatliners" host -- only the Cloudflare *script*
+# name still carries that historical label.
+#
+# Why it drifts: production MCP (`vivijure-studio-mcp`) deploys on the tag path when MCP_HOST +
+# MCP_STUDIO_URL are set (ci.yml). THIS door needs fleet secrets (STUDIO_API_TOKEN for the local
+# studio + MCP_TOKEN for this host) that CI must not hold, so it stays hand-deployed. Hand
+# deployment is the root cause of lag; the drift detector is tests/mcp-doors-328.test.ts, which
+# pins the package identity this config points at and fails if serverInfo.version disagrees with
+# package.json of the installed @skyphusion-labs/vivijure-mcp.
+#
+# Redeploy after a vivijure-mcp (or this repo's pin) bump, from a machine that holds the secrets:
+#   npm ci
+#   wrangler secret put STUDIO_API_TOKEN -c wrangler.mcp.propagandhi.toml
+#   wrangler secret put MCP_TOKEN         -c wrangler.mcp.propagandhi.toml   # once; reuse after
+#   wrangler deploy -c wrangler.mcp.propagandhi.toml
+#
+# Do NOT fold this into the production MCP CI job: different studio URL, different secrets, and a
+# mis-aimed deploy would either overwrite production MCP or point this door at the wrong studio.
 #
 # Cloudflare Worker *script* name remains `vivijure-studio-mcp-flatliners` (historical).
 # Renaming the script would create a second Worker; skip until a deliberate migration.
