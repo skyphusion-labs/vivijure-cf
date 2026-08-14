@@ -1112,6 +1112,15 @@ async function finalizeRender(row, btnEl) {
     if (Object.keys(finalizeCastLoras).length > 0) {
       finalizeBody.castLoras = finalizeCastLoras;
     }
+    // cf#344/#347: name the GPU door the confirm dialog already promised (gpuMotionLabel).
+    // Without this, finalize ignores the panel and re-resolves from parent overrides.
+    const registry = window.plannerRegistry;
+    if (registry && typeof registry.defaultGpuDoorModule === "function") {
+      try {
+        const door = registry.defaultGpuDoorModule();
+        if (door && door.name) finalizeBody.motion_backend = door.name;
+      } catch (_) { /* omit: server falls back */ }
+    }
     // Finalize reuses the render_overrides persisted on the originating row
     // (the backend reads row.render_overrides); no per-finalize override body.
     const hasBody = Object.keys(finalizeBody).length > 0;

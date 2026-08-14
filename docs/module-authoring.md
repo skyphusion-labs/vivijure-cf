@@ -76,7 +76,7 @@ modules/<your-module>/
 
 A module **vendors** the contract shapes it uses (copy them into `src/contract.ts`) so it stays
 independent of the core's repo -- a module in another repo ships its own copy. Copy only what you
-need from [`src/modules/types.ts`](../src/modules/types.ts): `MODULE_API`, the manifest types, the
+need from `@skyphusion-labs/vivijure-core` (`modules/types`): `MODULE_API`, the manifest types, the
 `InvokeRequest`/`InvokeResponse` shapes, and your hook's payload types (e.g. `PlanEnhanceInput` /
 `PlanEnhanceOutput`).
 
@@ -325,7 +325,7 @@ the core invokes it through your hook. Nothing else is hardcoded.
 ## Prove it conforms
 
 Before you bind a module, run the **conformance harness** against it (see
-[`src/modules/conformance.ts`](../src/modules/conformance.ts)) to confirm it honors the contract --
+[`@skyphusion-labs/vivijure-core` conformance harness](https://github.com/skyphusion-labs/vivijure-core/blob/main/src/modules/conformance.ts)) to confirm it honors the contract --
 a valid manifest, a well-formed `InvokeResponse`, and graceful degradation on a bad request:
 
 ```
