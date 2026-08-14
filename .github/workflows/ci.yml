@@ -221,30 +221,60 @@ jobs:
       # `-- migrations-gate: skip <reason>` in its header. The skip is printed, so an opt-out is
       # visible in the log rather than silent -- an unexercised file that looks exercised is the
       # failure this step exists to prevent.
+      #
+      # TWO WAYS THIS ROTS, both known when it was written, neither yet a problem:
+      #
+      # (1) These files replay against the CURRENT chain, not the chain they were written for. A
+      #     future migration touching a column one of them references will break it in CI for
+      #     reasons that have nothing to do with the file, and the cheapest way to green is to add
+      #     a skip marker. The escape hatch is precisely what gets reached for on the day the chain
+      #     moves. If you are here for that reason: fix the file or delete it, do not skip it.
+      #
+      # (2) The design loses coverage on exactly the files most worth covering. Manual migrations
+      #     exist BECAUSE they need production state; CI replays them against empty tables, so a
+      #     row-matching statement matches nothing and passes. post-0020's UPDATE is checked for
+      #     parse and schema compatibility and NOT for whether it sets the right rows -- that is
+      #     proven in the PR's seeded-sqlite replay, not here. A future manual file that genuinely
+      #     needs rows will fail on a fresh chain and attract a skip, so the more semantically
+      #     important the file, the likelier it ends up uncovered. This step is a syntax and
+      #     schema-drift net. It is not a behavioural gate and must not be cited as one.
       - name: Replay operator-run migrations/manual/ against the same local D1
         run: |
           set -euo pipefail
           shopt -s nullglob
+          # Coverage is ASSERTED, not merely counted. Any change to these two numbers is a
+          # deliberate line in a diff, which is the only thing that makes an added skip visible.
+          # A bare "checked >= 1" floor does not scale: with two files and one permanent skip it is
+          # tight by arithmetic accident, but at five files an accidental opt-out still leaves
+          # checked >= 1 and passes. The guard has to scale with the directory it guards.
+          EXPECTED_CHECKED=1
+          EXPECTED_SKIPPED=1
           files=(migrations/manual/*.sql)
           echo "manual files found: ${#files[@]}"
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::no files in migrations/manual/ -- this step is matching nothing, which is not the same as passing"
-            exit 1
-          fi
           checked=0; skipped=0
+          # Order is glob sort, i.e. filename order. Stated because it is load-bearing the moment a
+          # second checked file appears and one depends on the other.
           for f in "${files[@]}"; do
-            if reason=$(grep -m1 -oP '(?<=-- migrations-gate: skip ).*' "$f"); then
-              echo "SKIP  $f -- $reason"
+            # ANCHORED to line start, restricted to the header, and a non-blank reason REQUIRED.
+            # Unanchored, this opts out on any line mentioning the marker -- including prose that
+            # documents the convention, a warning telling you not to use it, and a SQL string
+            # literal. Every one of those failure modes lands on SKIP, i.e. silently less coverage
+            # with a green step, which is the same self-concealing shape this gate exists to catch.
+            if reason=$(head -20 "$f" | grep -m1 -oP '^-- migrations-gate: skip \K\S.*'); then
+              echo "SKIP      $f -- $reason"
               skipped=$((skipped+1))
               continue
             fi
-            echo "CHECK $f"
+            # PARSE+APPLY, not "validated". This proves the file parses and is schema-compatible
+            # with the freshly-migrated chain. It does NOT prove the file does its job: these
+            # tables are empty, so a row-matching UPDATE legitimately matches nothing and passes.
+            echo "PARSE+APPLY $f"
             npx wrangler d1 execute DB --local --config wrangler.migrations-gate.toml --file "$f"
             checked=$((checked+1))
           done
           echo "manual/ replay: ${checked} checked, ${skipped} skipped, ${#files[@]} total"
-          if [ "$checked" -eq 0 ]; then
-            echo "::error::every manual file opted out -- this step would pass while exercising nothing"
+          if [ "$checked" -ne "$EXPECTED_CHECKED" ] || [ "$skipped" -ne "$EXPECTED_SKIPPED" ]; then
+            echo "::error::manual/ coverage changed: expected ${EXPECTED_CHECKED} checked / ${EXPECTED_SKIPPED} skipped, got ${checked} / ${skipped}. If this is intended, update EXPECTED_CHECKED / EXPECTED_SKIPPED in this step in the same PR, so the coverage change is reviewable rather than incidental."
             exit 1
           fi
 
