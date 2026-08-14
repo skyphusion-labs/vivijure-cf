@@ -63,6 +63,15 @@ const bundleState = {
 const renderState = {
   jobId: null,
   pollTimer: null,
+  // cf#515: consecutive poll failures, so the error paths back off instead of
+  // re-arming flat and hammering a studio having a bad minute from every open
+  // panel at once. Reset to 0 on any successful poll.
+  pollErrorStreak: 0,
+  // cf#515: true when the poll is deliberately NOT armed because the tab is
+  // backgrounded. Distinct from "no jobId" (nothing to poll) and from
+  // "pollTimer set" (armed), so resumeRenderPoll can tell a paused render from
+  // a finished one and only the paused case catches up on return.
+  pollPaused: false,
   // vivijure#552: true from the render click through the whole submit sequence
   // (LoRA preflight + the pre-jobId fetch) until jobId handoff or an error/pause
   // path. Widens the updateRenderGate active-render guard to cover the pre-jobId

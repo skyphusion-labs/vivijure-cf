@@ -414,6 +414,26 @@ service = "vivijure-module-alibaba-wan-lora"
 binding = "MODULE_CLOUD_KEYFRAME"
 service = "vivijure-module-cloud-keyframe"
 
+
+# Cloudflare AI Gateway i2v motion.backend modules (Unified Billing; Workflow-async, #155).
+# Distinct from RunPod seedance/hailuo/veo/wan: no RUNPOD_API_KEY; need GATEWAY_ID + AI binding.
+[[services]]
+binding = "MODULE_CF_HH1_R2V"
+service = "vivijure-module-cf-hh1-r2v"
+
+[[services]]
+binding = "MODULE_CF_SEEDANCE"
+service = "vivijure-module-cf-seedance"
+
+[[services]]
+binding = "MODULE_CF_GROK_VIDEO"
+service = "vivijure-module-cf-grok-video"
+
+[[services]]
+binding = "MODULE_CF_FLUX_3_VIDEO"
+service = "vivijure-module-cf-flux-3-video"
+
+
 # Subtitle (film.finish): burns a time-synced SRT via the video-finish container (POST /subtitle).
 # ADDED in v0.3.0; depends on the video-finish container rebuild (runbook 1.0).
 [[services]]

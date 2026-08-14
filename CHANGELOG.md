@@ -3,6 +3,138 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+## v1.27.0 -- 2026-08-15
+
+### fix(modules): project `studio_release` on `GET /api/modules` (cf#287)
+
+The module registry response carried no studio release identifier, so a caller inspecting
+`/api/modules` could not tell which studio build produced the module set it was looking at. That
+matters for the hosted/self-host parity invariant specifically: both doors resolve the same tag, and
+without the release on the response there is no way to confirm from the outside that they did.
+Adds the projection plus `tests/studio-release-287.test.ts`, and documents the field in
+`docs/CONTRACT.md` and `docs/module-api.md`.
+
+### ci(release): advance the hosted studio pin as part of the release, and verify the published artifact first (cf#372)
+
+`STUDIO_RELEASE` on `vivijure-control-plane` is the single value deciding which studio code a
+hosted tenant runs; self-host pulls the same tag straight from this repo's GitHub release. When the
+pin trails, hosted and self-host run different code from the same nominal tag, against the absolute
+hosted/self-host parity invariant. It has gone stale three times, and twice the fix was to bump the
+value, so the advance now happens on the release path rather than in anyone's memory.
+
+`studio-release.yml` gains two steps after the R2 mirror. The first re-downloads the artifact it
+just PUBLISHED (what a self-hoster would fetch, not the tree this job built), opens the tarball and
+asserts the manifest `tag` FIELD equals the released tag -- a filename is a claim by whoever named
+it. Only then does the second step call `scripts/advance-studio-pin.sh`, which reads the current
+pin, refuses to move it BACKWARDS (this workflow is dispatchable for rebuilds of older tags),
+PATCHes the variable, and reads the value back, because a 204 reports that a call was accepted and
+not that the stored value is what was asked for.
+
+Least-privileged credential: a fine-grained PAT carrying the `vivijure-control-plane` repository
+permission "Variables: read and write" and nothing else, held as `STUDIO_PIN_VARIABLE_TOKEN`. That
+is strictly narrower than the `Contents: write` a `repository_dispatch` requires (the price
+`corpus-notify.yml` pays because its receiver must act), and `GITHUB_TOKEN` cannot do it at all.
+Until that secret exists the step WARNS and does not fail, so a missing credential cannot break
+every studio release; the backstop is in the other repo and does not share this step's condition
+(cp#393 refuses to deploy a trailing pin and reads the live Worker binding daily).
+
+Setting the variable is not deploying it: the control plane binds `STUDIO_RELEASE` at its own
+deploy time, so this stages a value and cp#393's drift check is what observes the gap.
+
+`tests/advance-studio-pin.test.py` drives every refusal arm against a local stand-in for the GitHub
+API. Its load-bearing assertions are the ones about requests NOT sent -- a refusal that still
+issued the PATCH would print a refusal and change hosted anyway, which an exit-code-only test
+cannot distinguish.
+
+### fix(planner): jitter, pause and back off the render poll (cf#515)
+
+The render poll re-armed on a flat 8000ms from four bare `setTimeout` call sites, with `Math.random`
+appearing zero times anywhere under `public/`. Unjittered self-rescheduling timers synchronise, so
+panels starting inside one window converged onto the same 8s boundary and stayed there, arriving as
+a spike; the `visibilitychange` handler cleared only `historyRefreshTimer`, so a backgrounded tab
+polled forever and could never shed load; and both error paths re-armed flat.
+
+This is a change to a MEASUREMENT INSTRUMENT and is recorded as one. `GET
+/api/storyboard/render/<jobId>` drives `advanceFilmJob` and therefore closes a film's renders-DB
+row, so the poll cadence is what sets observation lag, the metric cf#512 insists must never be
+folded into latency. Ruled fix-anyway on cf#515: the unfixed behaviour is itself an artifact and a
+worse one, because real clients drift and an unjittered never-pausing panel is a synthetic arrival
+pattern authoring a spike production would never see. The base cadence is deliberately unchanged;
+only the distribution moves.
+
+Adds `public/poll-schedule.js` (pure, UMD-ish, mirroring `render-eta.js`) with `random`, the timer
+and the hidden flag all injected, because the interval was previously inline in the `setTimeout`
+call where no test could address it. `armPoll` refuses to arm at all while hidden rather than arming
+a longer timer. Every arm goes through one `schedulePollRender()` and a guard asserts no raw
+`setTimeout(pollRender, ...)` survives; `POLL_INTERVAL_MS` is retired rather than duplicated
+alongside `pollSchedule.POLL_BASE_MS`. Plus `public/poll-schedule.d.ts` and
+`tests/poll-schedule-515.test.ts`, whose six guards were each driven red individually with
+sibling-green pairing.
+
+Refs cf#515 defect 1 only. Defect 2 (uncached `discoverModules`) stays open: core `main` still reads
+`const ttl = opts.cacheTtlMs ?? 0;`.
+
+### ci(deploy): the deploy gate now waits on container-tests and migrations-gate (cf#526 follow-up)
+
+`deploy` needed `[ci, assert-on-main]`. `container-tests` and `migrations-gate` both RUN on a tag push
+-- neither carries an `if:`, so the workflow's `tags: ["v*"]` trigger starts them -- and neither was in
+that list, so a tag could deploy to production with either one RED and nothing would report it. The
+deploy job simply never looked. `migrations-gate` is the urgent half: it guards SCHEMA, and a deploy
+that ships a worker whose migrations gate failed is the shape where the code arrives and the database
+it expects does not. Adding them cannot deadlock, because both run unconditionally on this trigger.
+
+### feat(finish): blender is opt-in, and both render doors carry the selection (cf#537)
+
+The cf half of Conrad's cf#537 ruling: per-render, the caller names which finish modules run.
+`finish-blender` declares `participation: "opt_in"` so a render that does not name it does not get an
+unrequested `filmic_warm` grade at strength 1.0. Both render doors carry the selection, and the
+replay paths inherit it via `renderOverrides` so no caller and neither store-shipped native client
+needs to change.
+
+Repins core to `^1.14.0` WITH the regenerated lockfile, and updates the five `filmProgressMarker`
+assertions from the two-part `phase:count` to core#182's three-part `phase:done:steps`. The repin and
+those five fixes must land together: `npm ci` refuses a package.json/lockfile disagreement, and the
+repin alone reddens cf on assertions this change is what corrects.
+
+### ci(changelog): fragment files replace direct edits to the shared release section (cf#539, cf#542, cf#510)
+
+Every CHANGELOG.md entry appended to the same top `## vX.Y.Z` section, so merging any one
+CHANGELOG-touching PR re-conflicted every other open PR appending to it -- measured 2026-08-14:
+7 open PRs, one section, none bumping `package.json`. Separately, main carried no `## Unreleased`
+heading at all, so entries were landing under a stale, already-released heading five minors below
+HEAD (cf#542). Ported `vivijure-control-plane`'s `changelog.d/` fragment convention (cp#358)
+unchanged where possible: one file per PR under `changelog.d/`, filename `<issue>-<slug>.md`,
+content is exactly the `### ...` block that would have gone under `## Unreleased`. A new
+`## Unreleased` heading was added back to CHANGELOG.md so fragments and direct edits have a
+permanent, date-free destination that cannot go stale. `scripts/changelog-entry-required.py` (a
+new PR gate, cf#510) accepts EITHER a fragment or a direct CHANGELOG.md edit during the migration
+window, so no currently-open PR breaks. `scripts/changelog-assemble.py <version> <date>` writes a
+fresh `## <version> -- <date>` section from the accumulated fragments at release-prep time --
+`<version>` is always an explicit argument, never derived from the topmost heading, which is the
+direct fix for cf#542. See `CONTRIBUTING.md`.
+
+### fix(deploy): the hosted studio no longer binds or deploys local-gpu (cf#560)
+
+`local-gpu` was bound on the deployed hosted studio and, at `ui.order` 4, sorted FIRST in both
+`motion.backend` and `keyframe` on the live registry -- while its own manifest blurb reads
+*"Self-host only ... Commercial use of Vivijure is supported via vivijure-cf (Cloudflare partner
+channels), not this door"*, and vivijure-cf IS the hosted deploy.
+
+The control existed and was on the wrong path: `deploy.sh` (self-host, where the door is ALLOWED)
+strips the `LOCAL-GPU` block unless `INSTALL_LOCAL_GPU=1`; the CI render (hosted, where it is
+FORBIDDEN) had no strip at all. The path that permits it defaulted it off; the path that forbids it
+had no switch. The hosted render now strips the block unconditionally and REFUSES to deploy if
+`MODULE_LOCAL_GPU` survives, and the module-worker deploy excludes `local-gpu` by name rather than by
+reintroducing an include-list (cf#197).
+
+The survival check asserts the MODULE_ line DELTA is exactly 1, not merely that
+`MODULE_LOCAL_GPU` is absent. An absence-only guard is one-sided: a removed or renamed CLOSING marker
+leaves the strip running to EOF, and the guard passes because the binding really is gone -- driven at
+481 lines -> 240 with MODULE_ 42 -> 4, and no downstream check catches it either, since every
+downstream-guarded key sits above the truncation point.
+
 ## v1.26.0 -- 2026-08-14
 
 MINOR. Per-route authorization lands, and three telemetry fixes that the production load test is
@@ -478,6 +610,9 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+- **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
+- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
 ### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
 
 `runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
@@ -498,21 +633,37 @@ in a clean run). Retry already narrowed the window; this closes the gap for rows
 
 Hosted module telemetry (RunPod). Dual-panel N/A for vivijure-local studio door.
 
-### Fixed: `poll_cast_refs` `registered` never moved while the job ran (cf#386)
+### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
 
-The cast-image module generated one image per poll and the orchestrator only called `addRefs` on the
-terminal batch, so six healthy polls read `registered: 0` then jumped `0 -> N` at done. A stuck job
-was byte-identical to a healthy mid-run under that signal. The module now returns progressive
-`images` + `progress` on pending polls; the orchestrator folds each new key onto the member as it
-lands. `registered` and `images` grow while `phase === "generating"`. A legacy bare-pending module
-still batches at done (graceful).
+Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
+guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
+Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
+operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
+(vivijure-core, unreleased).
 
-### Docs: omitting a `*_config` does not skip a chain hook (cf#386)
+### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
 
-Intended: every serving module for a chain hook runs, clamped to schema defaults. Natural reading of
-"omit the config" was skip -- which mispriced phase-1 matrix cost and left no predicted tags for
-default-only steps. CONTRACT + MCP tool text now state the omit rule and point at module no-op knobs
-(e.g. `finish-rife` `interpolate: false` -> `noop:interpolate-off`).
+`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
+null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
+
+- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
+- Legacy `lora_status` retained and documented as shared training-job state only.
+- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
+- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
+### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
+
+`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
+view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
+required R2 archaeology. The host now:
+
+- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
+  injected or cap-dropped;
+- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
+  (`GET/POST /api/render/film`), and the scatter 201 body;
+- emits `film.wan_lora_projection` structured lines (docs/observability.md).
+
+Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
+bump.
 
 ## v1.20.1 -- 2026-08-05
 

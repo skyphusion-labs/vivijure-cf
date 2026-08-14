@@ -87,6 +87,25 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+      # cf#539/cf#510: these two scripts drive scripts/changelog-entry-required.py and
+      # scripts/changelog-assemble.py against synthetic fixtures, including fixtures that
+      # reproduce the exact bugs each guards against (a two-dot false pass, an assemble run that
+      # would target the wrong heading). Plain self-checking scripts (non-zero exit on any failed
+      # assertion), same shape as the container test scripts below -- not pytest-discovered, so
+      # they are invoked explicitly rather than swept up by the deploy/ suite above.
+      - name: Changelog fragment guard + assembler tests (cf#539, cf#510)
+        run: |
+          python3 tests/changelog-entry-required.test.py
+          python3 tests/changelog-assemble.test.py
+
+      # cf#372. The hosted studio pin is advanced by scripts/advance-studio-pin.sh on the release
+      # path, where a defect would repoint every future hosted tenant. This suite drives every
+      # refusal arm against a local stand-in for the GitHub API, and its load-bearing assertions are
+      # the ones about requests NOT sent: a refusal that still issued the PATCH would print a
+      # refusal and change hosted anyway, which an exit-code-only test cannot distinguish.
+      - name: Hosted studio pin advance guards (cf#372)
+        run: python3 tests/advance-studio-pin.test.py
+
   # CONTAINER TESTS (cf#325): the CPU containers ship their own test_*.py files and NONE of them
   # ran anywhere -- this workflow's only pytest invocation above is scoped to deploy/. A suite
   # nothing runs is indistinguishable from a suite that passes; both produce a green pipeline and
@@ -106,9 +125,13 @@ jobs:
   # SCOPED to what is proven safe on THIS runner, established by actually running it here rather
   # than assumed: `test_url_guard.py` (vendored byte-for-byte per its own docstring, stdlib only,
   # no ffmpeg, no network) from every container that carries a copy, plus video-finish's own
-  # `test_inspect.py` (also stdlib only) and `test_async.py` / `test_meta_sidecar.py` (need
-  # aiohttp, pinned from video-finish's own requirements.txt so a version bump there is picked up
-  # automatically instead of drifting from what the built image runs).
+  # `test_inspect.py` and `test_photometric_gate.py` (both stdlib only -- the latter is cf#532's
+  # pixel-identity gate, proving the RATIO MATH via an injected decoder rather than real ffmpeg;
+  # its real-ffmpeg proof, test_local.py, is NOT run here for the same runner-availability
+  # reason test_local.py is not run for the two audio containers below) and `test_async.py` /
+  # `test_meta_sidecar.py` (need aiohttp, pinned from video-finish's own requirements.txt so a
+  # version bump there is picked up automatically instead of drifting from what the built image
+  # runs).
   #
   # NOT run here, deliberately, and left open on cf#325 rather than silently skipped:
   # `containers/audio-master/test_local.py` and `containers/audio-mix/test_local.py`. Both drive
@@ -140,6 +163,7 @@ jobs:
           containers/image-prep/test_url_guard.py
           containers/video-finish/test_url_guard.py
           containers/video-finish/test_inspect.py
+          containers/video-finish/test_photometric_gate.py
           containers/video-finish/test_async.py
           containers/video-finish/test_meta_sidecar.py
           "
@@ -159,8 +183,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 7 ]; then
-            echo "::error::expected exactly 7 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 8 ]; then
+            echo "::error::expected exactly 8 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
@@ -320,7 +344,19 @@ jobs:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
     # (and no merge can bite an in-flight render). To release: push a SemVer tag vX.Y.Z.
-    needs: [ci, assert-on-main]
+    # cf#526 follow-up: `container-tests` and `migrations-gate` BOTH RUN on a tag push -- neither
+    # carries an `if:`, so the workflow's `tags: ["v*"]` trigger starts them -- and neither was in
+    # this list. A tag could therefore deploy to production with either one RED, and nothing would
+    # report that: the deploy job simply never looked.
+    #
+    # `migrations-gate` is the one that makes this urgent. It guards SCHEMA. A deploy that ships a
+    # worker whose migrations gate failed is the shape where the code arrives and the database it
+    # expects does not.
+    #
+    # Adding them cannot deadlock: both run unconditionally on this trigger, so `needs` will always
+    # resolve rather than wait on a job that never starts. That is the failure mode to check before
+    # widening a `needs` array, and it is why this is safe rather than merely stricter.
+    needs: [ci, container-tests, migrations-gate, assert-on-main]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: node:22-alpine
@@ -387,8 +423,19 @@ jobs:
           VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
           # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
           # deploy stayed GREEN while silently stripping the door blocks. The log line reading
-          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks is the ONLY tell, and
-          # nothing asserts this list against the module tomls that declare the markers.
+          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks was the ONLY tell.
+          #
+          # THAT IS NO LONGER TRUE AND THE OLD WORDING IS WORTH CORRECTING RATHER THAN DELETING.
+          # This comment used to end "nothing asserts this list against the module tomls that
+          # declare the markers". cf#507 shipped exactly that assertion:
+          # tests/optional-binding-wiring-cf507.test.ts derives the marker set from the module
+          # tomls and fails if any declared marker is absent from THIS env block or from the
+          # optional-var loop in fill-module-placeholders.sh, with a denominator and a negative
+          # control so an empty derivation cannot pass vacuously.
+          #
+          # Left as a correction because the stale sentence actively costs time: it invites a
+          # reader to re-file the gap as open, which is the failure mode it was warning about,
+          # pointed at itself.
           VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
           # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
           # normal state and strips the blocks, so adding these lines changes nothing until the
@@ -416,6 +463,14 @@ jobs:
           # Deploy-by-default via scripts/deploy-module-workers.sh (canonical list in
           # scripts/finish-satellite-modules.txt when FINISH_SATELLITES_ONLY=1). DO NOT reintroduce
           # a hardcoded include-list: that is what drifted finish-upscale on live (cf#197).
+          # cf#560: the HOSTED studio never deploys the local-gpu module worker. Its own manifest
+          # blurb names vivijure-cf -- this deploy -- as where commercial use belongs INSTEAD of that
+          # door, so binding it here contradicts the door's own licence text.
+          #
+          # EXCLUDE rather than an include-list, deliberately: the comment above records that a
+          # hardcoded include-list is what drifted finish-upscale off live in cf#197. An exclude of
+          # one named module keeps deploy-by-default for everything else.
+          export EXCLUDE="${EXCLUDE:-} local-gpu"
           chmod +x scripts/deploy-module-workers.sh
           scripts/deploy-module-workers.sh
 
@@ -471,7 +526,49 @@ jobs:
           R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
           R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
           VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET'
-          envsubst "$VARS" < wrangler.toml.example > wrangler.toml
+          # cf#560: STRIP THE LOCAL-GPU BLOCK. The hosted studio must never bind local-gpu.
+          #
+          # The door's own manifest blurb says "Self-host only ... Commercial use of Vivijure is
+          # supported via vivijure-cf (Cloudflare partner channels), not this door" -- and
+          # vivijure-cf IS this deploy. It was bound here anyway, and because it sorts at ui.order 4
+          # it was the FIRST entry in both `motion.backend` and `keyframe` on the live registry.
+          #
+          # The control existed and was on the wrong path. `deploy.sh` (SELF-HOST, where local-gpu is
+          # ALLOWED) strips this block unless INSTALL_LOCAL_GPU=1. This render (HOSTED, where it is
+          # FORBIDDEN) had no strip at all -- a bare envsubst. So the path that permits it defaults it
+          # OFF and the path that forbids it had no switch, which is the inversion rather than a gap.
+          #
+          # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour. SATELLITE
+          # and SELFHOST-SKIP blocks are deliberately NOT stripped -- hosted wants the satellite
+          # finish doors, and SELFHOST-SKIP marks our-fleet-only blocks, which hosted IS.
+          awk '
+            /^# >>> LOCAL-GPU:/ { skip=1; next }
+            /^# <<< LOCAL-GPU:/ { skip=0; next }
+            !skip { print }
+          ' wrangler.toml.example > .wrangler.hosted.toml
+          # TWO-SIDED GUARD. Absence alone is not enough, and the direction it cannot see is
+          # SILENT TRUNCATION.
+          #
+          # `skip` is set on the OPENING marker and cleared only on the CLOSING one, so a removed or
+          # renamed CLOSING marker leaves skip=1 to EOF. Driven: 481 lines -> 240, MODULE_ lines
+          # 41 -> 4, and the absence check PASSES -- because MODULE_LOCAL_GPU really is gone, eaten
+          # along with 37 other binding lines. Nothing downstream catches it either: every
+          # downstream-guarded key (AUTH_MODE, ACCESS_AUD, R2_S3_*, the secrets-store placeholder)
+          # lives BEFORE line 241, so all of them survive and all of them pass, and the placeholder
+          # check cannot fire because truncation REMOVES placeholders rather than adding them.
+          #
+          # So assert the DELTA, not the absence. Exactly one MODULE_ line may disappear.
+          before_mod=$(grep -c 'MODULE_' wrangler.toml.example || true)
+          after_mod=$(grep -c 'MODULE_' .wrangler.hosted.toml || true)
+          if grep -q 'MODULE_LOCAL_GPU' .wrangler.hosted.toml; then
+            echo "::error::cf#560: LOCAL-GPU block survived the strip -- refusing to deploy the hosted studio with local-gpu bound"; exit 1
+          fi
+          if [ "$((before_mod - after_mod))" -ne 1 ]; then
+            echo "::error::cf#560: the LOCAL-GPU strip removed $((before_mod - after_mod)) MODULE_ lines, expected exactly 1 (before=$before_mod after=$after_mod) -- a marker is probably malformed and the strip ran past the block"; exit 1
+          fi
+          echo "LOCAL-GPU stripped: MODULE_ lines ${before_mod} -> ${after_mod} (delta 1, as required)"
+          envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
+          rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a
           # literal ${...}); comment-prose mentioning ${...} is fine, and -F keeps the pattern
           # literal on every grep (the v0.16.2 MCP-guard lesson: '${' as a regex is grep-dependent).

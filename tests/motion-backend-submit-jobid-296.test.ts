@@ -32,6 +32,10 @@ import wanWorker from "../modules/alibaba-wan/src/index";
 import wanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
+import cfHh1Worker from "../modules/cf-hh1-r2v/src/index";
+import cfSeedanceWorker from "../modules/cf-seedance/src/index";
+import cfGrokWorker from "../modules/cf-grok-video/src/index";
+import cfFluxWorker from "../modules/cf-flux-3-video/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -57,6 +61,45 @@ const MODULES: { name: string; worker: Worker; env: Record<string, unknown>; job
   // local-gpu is included because cf#296's table listed it as MISSING the field and it was not.
   // Pinning it here means the correction cannot quietly regress into agreeing with the issue.
   { name: "local-gpu", worker: localGpuWorker as unknown as Worker, env: { LOCAL_BACKEND_URL: "https://door.invalid" }, jobId: STUB_JOB_ID_ALNUM },
+];
+
+// CF AI Gateway i2v modules: async shell is Workflow + R2 state, NOT RunPod /run. They still
+// return top-level jobId (local poll token id) so orchestrator can retain it. Covered here so
+// the population scan cannot leave them silent; behavioural shape lives in cf-ai-i2v-workflow.test.ts.
+function cfI2vEnv(): Record<string, unknown> {
+  const store = new Map<string, string | ArrayBuffer>();
+  return {
+    GATEWAY_ID: "gw",
+    AI: { async run() { throw new Error("request-path AI.run must not run"); } },
+    R2_RENDERS: {
+      async put(key: string, value: string | ArrayBuffer) { store.set(key, value); },
+      async get(key: string) {
+        const o = store.get(key);
+        if (o === undefined) return null;
+        return {
+          async text() { return typeof o === "string" ? o : ""; },
+          async arrayBuffer() {
+            return typeof o === "string" ? new TextEncoder().encode(o).buffer : o;
+          },
+        };
+      },
+    },
+    I2V_WORKFLOW: {
+      async create() {
+        return { id: "wf-1", async status() { return { status: "running" }; } };
+      },
+      async get() {
+        return { id: "wf-1", async status() { return { status: "running" }; } };
+      },
+    },
+  };
+}
+
+const CF_MODULES: { name: string; worker: Worker }[] = [
+  { name: "cf-hh1-r2v", worker: cfHh1Worker as unknown as Worker },
+  { name: "cf-seedance", worker: cfSeedanceWorker as unknown as Worker },
+  { name: "cf-grok-video", worker: cfGrokWorker as unknown as Worker },
+  { name: "cf-flux-3-video", worker: cfFluxWorker as unknown as Worker },
 ];
 
 /** Answers the vendor /run with a job id and everything else with something harmless. Records the
@@ -127,6 +170,34 @@ describe.each(MODULES)("$name: POST /invoke submit envelope", ({ name, worker, e
   });
 });
 
+describe.each(CF_MODULES)("$name: CF Workflow path still returns jobId on invoke", ({ name, worker }) => {
+  it("returns ok/pending/poll/jobId without calling RunPod /run", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const u = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      seen.push(u);
+      return new Response("{}", { status: 200 });
+    });
+    const body = await invoke(worker, cfI2vEnv(), {
+      ...INPUT,
+      // Stable id so we can assert the orchestrator-facing field is populated (local poll id,
+      // not a RunPod job id -- CF AI has no /run handle).
+    });
+    expect(seen.some((u) => u.endsWith("/run")), name + " must not hit RunPod /run").toBe(false);
+    expect(body.ok).toBe(true);
+    expect(body.pending).toBe(true);
+    expect(typeof body.poll).toBe("string");
+    expect(typeof body.jobId).toBe("string");
+    expect((body.jobId as string).length).toBeGreaterThan(0);
+  });
+
+  it("DISCRIMINATES: missing keyframe is a refusal with no jobId", async () => {
+    const body = await invoke(worker, cfI2vEnv(), { shot_id: "", prompt: "", keyframe_url: "" });
+    expect(body.ok).toBe(false);
+    expect(body.jobId).toBeUndefined();
+  });
+});
+
 describe("the population under test is the whole one (cf#296)", () => {
   it("covers every motion.backend module in the tree, so a new one cannot join silently", async () => {
     const { readdirSync, readFileSync } = await import("node:fs");
@@ -139,8 +210,15 @@ describe("the population under test is the whole one (cf#296)", () => {
         // `hooks: ["motion.backend"]` matched eight modules and silently dropped local-gpu, which
         // is dual-hook. A name filter that agrees with your expectation is the one nobody rechecks.
         try {
-          const src = readFileSync(join(dir, e.name, "src", "index.ts"), "utf8");
-          return /hooks:\s*\[[^\]]*"motion\.backend"/.test(src);
+          // cf#285 moved some modules' MANIFEST (incl. the `hooks` array) out of index.ts into a
+          // data-only manifest.ts leaf file. Read both -- a module post-extraction has nothing in
+          // index.ts and everything in manifest.ts; a not-yet-extracted module is the reverse.
+          const indexSrc = readFileSync(join(dir, e.name, "src", "index.ts"), "utf8");
+          let manifestSrc = "";
+          try {
+            manifestSrc = readFileSync(join(dir, e.name, "src", "manifest.ts"), "utf8");
+          } catch { /* not extracted; index.ts carries it */ }
+          return /hooks:\s*\[[^\]]*"motion\.backend"/.test(indexSrc + manifestSrc);
         } catch { return false; }
       })
       .map((e) => e.name);
@@ -152,12 +230,13 @@ describe("the population under test is the whole one (cf#296)", () => {
     // The module the exact-string matcher missed. Pinned by name so the widened pattern cannot
     // narrow back without this failing.
     expect(motion).toContain("local-gpu");
+    expect(motion).toContain("cf-seedance");
     // CONTROL: the pattern must NOT sweep in modules that are not motion backends, or the
     // "nothing uncovered" assertion below becomes trivially satisfiable by covering everything.
     expect(motion).not.toContain("keyframe");
     expect(motion).not.toContain("finish-upscale");
     expect(motion).not.toContain("narration-gen");
-    const covered = MODULES.map((m) => m.name);
+    const covered = [...MODULES.map((m) => m.name), ...CF_MODULES.map((m) => m.name)];
     expect(motion.filter((m) => !covered.includes(m)), "motion.backend modules not exercised above").toEqual([]);
   });
 });

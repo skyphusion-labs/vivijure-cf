@@ -64,8 +64,13 @@ service = "vivijure-tail"
 
 Both are live on the deployed `vivijure-studio` worker today
 (`observability.logs.enabled = true, persist = true, invocation_logs = true`;
-`tail_consumers = [{ service = "vivijure-tail" }]`). The tail worker is deployed
-separately and reaches Loki through its `LOKI_VPC` `vpc_service` binding.
+`tail_consumers = [{ service = "vivijure-tail" }]`). The tail worker is
+**OUR-fleet-only** (stripped for self-host / WfP tenants) and is deployed by hand
+via `scripts/deploy-tail.sh`, which renders `tail/wrangler.toml` from
+`tail/wrangler.toml.example` (`LOKI_VPC_ID` injected; cf#294 / PR #309). It is not
+part of `deploy.sh` or the tag-gated CI release job -- it changes rarely and has
+no meaning outside this fleet. The worker reaches Loki through its `LOKI_VPC`
+`vpc_service` binding.
 
 ## Loki labels (the tail extracts these from the JSON)
 
@@ -192,6 +197,24 @@ the poll view), and the orchestrator emits one structured line:
 
 The all-missing case still hard-fails loud; this event is the some-rendered degrade only. A film
 with this line completed, but it is NOT the full storyboard -- the poll view says so too.
+
+## The Wan cast-LoRA projection event (`film.wan_lora_projection`, cf#392)
+
+When the host projects bound cast Wan adapters into an `alibaba-wan-lora` motion config
+(`src/wan-lora-projection.ts`), it records `{ injected, dropped }` on the film job (host field
+`wan_lora_projection`, relayed on the film summary and planner poll `output`) and emits one
+structured line so phase-1 verification can assert the motion adapter was injected without digging
+through R2:
+
+```
+{"ev":"film.wan_lora_projection","film_id":"...","project":"...","injected":1,"dropped":0,"applied":true}
+```
+
+`injected` is the number of cast slots whose high/low expert pair was presigned into the config;
+`dropped` is how many the per-pass cap (`MAX_LORAS_PER_PASS`) refused. A pure no-op (wrong motion
+backend, or no Wan cast) emits nothing and leaves the poll field absent. Scatter submissions that
+project set the same field on the 201 body and emit with `scatter_id` instead of (or in addition to)
+`film_id`.
 
 ## The deferred-bookkeeping event (`render.bookkeeping_deferred`, #695)
 
