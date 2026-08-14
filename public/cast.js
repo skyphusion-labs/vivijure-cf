@@ -72,7 +72,14 @@
     try { data = await resp.json(); } catch { /* non-JSON */ }
     if (!resp.ok) {
       const msg = (data && data.error) || `HTTP ${resp.status}`;
-      throw new Error(msg);
+      // #329: carry the HTTP status on the Error so a caller can distinguish a
+      // host CONFIGURATION refusal (501) from a real failure, and say something
+      // truthful rather than forwarding operator-facing server text to a tenant.
+      // Additive by construction: every existing catch in this file reads
+      // .message only (21 e.message + 1 err.message, zero .status reads).
+      const err = new Error(msg);
+      err.status = resp.status;
+      throw err;
     }
     return data;
   }
@@ -1477,6 +1484,19 @@
     }
   }
 
+  // #329: a 501 from the Wan train route means the host has no Wan training
+  // endpoint wired. The server body for that case is written for the OPERATOR
+  // and names the binding to set; it must never reach a tenant, who can neither
+  // act on it nor should learn host configuration from a failed click. Every
+  // other failure keeps its server-supplied message, unchanged.
+  const WAN_TRAIN_UNAVAILABLE =
+    "Wan LoRA training is unavailable here. Ask whoever runs this studio to enable it.";
+
+  function wanTrainErrorText(e) {
+    if (e && e.status === 501) return WAN_TRAIN_UNAVAILABLE;
+    return "submit failed: " + e.message;
+  }
+
   async function trainWanLora() {
     const id = state.selectedId;
     if (!id) return;
@@ -1493,14 +1513,20 @@
     )) return;
     setWanLoraStatusText("submitting...", "loading");
     try {
-      const data = await api("/api/cast/" + id + "/train-lora", { method: "POST" });
+      // #329: the EXPLICIT Wan route. The shared /train-lora route resolves the
+      // family from host config when the body omits model_family, so this button
+      // silently trained SDXL on a host with no Wan endpoint while the confirm
+      // dialog promised Wan 2.2 expert training, ~35-45 minutes and a 2-to-4
+      // dollar GPU spend. The dedicated route hardcodes family "wan" and 501s
+      // when Wan is not wired. No body needed: the route tolerates a missing one.
+      const data = await api("/api/cast/" + id + "/train-wan-lora", { method: "POST" });
       const idx = state.cast.findIndex((x) => x.id === id);
       if (idx >= 0) state.cast[idx] = data.cast;
       renderLoraPane(data.cast);
       renderWanLoraPane(data.cast);
       schedulePollLoraStatus(id);
     } catch (e) {
-      setWanLoraStatusText("submit failed: " + e.message, "error");
+      setWanLoraStatusText(wanTrainErrorText(e), "error");
     }
   }
 

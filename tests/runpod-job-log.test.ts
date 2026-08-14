@@ -58,7 +58,11 @@ describe("recordRunpodJob: what it writes", () => {
     // CONTROL: the proxy records at all. Without this, every assertion below passes on a dead proxy.
     expect(calls.sql).toHaveLength(1);
     expect(calls.sql[0]).toBe(RUNPOD_JOB_LOG_UPSERT);
-    expect(calls.bound[0]).toEqual(["job-1", "finish-upscale", "backend-error", "boom", 1_700_000_000, 1_700_000_060, null]);
+    // cp#274 widened this row by two: execution_ms and delay_ms, both NULL here because this record
+    // carries no timing. Kept as an exact toEqual rather than relaxed to a partial match -- the point
+    // of this assertion is the ORDER and ARITY the migration declares, and a loosened matcher would
+    // stop catching the thing it was written for.
+    expect(calls.bound[0]).toEqual(["job-1", "finish-upscale", "backend-error", "boom", 1_700_000_000, 1_700_000_060, null, null, null]);
   });
 
   it("leaves terminal_at NULL on the submit row and fills it on a terminal row", async () => {
