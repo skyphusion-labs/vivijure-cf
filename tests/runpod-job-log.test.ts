@@ -19,6 +19,12 @@ import {
   ERROR_TYPE_MAX,
   parseRunpodErrorType,
   runpodWalkedPastOutcome,
+  terminalOutcomeFromRunpodStatus,
+  reconcileOpenRunpodJobs,
+  reconcileOpenRunpodJobsBestEffort,
+  LIST_OPEN_RUNPOD_JOBS_SQL,
+  RECONCILE_MIN_AGE_SEC,
+  RECONCILE_UNKNOWN_AFTER_SEC,
 } from "../modules/_shared/runpod-job-log";
 
 /** Records every prepare/bind/run call. `run` is injectable so a test can make the real failure. */
@@ -351,5 +357,317 @@ describe("recordRunpodJob: the cf#298 retry", () => {
     const { db, calls } = recordingDb();
     await expect(degradePath(db)).resolves.toBe("degrade-completed");
     expect(calls.sql).toHaveLength(1);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------
+// cf#298 reconciler: re-ask RunPod for rows stuck at submitted after the poll path moved on.
+//
+// The issue's acceptance shape: a deliberately dropped terminal write, failing before the
+// reconciler runs and closing after. Also: honest `unknown` past retention, never invent completed.
+// ------------------------------------------------------------------------------------------------
+
+/** Fake D1 that can list open rows AND accept upserts (reconciler does both). */
+function reconcileDb(openRows: Array<{ job_id: string; module: string; submitted_at: number | null }>) {
+  const upserts: unknown[][] = [];
+  const lists: unknown[][] = [];
+  const db = {
+    prepare(sql: string) {
+      if (sql === LIST_OPEN_RUNPOD_JOBS_SQL) {
+        return {
+          bind(...args: unknown[]) {
+            lists.push(args);
+            return {
+              all: async () => ({ results: openRows }),
+            };
+          },
+        };
+      }
+      if (sql === RUNPOD_JOB_LOG_UPSERT) {
+        return {
+          bind(...args: unknown[]) {
+            upserts.push(args);
+            return { run: async () => ({ success: true }) };
+          },
+        };
+      }
+      throw new Error("unexpected sql: " + sql.slice(0, 80));
+    },
+  } as unknown as D1Database;
+  return { db, upserts, lists };
+}
+
+describe("terminalOutcomeFromRunpodStatus (cf#298)", () => {
+  it("maps RunPod terminal statuses the same way the poll path does", () => {
+    expect(terminalOutcomeFromRunpodStatus("COMPLETED")).toBe("completed");
+    expect(terminalOutcomeFromRunpodStatus("FAILED")).toBe("failed");
+    expect(terminalOutcomeFromRunpodStatus("CANCELLED")).toBe("cancelled");
+    expect(terminalOutcomeFromRunpodStatus("CANCELED")).toBe("cancelled");
+    expect(terminalOutcomeFromRunpodStatus("TIMED_OUT")).toBe("failed");
+    expect(terminalOutcomeFromRunpodStatus("timed-out")).toBe("failed");
+  });
+
+  it("returns null for still-running and unrecognised statuses (leave the row open)", () => {
+    for (const s of ["IN_QUEUE", "IN_PROGRESS", "", "BOGUS", undefined, null]) {
+      expect(terminalOutcomeFromRunpodStatus(s), "must leave open: " + String(s)).toBeNull();
+    }
+  });
+});
+
+describe("reconcileOpenRunpodJobs (cf#298)", () => {
+  // cf#298: the pass must be handed to the runtime, not left dangling. An unregistered background
+  // promise can be torn down as soon as the response returns, and under load -- exactly when open
+  // rows accumulate -- that is the normal case. These drive the registration itself, because a
+  // waitUntil I have never watched fire is indistinguishable from one that never fires.
+  it("registers the pass with ctx.waitUntil when a context is supplied", async () => {
+    const seen: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => { seen.push(p); } };
+    const { db, upserts } = reconcileDb([
+      { job_id: "reg", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    reconcileOpenRunpodJobsBestEffort(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    }, ctx);
+    expect(seen).toHaveLength(1);
+    await seen[0]; // the registered promise is the real pass, not a stand-in
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0][2]).toBe("completed");
+  });
+
+  // The pair that makes the previous test a guard rather than a smoke test: absence must be LOUD,
+  // and presence must be QUIET. Asserting only that a warning appears would pass for a helper that
+  // warns unconditionally, which would train everyone to ignore the line.
+  it("SAYS SO when it could not register the pass", async () => {
+    const { db } = reconcileDb([
+      { job_id: "loud", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    reconcileOpenRunpodJobsBestEffort(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(warns.join("|")).toContain("NOT registered");
+    expect(warns.join("|")).toContain("keyframe");
+  });
+
+  it("says NOTHING about registration when a context IS supplied", async () => {
+    const seen: Promise<unknown>[] = [];
+    const { db } = reconcileDb([
+      { job_id: "quiet", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    reconcileOpenRunpodJobsBestEffort(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    }, { waitUntil: (p: Promise<unknown>) => { seen.push(p); } });
+    await Promise.all(seen);
+    expect(warns.join("|")).not.toContain("NOT registered");
+  });
+
+  it("still runs, and still never throws, when no context is available", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "noctx", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    expect(() =>
+      reconcileOpenRunpodJobsBestEffort(db, {
+        module: "keyframe",
+        fetchStatus: async () => "COMPLETED",
+        nowMs,
+      }),
+    ).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(upserts).toHaveLength(1);
+  });
+
+  // A ctx whose waitUntil is missing/not callable must not take the handler down.
+  it("falls back rather than throwing when ctx carries no usable waitUntil", async () => {
+    const { db } = reconcileDb([
+      { job_id: "badctx", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    expect(() =>
+      reconcileOpenRunpodJobsBestEffort(db, {
+        module: "keyframe",
+        fetchStatus: async () => "COMPLETED",
+        nowMs,
+      }, {} as unknown as { waitUntil(p: Promise<unknown>): void }),
+    ).not.toThrow();
+  });
+
+  const nowMs = 1_700_000_600_000; // fixed clock
+  const nowSec = Math.floor(nowMs / 1000);
+
+  it("closes a stuck submitted row when RunPod still reports COMPLETED (deliberately dropped terminal write)", async () => {
+    // The issue shape: submit wrote, terminal write never landed, job actually finished.
+    const submittedAt = nowSec - 120; // older than RECONCILE_MIN_AGE_SEC
+    const { db, upserts, lists } = reconcileDb([
+      { job_id: "0c27e837-aae6-4921-9123-84fd4a50a4c6-e2", module: "keyframe", submitted_at: submittedAt },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => "COMPLETED",
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 1, unknown: 0 });
+    expect(lists[0][0]).toBe("keyframe");
+    expect(lists[0][1]).toBe(nowSec - RECONCILE_MIN_AGE_SEC);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0][0]).toBe("0c27e837-aae6-4921-9123-84fd4a50a4c6-e2");
+    expect(upserts[0][2]).toBe("completed");
+    expect(upserts[0][5]).toBe(nowSec); // terminal_at filled
+  });
+
+  it("writes gone when RunPod no longer has the job", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "gone-job", module: "own-gpu", submitted_at: nowSec - 200 },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "own-gpu",
+      fetchStatus: async () => "gone",
+      nowMs,
+    });
+    expect(result.closed).toBe(1);
+    expect(upserts[0][2]).toBe("gone");
+  });
+
+  it("writes unknown past retention when RunPod gives no terminal answer (never invents completed)", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 60);
+    const { db, upserts } = reconcileDb([
+      { job_id: "stale-job", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => null, // retention expired / fetch failed
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 1, unknown: 1 });
+    expect(upserts[0][2]).toBe("unknown");
+  });
+
+  it("leaves IN_PROGRESS rows open when still inside the retention window", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "running", module: "keyframe", submitted_at: nowSec - 120 },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => "IN_PROGRESS",
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(upserts).toHaveLength(0);
+  });
+
+  // cf#298: THE CASE THE TEST ABOVE CANNOT SEE. That one sits INSIDE the retention window, so its
+  // `closed: 0` comes from the age gate whether or not the status is ever consulted -- deleting the
+  // entire status-handling block leaves it green. Here the age gate FIRES, so the only thing that
+  // can keep the row open is the affirmative IN_PROGRESS, and a reconciler that concludes from age
+  // alone books a job RunPod just told us is alive as terminally `unknown`.
+  //
+  // That write is not recoverable: the upsert carries `WHERE runpod_job_log.terminal_at IS NULL`, so
+  // the real `completed` arriving later is a silent no-op and the row stays `unknown` forever. The
+  // pipeline's own ceiling is 90 minutes (RUNPOD_COLD_GRACE_MS commentary) against a 25-minute
+  // window, so long renders are exactly the population this would mislabel.
+  it("leaves a row open when RunPod says IN_PROGRESS even PAST the retention window", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 3600); // an hour past the window
+    const { db, upserts } = reconcileDb([
+      { job_id: "long-render", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => "IN_PROGRESS", // RunPod affirmatively reports it alive
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(upserts).toHaveLength(0);
+  });
+
+  // The other side of the same gate, so the fix cannot be "never write unknown": when RunPod could
+  // not tell us anything AND the row is past retention, the honest close still happens.
+  it("still writes unknown past retention when RunPod could NOT tell us (status null)", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 3600);
+    const { db, upserts } = reconcileDb([
+      { job_id: "no-answer", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => null,
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 1, unknown: 1 });
+    expect(upserts[0][2]).toBe("unknown");
+  });
+
+  // A non-terminal status that is not IN_PROGRESS must behave the same way -- the gate is "did RunPod
+  // answer", not a list of blessed strings.
+  it("leaves a row open past retention on any non-terminal answer, not just IN_PROGRESS", async () => {
+    const old = nowSec - (RECONCILE_UNKNOWN_AFTER_SEC + 3600);
+    const { db, upserts } = reconcileDb([
+      { job_id: "queued", module: "keyframe", submitted_at: old },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => "IN_QUEUE",
+      nowMs,
+    });
+    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("maps CANCELLED and FAILED through the same terminal writer", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "c1", module: "keyframe", submitted_at: nowSec - 100 },
+      { job_id: "f1", module: "keyframe", submitted_at: nowSec - 100 },
+    ]);
+    let n = 0;
+    await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => (n++ === 0 ? "CANCELLED" : "FAILED"),
+      nowMs,
+    });
+    expect(upserts.map((u) => u[2])).toEqual(["cancelled", "failed"]);
+  });
+
+  it("returns zeros and does not throw when there is no D1 binding", async () => {
+    await expect(
+      reconcileOpenRunpodJobs(undefined, { module: "keyframe", fetchStatus: async () => "COMPLETED", nowMs }),
+    ).resolves.toEqual({ examined: 0, closed: 0, unknown: 0 });
+  });
+
+  it("survives a list() failure without rejecting", async () => {
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return {
+              all: async () => {
+                throw new Error("D1_ERROR: list boom");
+              },
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    await expect(
+      reconcileOpenRunpodJobs(db, { module: "keyframe", fetchStatus: async () => "COMPLETED", nowMs }),
+    ).resolves.toEqual({ examined: 0, closed: 0, unknown: 0 });
+    expect(warns.join("|")).toContain("reconcile list failed");
+  });
+
+  it("treats a throwing fetchStatus as transient (leave open) inside the retention window", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "net-fail", module: "own-gpu", submitted_at: nowSec - 120 },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "own-gpu",
+      fetchStatus: async () => {
+        throw new Error("fetch exploded");
+      },
+      nowMs,
+    });
+    expect(result.closed).toBe(0);
+    expect(upserts).toHaveLength(0);
+    expect(warns.join("|")).toContain("reconcile fetch failed");
   });
 });

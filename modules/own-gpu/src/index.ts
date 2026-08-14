@@ -26,7 +26,7 @@ import {
 import { buildI2vBody, readOutput, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./i2v";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
-import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus, reconcileOpenRunpodJobsBestEffort } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 import { withTenantR2Body } from "../../_shared/tenant-r2-body";
 import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
@@ -95,6 +95,32 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, endpointId: string,
     await fetch(endpoint(route, endpointId) + "/cancel/" + jobId, { method: "POST", headers: auth(route) });
   } catch {
     /* best-effort */
+  }
+}
+
+/**
+ * cf#298 reconciler status probe: status string, "gone", or null (transient / still running unknown).
+ * Never throws. A plane refusal is null (not a RunPod terminal), same as a transport failure.
+ */
+async function fetchRunpodStatusForReconcile(
+  route: RunpodRoute,
+  endpointId: string,
+  jobId: string,
+): Promise<string | "gone" | null> {
+  try {
+    const resp = await fetch(endpoint(route, endpointId) + "/status/" + jobId, { headers: auth(route) });
+    if (planeRefusalReason(route, resp)) return null;
+    let body: { status?: unknown; title?: unknown } | null = null;
+    try {
+      body = (await resp.json()) as { status?: unknown; title?: unknown };
+    } catch {
+      body = null;
+    }
+    if (runpodJobGone(resp.status, body)) return "gone";
+    if (body && typeof body.status === "string" && body.status.length > 0) return body.status;
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -192,12 +218,21 @@ async function submit(
 
 /** /poll: check the RunPod job; on completion the backend has already stored the clip in R2, so we
  *  just surface the clip_key it reported. No download, no re-upload. */
-async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBackendOutput>> {
+async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promise<PollResponse<MotionBackendOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "own-gpu: bad poll token" };
   const { route, endpointId } = await runpodCreds(env);
   const credProblem = credentialProblem(route, endpointId);
   if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
+
+  // cf#298: while this module is still being polled, re-ask RunPod for OTHER rows of this module
+  // stuck at submitted (lost terminal write after the chain moved on). Fire-and-forget; never
+  // gates this poll. Only keyframe + own-gpu are wired first (the two modules that produced the
+  // measured stuck rows); other modules can adopt the same one-liner later.
+  reconcileOpenRunpodJobsBestEffort(env.TELEMETRY_DB, {
+    module: MANIFEST.name,
+    fetchStatus: (jobId) => fetchRunpodStatusForReconcile(route, endpointId, jobId),
+  }, ctx);
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -276,7 +311,10 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  // ctx is OPTIONAL only so the handler stays directly invocable from a test without a stub;
+  // the Workers runtime always supplies one, and reconcileOpenRunpodJobsBestEffort falls back to
+  // today's unregistered behaviour when it is absent rather than refusing.
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
     // GET /ready (cf#114): does the version the edge is ACTUALLY SERVING read its credentials?
@@ -335,7 +373,7 @@ export default {
       if (!body || typeof body.poll !== "string") {
         return json({ ok: false, error: "poll token required" } as PollResponse);
       }
-      return json(await poll(env, body));
+      return json(await poll(env, body, ctx));
     }
 
     return json({ ok: false, error: "not found" }, 404);

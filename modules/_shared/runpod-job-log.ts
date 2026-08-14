@@ -36,7 +36,15 @@
  * `error_type` (cf#288, below), NOT by this value. This value names an observed RunPod terminal
  * status and nothing else.
  */
-export type RunpodJobOutcome = "submitted" | "completed" | "backend-error" | "failed" | "gone" | "cancelled";
+export type RunpodJobOutcome =
+  | "submitted"
+  | "completed"
+  | "backend-error"
+  | "failed"
+  | "gone"
+  | "cancelled"
+  /** Past RunPod retention with no answer; honest rather than guessing completed (cf#298). */
+  | "unknown";
 
 export interface RunpodJobRecord {
   /** RunPod job id. The upsert key; a blank id is dropped (nothing to reconcile against later). */
@@ -142,12 +150,11 @@ export const RUNPOD_JOB_LOG_TIMEOUT_MS = 2000;
  *  PERMANENTLY: the row stays `submitted` and reads as an in-flight job forever. Measured at 2 of 20
  *  module jobs in a run with zero actual faults, i.e. a perfect run presenting as 10% unexplained.
  *
- *  WHAT THIS DOES NOT DO, stated plainly so nobody reads cf#298 as closed. This reduces the window;
- *  it does not remove it. A D1 outage longer than the budget still loses the row, and nothing here
- *  revisits a row after the fact. The real fix is a reconciler that re-asks RunPod for rows with
- *  terminal_at IS NULL, and it has a hard constraint: RunPod keeps async results for ~30 minutes and
- *  has no job-history API, so a reconciler running later than that cannot learn the outcome at all
- *  and must record `unknown` honestly rather than guess. That is filed separately, not done here.
+ *  WHAT THIS DOES NOT DO ALONE. This reduces the loss window; it does not remove it. A D1 outage
+ *  longer than the budget still loses the row. Closing that gap is the reconciler below
+ *  (`reconcileOpenRunpodJobs`): re-asks RunPod for rows with terminal_at IS NULL. Hard constraint:
+ *  RunPod keeps async results ~30 minutes and has no job-history API, so past that window the
+ *  reconciler records `unknown` honestly rather than guessing completed.
  *
  *  The retry is safe to repeat: the upsert is keyed on job_id and guarded by
  *  `WHERE runpod_job_log.terminal_at IS NULL`, so a second attempt that lands after a first one
@@ -359,6 +366,196 @@ export function runpodWalkedPastOutcome(status: string | undefined): RunpodJobOu
     default:
       return undefined;
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// RECONCILER (cf#298): re-ask RunPod for rows stuck at submitted after the poll path moved on.
+//
+// A terminal write lost to a transient D1 error is permanent without this: nothing polls the job
+// again. RunPod retains async results ~30 minutes and has no history API, so past that window we
+// write `unknown` rather than inventing completed.
+//
+// Best-effort like recordRunpodJob: never throws, never rejects, bounded work per call.
+// ---------------------------------------------------------------------------------------------
+
+/** Open rows older than this (seconds) are eligible for re-query. */
+export const RECONCILE_MIN_AGE_SEC = 90;
+
+/** Past this age without a RunPod answer, write outcome `unknown` (retention is ~30 min). */
+export const RECONCILE_UNKNOWN_AFTER_SEC = 25 * 60;
+
+export const RECONCILE_MAX_ROWS = 10;
+
+export const LIST_OPEN_RUNPOD_JOBS_SQL =
+  "SELECT job_id, module, submitted_at FROM runpod_job_log " +
+  "WHERE terminal_at IS NULL AND module = ?1 " +
+  "AND (submitted_at IS NULL OR submitted_at <= ?2) " +
+  "ORDER BY submitted_at ASC LIMIT ?3";
+
+export interface OpenRunpodJobRow {
+  job_id: string;
+  module: string;
+  submitted_at: number | null;
+}
+
+/**
+ * Map a RunPod /status body status field to a terminal outcome, or null if still running / unknown
+ * status text that is not yet terminal.
+ */
+export function terminalOutcomeFromRunpodStatus(status: unknown): RunpodJobOutcome | null {
+  const s = String(status ?? "").toUpperCase();
+  if (s === "COMPLETED") return "completed";
+  if (s === "FAILED") return "failed";
+  if (s === "CANCELLED" || s === "CANCELED") return "cancelled";
+  if (s === "TIMED_OUT" || s === "TIMED-OUT") return "failed";
+  return null;
+}
+
+export async function listOpenRunpodJobs(
+  db: D1Database,
+  module: string,
+  olderThanOrEqualSec: number,
+  limit: number = RECONCILE_MAX_ROWS,
+): Promise<OpenRunpodJobRow[]> {
+  const res = await db
+    .prepare(LIST_OPEN_RUNPOD_JOBS_SQL)
+    .bind(module, olderThanOrEqualSec, limit)
+    .all<OpenRunpodJobRow>();
+  return res.results ?? [];
+}
+
+/**
+ * Re-query RunPod for open rows of one module and close them.
+ *
+ * `fetchStatus` returns:
+ * - a status string from a successful /status body (`COMPLETED`, `IN_PROGRESS`, ...)
+ * - `"gone"` for job-not-found / 404
+ * - `null` for transient errors (leave the row open)
+ */
+export async function reconcileOpenRunpodJobs(
+  db: D1Database | undefined,
+  args: {
+    module: string;
+    fetchStatus: (jobId: string) => Promise<string | "gone" | null>;
+    minAgeSec?: number;
+    unknownAfterSec?: number;
+    maxRows?: number;
+    nowMs?: number;
+  },
+): Promise<{ examined: number; closed: number; unknown: number }> {
+  const out = { examined: 0, closed: 0, unknown: 0 };
+  try {
+    if (!db) return out;
+    const nowMs = args.nowMs ?? Date.now();
+    const nowSec = Math.floor(nowMs / 1000);
+    const minAge = args.minAgeSec ?? RECONCILE_MIN_AGE_SEC;
+    const unknownAfter = args.unknownAfterSec ?? RECONCILE_UNKNOWN_AFTER_SEC;
+    const maxRows = args.maxRows ?? RECONCILE_MAX_ROWS;
+    const olderThan = nowSec - minAge;
+    let rows: OpenRunpodJobRow[] = [];
+    try {
+      rows = await listOpenRunpodJobs(db, args.module, olderThan, maxRows);
+    } catch (e) {
+      warn("reconcile list failed (module=" + args.module + "): " + describe(e));
+      return out;
+    }
+    for (const row of rows) {
+      out.examined += 1;
+      const jobId = row.job_id;
+      if (!jobId) continue;
+      const ageSec =
+        row.submitted_at === null || row.submitted_at === undefined
+          ? unknownAfter + 1
+          : nowSec - row.submitted_at;
+      let status: string | "gone" | null = null;
+      try {
+        status = await args.fetchStatus(jobId);
+      } catch (e) {
+        warn("reconcile fetch failed (job=" + jobId + "): " + describe(e));
+        status = null;
+      }
+      if (status === "gone") {
+        await recordRunpodJob(db, {
+          jobId,
+          module: args.module,
+          outcome: "gone",
+          submittedAtMs: row.submitted_at === null ? undefined : row.submitted_at * 1000,
+          detail: "reconcile: job not found on RunPod",
+        }, nowMs);
+        out.closed += 1;
+        continue;
+      }
+      if (status !== null) {
+        const terminal = terminalOutcomeFromRunpodStatus(status);
+        if (terminal) {
+          await recordRunpodJob(db, {
+            jobId,
+            module: args.module,
+            outcome: terminal,
+            submittedAtMs: row.submitted_at === null ? undefined : row.submitted_at * 1000,
+            detail: "reconcile: runpod status " + status,
+          }, nowMs);
+          out.closed += 1;
+          continue;
+        }
+        // RunPod ANSWERED and the answer is non-terminal (IN_QUEUE / IN_PROGRESS / anything else we
+        // do not map): the job is alive, and that is a measurement. Age is a reason to LOOK, never a
+        // reason to CONCLUDE -- falling through here would write `unknown` over a running job, and
+        // the upsert's `WHERE runpod_job_log.terminal_at IS NULL` makes that permanent, so the real
+        // terminal write arriving later is a silent no-op. Leave it open; the next pass re-asks.
+        continue;
+      }
+      // Only reached when RunPod could not tell us anything (status === null: a transient error, or
+      // a job that aged out of retention). THAT is what `unknown` means, and it is the only path to
+      // it. A row still inside the window is left open for the next pass.
+      if (ageSec >= unknownAfter) {
+        await recordRunpodJob(db, {
+          jobId,
+          module: args.module,
+          outcome: "unknown",
+          submittedAtMs: row.submitted_at === null ? undefined : row.submitted_at * 1000,
+          detail: "reconcile: past retention with no terminal status",
+        }, nowMs);
+        out.unknown += 1;
+        out.closed += 1;
+      }
+    }
+  } catch (e) {
+    warn("reconcile unusable (module=" + args.module + "): " + describe(e));
+  }
+  return out;
+}
+
+/** Fire-and-forget reconcile; never rejects. */
+export function reconcileOpenRunpodJobsBestEffort(
+  db: D1Database | undefined,
+  args: Parameters<typeof reconcileOpenRunpodJobs>[1],
+  /**
+   * The request's ExecutionContext. REGISTER the pass with the runtime rather than leaving a
+   * dangling promise: an unregistered background task can be torn down the moment the response is
+   * returned, and under load -- which is when open rows accumulate and the reconciler earns its
+   * keep -- that is the common case, not the edge case. Structurally typed so this file does not
+   * depend on the worker types.
+   */
+  ctx?: { waitUntil(promise: Promise<unknown>): void },
+): void {
+  const pass = reconcileOpenRunpodJobs(db, args).catch((e: unknown) => {
+    warn("reconcile best-effort rejected (module=" + args.module + "): " + describe(e));
+  });
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(pass);
+    return;
+  }
+  // NO CONTEXT. Still best-effort, but SAY SO. An unregistered pass can be torn down the moment the
+  // response returns, so this is a DEGRADED run, not an equivalent one, and the degrade is exactly
+  // what this argument exists to prevent. Falling back silently is how a future call site that omits
+  // ctx reintroduces the original defect with nothing anywhere reporting it: the reconciler would
+  // still "run", the rows would still look reconciled, and the only difference would be invisible.
+  warn(
+    "reconcile pass NOT registered (module=" + args.module + "): no ExecutionContext supplied, " +
+      "so the runtime may cancel it before it finishes",
+  );
+  void pass;
 }
 
 // ---------------------------------------------------------------------------------------------
