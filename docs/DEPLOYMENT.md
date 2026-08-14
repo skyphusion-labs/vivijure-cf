@@ -300,6 +300,21 @@ npx wrangler d1 migrations apply vivijure-studio --remote
 # migrations/manual/0004_drop_user_email.sql must apply that file once (see its header).
 # scripts/verify-migration-squash.sh proves fresh chain == prod history.
 
+# 3c-bis. REQUIRED ON THE ESTATE DEPLOY, IMMEDIATELY AFTER THE TAG (cf#520).
+# 0020 adds api_tokens.scope with a DEFAULT of 'consumer', so the moment it applies, every named
+# token is demoted and starts returning 403 on operator routes. This file restores the four live
+# estate scopes. It is NOT applied automatically and NOT bundled into tenant releases -- that is
+# deliberate (its header explains why a name-matching UPDATE in the bundle would escalate a
+# TENANT's own token), and it is why the window exists at all. Run it as the next command after
+# the deploy job finishes, not later:
+npx wrangler d1 execute vivijure-studio --remote \
+  --file migrations/manual/post-0020-set-live-token-scopes.sql
+# Until it runs: slate loses !install-config; crew-mcp loses all 8 operator tools and any
+# studio_request at those paths; the panel and both mobile clients fail to load or save module
+# config WITH NO RE-AUTH PROMPT. Every denial is a 403 (there is no 401 path in this gate) with
+# {"ev":"authz.deny",...,"required":"operator","held":"consumer"}. The deploy itself goes GREEN
+# throughout, so nothing else will tell you this step was missed.
+
 # 3d. Deploy. Module workers MUST deploy before the core (the core binds each as a service;
 #     a binding to a not-yet-deployed module makes the core deploy fail).
 # The standard modules (this list mirrors STANDARD_MODULES in deploy.sh; the last five are the

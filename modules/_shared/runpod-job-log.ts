@@ -106,8 +106,32 @@ export function timingFromStatus(status: unknown): RunpodJobTiming {
   return { executionMs: num(s.executionTime), delayMs: num(s.delayTime) };
 }
 
-/** Same bound the module poll paths already apply to a backend error string. */
-export const DETAIL_MAX = 160;
+/**
+ * Bound on `detail` (cf#320). Was 160: short enough that a validation refusal's actionable tail
+ * (the path prefix that was wrong, the project that was expected) was exactly what got cut. Measured
+ * live: `HarnessError: preview: bundle_key: ... must belong to project 'lighthouse_smoke2b'...`
+ * lost the diagnosis and forced an out-of-band RunPod status lookup that may have aged out.
+ *
+ * 480 still bounds operator-controlled strings; validation messages that ARE the diagnosis fit.
+ * Truncation is always visible (see `boundDetail`) so a reader never mistakes a cut string for the
+ * whole error.
+ */
+export const DETAIL_MAX = 480;
+
+/** Marker appended when detail is cut. ASCII only; total length stays DETAIL_MAX. */
+export const DETAIL_TRUNCATION_MARKER = "...";
+
+/**
+ * Bound a detail string to DETAIL_MAX. When cut, the last characters are DETAIL_TRUNCATION_MARKER
+ * so truncation is visible (cf#320). Null/undefined stay null.
+ */
+export function boundDetail(detail: string | undefined | null): string | null {
+  if (detail === undefined || detail === null) return null;
+  const s = String(detail);
+  if (s.length <= DETAIL_MAX) return s;
+  const keep = DETAIL_MAX - DETAIL_TRUNCATION_MARKER.length;
+  return s.slice(0, keep) + DETAIL_TRUNCATION_MARKER;
+}
 
 /** A class name, not prose. Generous enough for a fully-qualified python class, short enough that a
  *  vendor deciding to put a sentence in this key cannot widen the row. */
@@ -188,7 +212,7 @@ export async function recordRunpodJob(
       warn("empty job id (module=" + rec.module + ", outcome=" + rec.outcome + ") -- nothing to key on");
       return;
     }
-    const detail = rec.detail === undefined || rec.detail === null ? null : String(rec.detail).slice(0, DETAIL_MAX);
+    const detail = boundDetail(rec.detail);
     const errorType =
       rec.errorType === undefined || rec.errorType === null || rec.errorType === ""
         ? null

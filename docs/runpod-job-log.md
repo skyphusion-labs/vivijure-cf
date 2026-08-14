@@ -20,7 +20,7 @@ one row per job, upserted on `job_id`:
 | `job_id` | the RunPod job id (upsert key) |
 | `module` | the module worker name, a compile-time constant, already public in its `/module.json` |
 | `outcome` | `submitted` / `completed` / `backend-error` / `failed` / `gone` / `cancelled` / `unknown` |
-| `detail` | the backend error text on a fault, bounded to 160 chars |
+| `detail` | the backend error text on a fault, bounded to 480 chars (cf#320); truncated values end in `...` so the cut is visible |
 | `submitted_at` | unix seconds; NULL only for a legacy poll token that carried no submit time |
 | `terminal_at` | unix seconds; NULL while the outcome is `submitted` |
 | `error_type` | the fault CLASS as a machine label, e.g. `HarnessError`; bounded to 80 chars; NULL when the endpoint reported none |
@@ -175,6 +175,16 @@ never observed, which the lifetime counters cannot show either. `unknown` is dif
 reconcile past retention and still had no answer, so the denominator is honest rather than open
 forever.
 
+## `detail` truncation is visible (cf#320)
+
+`detail` is bounded (`DETAIL_MAX` = 480) so an unbounded backend string cannot widen a D1 row. The
+old bound of 160 cut the actionable half of validation refusals (the path prefix / project name that
+was wrong), and the cut was silent: a reader could not tell the stored string was incomplete.
+
+`boundDetail` keeps the bound and, when it cuts, ends the value with `...` so truncation is visible.
+A short string is unchanged and never carries the marker; the marker only means "go look elsewhere
+for the rest" (RunPod `/status` while the job is retained, or the backend log).
+
 ## `cancelled`, and what it is NOT (cf#298)
 
 `cancelled` names one thing: a RunPod `/status` that returned `CANCELLED`. Before it existed, the
@@ -211,9 +221,8 @@ genuine handler fault, and genuine infra (OOM, eviction, crash). All three arriv
 
 Before `error_type`, that class survived only inside `detail`, and only because `error_type` happens
 to be the FIRST key RunPod emits. Measured on a real refusal: the raw error string is 1071 chars, the
-class name ends at char 73, `detail` is bounded to 160. Eighty-seven characters of headroom against a
-vendor reordering its own JSON, with a silent failure mode: the numbers would not break, they would
-quietly stop meaning what they say.
+class name ends at char 73. `detail` is bounded (now 480, cf#320) and never the home for a class
+name -- that is what `error_type` is for.
 
 `error_type` is extracted at WRITE time from the structured key and normalised
 (`<class 'vivijure_backend.harness.handler.HarnessError'>` becomes `HarnessError`). It NEVER reads the
