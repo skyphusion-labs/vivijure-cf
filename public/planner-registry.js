@@ -98,10 +98,17 @@
     return mod && mod.name === "own-gpu" ? "byo" : "cloud"; // legacy fallback (removable)
   }
 
-  // The GPU-finalize door: bound to the BYO module (own-gpu) SPECIFICALLY, because it gates the
-  // server-side CONTRACT-2.27 finalize route, which is hardcoded to motion backend own-gpu. Keying
-  // on "byo" (NOT generic "local") means a new homelab "local" door is fully selectable for motion
-  // yet can never hijack the own-gpu finalize route. Name kept ownGpuModule for caller compat.
+  // The GPU-finalize door: bound to the BYO module (own-gpu) SPECIFICALLY. Keying on "byo" (NOT
+  // generic "local") means a new homelab "local" door is fully selectable for motion yet can never
+  // hijack the finalize route's default. Name kept ownGpuModule for caller compat.
+  //
+  // cf#347: this comment used to say the finalize route "is hardcoded to motion backend own-gpu".
+  // That was already false when cf#347 was filed -- the route RESOLVED a door rather than
+  // hardcoding one -- and PR #421 moved it further: src/finalize-from-keyframes.ts:186 now reads
+  //   motionBackend = args.motionBackend ?? mapped.motion_backend ?? gpuDoor;
+  // so an explicit caller choice wins, the parent row's stored override is the fallback, and this
+  // byo door is only the LAST resort. A stale comment in a live path is what sent the crew hunting
+  // a non-existent bundle defect (vivijure-core#122); corrected rather than left to do it again.
   function ownGpuModule() {
     return motionBackendModules().find((m) => motionLocality(m) === "byo") || null;
   }
