@@ -43,3 +43,25 @@ export function clipsFrom(output: RenderOutput | null | undefined): DeliveredCli
 export function degradeFrom(output: RenderOutput | null | undefined): NormalizedDegrade | null;
 export function deliverable(output: RenderOutput | null | undefined): Deliverable;
 export function deliveredSummary(degrade: NormalizedDegrade | null | undefined): string | null;
+
+/** cf#549: the four bands render history has to keep apart. "none-reported" is NOT a
+ *  clean verdict -- it means this payload reports no assemble/mux soft-degrade, and says
+ *  nothing about `film_finish.degraded` (vivijure-core#203), which does not exist yet. */
+export type DegradeBand = "unmeasured" | "none-reported" | "unreadable" | "reported";
+
+export interface DegradeBandNote {
+  label: string;
+  title: string;
+}
+
+export const DEGRADE_BANDS: {
+  UNMEASURED: "unmeasured";
+  NONE_REPORTED: "none-reported";
+  UNREADABLE: "unreadable";
+  REPORTED: "reported";
+};
+
+export function degradeBand(output: RenderOutput | null | undefined): DegradeBand;
+/** null for the bands that must render nothing ("unmeasured", "none-reported") and for
+ *  any unrecognised value. */
+export function bandNote(band: DegradeBand | string | null | undefined): DegradeBandNote | null;
