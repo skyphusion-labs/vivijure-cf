@@ -187,7 +187,7 @@ const DOORS: DoorDecl[] = [
     id: "1 panel MAIN render", route: "/api/storyboard/render", path: "/api/storyboard/render", seam: "film",
     body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
             audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
-    caps: { dialogue: "internal", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
+    caps: { dialogue: "yes", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
     guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
     na_reasons: { dialogue: "derived inside hSubmitRender from the bundle storyboard when the panel omits dialogue_lines (cf#334 door 1)" },
   },

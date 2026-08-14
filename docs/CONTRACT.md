@@ -369,6 +369,8 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `hooks` | `{ [hook]: string[] }` | Map of hook name -> module **names** serving it, **pre-sorted** in canonical `ui.order` then name order (section 5). The frontend consumes this verbatim and never re-sorts. A hook with no installed module is absent from the map. |
 | `catalog` | `HookCatalogEntry[]` | Every hook (independent of what is installed): `{ name, blurb, cardinality }`. |
 | `render` | `RenderConfigProjection` | Core-owned render config: `{ quality_tiers: { value, label, blurb }[], default_tier }`. See 2.3.1. |
+| `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
+| `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
 
 `HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" }`.
 `PublicModule` = the `ModuleManifest` (section 4) with `binding` removed.
@@ -531,6 +533,20 @@ Note the two success shapes differ by one field: SDXL returns `loraDestKey` (sin
 `lora_status` enum (on the cast row): `"idle" | "training" | "ready" | "failed"`. The training submit
 banks the freshly-trained adapter back onto the cast member (`lora_status` -> `ready`) so a
 character's LoRA is trained ONCE and reused across every project.
+
+**Per-family readiness (cf#383):** a cast can carry two independent adapter sets (`lora_key` for
+SDXL keyframes; `wan_lora_key_high` / `wan_lora_key_low` for Wan motion). `lora_status` is the
+**shared** last training-job state across both families -- `"ready"` means at least one family was
+marked ready, not that both adapters exist. Public cast rows also expose additive booleans derived
+from key presence (cannot disagree with the keys):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `sdxl_lora_ready` | boolean | `lora_key` is under `loras/` (keyframe identity adapter present) |
+| `wan_lora_ready` | boolean | both Wan expert keys are under `loras/` |
+
+Prefer these over `lora_status === "ready"` when selecting cast for a bind. Existing clients that
+only read `lora_status` keep working; they remain subject to the ambiguity this field pair fixes.
 
 ### 2.9a Cast bundle import/export (issue #324)
 
@@ -1019,6 +1035,7 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
 | `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
+| `wan_lora_projection` | `{ injected, dropped }` \| undefined | cf#392: counts from the host Wan cast-LoRA projection into `alibaba-wan-lora` (`high_noise_loras` / `low_noise_loras`). `injected` = cast slots whose expert pair was presigned into the motion config; `dropped` = slots skipped by the per-pass cap. Present only when at least one slot was injected or dropped; absent on non-Wan / no-Wan-cast renders (absence is honest, never fabricated zeros). Also relayed on the planner poll view (`GET /api/storyboard/render/:jobId` -> `output.wan_lora_projection`) and on the scatter 201 body. Paired with the `film.wan_lora_projection` structured event. |
 | `download_url` | string \| undefined | Presigned GET of the finished film (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; a later poll re-issues a fresh one), added only when `phase === "done"` and `film_key` is set. |
 
 **404** `{ "error": "film job not found" }` for an unknown id.
@@ -1772,7 +1789,7 @@ The persistence + retrieval surface for `scope:"install"` fields. Behind the stu
 | method | request | response |
 |--------|---------|----------|
 | `GET /api/modules/:name/config` | none | `200 { ok:true, module, config }` -- `config` is every install field, missing ones at their schema default. `404` if the module is unknown or has no install-scope field. |
-| `PATCH /api/modules/:name/config` | a `{ field: value }` object | `200 { ok:true, module, config }`. The patch is clamped against the module's **install subschema** (the same `validateConfig` clamp the invoke uses): unknown and **render-scope** keys are dropped (never writable here). `400` if the body is not an object; `404` as above. |
+| `PATCH /api/modules/:name/config` | a flat `{ field: value }` object (install keys only; not nested under `config`) | `200 { ok:true, module, config }`. Values are clamped against the module's **install subschema** (the same `validateConfig` clamp the invoke uses). `400` if the body is not an object, or if any key is unknown or **render-scope** (never writable here; the error names the dropped keys and the allowed install keys). `404` as above. An empty `{}` is a no-op that returns the current config. |
 
 The store is **instance-scoped** (keyed on `(module_name, field_key)`), not per-user: the identity
 strip (#292) zeroed `user_email`, so there is no per-user dimension. At a `notify` (or any) hook
@@ -1998,11 +2015,15 @@ are documented here for total coverage. The API returns them wrapped (`{ cast }`
 | `ref_keys` | `{ key, mime }[]` | LoRA training reference images. |
 | `source_keys` | `{ key, mime }[]` | Human-uploaded source photos (multi-ref conditioning). |
 | `created_at` / `updated_at` | string | Timestamps. |
-| `lora_key` | string \| null | R2 key of the trained LoRA. |
-| `lora_status` | `"idle"\|"training"\|"ready"\|"failed"` | Training state. |
-| `lora_job_id` | string \| null | In-flight training job. |
-| `lora_error` | string \| null | Last training error. |
-| `lora_trained_at` | string \| null | When trained. |
+| `lora_key` | string \| null | R2 key of the trained **SDXL** identity LoRA (keyframes). |
+| `lora_status` | `"idle"\|"training"\|"ready"\|"failed"` | **Legacy shared** last training-job state across SDXL + Wan. `"ready"` does not imply both families have adapters -- use `sdxl_lora_ready` / `wan_lora_ready` (cf#383). |
+| `lora_job_id` | string \| null | In-flight training job (shared slot). |
+| `lora_error` | string \| null | Last training failure when status is `failed`. Non-null alone is not a failure predicate: ops harvest notes have also been written here on ready rows (cf#295). |
+| `lora_trained_at` | string \| null | When a train last completed (either family). |
+| `wan_lora_key_high` | string \| null | R2 key of the Wan high-noise expert adapter. |
+| `wan_lora_key_low` | string \| null | R2 key of the Wan low-noise expert adapter. |
+| `sdxl_lora_ready` | boolean | Derived: SDXL identity adapter present (`lora_key` under `loras/`). Prefer for keyframe binding. |
+| `wan_lora_ready` | boolean | Derived: both Wan experts present under `loras/`. Prefer for Wan motion binding. |
 | `voice_id` | string \| null | Aura-1 speaker (one of the 12; see 2.4). null = unassigned. |
 
 ### A.2 StoryboardProject

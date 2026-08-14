@@ -43,7 +43,7 @@ describe("clampInstallPatch (the write clamp = store->invoke round-trip)", () =>
 
   it("REJECTS a render-scope key (not writable via the install store)", () => {
     const out = clampInstallPatch(MIXED, {}, { quality_tier: "final", retries: 9 });
-    // render keys never enter the install store; only the (defaulted) install field is present.
+    // Pure clamp still drops; the PATCH route (cf#387) 400s before write when body keys are not install-scope.
     expect(out).toEqual({ notify_email: "" });
     expect(out).not.toHaveProperty("quality_tier");
     expect(out).not.toHaveProperty("retries");
@@ -53,6 +53,15 @@ describe("clampInstallPatch (the write clamp = store->invoke round-trip)", () =>
     const out = clampInstallPatch(MIXED, {}, { notify_email: 12345, bogus: "x" });
     // a non-string notify_email falls back to its schema default ("") via validateConfig
     expect(out).toEqual({ notify_email: "" });
+  });
+
+  it("installFieldKeys is the allow-list the PATCH route uses to refuse silent discards (cf#387)", () => {
+    // Nested body operators often send ({ config: { notify_email } }) -- `config` is not install-scope.
+    const body = { config: { notify_email: "ops@example.org" } };
+    const allowed = new Set(installFieldKeys(MIXED));
+    const dropped = Object.keys(body).filter((k) => !allowed.has(k));
+    expect(dropped).toEqual(["config"]);
+    expect(installFieldKeys(MIXED)).toEqual(["notify_email"]);
   });
 
   it("merges a patch over current stored values", () => {

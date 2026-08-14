@@ -87,6 +87,17 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+      # cf#539/cf#510: these two scripts drive scripts/changelog-entry-required.py and
+      # scripts/changelog-assemble.py against synthetic fixtures, including fixtures that
+      # reproduce the exact bugs each guards against (a two-dot false pass, an assemble run that
+      # would target the wrong heading). Plain self-checking scripts (non-zero exit on any failed
+      # assertion), same shape as the container test scripts below -- not pytest-discovered, so
+      # they are invoked explicitly rather than swept up by the deploy/ suite above.
+      - name: Changelog fragment guard + assembler tests (cf#539, cf#510)
+        run: |
+          python3 tests/changelog-entry-required.test.py
+          python3 tests/changelog-assemble.test.py
+
   # CONTAINER TESTS (cf#325): the CPU containers ship their own test_*.py files and NONE of them
   # ran anywhere -- this workflow's only pytest invocation above is scoped to deploy/. A suite
   # nothing runs is indistinguishable from a suite that passes; both produce a green pipeline and
@@ -387,8 +398,19 @@ jobs:
           VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
           # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
           # deploy stayed GREEN while silently stripping the door blocks. The log line reading
-          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks is the ONLY tell, and
-          # nothing asserts this list against the module tomls that declare the markers.
+          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks was the ONLY tell.
+          #
+          # THAT IS NO LONGER TRUE AND THE OLD WORDING IS WORTH CORRECTING RATHER THAN DELETING.
+          # This comment used to end "nothing asserts this list against the module tomls that
+          # declare the markers". cf#507 shipped exactly that assertion:
+          # tests/optional-binding-wiring-cf507.test.ts derives the marker set from the module
+          # tomls and fails if any declared marker is absent from THIS env block or from the
+          # optional-var loop in fill-module-placeholders.sh, with a denominator and a negative
+          # control so an empty derivation cannot pass vacuously.
+          #
+          # Left as a correction because the stale sentence actively costs time: it invites a
+          # reader to re-file the gap as open, which is the failure mode it was warning about,
+          # pointed at itself.
           VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
           # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
           # normal state and strips the blocks, so adding these lines changes nothing until the
