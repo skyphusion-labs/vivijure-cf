@@ -3,6 +3,77 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## v1.26.0 -- 2026-08-14
+
+MINOR. Per-route authorization lands, and three telemetry fixes that the production load test is
+about to be scored on.
+
+### ⚠️ OPERATOR: THIS TAG NEEDS A SECOND COMMAND. THE DEPLOY WILL NOT TELL YOU.
+
+Migration `0020` adds `api_tokens.scope` with a DEFAULT of `consumer`. It applies in the deploy job
+the moment this tag lands, so **every named token is demoted and starts returning 403 on operator
+routes**. Restore the four live estate scopes IMMEDIATELY AFTER the deploy finishes:
+
+```bash
+npx wrangler d1 execute vivijure-studio --remote \
+  --file migrations/manual/post-0020-set-live-token-scopes.sql
+```
+
+Until it runs: slate loses `!install-config`; crew-mcp loses all 8 operator tools and any
+`studio_request` at those paths, including `POST /api/storage/reconcile`; the panel and both mobile
+clients fail to load or save module config **with no re-auth prompt** (`AUTHZ_DENY_REASON`
+deliberately does not match the paste-once regex at `public/auth-token.js:124`, because the token is
+genuinely fine, and the mobile clients carry no such prompt in any form).
+
+Every denial is a **403** -- there is no 401 path in this gate -- carrying
+`{"ev":"authz.deny",...,"required":"operator","held":"consumer"}`. **The deploy itself goes GREEN
+throughout, so nothing else will tell you this step was missed.**
+
+The file is operator-run and deliberately NOT bundled into tenant releases: a name-matching UPDATE
+in a top-level migration would silently promote a TENANT's own `conrad` or `joan` token to operator,
+which is cf#520's hole reopened under a name. Its header carries the full reasoning.
+
+### feat(authz): enforce per-route scope (cf#520, #521 + #522)
+
+`api_tokens` said WHO a credential belonged to and nothing about WHAT it may do, so every named
+token was operator-equivalent -- a consumer token could call `POST /api/storage/reconcile`, which
+rewrites an estate-wide ledger (cf#516). The `Route` type now carries a required scope field, so
+all 86 routes enumerate their scope at compile time and forgetting one does not compile.
+
+Scopes were derived from CALL SITES, never from a consumer's name: `slate-bot` 2 of 8 operator
+routes, `crew-mcp` 8 of 8 plus a generic passthrough, `conrad` from `public/settings.js:140,199`.
+`joan` has no call sites -- no service bears that name -- so it is recorded as a DECISION rather
+than a measurement. Both mobile clients drive all 8 operator routes but hold no token of their own;
+each takes a user-pasted Bearer.
+
+### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298, #425)
+
+A terminal write lost on the poll path left rows at `submitted` forever. The reconciler closes them,
+and writes `unknown` ONLY when RunPod cannot tell us -- never on age alone. That distinction matters:
+the upsert is first-write-wins, so booking a live job terminal makes the later genuine `completed`
+write a silent no-op, permanently. The pass is registered with `ctx.waitUntil`, and says so loudly
+when it cannot be.
+
+Note for whoever scores the run: `closed` means "no longer open", NOT "resolved" -- it counts
+`unknown` rows too (cf#523).
+
+### feat(modules): wall-clock VPC attribution for finishing fleet calls (cf#396, #440)
+
+Absent wall-clock now lands as `null` end to end rather than rendering as an observed zero, which
+would silently deflate every aggregate it was averaged into. A REPORTED zero is still kept as zero;
+that distinction is pinned by its own assertion. Follows the rule already written at
+`modules/_shared/runpod-job-log.ts:70-85` rather than inventing a second convention for one fact.
+
+### fix(telemetry): make runpod_job_log detail truncation visible (cf#320, #426)
+
+Bound raised 160 -> 480 and truncated values end in a visible marker. The bound is now pinned to its
+VALUE (`expect(DETAIL_MAX).toBe(480)`); previously every assertion tracked the imported constant, so
+halving it left all 33 tests green.
+
+### fix(finish): name the transport that actually ran a gone job (#517)
+
+### refactor(bridge): drop the two cf#393 widening casts, now that core declares the fields (#519)
+
 ## v1.25.0 -- 2026-08-14
 
 ### feat(finish-upscale): derive the upscale factor from the delivery target, explicit wins (cf#507b)
