@@ -1771,7 +1771,7 @@ The persistence + retrieval surface for `scope:"install"` fields. Behind the stu
 | method | request | response |
 |--------|---------|----------|
 | `GET /api/modules/:name/config` | none | `200 { ok:true, module, config }` -- `config` is every install field, missing ones at their schema default. `404` if the module is unknown or has no install-scope field. |
-| `PATCH /api/modules/:name/config` | a `{ field: value }` object | `200 { ok:true, module, config }`. The patch is clamped against the module's **install subschema** (the same `validateConfig` clamp the invoke uses): unknown and **render-scope** keys are dropped (never writable here). `400` if the body is not an object; `404` as above. |
+| `PATCH /api/modules/:name/config` | a flat `{ field: value }` object (install keys only; not nested under `config`) | `200 { ok:true, module, config }`. Values are clamped against the module's **install subschema** (the same `validateConfig` clamp the invoke uses). `400` if the body is not an object, or if any key is unknown or **render-scope** (never writable here; the error names the dropped keys and the allowed install keys). `404` as above. An empty `{}` is a no-op that returns the current config. |
 
 The store is **instance-scoped** (keyed on `(module_name, field_key)`), not per-user: the identity
 strip (#292) zeroed `user_email`, so there is no per-user dimension. At a `notify` (or any) hook

@@ -35,8 +35,10 @@ export type InvokeResponse<O = unknown> =
   | { ok: true; pending: true; poll: string }
   | { ok: false; error: string };
 export interface PollRequest { poll: string; }
+// pending may carry submitted_at (epoch ms) + elapsed_ms so a caller can enforce a timeout without
+// inventing a wall-clock impression (#391). Both are optional for older callers / legacy tokens.
 export type PollResponse<O = unknown> =
-  | { ok: true; pending: true }
+  | { ok: true; pending: true; submitted_at?: number; elapsed_ms?: number }
   | { ok: true; output: O }
   | { ok: false; error: string };
 
