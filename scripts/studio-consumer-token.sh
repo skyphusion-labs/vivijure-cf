@@ -15,7 +15,8 @@
 # state, `consumer` for one tenant's own data however destructive. THE AXIS IS WHOSE DATA, NOT HOW
 # VIOLENT THE VERB -- deleting your own cast portrait is consumer work. There is deliberately no
 # default: a default here is a guess about privilege, and the two ways to guess wrong are a live
-# consumer that 401s or the hole cf#520 exists to close, reopened under a new name. Derive the
+# consumer that 403s (the gate has no 401 path) or the hole cf#520 exists to close, reopened under
+# a new name. Derive the
 # scope from what the consumer actually CALLS, never from its job title.
 #   scripts/studio-consumer-token.sh revoke <name>
 #   scripts/studio-consumer-token.sh list

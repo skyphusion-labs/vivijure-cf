@@ -9,9 +9,10 @@
 --
 -- ITS VALUE IS DELIBERATE AND IT HAS A CONSEQUENCE THE OPERATOR MUST SEQUENCE: 'consumer' is the
 -- least privilege, so applying this migration DOWNGRADES every existing named token to consumer
--- until it is reissued. That is the safe direction (a consumer token that needed more 401s loudly;
+-- until it is reissued. That is the safe direction (a consumer token that needed more fails CLOSED with a 403 -- there is no 401 path in this gate;
 -- an operator default would leave the hole open under a new name), but it means the reissue has to
--- happen with the tag that applies this migration, not after it. Migrations apply in the DEPLOY
+-- happen with the tag that applies this migration, not after it -- which is why the UPDATE at the
+-- bottom of this file does exactly that. Migrations apply in the DEPLOY
 -- job on a version tag, so merging this is inert -- tagging is the moment it lands.
 --
 -- The CHECK constraint is not retroactive: SQLite does not re-evaluate it for rows that predate
@@ -20,3 +21,44 @@
 ALTER TABLE api_tokens
   ADD COLUMN scope TEXT NOT NULL DEFAULT 'consumer'
   CHECK (scope IN ('operator', 'consumer'));
+
+-- ---------------------------------------------------------------------------------------------
+-- THE FOUR LIVE TOKENS, SET BY NAME. Added before this migration ever ran anywhere (verified: no
+-- `scope` column in prod `api_tokens`, and 0 of 52 `v*` tags contain this file, so it has reached
+-- no tenant studio either). Amending it in place is therefore safe and leaves no split-brain
+-- between a DB that ran the old version and one that ran this.
+--
+-- WHY THIS IS HERE AND NOT A POST-TAG REISSUE. The header above is right that the DEFAULT must
+-- stay `consumer` and right that a blanket operator default would reopen cf#520. This does not do
+-- that: it names four rows. What it removes is the WINDOW. Migrations apply in the deploy job, so
+-- without these lines every one of these credentials 403s from the moment the tag deploys until a
+-- human finishes reissuing -- and `reissue` through studio-consumer-token.sh means revoke+mint,
+-- i.e. new plaintext that has to reach a browser, a crew member, slate's env and vivijure-mcp's
+-- config before service resumes. Setting the column by name costs nothing, moves no secret, and
+-- the end state is identical to a reissue that happened to choose these values.
+--
+-- A token minted AFTER this migration still gets its scope explicitly from `mint <name> <scope>`,
+-- which has no default and refuses to run without one. Nothing here weakens that.
+--
+-- SCOPE EVIDENCE (derived from call sites, never from the consumer's name -- cf#520):
+--   slate-bot  MEASURED  2 of 8 operator routes: GET + PATCH /api/modules/:name/config,
+--                        slate/studio.mjs:101,103, reached live from bot.mjs behind !install-config.
+--                        Slate has no arbitrary-path escape hatch, so its surface really is bounded.
+--   crew-mcp   MEASURED  8 of 8 operator routes, vivijure-mcp/src/mcp-tools.ts:998-1088, PLUS
+--                        studio_request at :1810, a documented generic passthrough to any path.
+--   conrad     MEASURED  the operator login; public/settings.js:140,199 calls an operator route,
+--                        and settings.html is the only panel page that reaches one.
+--   joan       DECIDED   no call sites exist: no service is named `joan`, so its scope is a fact
+--                        about which pages a person opens and code cannot answer it. Conrad's call,
+--                        2026-08-14: operator. Joan maintains public/settings.js -- the file holding
+--                        the two operator call sites -- so a consumer scope would break the page she
+--                        owns with no re-auth prompt (AUTHZ_DENY_REASON deliberately does not match
+--                        the paste-once regex in public/auth-token.js:124), which reads as a release
+--                        regression rather than a credential problem. Recorded as a DECISION, not a
+--                        measurement, so a later reader does not mistake it for one.
+--
+-- Revoked rows are deliberately left at the `consumer` default: they authenticate nothing.
+UPDATE api_tokens
+   SET scope = 'operator'
+ WHERE name IN ('conrad', 'slate-bot', 'joan', 'crew-mcp')
+   AND revoked_at IS NULL;
