@@ -423,7 +423,30 @@ function maybeScheduleHistoryRefresh(rows) {
   const TERMINAL = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
   const hasInFlight = rows.some((r) => TERMINAL.indexOf(r.status) < 0);
   if (!hasInFlight) return;
-  historyRefreshTimer = setTimeout(loadHistory, HISTORY_AUTO_REFRESH_MS);
+  // cf#515: jittered. This one ALREADY sheds load correctly (the document.hidden
+  // guard four lines up is the pattern the render poll was missing), but it was
+  // still a flat 30s self-rescheduling timer, so N panels opened in the same window
+  // converge onto one boundary exactly as the render poll did. No backoff arm: this
+  // function is called from loadHistory's SUCCESS path only, so there is no error
+  // re-arm to back off.
+  historyRefreshTimer = setTimeout(
+    loadHistory,
+    pollPolicy().nextPollDelayMs({ baseMs: HISTORY_AUTO_REFRESH_MS }),
+  );
+}
+
+// cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
+// PR #563 for the render poll). Resolved at CALL time rather than load time,
+// because several vitest suites `eval` this file in plain Node where the global
+// does not exist; only a live poll needs the policy. It THROWS when the script is
+// missing rather than falling back to a flat interval: a silent fallback would
+// reintroduce exactly the unjittered loop this change removes, and would read as
+// working.
+function pollPolicy() {
+  var ps = (typeof pollSchedule !== "undefined" && pollSchedule)
+    || (typeof globalThis !== "undefined" && globalThis.pollSchedule);
+  if (!ps) throw new Error("poll-schedule.js is not loaded; refusing to poll unjittered (cf#515)");
+  return ps;
 }
 
 // v0.37.1: signature now takes the filtered subset AND the total count
