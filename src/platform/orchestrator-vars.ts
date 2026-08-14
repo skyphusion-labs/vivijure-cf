@@ -45,3 +45,9 @@ export const ORCHESTRATOR_VAR_KEYS = [
   // renders no link, the deliberate self-host behaviour.
   "ABUSE_REPORT_URL",
 ] as const;
+// cf#287 STUDIO_RELEASE / STUDIO_GIT_SHA are intentional NOT listed here yet. They are optional
+// identity overrides (src/studio-release.ts falls back to the baked package version when unset),
+// and a key that lands in required_vars without a TENANT_STUDIO_VAR_DISPOSITION entry on the
+// control plane refuses every provision (R2_STORAGE_QUOTA_MODE comment: disposition first). When
+// the plane wants tenants.studio_release projected on the wire it adds disposition + binds the
+// var; until then the baked PACKAGE_VERSION already distinguishes tag deploys.
