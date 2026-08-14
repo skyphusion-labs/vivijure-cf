@@ -48,8 +48,27 @@ export interface Env {
   R2_S3_BUCKET?: string;
 
   // RunPod serverless render endpoint (runpod-submit.ts). Secrets.
-  RUNPOD_API_KEY: SecretsStoreSecret | string;
+  //
+  // RUNPOD_API_KEY IS OPTIONAL AS OF cp#321, and the optionality is the product statement rather
+  // than a loosened type. On a SHARED hosted tenant this binding MUST NOT EXIST: the studio reaches
+  // RunPod through the control-plane proxy and holds no RunPod credential it could extract (Conrad,
+  // 2026-08-03). Declaring it required said the opposite -- that every studio always holds our key.
+  // Nothing in src/ dereferences it; it is read through core's `runpodRoute`, which tolerates an
+  // absent binding and refuses honestly. RUNPOD_ENDPOINT_ID stays REQUIRED because the plane binds
+  // endpoint ids on BOTH modes; only the credential differs between them.
+  RUNPOD_API_KEY?: SecretsStoreSecret | string;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret | string;
+  // The control-plane RunPod proxy pair (cp#321). Bound by the plane for `runpod_mode = 'shared'`
+  // ONLY, which is why both are optional: dedicated, BYO and self-host bind neither and take the
+  // direct path unchanged. BASE is plain_text (the plane's public origin + `/api/runpod/v2`), TOKEN
+  // is the per-tenant `vjp1.<tenant>.<mac>` secret.
+  //
+  // THE BRANCH IS ON BASE BEING BOUND AND IS NEVER A FAILOVER. A studio with the base bound and the
+  // token missing REFUSES; it does not reach for RUNPOD_API_KEY. Resolution lives in core
+  // (`runpodRoute`), reached here through modules/_shared/runpod-route.ts, so there is exactly one
+  // implementation of that rule in the estate.
+  RUNPOD_PROXY_BASE?: SecretsStoreSecret | string;
+  RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
   // Dedicated Wan 2.2 A14B LoRA-training endpoint (runpod-submit submitTrainWanLoraJob, cf#29). Optional
   // so a deploy without Wan training still typechecks; handleCastTrainWanLora fails loud if it is unset.
   RUNPOD_WAN_TRAIN_ENDPOINT_ID?: SecretsStoreSecret | string;
