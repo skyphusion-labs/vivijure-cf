@@ -203,7 +203,10 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
     // The container lost the job (its store is in-process; a restart drops it). Brief grace for a
     // post-submit race; past it, report gone so the core re-dispatches -- the deterministic output key
     // makes a re-run idempotent (#141 GC-grace discipline, container flavor).
-    if (Date.now() - st.submittedAt < CONTAINER_NOTFOUND_GRACE_MS) {
+    // No submit time => the grace window is unmeasurable, so it is NOT granted. Same outcome as
+    // before (epoch 0 always exceeded the window); the absence is now explicit rather than
+    // disguised as a very old timestamp.
+    if (st.submittedAt !== null && Date.now() - st.submittedAt < CONTAINER_NOTFOUND_GRACE_MS) {
       return { ok: true, pending: true };
     }
     logVpcAsyncTerminal({

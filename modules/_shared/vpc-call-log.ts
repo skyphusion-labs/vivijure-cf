@@ -42,15 +42,16 @@ export interface VpcCallRecord {
   route: string;
   mode: VpcCallMode;
   outcome: VpcCallOutcome;
-  /** Wall-clock start of THIS hop (Date.now at fetch begin), epoch ms. */
-  startedAtMs: number;
-  /** Wall-clock duration of THIS hop in ms. */
-  elapsedMs: number;
+  /** Wall-clock start of THIS hop (Date.now at fetch begin), epoch ms. `null` = not measurable. */
+  startedAtMs: number | null;
+  /** Wall-clock duration of THIS hop in ms. `null` = not measurable (NOT the same as 0). */
+  elapsedMs: number | null;
   /**
    * For async_poll terminal events: wall-clock from the original submit (poll token submittedAt)
-   * to this terminal observation. Absent on sync / submit / non-terminal poll.
+   * to this terminal observation. Absent on sync / submit / non-terminal poll, and `null` when
+   * the poll token carried no submit time -- absent, never 0.
    */
-  jobElapsedMs?: number;
+  jobElapsedMs?: number | null;
   httpStatus?: number;
   /** Container async job id when known. */
   containerJobId?: string;
@@ -63,15 +64,30 @@ export interface VpcCallRecord {
 /** Applied-tag prefix so film job history carries wall-clock without inventing a billing column. */
 export const VPC_ELAPSED_APPLIED_PREFIX = "vpc:elapsed_ms=";
 
-/** Pure: format the applied tag. Rounds to integer ms; never negative. */
-export function vpcElapsedAppliedTag(elapsedMs: number): string {
-  const n = Number.isFinite(elapsedMs) ? Math.max(0, Math.round(elapsedMs)) : 0;
-  return VPC_ELAPSED_APPLIED_PREFIX + n;
+/**
+ * Pure: format the applied tag. Rounds to integer ms; never negative.
+ *
+ * Returns `null` when the duration is not measurable (null/undefined/NaN/Infinity). It does NOT
+ * fall back to 0: a 0 would read as a real measurement of a call that took no time and would
+ * under-count every total built from these tags. A REPORTED zero is kept as zero -- the rule is
+ * that ABSENT becomes null, not that zero is forbidden. Same rule the RunPod job log enforces
+ * (modules/_shared/runpod-job-log.ts), stated once here so no caller can reintroduce a zero.
+ */
+export function vpcElapsedAppliedTag(elapsedMs: number | null | undefined): string | null {
+  if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs)) return null;
+  return VPC_ELAPSED_APPLIED_PREFIX + Math.max(0, Math.round(elapsedMs));
 }
 
-/** Pure: append the tag once (idempotent if already present). Does not mutate the input array. */
-export function withVpcElapsedApplied(applied: string[], elapsedMs: number): string[] {
+/**
+ * Pure: append the tag once (idempotent if already present). Does not mutate the input array.
+ *
+ * An unmeasurable duration adds NOTHING. Applied history then carries no wall-clock for that
+ * call, which is the honest reading -- a `vpc:elapsed_ms=0` on a completed render would be a
+ * measurement we never took.
+ */
+export function withVpcElapsedApplied(applied: string[], elapsedMs: number | null | undefined): string[] {
   const tag = vpcElapsedAppliedTag(elapsedMs);
+  if (tag === null) return [...applied];
   if (applied.some((t) => t.startsWith(VPC_ELAPSED_APPLIED_PREFIX))) {
     return applied.map((t) => (t.startsWith(VPC_ELAPSED_APPLIED_PREFIX) ? tag : t));
   }
@@ -92,9 +108,16 @@ export function logVpcCall(rec: VpcCallRecord): void {
       route: rec.route,
       mode: rec.mode,
       outcome: rec.outcome,
-      started_at_ms: Math.floor(rec.startedAtMs),
-      elapsed_ms: Math.max(0, Math.round(rec.elapsedMs)),
+      // ABSENT IS OMITTED, NEVER ZEROED. A missing started_at_ms/elapsed_ms leaves the key off
+      // the line entirely, so a consumer sees "not reported" instead of a call that began at the
+      // epoch or took no time. A REPORTED zero is still written as 0.
     };
+    if (typeof rec.startedAtMs === "number" && Number.isFinite(rec.startedAtMs)) {
+      line.started_at_ms = Math.floor(rec.startedAtMs);
+    }
+    if (typeof rec.elapsedMs === "number" && Number.isFinite(rec.elapsedMs)) {
+      line.elapsed_ms = Math.max(0, rec.elapsedMs === 0 ? 0 : Math.round(rec.elapsedMs));
+    }
     if (typeof rec.jobElapsedMs === "number" && Number.isFinite(rec.jobElapsedMs)) {
       line.job_elapsed_ms = Math.max(0, Math.round(rec.jobElapsedMs));
     }
@@ -215,7 +238,8 @@ export function logVpcAsyncTerminal(args: {
   binding: string;
   route: string;
   outcome: Extract<VpcCallOutcome, "completed" | "failed" | "not_found" | "error">;
-  submittedAtMs: number;
+  /** Poll-token submit time, epoch ms. `null` when the token carried none. */
+  submittedAtMs: number | null;
   pollElapsedMs?: number;
   httpStatus?: number;
   containerJobId?: string;
@@ -223,12 +247,12 @@ export function logVpcAsyncTerminal(args: {
   project?: string;
   contextJobId?: string;
   nowMs?: number;
-}): number {
+}): number | null {
   const now = typeof args.nowMs === "number" ? args.nowMs : Date.now();
-  const jobElapsedMs =
-    typeof args.submittedAtMs === "number" && args.submittedAtMs > 0
-      ? Math.max(0, now - args.submittedAtMs)
-      : 0;
+  // No submit time => no job duration. null, never 0.
+  const haveSubmit =
+    typeof args.submittedAtMs === "number" && Number.isFinite(args.submittedAtMs) && args.submittedAtMs > 0;
+  const jobElapsedMs = haveSubmit ? Math.max(0, now - (args.submittedAtMs as number)) : null;
   logVpcCall({
     module: args.module,
     service: args.service,
@@ -236,7 +260,7 @@ export function logVpcAsyncTerminal(args: {
     route: args.route,
     mode: "async_poll",
     outcome: args.outcome,
-    startedAtMs: args.submittedAtMs > 0 ? args.submittedAtMs : now,
+    startedAtMs: haveSubmit ? (args.submittedAtMs as number) : null,
     elapsedMs: typeof args.pollElapsedMs === "number" ? args.pollElapsedMs : jobElapsedMs,
     jobElapsedMs,
     httpStatus: args.httpStatus,

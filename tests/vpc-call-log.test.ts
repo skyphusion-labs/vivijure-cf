@@ -17,7 +17,34 @@ describe("vpcElapsedAppliedTag / withVpcElapsedApplied", () => {
   it("formats a non-negative integer ms tag", () => {
     expect(vpcElapsedAppliedTag(1234.6)).toBe("vpc:elapsed_ms=1235");
     expect(vpcElapsedAppliedTag(-5)).toBe("vpc:elapsed_ms=0");
-    expect(vpcElapsedAppliedTag(Number.NaN)).toBe("vpc:elapsed_ms=0");
+  });
+
+  // cf#396: ABSENT BECOMES NULL, NEVER 0. A 0 would read as a real measurement of a call that
+  // took no time and under-count every total built from these tags. This is the same rule the
+  // RunPod job log states in modules/_shared/runpod-job-log.ts.
+  it("returns null for a duration it could not measure, and never a zero", () => {
+    expect(vpcElapsedAppliedTag(Number.NaN)).toBeNull();
+    expect(vpcElapsedAppliedTag(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(vpcElapsedAppliedTag(null)).toBeNull();
+    expect(vpcElapsedAppliedTag(undefined)).toBeNull();
+  });
+
+  // The other half of the rule, and the one that catches an over-correction: a duration that was
+  // REPORTED as zero is a real observation and is kept. A fix that collapsed every 0 to null
+  // would satisfy the test above and fail this one.
+  it("keeps a REPORTED zero as zero", () => {
+    expect(vpcElapsedAppliedTag(0)).toBe("vpc:elapsed_ms=0");
+    expect(withVpcElapsedApplied(["film-titles"], 0)).toEqual(["film-titles", "vpc:elapsed_ms=0"]);
+  });
+
+  it("adds NO tag at all when the duration is not measurable", () => {
+    expect(withVpcElapsedApplied(["film-titles"], null)).toEqual(["film-titles"]);
+    expect(withVpcElapsedApplied(["film-titles"], Number.NaN)).toEqual(["film-titles"]);
+    // and it must not strip a tag that is already there
+    expect(withVpcElapsedApplied(["film-titles", "vpc:elapsed_ms=7"], null)).toEqual([
+      "film-titles",
+      "vpc:elapsed_ms=7",
+    ]);
   });
 
   it("appends once and replaces an existing tag rather than stacking", () => {
