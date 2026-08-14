@@ -508,6 +508,16 @@ Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke t
 operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
 (vivijure-core, unreleased).
 
+### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
+
+`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
+null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
+
+- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
+- Legacy `lora_status` retained and documented as shared training-job state only.
+- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
+- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
+
 ## v1.20.1 -- 2026-08-05
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.

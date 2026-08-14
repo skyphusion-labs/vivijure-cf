@@ -7,12 +7,12 @@ import {
   getCastById,
   markLoraReady,
   setPortrait,
-  toPublicCast,
   updateCast,
   type CastMember,
   type CastRefImage,
   type LoraStatus,
 } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "./cast-public";
 import { isValidVoiceId } from "@skyphusion-labs/vivijure-core/voices";
 import { emitTar, readTar } from "@skyphusion-labs/vivijure-core/tar";
 import type { Env } from "./env";

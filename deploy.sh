@@ -124,7 +124,7 @@ export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
 # picker that offers nothing -- which is what this list did until the omission was caught.
 STANDARD_MODULES="own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
 image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo vidu-q3 \
-alibaba-wan film-titles subtitle beat-sync audio-master"
+alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video film-titles subtitle beat-sync audio-master"
 # alibaba-wan-lora is DELISTED for v1.0 (#771): custom-LoRA path unverified; source kept, re-add when fixed.
 # SATELLITES = the 3 opt-in GPU finish modules, each on its own separate RunPod endpoint.
 SATELLITE_MODULES="finish-upscale finish-lipsync speech-upscale"
