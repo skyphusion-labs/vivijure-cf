@@ -46,6 +46,29 @@ export type RunpodJobOutcome =
   /** Past RunPod retention with no answer; honest rather than guessing completed (cf#298). */
   | "unknown";
 
+/**
+ * The outcomes we OBSERVED a job reach. `unknown` is deliberately absent: it is the one outcome that
+ * means we STOPPED ASKING, not that we saw anything (cf#523).
+ *
+ * WHY THIS IS EXPORTED RATHER THAN LEFT TO EACH QUERY. A terminal write fills `terminal_at` for every
+ * outcome except `submitted`, so **`terminal_at IS NOT NULL` IS NOT A COMPLETION PREDICATE** -- it is
+ * true of a job we watched finish and equally true of one we gave up on, and the error is silent and
+ * in the flattering direction. Any completion or capacity metric must key on `outcome`, and this is
+ * the list to key it on. For successes only, `outcome = 'completed'` is narrower still.
+ */
+export const RESOLVED_RUNPOD_OUTCOMES: readonly RunpodJobOutcome[] = [
+  "completed",
+  "backend-error",
+  "failed",
+  "gone",
+  "cancelled",
+];
+
+/** True when the outcome is one we observed, rather than one we gave up on. See cf#523. */
+export function isResolvedRunpodOutcome(outcome: string): boolean {
+  return (RESOLVED_RUNPOD_OUTCOMES as readonly string[]).includes(outcome);
+}
+
 export interface RunpodJobRecord {
   /** RunPod job id. The upsert key; a blank id is dropped (nothing to reconcile against later). */
   jobId: string;
@@ -442,8 +465,8 @@ export async function reconcileOpenRunpodJobs(
     maxRows?: number;
     nowMs?: number;
   },
-): Promise<{ examined: number; closed: number; unknown: number }> {
-  const out = { examined: 0, closed: 0, unknown: 0 };
+): Promise<ReconcilePassCounts> {
+  const out: ReconcilePassCounts = { examined: 0, resolved: 0, unknown: 0, stillOpen: 0, skipped: 0 };
   try {
     if (!db) return out;
     const nowMs = args.nowMs ?? Date.now();
@@ -462,7 +485,10 @@ export async function reconcileOpenRunpodJobs(
     for (const row of rows) {
       out.examined += 1;
       const jobId = row.job_id;
-      if (!jobId) continue;
+      if (!jobId) {
+        out.skipped += 1;
+        continue;
+      }
       const ageSec =
         row.submitted_at === null || row.submitted_at === undefined
           ? unknownAfter + 1
@@ -482,7 +508,7 @@ export async function reconcileOpenRunpodJobs(
           submittedAtMs: row.submitted_at === null ? undefined : row.submitted_at * 1000,
           detail: "reconcile: job not found on RunPod",
         }, nowMs);
-        out.closed += 1;
+        out.resolved += 1;
         continue;
       }
       if (status !== null) {
@@ -495,7 +521,7 @@ export async function reconcileOpenRunpodJobs(
             submittedAtMs: row.submitted_at === null ? undefined : row.submitted_at * 1000,
             detail: "reconcile: runpod status " + status,
           }, nowMs);
-          out.closed += 1;
+          out.resolved += 1;
           continue;
         }
         // RunPod ANSWERED and the answer is non-terminal (IN_QUEUE / IN_PROGRESS / anything else we
@@ -503,6 +529,7 @@ export async function reconcileOpenRunpodJobs(
         // reason to CONCLUDE -- falling through here would write `unknown` over a running job, and
         // the upsert's `WHERE runpod_job_log.terminal_at IS NULL` makes that permanent, so the real
         // terminal write arriving later is a silent no-op. Leave it open; the next pass re-asks.
+        out.stillOpen += 1;
         continue;
       }
       // Only reached when RunPod could not tell us anything (status === null: a transient error, or
@@ -517,13 +544,38 @@ export async function reconcileOpenRunpodJobs(
           detail: "reconcile: past retention with no terminal status",
         }, nowMs);
         out.unknown += 1;
-        out.closed += 1;
+      } else {
+        out.stillOpen += 1;
       }
     }
   } catch (e) {
     warn("reconcile unusable (module=" + args.module + "): " + describe(e));
   }
   return out;
+}
+
+/**
+ * What one reconcile pass did, split so no caller can read a single number and mistake it for
+ * "finished" (cf#523).
+ *
+ * The predecessor field was `closed`, meaning "this row is no longer open" -- true of a row we
+ * watched finish AND of one we gave up on. Scoring a load test on it counts abandonment as
+ * resolution, silently and in the flattering direction, so the field is gone rather than renamed:
+ * a name nobody can reach cannot be misread.
+ *
+ * INVARIANT, asserted in the suite: `examined === resolved + unknown + stillOpen + skipped`.
+ */
+export interface ReconcilePassCounts {
+  /** Open rows this pass looked at. */
+  examined: number;
+  /** Rows written to a terminal outcome WE OBSERVED (see RESOLVED_RUNPOD_OUTCOMES). */
+  resolved: number;
+  /** Rows written `unknown`: past retention with no answer. We stopped asking. NOT resolved. */
+  unknown: number;
+  /** Rows deliberately left open for the next pass (alive, or too young to give up on). */
+  stillOpen: number;
+  /** Rows with no job id to reconcile against. Malformed, not pending. */
+  skipped: number;
 }
 
 /** Fire-and-forget reconcile; never rejects. */

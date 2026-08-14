@@ -56,7 +56,9 @@ interface Env {
   TELEMETRY_DB?: D1Database;
 }
 
-const MANIFEST: ModuleManifest = {
+// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
+// against a transcribed copy in the test file. finish-lipsync already exported its own.
+export const MANIFEST: ModuleManifest = {
   name: "finish-blender",
   version: "0.1.0",
   api: MODULE_API,
@@ -76,6 +78,13 @@ const MANIFEST: ModuleManifest = {
   },
   // After lipsync (15), before upscale (20): grade at native resolution.
   ui: { section: "finish", icon: "palette", order: 18 },
+  // cf#537, and this line IS the ticket. `finish` is a chain hook, so binding this module used to be
+  // the entire enrolment: it ran on every shot of every film and applied a real `filmic_warm` grade
+  // at strength 1.0 to footage nobody asked to grade, while the job reported done / 0 failed /
+  // 0 degraded. Conrad ruled a colour grade is for ANIMATION SHOTS, named per render. `opt_in` means
+  // the core omits this module from the finish chain unless a caller names it in that render's
+  // `select`. Naming it still runs it -- opt_in is "not unless asked", never "not ever".
+  participation: "opt_in",
   finish_artifacts: {
     output_key: { kind: "append_suffix", suffix: "_bl" },
     applied: [{ tag: "blender:{job_type|grade}:{preset|filmic_warm}" }],
