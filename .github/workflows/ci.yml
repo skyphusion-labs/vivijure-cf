@@ -98,6 +98,14 @@ jobs:
           python3 tests/changelog-entry-required.test.py
           python3 tests/changelog-assemble.test.py
 
+      # cf#372. The hosted studio pin is advanced by scripts/advance-studio-pin.sh on the release
+      # path, where a defect would repoint every future hosted tenant. This suite drives every
+      # refusal arm against a local stand-in for the GitHub API, and its load-bearing assertions are
+      # the ones about requests NOT sent: a refusal that still issued the PATCH would print a
+      # refusal and change hosted anyway, which an exit-code-only test cannot distinguish.
+      - name: Hosted studio pin advance guards (cf#372)
+        run: python3 tests/advance-studio-pin.test.py
+
   # CONTAINER TESTS (cf#325): the CPU containers ship their own test_*.py files and NONE of them
   # ran anywhere -- this workflow's only pytest invocation above is scoped to deploy/. A suite
   # nothing runs is indistinguishable from a suite that passes; both produce a green pipeline and
@@ -331,7 +339,19 @@ jobs:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
     # (and no merge can bite an in-flight render). To release: push a SemVer tag vX.Y.Z.
-    needs: [ci, assert-on-main]
+    # cf#526 follow-up: `container-tests` and `migrations-gate` BOTH RUN on a tag push -- neither
+    # carries an `if:`, so the workflow's `tags: ["v*"]` trigger starts them -- and neither was in
+    # this list. A tag could therefore deploy to production with either one RED, and nothing would
+    # report that: the deploy job simply never looked.
+    #
+    # `migrations-gate` is the one that makes this urgent. It guards SCHEMA. A deploy that ships a
+    # worker whose migrations gate failed is the shape where the code arrives and the database it
+    # expects does not.
+    #
+    # Adding them cannot deadlock: both run unconditionally on this trigger, so `needs` will always
+    # resolve rather than wait on a job that never starts. That is the failure mode to check before
+    # widening a `needs` array, and it is why this is safe rather than merely stricter.
+    needs: [ci, container-tests, migrations-gate, assert-on-main]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: node:22-alpine

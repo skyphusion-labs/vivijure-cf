@@ -34,6 +34,14 @@ export interface ModuleManifest {
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
   finish_artifacts?: FinishArtifactsDecl;
+  /** OPTIONAL, additive (cf#537). Whether this module runs when a render carries NO explicit
+   *  selection for its hook. "default" or ABSENT = yes, the pre-cf#537 behaviour; "opt_in" = it runs
+   *  ONLY when a caller NAMES it in that render's selection. The module declares its own nature; the
+   *  participation policy lives in the core (selectForChain). Naming a module overrides this in the
+   *  permissive direction and never in the restrictive one. See the core src/modules/types.ts for the
+   *  full contract text, including why the permissive default is a stated limit rather than an
+   *  oversight. */
+  participation?: "default" | "opt_in";
   /** OPTIONAL, additive: this finish module drives its output from the shot dialogue audio
    *  (`FinishInput.audio_key`) and is calibrated to the source frame rate, so the core runs it on the
    *  native-fps clip BEFORE any interpolation for a shot that has a dialogue line (vivijure #584). The

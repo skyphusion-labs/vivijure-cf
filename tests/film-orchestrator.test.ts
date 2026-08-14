@@ -2512,14 +2512,14 @@ describe("filmProgressMarker (#136 progress fingerprint)", () => {
 
   it("clips: counts done clip shots in the marker", () => {
     const clipJob = { shots: [{ status: "done" }, { status: "pending" }] } as unknown as Parameters<typeof filmProgressMarker>[1];
-    expect(filmProgressMarker({ ...base, phase: "clips" }, clipJob)).toBe("clips:1");
+    expect(filmProgressMarker({ ...base, phase: "clips" }, clipJob)).toBe("clips:1:0");
   });
 
   it("clips: marker advances as more shots finish (monotonic forward progress)", () => {
     const one = { shots: [{ status: "done" }, { status: "pending" }] } as unknown as Parameters<typeof filmProgressMarker>[1];
     const two = { shots: [{ status: "done" }, { status: "done" }] } as unknown as Parameters<typeof filmProgressMarker>[1];
     expect(filmProgressMarker({ ...base }, one)).not.toBe(filmProgressMarker({ ...base }, two));
-    expect(filmProgressMarker({ ...base }, two)).toBe("clips:2");
+    expect(filmProgressMarker({ ...base }, two)).toBe("clips:2:0");
   });
 
   it("finish: counts done finish shots", () => {
@@ -2530,12 +2530,12 @@ describe("filmProgressMarker (#136 progress fingerprint)", () => {
         { shot_id: "shot_02", clip_key: "k2", chain: ["M"], idx: 0, status: "pending", applied: [] },
       ] as FinishShot[],
     };
-    expect(filmProgressMarker(job, null)).toBe("finish:1");
+    expect(filmProgressMarker(job, null)).toBe("finish:1:0");
   });
 
   it("a phase with no per-shot fan-out reports :0 (stall window runs from phase start, as before)", () => {
-    expect(filmProgressMarker({ ...base, phase: "keyframe" }, null)).toBe("keyframe:0");
-    expect(filmProgressMarker({ ...base, phase: "assemble" }, null)).toBe("assemble:0");
+    expect(filmProgressMarker({ ...base, phase: "keyframe" }, null)).toBe("keyframe:0:0");
+    expect(filmProgressMarker({ ...base, phase: "assemble" }, null)).toBe("assemble:0:0");
   });
 });
 
