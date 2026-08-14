@@ -13,7 +13,7 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves. 85 in `API_ROUTES` plus `GET /api/modules`, which is dispatched before the table (it opts into a 60s isolate cache) and would otherwise be silently uncounted. |
+| Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Until cf#520, 85 were in the table and `GET /api/modules` was dispatched inline before it, so every consumer of this number had to compensate by hand; the route was moved into the table and the compensations deleted. |
 | Panel-reachable | **66** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |

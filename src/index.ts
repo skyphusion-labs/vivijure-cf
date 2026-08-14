@@ -42,6 +42,7 @@ import {
 } from "./cast-media";
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
+import { authorizeRoute, AUTHZ_DENY_REASON, type Scope } from "./authz";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
 import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
@@ -167,7 +168,7 @@ type Handler = (req: Request, env: StudioEnv, ctx: ExecutionContext, p: Record<s
  *  deleting their own cast portrait is correct work, and a guard that refuses correct work is the
  *  guard people switch off. `POST /api/storage/reconcile` is `operator` because it rewrites an
  *  ESTATE-WIDE ledger, not because it deletes. */
-type RouteScope = "operator" | "consumer";
+type RouteScope = Scope;
 
 /** REQUIRED, deliberately. An optional field with a safe default still leaves a rule to remember;
  *  a required one makes forgetting a COMPILE ERROR, so "someone adds a route under deadline and
@@ -192,7 +193,10 @@ function match(routes: Route[], method: string, pathname: string) {
     }
     // The PATTERN travels with the match (cf#223): the router error line logs the route template
     // instead of the raw pathname, and it can only do that if the matcher says which template won.
-    if (ok) return { handler: r.handler, params: p, pattern: r.pattern };
+    // cf#520: the SCOPE travels with the match for the same reason the pattern does -- the
+    // authorization comparison happens after dispatch has chosen a route, and it can only do that
+    // if the matcher says which route won.
+    if (ok) return { handler: r.handler, params: p, pattern: r.pattern, scope: r.scope };
   }
   return null;
 }
@@ -1950,6 +1954,63 @@ const hStorageReconcile: Handler = async (_req, env) => {
   });
 };
 
+/** cf#520: the 86th route. This was dispatched INLINE inside routeRequest from the host
+ *  bootstrap (d03b57f) onward -- early because it was written FIRST, before the route-table
+ *  pattern existed, not because anything needed it early. Established before moving it: the 60s
+ *  cache is a PARAMETER of discoverModules passed identically at six call sites, so position can
+ *  neither create nor destroy it; and both intervening gates are probed false for this route
+ *  (isSpendRoute returns false for any non-POST). An inline handler carries no `scope` and NO
+ *  COMPILE ERROR EVER SAYS SO, so the required-field guarantee was exactly as complete as the
+ *  table. tests/no-inline-api-routes.test.ts is the guard for the CLASS. */
+const hModules: Handler = async (_req, env) => {
+  // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
+  // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
+  const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
+  // ONE availability computation, used by BOTH the hook report and the demo assistant gate
+  // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
+  // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
+  // gate rather than adding a second mechanism is the point: one answer to "can this host serve
+  // an AI-Gateway hook", consumed everywhere that question is asked.
+  const aiReady = await aiGatewayReady(env);
+  // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
+  // reason the panel prints verbatim.
+  // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
+  // through the SAME channel rather than growing a parallel one -- that is the whole point of
+  // cf#98. Merged, so a host missing both reports both.
+  const hooksUnavailable = {
+    ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
+    ...videoFinishHooksUnavailable(env),
+  };
+  const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
+  const abuseUrl = abuseReportUrl(env);
+  // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
+  // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
+  // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
+  // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
+  // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
+  return json(
+    modulesResponse(modules, renderConfigProjection(), {
+      dispatch: !!env.MODULE_DISPATCH,
+      ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
+      // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
+      // operator set it, because the same bundle self-hosts and must never advertise an address
+      // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
+      ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
+      ...(isDemoMode(env)
+        ? {
+            readonly: true,
+            render: { available: demoRenderEnabled(env) },
+            // Assistant capability only when the host can actually reach the gateway. This used
+            // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
+            // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
+            // hook report asks, so the two can never disagree.
+            ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
+          }
+        : {}),
+    }),
+  );
+};
+
 export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/storage/usage",                   scope: "operator",    handler: hStorageUsage },
   { method: "POST",   pattern: "/api/storage/reconcile",               scope: "operator",    handler: hStorageReconcile },
@@ -2030,6 +2091,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/whoami",                          scope: "consumer",    handler: hWhoami },
   { method: "GET",    pattern: "/api/prefs",                           scope: "consumer",    handler: hGetPrefs },
   { method: "PATCH",  pattern: "/api/prefs",                           scope: "consumer",    handler: hPatchPrefs },
+  { method: "GET",    pattern: "/api/modules",                       scope: "consumer",    handler: hModules },
   { method: "GET",    pattern: "/api/modules/installed",              scope: "operator",    handler: hListInstalledModules },
   { method: "POST",   pattern: "/api/modules/install",                scope: "operator",    handler: hInstallModule },
   { method: "DELETE", pattern: "/api/modules/install/:name",          scope: "operator",    handler: hUninstallModule },
@@ -2088,57 +2150,14 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // (below) stay open; every /api/* request must pass the AUTH_MODE gate -- the studio bearer
     // token (token mode) or a valid Access JWT (access mode / legacy unset). The dev opt-out
     // stays ALLOW_UNAUTHENTICATED, legacy path only. See src/auth-gate.ts.
+    // cf#520: the gate answers WHO is calling. It runs HERE, before any route has been matched,
+    // so it structurally cannot answer WHAT they may do -- there is no route yet. The authorization
+    // comparison therefore lives at the dispatch site below and this decision is carried forward.
+    let credential: Scope | null = null;
     if (url.pathname.startsWith("/api/")) {
       const gate = await gateApi(request, env);
       if (!gate.ok) return json({ error: gate.reason }, gate.status);
-    }
-    if (url.pathname === "/api/modules" && request.method === "GET") {
-      // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
-      // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
-      const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
-      // ONE availability computation, used by BOTH the hook report and the demo assistant gate
-      // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
-      // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
-      // gate rather than adding a second mechanism is the point: one answer to "can this host serve
-      // an AI-Gateway hook", consumed everywhere that question is asked.
-      const aiReady = await aiGatewayReady(env);
-      // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
-      // reason the panel prints verbatim.
-      // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
-      // through the SAME channel rather than growing a parallel one -- that is the whole point of
-      // cf#98. Merged, so a host missing both reports both.
-      const hooksUnavailable = {
-        ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
-        ...videoFinishHooksUnavailable(env),
-      };
-      const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
-      const abuseUrl = abuseReportUrl(env);
-      // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
-      // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
-      // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
-      // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
-      // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
-      return json(
-        modulesResponse(modules, renderConfigProjection(), {
-          dispatch: !!env.MODULE_DISPATCH,
-          ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
-          // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
-          // operator set it, because the same bundle self-hosts and must never advertise an address
-          // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
-          ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
-          ...(isDemoMode(env)
-            ? {
-                readonly: true,
-                render: { available: demoRenderEnabled(env) },
-                // Assistant capability only when the host can actually reach the gateway. This used
-                // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
-                // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
-                // hook report asks, so the two can never disagree.
-                ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
-              }
-            : {}),
-        }),
-      );
+      credential = gate.scope;
     }
     if (WELCOME_REDIRECT_PATHS.has(url.pathname) && (request.method === "GET" || request.method === "HEAD")) {
       return Response.redirect(WELCOME_REDIRECT_TARGET, 301);
@@ -2175,6 +2194,23 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     }
     const hit = match(API_ROUTES, request.method, url.pathname);
     if (hit) {
+      // cf#520: AUTHORIZATION -- the first point in the request where BOTH facts exist: what the
+      // route requires (from the table) and what the credential holds (from the gate above). Fails
+      // CLOSED on a null credential, which cannot happen for a table route today (every pattern is
+      // under /api/, asserted in tests/route-scope-authz.test.ts) and would otherwise be the way a
+      // route added outside the gated prefix reached an operator handler unauthenticated.
+      if (!authorizeRoute(hit.scope, credential)) {
+        console.warn(JSON.stringify({
+          ev: "authz.deny",
+          // The route TEMPLATE, never the raw pathname (cf#223): a pathname carries the artifact
+          // key and every :id in the URL, and this line fires on a request that is already refused.
+          route: hit.pattern,
+          method: request.method,
+          required: hit.scope,
+          held: credential,
+        }));
+        return json({ error: AUTHZ_DENY_REASON }, 403);
+      }
       try {
         return await hit.handler(request, env, ctx, hit.params);
       } catch (e) {
