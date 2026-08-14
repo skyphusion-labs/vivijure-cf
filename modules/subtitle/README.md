@@ -2,7 +2,8 @@
 
 A `film.finish`-hook module (vivijure-module/2). It burns **time-synced dialogue captions** onto the
 finished film (and/or emits a soft `.srt` sidecar) via the video-finish CPU container's `/subtitle`
-route over Workers VPC.
+route over Workers VPC. Every VPC hop records wall-clock start + duration (`vpc.call` structured log
++ optional `vpc:elapsed_ms=N` applied tag; cf#396).
 
 **Scope:** dialogue captions with **real** per-shot timing. Narration captions are **pending
 per-line narration timing -- intentionally not guessed** (see [Caption timing](#caption-timing-how-cues-are-sourced)).

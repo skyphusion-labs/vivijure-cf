@@ -35,12 +35,15 @@ export const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 4,
     locality: "local",
-    cost: "Free after hardware",
-    blurb: "Renders keyframes + motion on your own GPU -- no cloud, no per-render cost; quality scales with your card and chosen backend (12GB LTX floor, 16GB CogVideoX).",
+    // local#278: self-host CogVideoX may need registration; commercial product use is via
+    // vivijure-cf / Cloudflare partner channels. No cloud API bill on this door.    // local#278: self-host/vivijure-local = hobby + non-commercial; commercial = vivijure-cf.
+    cost: "Hardware; self-host non-commercial",
+    blurb: "Renders keyframes + motion on your own GPU (no cloud API bill). Self-host only: vivijure-local and the local-gpu door are for hobbyists and non-commercial use. Commercial use of Vivijure is supported via vivijure-cf (Cloudflare partner channels), not this door. Default 16GB CogVideoX and other self-host weights carry their own licences -- see the door licence and docs/DEPLOYMENT.md. The 12GB LTX door is a different engine and licence. Quality scales with your card and backend.",
     limits: [
       "Runs whichever local backend you point it at: LTX (12GB floor) or CogVideoX (16GB floor); bigger cards add headroom",
       "Keyframes (SDXL preview) and short i2v clips share the same card serially",
       "One GPU job at a time (a consumer card runs a single preview or i2v job)",
+      "Self-host / vivijure-local: hobby and non-commercial only (local#278). Commercial product use: vivijure-cf",
     ],
   },
   cancelable: true,

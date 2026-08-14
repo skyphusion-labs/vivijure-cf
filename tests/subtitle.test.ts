@@ -175,7 +175,9 @@ describe("subtitle module invoke (#602 async + honest degrade)", () => {
     const json = (await (await worker.fetch(pollReq(sub.poll), env)).json()) as { ok: boolean; output: { film_key: string; applied: string[]; degraded?: string } };
     expect(json.ok).toBe(true);
     expect(json.output.film_key).toBe("renders/film-x/film_subbed.mp4"); // the captioned film, not the original
-    expect(json.output.applied).toEqual(["subtitle"]);
+    expect(json.output.applied).toContain("subtitle");
+    // cf#396: wall-clock fleet VPC attribution on success (job elapsed from submit -> terminal)
+    expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
     expect(json.output.degraded).toBeUndefined();
     expect(checkHookOutput("film.finish", json.output).pass).toBe(true);
   });
@@ -184,7 +186,9 @@ describe("subtitle module invoke (#602 async + honest degrade)", () => {
     const { env } = vpcEnv({ statusResult: { status: "completed", result: { ok: true, key: "renders/film-x/film_subbed.mp4", burned: true, sidecar: true } } });
     const sub = (await (await worker.fetch(invoke(baseInput(), { mode: "both" }), env)).json()) as { poll: string };
     const json = (await (await worker.fetch(pollReq(sub.poll), env)).json()) as { ok: boolean; output: { film_key: string; applied: string[] } };
-    expect(json.output.applied).toEqual(["subtitle", "subtitle:sidecar"]);
+    expect(json.output.applied).toContain("subtitle");
+    expect(json.output.applied).toContain("subtitle:sidecar");
+    expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
     expect(json.output.film_key).toBe("renders/film-x/film_subbed.mp4");
   });
 
@@ -193,7 +197,9 @@ describe("subtitle module invoke (#602 async + honest degrade)", () => {
     const sub = (await (await worker.fetch(invoke(baseInput(), { mode: "both" }), env)).json()) as { poll: string };
     const json = (await (await worker.fetch(pollReq(sub.poll), env)).json()) as { ok: boolean; output: { film_key: string; applied: string[] } };
     expect(json.output.film_key).toBe("renders/film-x/film.mp4"); // unchanged
-    expect(json.output.applied).toEqual(["subtitle:sidecar"]);
+    expect(json.output.applied).toContain("subtitle:sidecar");
+    expect(json.output.applied).not.toContain("subtitle"); // no fake burn tag
+    expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
   });
 
   it("falls back to the SYNCHRONOUS route on a pre-#602 container", async () => {
@@ -201,7 +207,8 @@ describe("subtitle module invoke (#602 async + honest degrade)", () => {
     const json = (await (await worker.fetch(invoke(baseInput()), env)).json()) as { ok: boolean; output: { film_key: string; applied: string[] } };
     expect(calls.map((c) => new URL(c).pathname)).toEqual(["/async/subtitle", "/subtitle"]);
     expect(json.output.film_key).toBe("renders/film-x/film_subbed.mp4");
-    expect(json.output.applied).toEqual(["subtitle"]);
+    expect(json.output.applied).toContain("subtitle");
+    expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
   });
 
   it("poll surfaces a container job FAILURE (ok:false -> the core soft-degrades, fail-safe)", async () => {

@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.0",
+  version: "0.3.1",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -29,6 +29,14 @@ export const MANIFEST: ModuleManifest = {
     steps: { type: "int", default: 30, min: 1, max: 60, label: "diffusion steps" },
     guidance_scale: { type: "float", default: 6.5, min: 0, max: 20, label: "guidance scale" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
+    // cf#299: expose InstantID on the studio door. Backend default is ip_adapter;
+    // "instantid" selects the insightface face path (proven on vivijure-backend).
+    identity_method: {
+      type: "enum",
+      values: ["ip_adapter", "instantid"],
+      default: "ip_adapter",
+      label: "face identity method",
+    },
   },
   ui: { section: "keyframe", order: 10 },
   // This module is async + GPU-backed, so it implements POST /cancel: the core can stop an in-flight

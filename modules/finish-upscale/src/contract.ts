@@ -68,8 +68,21 @@ export interface FinishInput {
   // them optional -- so the producer's real shape now matches (no more `as FinishInput` cover).
   src_fps?: number;
   frames?: number;
+  // SOURCE dimensions: what this clip ACTUALLY IS, measured by the core from the mp4 tkhd box.
+  // Absence is meaningful and honest -- the backend probes the clip -- so a miss does NOT render as
+  // a value.
   width?: number;
   height?: number;
+  // cf#507b THE DELIVERY TARGET: what the FILM SHIPS AT. A DECISION, named apart from width/height
+  // rather than overloading them, because those are a measurement of the footage and conflating the
+  // two would make the upscale aim at its own input size and do nothing.
+  //
+  // Mirrors vivijure-core's FinishInput (core >= 1.11.0). This contract is VENDORED rather than
+  // imported ("Copy only what this module needs so it stays independent of the core repo"), so a
+  // field the core adds does not arrive here on a dependency bump -- it has to be mirrored, and
+  // that is why this module could not see a target the core was already sending.
+  delivery_width?: number;
+  delivery_height?: number;
   // #583 provenance: the core-computed param-hash of this step's inputs, forwarded VERBATIM into the
   // RunPod job so the container stamps `<output_key>.hash` after the artifact. Opaque here -- never
   // parse/recompute it. Absent from a legacy core => the container writes no sidecar (safe re-run).
