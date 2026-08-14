@@ -297,3 +297,66 @@ jobs:
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/manifest.json" --file "dist-release/modules/$m/manifest.json" --remote
             npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/modules/$m/worker.js" --file "dist-release/modules/$m/worker.js" --remote
           done
+
+      # ------------------------------------------------------------------------------------------
+      # ADVANCE THE HOSTED PIN AS PART OF THE RELEASE, NOT AS A FOLLOW-UP TO IT (cf#372).
+      #
+      # `STUDIO_RELEASE` on vivijure-control-plane decides which studio code a hosted tenant runs;
+      # self-host pulls the tag published above directly. When the pin trails, hosted and self-host
+      # run DIFFERENT code from the same nominal tag, against the absolute parity invariant. It has
+      # gone stale three times and twice been "fixed" by bumping it, so the advance belongs here.
+      #
+      # ORDER MATTERS AND THIS IS THE ORDER. Verify the PUBLISHED artifact, then advance. A pin
+      # pointed at a tag whose artifact is not pullable is worse than a stale pin: it trades an old
+      # studio for a broken provision.
+      #
+      # This deliberately re-downloads what a SELF-HOSTER would download rather than re-reading the
+      # tree this job just built. The two verify steps above already gate the build; a pipeline's
+      # opinion of its own output is not evidence that the published artifact is present.
+      - name: Re-verify the PUBLISHED artifact before any pin advances
+        id: verify_published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v*) ;;
+            *) echo "::notice::ref ${TAG} is not a v* tag; nothing to pin."; exit 0 ;;
+          esac
+          rm -rf published-check && mkdir published-check
+          gh release download "$TAG" --dir published-check \
+            --pattern "studio-release-$TAG.tar.gz" --pattern "manifest.json"
+          test -s "published-check/studio-release-$TAG.tar.gz"
+          test -s published-check/manifest.json
+          entries="$(tar -tzf "published-check/studio-release-$TAG.tar.gz" | wc -l)"
+          if [ "$entries" -lt 1 ]; then
+            echo "::error::the published tarball for ${TAG} opened to ZERO entries"
+            exit 1
+          fi
+          # The manifest TAG FIELD, not the filename. A filename is a claim by whoever named it;
+          # the manifest is what the provisioner reads and what it refuses on.
+          got="$(node -p "JSON.parse(require('node:fs').readFileSync('published-check/manifest.json','utf8')).tag")"
+          if [ "$got" != "$TAG" ]; then
+            echo "::error::published manifest.json declares tag ${got}, not ${TAG} -- refusing to advance a pin onto it"
+            exit 1
+          fi
+          echo "published artifact for ${TAG} verified: ${entries} entries, manifest tag ${got}."
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      # ONE DEFINITION: the logic lives in scripts/advance-studio-pin.sh and is driven by
+      # tests/advance-studio-pin.test.sh, which proves every refusal path against a local server.
+      # Inlining a second copy here is what lets the two drift.
+      #
+      # WHEN THE SECRET IS ABSENT THIS WARNS AND DOES NOT FAIL, and that trade is worth stating
+      # rather than hiding: a hard failure would break every studio release until the credential
+      # exists, and this step is an ADVANCE MECHANISM, not a gate. The gate lives in the other repo
+      # and does NOT share this step's condition -- vivijure-control-plane's deploy preflight
+      # refuses to deploy a trailing pin, and its studio-pin-drift.yml reads the LIVE Worker binding
+      # daily. A skip here is therefore observable by something the same missing secret cannot
+      # disable (cp#393).
+      - name: Advance the hosted studio pin (vivijure-control-plane)
+        if: ${{ steps.verify_published.outputs.verified == 'true' }}
+        env:
+          STUDIO_PIN_VARIABLE_TOKEN: ${{ secrets.STUDIO_PIN_VARIABLE_TOKEN }}
+        run: bash scripts/advance-studio-pin.sh "${{ github.event.inputs.tag || github.ref_name }}"
