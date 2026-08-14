@@ -368,6 +368,8 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `hooks` | `{ [hook]: string[] }` | Map of hook name -> module **names** serving it, **pre-sorted** in canonical `ui.order` then name order (section 5). The frontend consumes this verbatim and never re-sorts. A hook with no installed module is absent from the map. |
 | `catalog` | `HookCatalogEntry[]` | Every hook (independent of what is installed): `{ name, blurb, cardinality }`. |
 | `render` | `RenderConfigProjection` | Core-owned render config: `{ quality_tiers: { value, label, blurb }[], default_tier }`. See 2.3.1. |
+| `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
+| `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
 
 `HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" }`.
 `PublicModule` = the `ModuleManifest` (section 4) with `binding` removed.
@@ -1032,6 +1034,7 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
 | `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
+| `wan_lora_projection` | `{ injected, dropped }` \| undefined | cf#392: counts from the host Wan cast-LoRA projection into `alibaba-wan-lora` (`high_noise_loras` / `low_noise_loras`). `injected` = cast slots whose expert pair was presigned into the motion config; `dropped` = slots skipped by the per-pass cap. Present only when at least one slot was injected or dropped; absent on non-Wan / no-Wan-cast renders (absence is honest, never fabricated zeros). Also relayed on the planner poll view (`GET /api/storyboard/render/:jobId` -> `output.wan_lora_projection`) and on the scatter 201 body. Paired with the `film.wan_lora_projection` structured event. |
 | `download_url` | string \| undefined | Presigned GET of the finished film (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; a later poll re-issues a fresh one), added only when `phase === "done"` and `film_key` is set. |
 
 **404** `{ "error": "film job not found" }` for an unknown id.

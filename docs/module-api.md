@@ -448,10 +448,15 @@ On boot, the core reads each bound module's `module.json` and indexes them by ho
 GET /api/modules
 {
   "api": "vivijure-module/2",
+  "studio_release": "1.20.1",
   "modules": [ { "name": "finish-rife", "hooks": ["finish"], "provides": [...], "config_schema": {...}, "ui": {...} } ],
   "hooks": { "finish": ["finish-rife"], "motion.backend": ["motion-runpod"] }
 }
 ```
+
+`studio_release` (cf#287) is the studio build identity: `env.STUDIO_RELEASE` when bound, else the
+baked `package.json` version. Optional `git_sha` appears only when `env.STUDIO_GIT_SHA` is set.
+Module manifest `version` strings do not substitute for this; they track API shape, not the build.
 
 ## Contributor flow
 
