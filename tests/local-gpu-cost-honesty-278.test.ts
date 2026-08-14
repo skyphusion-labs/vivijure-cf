@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const SRC = join(import.meta.dirname, "..", "modules/local-gpu/src/index.ts");
+const SRC = join(import.meta.dirname, "..", "modules/local-gpu/src/manifest.ts");
 
 describe("local-gpu cost honesty (local#278)", () => {
   it("does not claim Free after hardware and points commercial use at vivijure-cf", () => {

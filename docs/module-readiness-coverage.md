@@ -12,12 +12,12 @@ the modules, that test fails.
 
 | # | Population | Size | Where it is defined |
 |---|---|---|---|
-| 1 | Modules in this repo | **27** | `modules/*/src/index.ts` (excluding `_shared`) |
+| 1 | Modules in this repo | **31** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **15** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **20** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **15** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **15 of 27**.
+Population 4 is the one an operator actually sees, and it is **15 of 31**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -60,6 +60,10 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | audio-master | yes | no | no | **yes** | no |
 | beat-sync | yes | no | no | **yes** | no |
 | cast-image | yes | no | no | no | no |
+| cf-flux-3-video | yes | no | no | no | no |
+| cf-grok-video | yes | no | no | no | no |
+| cf-hh1-r2v | yes | no | no | no | no |
+| cf-seedance | yes | no | no | no | no |
 | cloud-keyframe | yes | no | no | no | no |
 | dialogue-gen | yes | no | no | no | no |
 | film-titles | yes | no | no | **yes** | no |
@@ -104,12 +108,14 @@ result, not a fault.** It is excluded from `records_unproven` because its catalo
 ## What cf#295 found, and what changed
 
 cf#295 measured 6 of 26 modules implementing `/ready`, so a sweep could not tell "not ready" from
-"no endpoint exists". **That is fixed: all 27 now implement it**, and `tests/module-ready-coverage-291.test.ts`
+"no endpoint exists". **That is fixed: all 31 now implement it** (the invariant is every
+module, not a frozen count; the tree grew with the four CF AI i2v modules on top of main's own
+cf#470 growth), and `tests/module-ready-coverage-291.test.ts`
 holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, fifteen of twenty-seven. A route
+`module-readiness` looks complete while speaking for population 4, fifteen of thirty-one. A route
 that reports a subset without saying so is the same defect one layer up, which is why the
 denominator is published here rather than left to be re-derived.
 
@@ -121,12 +127,13 @@ maintained by hand here.
 
 ## What a green `module-readiness` does NOT tell you
 
-- **Anything about the other 12 modules** (27 minus the 15 in population 4). They are not
-  provisioned to tenants, so a tenant provision does not reach them. **This no longer excludes the
+- **Anything about the other 16 modules** (31 minus the 15 in population 4). They are not
+  provisioned to tenants, so a tenant provision does not reach them. **This does not include the
   GPUless cost door**: all eight cost-door modules were catalogued by cp#317 and a tenant reaches
-  them through the plane-side proxy. The 12 are `audio-master`, `beat-sync`, `cast-image`,
-  `cloud-keyframe`, `dialogue-gen`, `film-titles`, `finish-blender`, `image-generate`, `local-gpu`,
-  `music-gen`, `notify-email`, `subtitle`.
+  them through the plane-side proxy. The 16 are `audio-master`, `beat-sync`, `cast-image`,
+  `cf-flux-3-video`, `cf-grok-video`, `cf-hh1-r2v`, `cf-seedance`, `cloud-keyframe`, `dialogue-gen`,
+  `film-titles`, `finish-blender`, `image-generate`, `local-gpu`, `music-gen`, `notify-email`,
+  `subtitle`.
 - **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
   module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
   fail every invocation.
@@ -137,6 +144,6 @@ maintained by hand here.
 ## Reporting rule
 
 **A readiness sweep must print its denominator and name what it could not probe.** A result that
-says "all green" without saying "15 of 27 provisioned modules" will be read as a clean fleet by
+says "all green" without saying "15 of 31 provisioned modules" will be read as a clean fleet by
 whoever was not in the conversation. That is the whole lesson of cf#295 and it applies to this page
 too: if you quote the table, quote the population you are quoting.

@@ -27,8 +27,9 @@ import {
 } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import {
   listCast, getCastById, createCast, updateCast, deleteCast,
-  clearPortrait, getCastIdByPublicId, toPublicCast,
+  clearPortrait, getCastIdByPublicId,
 } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "./cast-public";
 import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
 import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
