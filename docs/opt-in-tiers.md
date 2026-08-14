@@ -110,6 +110,17 @@ shared note just below), then put its endpoint id into the account Secrets Store
 - **Provision it:** `python3 scripts/runpod-provision.py --satellite lipsync` sets the image + the four
   R2 env vars from your `deploy.env`. Put the printed `MUSETALK_RUNPOD_ENDPOINT_ID` in deploy.env.
 
+
+### finish-blender (color grade)
+- **What it is:** a headless Blender compositor grade (fixed presets: filmic warm, cool, high contrast, …).
+- **What you get:** a gentle look pass on each shot before upscale.
+- **What it needs:** a RunPod endpoint running the `vivijure-blender` image, with the four R2 env vars
+  set on it; its id in the store secret `BLENDER_RUNPOD_ENDPOINT_ID`; and the `finish-blender`
+  (`MODULE_FINISH_BLENDER`) service binding enabled (see wrangler.toml.example; commented by default).
+- **Provision it:** clone `skyphusion-labs/vivijure-blender`, `./deploy.sh`, put the printed
+  `BLENDER_RUNPOD_ENDPOINT_ID` in deploy.env. **Optional** -- not part of the required `satellites`
+  profile triad (upscale / lipsync / speech-upscale).
+
 ### speech-upscale
 - **What it is:** a speech cleanup step for dialogue audio.
 - **What you get:** clearer spoken lines, which makes lip-sync land better.

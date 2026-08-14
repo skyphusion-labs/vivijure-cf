@@ -5,6 +5,7 @@ import {
   parseAudioUrl,
   encodePoll,
   decodePoll,
+  resolveSubmittedAtMs,
   stateKey,
   audioKey,
   appliedTags,
@@ -85,6 +86,25 @@ describe("music-gen pure logic", () => {
     expect(decodePoll(encodePoll({ job_id: "abc-123" }))).toEqual({ job_id: "abc-123" });
     expect(stateKey("abc-123")).toBe("music-gen/abc-123.state.json");
     expect(audioKey("abc-123", "mp3")).toBe("out/abc-123.mp3");
+  });
+
+  it("poll token round-trips submittedAt; legacy token decodes without it (#391)", () => {
+    const withTs = encodePoll({ job_id: "abc-123", submittedAt: 1_700_000_000_000 });
+    expect(decodePoll(withTs)).toEqual({ job_id: "abc-123", submittedAt: 1_700_000_000_000 });
+    const legacy = decodePoll(encodePoll({ job_id: "abc-123" }));
+    expect(legacy).toEqual({ job_id: "abc-123" });
+    expect(legacy?.submittedAt).toBeUndefined();
+  });
+
+  it("resolveSubmittedAtMs prefers token.submittedAt, falls back to R2 started_at seconds (#391)", () => {
+    expect(resolveSubmittedAtMs({ job_id: "j", submittedAt: 1_700_000_000_000 }, null)).toBe(1_700_000_000_000);
+    expect(
+      resolveSubmittedAtMs(
+        { job_id: "j" },
+        { status: "running", started_at: 1_700_000_000, film_key: "f", applied: [] },
+      ),
+    ).toBe(1_700_000_000_000);
+    expect(resolveSubmittedAtMs({ job_id: "j" }, null)).toBeUndefined();
   });
 
   it("readOutput returns ScoreOutput with film_key + applied", () => {

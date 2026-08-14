@@ -340,13 +340,18 @@ describe("verifyTokenRequest -- named per-consumer tokens (#445)", () => {
 
   // Emulates the api_tokens lookup: hash -> live row (the SQL filters revoked_at IS NULL, so the
   // fake returns null for a revoked row exactly as D1 would).
-  function fakeDb(rows: Array<{ hash: string; name: string; revoked?: boolean }>) {
+  // cf#520: the row now carries a `scope`, and this fixture carries it too -- a fixture is a claim
+  // about the shape of real data, and one that stops matching the SELECT stops standing in for it.
+  // Default `consumer` here so these #445 cases keep testing what they were written to test
+  // (admission, revocation, transport); the scope-specific cases live in
+  // tests/route-scope-authz.test.ts, including the rows where scope is absent or unusable.
+  function fakeDb(rows: Array<{ hash: string; name: string; scope?: string; revoked?: boolean }>) {
     return {
       prepare: (_sql: string) => ({
         bind: (hash: string) => ({
           first: async () => {
             const r = rows.find((x) => x.hash === hash && !x.revoked);
-            return r ? { name: r.name } : null;
+            return r ? { name: r.name, scope: r.scope ?? "consumer" } : null;
           },
         }),
       }),

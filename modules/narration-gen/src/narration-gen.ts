@@ -180,6 +180,56 @@ export function extForFormat(format: SpeechFormat): string {
   return format;
 }
 
+/**
+ * Detect the ACTUAL container of downloaded narration bytes (cf#389).
+ *
+ * Minimax hosted speech has been observed to ignore `format`/`sample_rate` and always return MP3
+ * while the module labeled key/mime/applied as `wav`. Labeling from the REQUEST invents a format
+ * the bytes do not have and poisons downstream mime. Magic-byte sniff is the source of truth;
+ * Content-Type is a fallback; the requested format is last resort only when nothing else speaks.
+ */
+export function sniffAudioFormat(
+  bytes: ArrayBuffer | Uint8Array,
+  contentType?: string | null,
+): SpeechFormat {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (u8.length >= 4) {
+    // RIFF....WAVE
+    if (
+      u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46 &&
+      u8.length >= 12 &&
+      u8[8] === 0x57 && u8[9] === 0x41 && u8[10] === 0x56 && u8[11] === 0x45
+    ) {
+      return "wav";
+    }
+    // fLaC
+    if (u8[0] === 0x66 && u8[1] === 0x4c && u8[2] === 0x61 && u8[3] === 0x43) {
+      return "flac";
+    }
+    // ID3 tag (MP3)
+    if (u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) {
+      return "mp3";
+    }
+    // MPEG audio frame sync 0xFFE?
+    if (u8[0] === 0xff && (u8[1] & 0xe0) === 0xe0) {
+      return "mp3";
+    }
+  }
+  const ct = (contentType ?? "").toLowerCase();
+  if (ct.includes("wav") || ct.includes("wave")) return "wav";
+  if (ct.includes("flac")) return "flac";
+  if (ct.includes("mpeg") || ct.includes("mp3")) return "mp3";
+  return "mp3"; // last resort: the measured default of this endpoint, not the request
+}
+
+/** Format applied tags for the DELIVERED artifact (cf#389). Actual is source of truth; if the
+ *  request differed, format_requested keeps the mismatch greppable. */
+export function appliedTagsForDelivered(requested: SpeechFormat, actual: SpeechFormat): string[] {
+  const tags = [`format:${actual}`];
+  if (requested !== actual) tags.push(`format_requested:${requested}`);
+  return tags;
+}
+
 export function encodePoll(s: PollState): string {
   return btoa(JSON.stringify(s));
 }
