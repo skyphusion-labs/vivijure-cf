@@ -169,13 +169,62 @@ are a global singleton. The `notify` hook carries completion facts only -- the e
 in the notify-email module's OWN config, not in any core-sent field. (The legacy per-user ownership
 key was removed in the identity strip; see Epoch history above.)
 
+### 1.2 Authorization model (cf#520)
+
+Auth gating (1.1) answers **who is calling**. Authorization answers **what they may do**, and it is a
+separate question asked after admission. Both are needed: until cf#520 every credential that passed
+the gate was operator-equivalent, so a named consumer token could call `POST /api/storage/reconcile`,
+which rewrites an estate-wide storage ledger.
+
+**Two scopes, and the axis is WHOSE DATA -- not how destructive the verb is.**
+
+| scope | means |
+|---|---|
+| `operator` | the route touches installation, configuration, or estate-wide state |
+| `consumer` | the route touches one tenant's own data, **however destructive** |
+
+Every `DELETE` route in this contract is `consumer`. Deleting your own cast portrait is correct work,
+and classifying by verb would refuse it while protecting nothing; `POST /api/storage/reconcile` is
+`operator` because it rewrites an estate-wide ledger, not because it deletes.
+
+**What each credential holds:**
+
+| credential | scope | note |
+|---|---|---|
+| the operator secret (`STUDIO_API_TOKEN`) | `operator` | unchanged |
+| a named token (`api_tokens`) | its own `scope` column | migration `0020`; `operator` or `consumer`, no default at mint |
+| a verified Access JWT | `operator` | Access is how the operator reaches his own studio |
+| `ALLOW_UNAUTHENTICATED=true` (dev opt-out) | `operator` | unchanged: a conscious "no boundary here" switch |
+| a demo visitor (`AUTH_MODE=demo`) | `consumer` | there is no operator path into a demo deploy |
+
+**Refusal.** An authorized-but-insufficient caller gets `403 { "error": "insufficient scope: this
+credential is not authorized for this route" }`. That wording deliberately avoids the phrases the
+frontend token shim keys on, so an authorization failure does not prompt the user to re-paste a
+token that is fine.
+
+**Where the classification lives.** On the `Route` entry in `API_ROUTES` (`src/index.ts`), as a
+REQUIRED field -- omitting it is a compile error, so a route cannot be added without being
+classified. This document deliberately does NOT carry a per-route copy of the scope: a
+hand-maintained duplicate of a compiler-enforced authority drifts by construction, and the drift
+would be invisible. Read the table.
+
+**A row whose `scope` is not `operator` or `consumer`** (migration not applied, or a value written
+around the `CHECK` constraint) is a configuration defect and the credential is DENIED outright, with
+the same deny reason as any other bad token so a prober learns nothing, and a
+`ev="authz.token_scope_invalid"` line in the log so an operator learns everything.
+
 ---
 
 ## 2. HTTP API routes (frontend -> backend)
 
 ### 2.0 Dispatch + global behavior
 
-- `GET /health` and `GET /api/modules` are handled inline (before the route table).
+- `GET /health` is handled inline (before the route table). It is the ONLY inline dispatch: it is
+  outside `/api/`, so it is not gated and carries no scope. `GET /api/modules` was inline until
+  cf#520 and is now a table entry like every other API route -- an inline `/api/*` handler carries
+  no `scope` and produces no compile error saying so, which made the required-field guarantee
+  exactly as complete as the table. `tests/no-inline-api-routes.test.ts` is the guard for that
+  class.
 - Studio HTML/JS/CSS pages are served from the `ASSETS` binding for `GET`/`HEAD` (static assets, not
   part of the API contract).
 - All other API routes dispatch through the `API_ROUTES` table (method + path pattern -> handler).
