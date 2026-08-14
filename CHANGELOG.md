@@ -3,6 +3,8 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
 ## v1.26.0 -- 2026-08-14
 
 MINOR. Per-route authorization lands, and three telemetry fixes that the production load test is

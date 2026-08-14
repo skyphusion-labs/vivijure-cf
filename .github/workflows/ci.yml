@@ -87,6 +87,17 @@ jobs:
           python -m pip install pytest
           python -m pytest deploy/ -q
 
+      # cf#539/cf#510: these two scripts drive scripts/changelog-entry-required.py and
+      # scripts/changelog-assemble.py against synthetic fixtures, including fixtures that
+      # reproduce the exact bugs each guards against (a two-dot false pass, an assemble run that
+      # would target the wrong heading). Plain self-checking scripts (non-zero exit on any failed
+      # assertion), same shape as the container test scripts below -- not pytest-discovered, so
+      # they are invoked explicitly rather than swept up by the deploy/ suite above.
+      - name: Changelog fragment guard + assembler tests (cf#539, cf#510)
+        run: |
+          python3 tests/changelog-entry-required.test.py
+          python3 tests/changelog-assemble.test.py
+
   # CONTAINER TESTS (cf#325): the CPU containers ship their own test_*.py files and NONE of them
   # ran anywhere -- this workflow's only pytest invocation above is scoped to deploy/. A suite
   # nothing runs is indistinguishable from a suite that passes; both produce a green pipeline and
