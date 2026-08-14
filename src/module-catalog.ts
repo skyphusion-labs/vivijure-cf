@@ -64,9 +64,14 @@ export function catalogFromModules(
 }
 
 /** Resolve a client-supplied model id to the module + config.model that should answer it, for a
- *  given hook. Same three-way resolution as the planning catalog: declared enum value, module name,
- *  or sole-module default. With several modules installed and no match this returns null -- guessing
- *  which one owns an unknown id would be inventing an answer. */
+ *  given hook. Declared enum value, or module name when the module has no model enum.
+ *
+ *  NO sole-module fallback (cf#381). Planning keeps a sole-default in resolvePlanningTarget because
+ *  an unknown planning id with one planner installed is a reasonable default. Image routing does
+ *  NOT: with exactly one image.generate module installed, ANY non-empty model id used to resolve
+ *  to it, so hChat always took the image branch and the text path was unreachable in prod. An
+ *  unknown id returns null -- the caller falls through to text (or 404s elsewhere). Guessing which
+ *  module owns an unknown id invents an answer. */
 export function resolveCatalogTarget(
   modules: RegisteredModule[],
   hook: HookName,
@@ -82,13 +87,15 @@ export function resolveCatalogTarget(
     }
   }
 
+  // Module name match: only when that module has no model enum (its catalog row id is its name).
+  // A module with an enum is only addressable by those values, not by arbitrary strings.
   const byName = serving.find((m) => m.name === trimmed);
-  if (byName) return { moduleName: byName.name, modelId: trimmed };
-
-  if (serving.length === 1) {
-    const mod = serving[0]!;
-    const values = modelValues(mod);
-    return { moduleName: mod.name, modelId: trimmed, configModel: values[0] ?? mod.name };
+  if (byName) {
+    const values = modelValues(byName);
+    if (values.length === 0) return { moduleName: byName.name, modelId: trimmed };
+    // Name matches a module that declares models -- treat the name as an id only if it is also
+    // in the enum (already handled above) or as a convenience alias for the first value.
+    return { moduleName: byName.name, modelId: trimmed, configModel: values[0] };
   }
 
   return null;

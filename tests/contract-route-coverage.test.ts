@@ -30,9 +30,11 @@ function studioRoutes(): Route[] {
   for (const m of SRC.slice(start, end).matchAll(/\{\s*method:\s*"([A-Z]+)",\s*pattern:\s*"([^"]+)"/g)) {
     out.push({ method: m[1], pattern: m[2] });
   }
-  // GET /api/modules dispatches in routeRequest BEFORE the table (it opts into a 60s isolate cache),
-  // so counting the table alone undercounts by exactly this one, silently.
-  out.push({ method: "GET", pattern: "/api/modules" });
+  // cf#520 REMOVED the compensation that used to sit here: GET /api/modules was dispatched inline
+  // in routeRequest, so the table undercounted by one and this file pushed it back by hand. It is a
+  // table route now, so the push would DOUBLE-COUNT it. tests/no-inline-api-routes.test.ts is what
+  // keeps this honest going forward -- it fails if any route goes back to being dispatched inline,
+  // which is the condition that made a hand-maintained compensation necessary in the first place.
   return out;
 }
 

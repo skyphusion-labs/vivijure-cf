@@ -42,6 +42,7 @@ import {
 } from "./cast-media";
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
+import { authorizeRoute, AUTHZ_DENY_REASON, type Scope } from "./authz";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
 import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
@@ -158,7 +159,23 @@ async function readBody<T>(req: Request): Promise<T> {
 
 // --- routing -------------------------------------------------------------
 type Handler = (req: Request, env: StudioEnv, ctx: ExecutionContext, p: Record<string, string>) => Promise<Response>;
-interface Route { method: string; pattern: string; handler: Handler; }
+/** cf#520: WHO may call this route.
+ *
+ *   operator  -- touches installation, configuration, or estate-wide state.
+ *   consumer  -- touches one tenant's own data, HOWEVER destructive.
+ *
+ *  THE AXIS IS WHOSE DATA, NOT HOW VIOLENT THE VERB. All ten DELETE routes are `consumer`: a user
+ *  deleting their own cast portrait is correct work, and a guard that refuses correct work is the
+ *  guard people switch off. `POST /api/storage/reconcile` is `operator` because it rewrites an
+ *  ESTATE-WIDE ledger, not because it deletes. */
+type RouteScope = Scope;
+
+/** REQUIRED, deliberately. An optional field with a safe default still leaves a rule to remember;
+ *  a required one makes forgetting a COMPILE ERROR, so "someone adds a route under deadline and
+ *  forgets" cannot happen. The compiler also hands over the complete classification list rather
+ *  than a grep anyone has to trust -- the same reason core#177 made FilmFinishSeed's fields
+ *  required and let tsc enumerate the seeds. */
+interface Route { method: string; pattern: string; scope: RouteScope; handler: Handler; }
 
 // Pattern segments are a literal, ":name" (one segment), or a trailing "*name" catch-all that
 // captures the rest of the path -- used for /api/artifact/*key, where the R2 key contains slashes.
@@ -176,7 +193,10 @@ function match(routes: Route[], method: string, pathname: string) {
     }
     // The PATTERN travels with the match (cf#223): the router error line logs the route template
     // instead of the raw pathname, and it can only do that if the matcher says which template won.
-    if (ok) return { handler: r.handler, params: p, pattern: r.pattern };
+    // cf#520: the SCOPE travels with the match for the same reason the pattern does -- the
+    // authorization comparison happens after dispatch has chosen a route, and it can only do that
+    // if the matcher says which route won.
+    if (ok) return { handler: r.handler, params: p, pattern: r.pattern, scope: r.scope };
   }
   return null;
 }
@@ -650,15 +670,26 @@ async function animatePreviewHandler(
 
 const hFinalizePreview: Handler = async (req, env, _c, p) => {
   let audioKey: string | undefined;
+  let motionBackend: string | undefined;
+  let castLoras: Record<string, string> | undefined;
   try {
-    const b = await readBody<{ audioKey?: string; castLoras?: Record<string, string> }>(req);
+    const b = await readBody<{
+      audioKey?: string;
+      castLoras?: Record<string, string>;
+      motion_backend?: string;
+      motionBackend?: string;
+    }>(req);
     audioKey = b.audioKey;
+    castLoras = b.castLoras;
+    // cf#347: accept snake_case (panel) or camelCase
+    const raw = b.motion_backend ?? b.motionBackend;
+    motionBackend = typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
   } catch { /* empty body ok */ }
-  // No motionBackend: animateFromPreview ignores it for "finalized" mode and resolves the gpu
-  // door from the registry by locality (the old hardcoded "own-gpu" here was dead config).
   return animatePreviewHandler(env, await resolveRenderId(env, p.id), {
     deriveMode: "finalized",
     audioKey,
+    motionBackend,
+    castLoras,
   });
 };
 
@@ -824,7 +855,10 @@ const hSubmitRender: Handler = async (req, env) => {
     status: view.status,
     mode: b.keyframesOnly ? "keyframes-only" : "full",
     projectId: await resolveProjectRef(env, b.projectId),
-  };
+    // cf#393: resolved backends known at submit (motion undefined on keyframes-only).
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: mapped.keyframe_backend ?? null,
+  } as NewRenderRow;
   await insertRenderBestEffort(env, row);
   return json(view, 201);
 };
@@ -832,7 +866,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   const b = await readBody<{
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
-    motion_backend?: string;
+    motion_backend?: string; castLoras?: Record<string, unknown>;
   }>(req);
   // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
   //
@@ -910,6 +944,17 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     throw badRequest(fromKfPre.refusal.message);
   }
 
+  // cf#334: derive dialogue from the bundle so RFK is not silent-by-default on a voiced package.
+  let fromKfDialogue: DialogueLine[] | undefined;
+  try {
+    const { voices } = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
+    let lines = dialogueLinesFromBundleScenes(parsedScenes, voices);
+    if (lines.length) {
+      lines = resolveExplicitLineVoices(lines, parsedScenes, voices);
+      fromKfDialogue = lines;
+    }
+  } catch { /* best-effort */ }
+
   const job = await startFilmFromKeyframes(env, {
     project,
     bundle_key: fromKfBundleKey,
@@ -923,7 +968,8 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     master_config: mapped.master_config,
     derive_mode: "finalized",
     audio_key: b.audioKey,
-  }, modules);
+    dialogue_lines: fromKfDialogue,
+  } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
     return json({ error: job.error || "render from keyframes failed" }, 422);
   }
@@ -937,7 +983,10 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     status: view.status,
     mode: "finalized",
     projectId: await resolveProjectRef(env, b.projectId),
-  });
+    // cf#393: from-keyframes has motion, no keyframe module pass.
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: null,
+  } as NewRenderRow);
   return json(view, 201);
 };
 const hRegenShot: Handler = async (req, env, _c, p) => {
@@ -1176,9 +1225,11 @@ const hAdoptRender: Handler = async (req, env) =>
 
 // --- validation ----------------------------------------------------------
 // Pre-render preflight. The client (planner.js `runPreflight`) POSTs the
-// envelope { storyboard, castBindings?, bundleKey?, audioKey? } and expects a
+// envelope { storyboard, castBindings?, motionBackend?, quality? } and expects a
 // PreflightResult { ok, counts, issues[] } (see ./preflight): it renders the
 // issues, shows the counts, and gates the bundle button on counts.error.
+// bundleKey / audioKey are NOT read here (mcp#26 / cf#315 honesty): do not re-add
+// them to the envelope docs without wiring validation.
 //
 // Two things this handler must get right (both were wrong before #242):
 //   1. Unwrap `.storyboard` from the envelope. The previous code validated the
@@ -1804,8 +1855,10 @@ function demoChatCaps(env: StudioEnv): DemoChatCaps {
   };
 }
 
-/** Is the demo render backend armed? DEMO_RENDER_ENABLED="true" AND the demo-scoped local-gpu door is
- *  bound. Post-credits the operator unsets the var (or unbinds the door) -> renders paused, no outage. */
+/** Is the demo render backend armed in config? DEMO_RENDER_ENABLED="true" AND the demo-scoped
+ *  local-gpu door is bound. This is NOT a live door-box healthcheck (cf#28): a down box still
+ *  reports available=true and fails at submit. Post-credits the operator unsets the var (or unbinds
+ *  the door) -> renders paused, no outage. */
 function demoRenderEnabled(env: StudioEnv): boolean {
   return (env.DEMO_RENDER_ENABLED || "").trim() === "true"
     && !!resolveFetcher(env as unknown as Record<string, unknown>, "MODULE_LOCAL_GPU");
@@ -1938,92 +1991,150 @@ const hStorageReconcile: Handler = async (_req, env) => {
   });
 };
 
+/** cf#520: the 86th route. This was dispatched INLINE inside routeRequest from the host
+ *  bootstrap (d03b57f) onward -- early because it was written FIRST, before the route-table
+ *  pattern existed, not because anything needed it early. Established before moving it: the 60s
+ *  cache is a PARAMETER of discoverModules passed identically at six call sites, so position can
+ *  neither create nor destroy it; and both intervening gates are probed false for this route
+ *  (isSpendRoute returns false for any non-POST). An inline handler carries no `scope` and NO
+ *  COMPILE ERROR EVER SAYS SO, so the required-field guarantee was exactly as complete as the
+ *  table. tests/no-inline-api-routes.test.ts is the guard for the CLASS. */
+const hModules: Handler = async (_req, env) => {
+  // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
+  // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
+  const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
+  // ONE availability computation, used by BOTH the hook report and the demo assistant gate
+  // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
+  // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
+  // gate rather than adding a second mechanism is the point: one answer to "can this host serve
+  // an AI-Gateway hook", consumed everywhere that question is asked.
+  const aiReady = await aiGatewayReady(env);
+  // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
+  // reason the panel prints verbatim.
+  // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
+  // through the SAME channel rather than growing a parallel one -- that is the whole point of
+  // cf#98. Merged, so a host missing both reports both.
+  const hooksUnavailable = {
+    ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
+    ...videoFinishHooksUnavailable(env),
+  };
+  const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
+  const abuseUrl = abuseReportUrl(env);
+  // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
+  // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
+  // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
+  // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
+  // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
+  return json(
+    modulesResponse(modules, renderConfigProjection(), {
+      dispatch: !!env.MODULE_DISPATCH,
+      ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
+      // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
+      // operator set it, because the same bundle self-hosts and must never advertise an address
+      // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
+      ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
+      ...(isDemoMode(env)
+        ? {
+            readonly: true,
+            render: { available: demoRenderEnabled(env) },
+            // Assistant capability only when the host can actually reach the gateway. This used
+            // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
+            // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
+            // hook report asks, so the two can never disagree.
+            ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
+          }
+        : {}),
+    }),
+  );
+};
+
 export const API_ROUTES: Route[] = [
-  { method: "GET",    pattern: "/api/storage/usage",                   handler: hStorageUsage },
-  { method: "POST",   pattern: "/api/storage/reconcile",               handler: hStorageReconcile },
-  { method: "GET",    pattern: "/api/demo/menu",                       handler: hDemoMenu },
-  { method: "POST",   pattern: "/api/demo/render",                     handler: hDemoRender },
-  { method: "GET",    pattern: "/api/demo/render/:id",                 handler: hDemoPoll },
-  { method: "POST",   pattern: "/api/demo/chat",                       handler: hDemoChat },
-  { method: "GET",    pattern: "/api/storyboard/projects",                        handler: hListProjects },
-  { method: "POST",   pattern: "/api/storyboard/projects",                        handler: hCreateProject },
-  { method: "GET",    pattern: "/api/storyboard/projects/:id",                    handler: hGetProject },
-  { method: "PATCH",  pattern: "/api/storyboard/projects/:id",                    handler: hPatchProject },
-  { method: "POST",   pattern: "/api/storyboard/projects/:id/storyboard",         handler: hSaveProjectStoryboard },
-  { method: "DELETE", pattern: "/api/storyboard/projects/:id",                    handler: hDeleteProject },
-  { method: "GET",    pattern: "/api/voices",                          handler: hListVoices },
-  { method: "GET",    pattern: "/api/cast",                            handler: hListCast },
-  { method: "POST",   pattern: "/api/cast",                            handler: hCreateCast },
-  { method: "GET",    pattern: "/api/cast/export/:id",                 handler: hExportCast },
-  { method: "POST",   pattern: "/api/cast/export/:id",                 handler: hExportCast },
-  { method: "POST",   pattern: "/api/cast/import",                     handler: hImportCast },
-  { method: "GET",    pattern: "/api/cast/:id",                        handler: hGetCast },
-  { method: "PATCH",  pattern: "/api/cast/:id",                        handler: hPatchCast },
-  { method: "DELETE", pattern: "/api/cast/:id",                        handler: hDeleteCast },
-  { method: "POST",   pattern: "/api/cast/:id/portrait",               handler: hSetPortrait },
-  { method: "DELETE", pattern: "/api/cast/:id/portrait",               handler: hClearPortrait },
-  { method: "POST",   pattern: "/api/cast/:id/ref",                    handler: hAddRef },
-  { method: "DELETE", pattern: "/api/cast/:id/ref",                    handler: hRemoveRef },
-  { method: "DELETE", pattern: "/api/cast/:id/refs/*refKey",           handler: hRemoveRef },
-  { method: "POST",   pattern: "/api/cast/:id/source",                 handler: hAddSource },
-  { method: "DELETE", pattern: "/api/cast/:id/source",                 handler: hRemoveSource },
-  { method: "DELETE", pattern: "/api/cast/:id/source/*sourceKey",      handler: hRemoveSource },
-  { method: "POST",   pattern: "/api/cast/:id/generate-refs",          handler: hGenerateCastRefs },
-  { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        handler: hPollCastRefs },
-  { method: "POST",   pattern: "/api/cast/:id/train-lora",             handler: hTrainCastLora },
-  { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         handler: hTrainCastWanLora },
-  { method: "GET",    pattern: "/api/cast/:id/lora-status",            handler: hCastLoraStatus },
-  { method: "POST",   pattern: "/api/upload",                          handler: hUpload },
-  { method: "GET",    pattern: "/api/artifact/*key",                   handler: hServeArtifact },
-  { method: "HEAD",   pattern: "/api/artifact/*key",                   handler: hServeArtifact },
-  { method: "GET",    pattern: "/api/artifact-url/*key",               handler: hArtifactUrl },
-  { method: "POST",   pattern: "/api/render/frames",                  handler: hRenderFrames },
-  { method: "POST",   pattern: "/api/storyboard/preflight",            handler: hPreflight },
-  { method: "POST",   pattern: "/api/storyboard/plan",                 handler: hPlan },
-  { method: "POST",   pattern: "/api/storyboard/refine",               handler: hRefine },
-  { method: "POST",   pattern: "/api/chat",                            handler: hChat },
-  { method: "POST",   pattern: "/api/storyboard/score-bed",            handler: hScoreBedGenerate },
-  { method: "POST",   pattern: "/api/storyboard/music-generate",       handler: hScoreBedGenerate },
-  { method: "GET",    pattern: "/api/job/:id",                         handler: hPollScoreBed },
-  { method: "POST",   pattern: "/api/storyboard/enhance",              handler: hEnhance },
-  { method: "GET",    pattern: "/api/models",                          handler: hAllModels },
-  { method: "GET",    pattern: "/api/storyboard/models",               handler: hModels },
-  { method: "POST",   pattern: "/api/storyboard/yaml",                 handler: hYaml },
-  { method: "POST",   pattern: "/api/storyboard/markers",              handler: hMarkers },
-  { method: "POST",   pattern: "/api/storyboard/bundle",               handler: hBundle },
-  { method: "POST",   pattern: "/api/storyboard/audio-upload",         handler: hStoryboardAudioUpload },
-  { method: "POST",   pattern: "/api/storyboard/character-ref",        handler: hStoryboardCharacterRef },
-  { method: "POST",   pattern: "/api/audio/analyze",                   handler: hAudioAnalyze },
-  { method: "POST",   pattern: "/api/storyboard/render",               handler: hSubmitRender },
-  { method: "POST",   pattern: "/api/storyboard/render-plan",          handler: hRenderPlan },
-  { method: "POST",   pattern: "/api/render/clips",                     handler: hStartClips },
-  { method: "GET",    pattern: "/api/render/clips/:id",                 handler: hPollClips },
-  { method: "POST",   pattern: "/api/render/film",                      handler: hStartFilm },
-  { method: "GET",    pattern: "/api/render/film/:id",                  handler: hPollFilm },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", handler: hRegenShot },
-  { method: "POST",   pattern: "/api/storyboard/render/scatter",       handler: hScatterRender },
-  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", handler: hRenderFromKeyframes },
-  { method: "GET",    pattern: "/api/storyboard/render/:jobId",        handler: hPollRender },
-  { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        handler: hCancelRender },
-  { method: "GET",    pattern: "/api/storyboard/renders",              handler: hListRenders },
-  { method: "GET",    pattern: "/api/storyboard/renders/tags",         handler: hListTags },
-  { method: "PATCH",  pattern: "/api/storyboard/renders/:id",          handler: hPatchRender },
-  { method: "DELETE", pattern: "/api/storyboard/renders/:id",          handler: hDeleteRender },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-audio", handler: hAddRenderAudio },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-narration", handler: hAddRenderNarration },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/finalize", handler: hFinalizePreview },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-cloud", handler: hAnimateCloud },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-hybrid", handler: hAnimateHybrid },
-  { method: "POST",   pattern: "/api/storyboard/renders/adopt",        handler: hAdoptRender },
-  { method: "GET",    pattern: "/api/whoami",                          handler: hWhoami },
-  { method: "GET",    pattern: "/api/prefs",                           handler: hGetPrefs },
-  { method: "PATCH",  pattern: "/api/prefs",                           handler: hPatchPrefs },
-  { method: "GET",    pattern: "/api/modules/installed",              handler: hListInstalledModules },
-  { method: "POST",   pattern: "/api/modules/install",                handler: hInstallModule },
-  { method: "DELETE", pattern: "/api/modules/install/:name",          handler: hUninstallModule },
-  { method: "PATCH",  pattern: "/api/modules/install/:name",          handler: hSetModuleEnabled },
-  { method: "GET",    pattern: "/api/modules/:name/config",            handler: hGetModuleConfig },
-  { method: "PATCH",  pattern: "/api/modules/:name/config",            handler: hPatchModuleConfig },
+  { method: "GET",    pattern: "/api/storage/usage",                   scope: "operator",    handler: hStorageUsage },
+  { method: "POST",   pattern: "/api/storage/reconcile",               scope: "operator",    handler: hStorageReconcile },
+  { method: "GET",    pattern: "/api/demo/menu",                       scope: "consumer",    handler: hDemoMenu },
+  { method: "POST",   pattern: "/api/demo/render",                     scope: "consumer",    handler: hDemoRender },
+  { method: "GET",    pattern: "/api/demo/render/:id",                 scope: "consumer",    handler: hDemoPoll },
+  { method: "POST",   pattern: "/api/demo/chat",                       scope: "consumer",    handler: hDemoChat },
+  { method: "GET",    pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hListProjects },
+  { method: "POST",   pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hCreateProject },
+  { method: "GET",    pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hGetProject },
+  { method: "PATCH",  pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hPatchProject },
+  { method: "POST",   pattern: "/api/storyboard/projects/:id/storyboard",         scope: "consumer",    handler: hSaveProjectStoryboard },
+  { method: "DELETE", pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hDeleteProject },
+  { method: "GET",    pattern: "/api/voices",                          scope: "consumer",    handler: hListVoices },
+  { method: "GET",    pattern: "/api/cast",                            scope: "consumer",    handler: hListCast },
+  { method: "POST",   pattern: "/api/cast",                            scope: "consumer",    handler: hCreateCast },
+  { method: "GET",    pattern: "/api/cast/export/:id",                 scope: "consumer",    handler: hExportCast },
+  { method: "POST",   pattern: "/api/cast/export/:id",                 scope: "consumer",    handler: hExportCast },
+  { method: "POST",   pattern: "/api/cast/import",                     scope: "consumer",    handler: hImportCast },
+  { method: "GET",    pattern: "/api/cast/:id",                        scope: "consumer",    handler: hGetCast },
+  { method: "PATCH",  pattern: "/api/cast/:id",                        scope: "consumer",    handler: hPatchCast },
+  { method: "DELETE", pattern: "/api/cast/:id",                        scope: "consumer",    handler: hDeleteCast },
+  { method: "POST",   pattern: "/api/cast/:id/portrait",               scope: "consumer",    handler: hSetPortrait },
+  { method: "DELETE", pattern: "/api/cast/:id/portrait",               scope: "consumer",    handler: hClearPortrait },
+  { method: "POST",   pattern: "/api/cast/:id/ref",                    scope: "consumer",    handler: hAddRef },
+  { method: "DELETE", pattern: "/api/cast/:id/ref",                    scope: "consumer",    handler: hRemoveRef },
+  { method: "DELETE", pattern: "/api/cast/:id/refs/*refKey",           scope: "consumer",    handler: hRemoveRef },
+  { method: "POST",   pattern: "/api/cast/:id/source",                 scope: "consumer",    handler: hAddSource },
+  { method: "DELETE", pattern: "/api/cast/:id/source",                 scope: "consumer",    handler: hRemoveSource },
+  { method: "DELETE", pattern: "/api/cast/:id/source/*sourceKey",      scope: "consumer",    handler: hRemoveSource },
+  { method: "POST",   pattern: "/api/cast/:id/generate-refs",          scope: "consumer",    handler: hGenerateCastRefs },
+  { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        scope: "consumer",    handler: hPollCastRefs },
+  { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
+  { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
+  { method: "POST",   pattern: "/api/upload",                          scope: "consumer",    handler: hUpload },
+  { method: "GET",    pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
+  { method: "HEAD",   pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
+  { method: "GET",    pattern: "/api/artifact-url/*key",               scope: "consumer",    handler: hArtifactUrl },
+  { method: "POST",   pattern: "/api/render/frames",                  scope: "consumer",    handler: hRenderFrames },
+  { method: "POST",   pattern: "/api/storyboard/preflight",            scope: "consumer",    handler: hPreflight },
+  { method: "POST",   pattern: "/api/storyboard/plan",                 scope: "consumer",    handler: hPlan },
+  { method: "POST",   pattern: "/api/storyboard/refine",               scope: "consumer",    handler: hRefine },
+  { method: "POST",   pattern: "/api/chat",                            scope: "consumer",    handler: hChat },
+  { method: "POST",   pattern: "/api/storyboard/score-bed",            scope: "consumer",    handler: hScoreBedGenerate },
+  { method: "POST",   pattern: "/api/storyboard/music-generate",       scope: "consumer",    handler: hScoreBedGenerate },
+  { method: "GET",    pattern: "/api/job/:id",                         scope: "consumer",    handler: hPollScoreBed },
+  { method: "POST",   pattern: "/api/storyboard/enhance",              scope: "consumer",    handler: hEnhance },
+  { method: "GET",    pattern: "/api/models",                          scope: "consumer",    handler: hAllModels },
+  { method: "GET",    pattern: "/api/storyboard/models",               scope: "consumer",    handler: hModels },
+  { method: "POST",   pattern: "/api/storyboard/yaml",                 scope: "consumer",    handler: hYaml },
+  { method: "POST",   pattern: "/api/storyboard/markers",              scope: "consumer",    handler: hMarkers },
+  { method: "POST",   pattern: "/api/storyboard/bundle",               scope: "consumer",    handler: hBundle },
+  { method: "POST",   pattern: "/api/storyboard/audio-upload",         scope: "consumer",    handler: hStoryboardAudioUpload },
+  { method: "POST",   pattern: "/api/storyboard/character-ref",        scope: "consumer",    handler: hStoryboardCharacterRef },
+  { method: "POST",   pattern: "/api/audio/analyze",                   scope: "consumer",    handler: hAudioAnalyze },
+  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: hSubmitRender },
+  { method: "POST",   pattern: "/api/storyboard/render-plan",          scope: "consumer",    handler: hRenderPlan },
+  { method: "POST",   pattern: "/api/render/clips",                     scope: "consumer",    handler: hStartClips },
+  { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
+  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
+  { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
+  { method: "POST",   pattern: "/api/storyboard/render/scatter",       scope: "consumer",    handler: hScatterRender },
+  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
+  { method: "GET",    pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hPollRender },
+  { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hCancelRender },
+  { method: "GET",    pattern: "/api/storyboard/renders",              scope: "consumer",    handler: hListRenders },
+  { method: "GET",    pattern: "/api/storyboard/renders/tags",         scope: "consumer",    handler: hListTags },
+  { method: "PATCH",  pattern: "/api/storyboard/renders/:id",          scope: "consumer",    handler: hPatchRender },
+  { method: "DELETE", pattern: "/api/storyboard/renders/:id",          scope: "consumer",    handler: hDeleteRender },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-audio", scope: "consumer",    handler: hAddRenderAudio },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-narration", scope: "consumer",    handler: hAddRenderNarration },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/finalize", scope: "consumer",    handler: hFinalizePreview },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-cloud", scope: "consumer",    handler: hAnimateCloud },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-hybrid", scope: "consumer",    handler: hAnimateHybrid },
+  { method: "POST",   pattern: "/api/storyboard/renders/adopt",        scope: "consumer",    handler: hAdoptRender },
+  { method: "GET",    pattern: "/api/whoami",                          scope: "consumer",    handler: hWhoami },
+  { method: "GET",    pattern: "/api/prefs",                           scope: "consumer",    handler: hGetPrefs },
+  { method: "PATCH",  pattern: "/api/prefs",                           scope: "consumer",    handler: hPatchPrefs },
+  { method: "GET",    pattern: "/api/modules",                       scope: "consumer",    handler: hModules },
+  { method: "GET",    pattern: "/api/modules/installed",              scope: "operator",    handler: hListInstalledModules },
+  { method: "POST",   pattern: "/api/modules/install",                scope: "operator",    handler: hInstallModule },
+  { method: "DELETE", pattern: "/api/modules/install/:name",          scope: "operator",    handler: hUninstallModule },
+  { method: "PATCH",  pattern: "/api/modules/install/:name",          scope: "operator",    handler: hSetModuleEnabled },
+  { method: "GET",    pattern: "/api/modules/:name/config",            scope: "operator",    handler: hGetModuleConfig },
+  { method: "PATCH",  pattern: "/api/modules/:name/config",            scope: "operator",    handler: hPatchModuleConfig },
 ];
 
 // #617: the marketing/welcome page moved off the Worker to the vivijure.com storefront. /welcome
@@ -2076,57 +2187,14 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // (below) stay open; every /api/* request must pass the AUTH_MODE gate -- the studio bearer
     // token (token mode) or a valid Access JWT (access mode / legacy unset). The dev opt-out
     // stays ALLOW_UNAUTHENTICATED, legacy path only. See src/auth-gate.ts.
+    // cf#520: the gate answers WHO is calling. It runs HERE, before any route has been matched,
+    // so it structurally cannot answer WHAT they may do -- there is no route yet. The authorization
+    // comparison therefore lives at the dispatch site below and this decision is carried forward.
+    let credential: Scope | null = null;
     if (url.pathname.startsWith("/api/")) {
       const gate = await gateApi(request, env);
       if (!gate.ok) return json({ error: gate.reason }, gate.status);
-    }
-    if (url.pathname === "/api/modules" && request.method === "GET") {
-      // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
-      // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
-      const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
-      // ONE availability computation, used by BOTH the hook report and the demo assistant gate
-      // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
-      // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
-      // gate rather than adding a second mechanism is the point: one answer to "can this host serve
-      // an AI-Gateway hook", consumed everywhere that question is asked.
-      const aiReady = await aiGatewayReady(env);
-      // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
-      // reason the panel prints verbatim.
-      // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
-      // through the SAME channel rather than growing a parallel one -- that is the whole point of
-      // cf#98. Merged, so a host missing both reports both.
-      const hooksUnavailable = {
-        ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
-        ...videoFinishHooksUnavailable(env),
-      };
-      const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
-      const abuseUrl = abuseReportUrl(env);
-      // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
-      // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
-      // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
-      // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
-      // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
-      return json(
-        modulesResponse(modules, renderConfigProjection(), {
-          dispatch: !!env.MODULE_DISPATCH,
-          ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
-          // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
-          // operator set it, because the same bundle self-hosts and must never advertise an address
-          // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
-          ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
-          ...(isDemoMode(env)
-            ? {
-                readonly: true,
-                render: { available: demoRenderEnabled(env) },
-                // Assistant capability only when the host can actually reach the gateway. This used
-                // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
-                // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
-                // hook report asks, so the two can never disagree.
-                ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
-              }
-            : {}),
-        }),
-      );
+      credential = gate.scope;
     }
     if (WELCOME_REDIRECT_PATHS.has(url.pathname) && (request.method === "GET" || request.method === "HEAD")) {
       return Response.redirect(WELCOME_REDIRECT_TARGET, 301);
@@ -2163,6 +2231,23 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     }
     const hit = match(API_ROUTES, request.method, url.pathname);
     if (hit) {
+      // cf#520: AUTHORIZATION -- the first point in the request where BOTH facts exist: what the
+      // route requires (from the table) and what the credential holds (from the gate above). Fails
+      // CLOSED on a null credential, which cannot happen for a table route today (every pattern is
+      // under /api/, asserted in tests/route-scope-authz.test.ts) and would otherwise be the way a
+      // route added outside the gated prefix reached an operator handler unauthenticated.
+      if (!authorizeRoute(hit.scope, credential)) {
+        console.warn(JSON.stringify({
+          ev: "authz.deny",
+          // The route TEMPLATE, never the raw pathname (cf#223): a pathname carries the artifact
+          // key and every :id in the URL, and this line fires on a request that is already refused.
+          route: hit.pattern,
+          method: request.method,
+          required: hit.scope,
+          held: credential,
+        }));
+        return json({ error: AUTHZ_DENY_REASON }, 403);
+      }
       try {
         return await hit.handler(request, env, ctx, hit.params);
       } catch (e) {
