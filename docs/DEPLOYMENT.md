@@ -145,7 +145,14 @@ deploy job. So:
 # 1. Release PR on main: bump package.json, add the CHANGELOG section. Merge it.
 # 2. Tag the merged commit and push.
 git tag -a v1.26.0 -m "vivijure-studio v1.26.0" && git push origin v1.26.0
-# 3. Watch the deploy job. It applies `wrangler d1 migrations apply --remote` for you.
+# 3. Watch BOTH workflows. A `v*` tag fires TWO of them, not one:
+#      ci.yml            -> the `deploy` job; applies `wrangler d1 migrations apply --remote`
+#      studio-release.yml -> publishes the GitHub release ASSET and mirrors it to R2
+#    The second is a separate workflow run, so an operator watching "the deploy" does not see it.
+#    If it fails the studio still deploys and the tag still looks shipped, but the release asset is
+#    the PUBLIC SOURCE OF TRUTH under the parity ruling and the control plane's provisioner and
+#    upgrade path fetch the tenant studio bundle BY TAG -- so TENANT provisioning breaks at the next
+#    upgrade, with nothing on the deploy job saying so.
 # 4. RUN ANY OPERATOR-ONLY MIGRATION THE TAG NEEDS -- see below. Nothing does this for you.
 # 5. Verify at the ARTIFACT: the deployed worker's modified_on, and a live request. A green
 #    pipeline is the pipeline's opinion of itself, not evidence the thing shipped.
