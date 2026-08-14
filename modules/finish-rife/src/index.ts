@@ -42,7 +42,9 @@ interface Env {
   TELEMETRY_DB?: D1Database;
 }
 
-const MANIFEST: ModuleManifest = {
+// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
+// against a transcribed copy in the test file. finish-lipsync already exported its own.
+export const MANIFEST: ModuleManifest = {
   name: "finish-rife",
   version: "0.1.1",
   api: MODULE_API,
@@ -59,6 +61,13 @@ const MANIFEST: ModuleManifest = {
     only_faces:           { type: "bool",  default: true,   label: "faces only (leave background untouched)" },
   },
   ui: { section: "finish", icon: "wand", order: 10 },
+  // cf#537: EXPLICIT rather than absent. Absent is treated as "default" by the core, so this line
+  // changes no behaviour -- interpolation keeps running for every caller that sends no selection.
+  // It is stated because the manifest default is PERMISSIVE, which makes silence at this layer a
+  // signal: a module that ought to be opt-in and says nothing keeps running unasked and nothing
+  // reports it. Conformance therefore requires an explicit value from any module serving a
+  // selectable hook, so the reader can tell "considered, runs by default" from "nobody thought".
+  participation: "default",
   // Declared artifact conventions (S6): the container names its output off the shot id, and its
   // applied marker depends on the interpolate knob. The core's R2 recovery reads THIS, not our name.
   finish_artifacts: {

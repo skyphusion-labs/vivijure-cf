@@ -5,6 +5,9 @@ import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifes
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
+// cf#537: the agent door validates its own untrusted `finish_select` with the SAME parser the panel
+// door's overrides bag goes through, so the two doors cannot drift on what a valid selection is.
+import { parseHookSelection } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, summarizeFilm, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
@@ -839,6 +842,10 @@ const hSubmitRender: Handler = async (req, env) => {
     keyframe_config: mapped.keyframe_config,
     motion_config: mapped.motion_config,
     finish_config: mapped.finish_config,
+    // cf#537: which finish modules this render asked for. Resolved out of `renderOverrides.select`
+    // by the core, so it rides the SAME bag that `renders.render_overrides` already persists, and a
+    // derived render (regen-shot, finalize, animate-*) replays it with no schema change.
+    finish_select: mapped.finish_select,
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
@@ -969,6 +976,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     motion_backend: motionBackend,
     motion_config: mapped.motion_config,
     finish_config: mapped.finish_config,
+    finish_select: mapped.finish_select, // cf#537
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
@@ -1477,7 +1485,7 @@ async function withFilmDownloadUrlBestEffort(
   }
 }
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1581,7 +1589,14 @@ const hStartFilm: Handler = async (req, env) => {
     // audio_key: a staged bed (score-bed music/narration) to mux after assemble. startFilmJob runs it
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
     // silent even when the caller supplied a bed (the scored/narrated render path).
-    finish_config: a.finish_config, speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
+    finish_config: a.finish_config,
+    // cf#537: this door takes PRE-RESOLVED config maps and carries no renderOverrides bag (0
+    // mentions in its body type, against 3 for finish_config), so the selection is its own
+    // top-level field rather than a key inside a bag that does not exist here. The panel door and
+    // this one are two different pipelines; a selection wired only into the panel would leave the
+    // agent / MCP / Slate path on run-everything.
+    finish_select: parseHookSelection({ finish: a.finish_select })?.finish,
+    speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
     // TTS+lip-sync stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
     // which read job.dialogue_lines. cast_loras carries the speaking cast (slot -> cast id) so the

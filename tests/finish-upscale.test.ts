@@ -3,6 +3,11 @@ import {
   coerceConfig, buildRunPodBody, upscaledKey, encodePoll, decodePoll, parseBackendOutput,
   passthroughOutput, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS,
 } from "../modules/finish-upscale/src/finish";
+// cf#537: conformance runs against the SHIPPED manifest, not a transcribed copy. The copy
+// this replaced could not report anything about the artifact that deploys -- proven on this
+// very change, where adding `participation` made finish-lipsync (which reads the real one)
+// pass while these two stayed red against their own stale transcriptions.
+import { MANIFEST } from "../modules/finish-upscale/src/index";
 import { checkManifest, checkInvokeResponse, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { FinishInput } from "../modules/finish-upscale/src/contract";
 
@@ -106,17 +111,6 @@ describe("finish-upscale: parseBackendOutput", () => {
 });
 
 describe("finish-upscale: manifest conformance", () => {
-  const MANIFEST = {
-    name: "finish-upscale",
-    version: "0.1.0",
-    api: "vivijure-module/2",
-    hooks: ["finish"],
-    provides: [{ id: "upscale", label: "Upscale resolution (Real-ESRGAN)" }],
-    config_schema: {
-      scale: { type: "int",  default: 2, min: 2, max: 4 },
-      model: { type: "enum", values: ["realesr-animevideov3", "RealESRGAN_x4plus"], default: "realesr-animevideov3" },
-    },
-  };
   it("passes the conformance manifest checker", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
