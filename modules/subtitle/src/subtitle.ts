@@ -154,7 +154,7 @@ export interface FinishPoll {
   jobId: string;       // the container's background job id
   filmKey: string;     // the input film key (the sidecar-only / passthrough result key)
   outputKey: string;   // the deterministic key the container writes the burned film to
-  submittedAt: number; // epoch ms; measures the container "job not found" (restart) grace window
+  submittedAt: number | null; // epoch ms; grace window + wall-clock. null = the token carried none.
 }
 
 export function encodePoll(s: FinishPoll): string {
@@ -165,7 +165,7 @@ export function decodePoll(token: string): FinishPoll | null {
   try {
     const o = JSON.parse(atob(token)) as FinishPoll;
     if (o && typeof o.jobId === "string" && typeof o.filmKey === "string" && typeof o.outputKey === "string") {
-      return { jobId: o.jobId, filmKey: o.filmKey, outputKey: o.outputKey, submittedAt: typeof o.submittedAt === "number" ? o.submittedAt : 0 };
+      return { jobId: o.jobId, filmKey: o.filmKey, outputKey: o.outputKey, submittedAt: typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt) ? o.submittedAt : null };
     }
   } catch { /* fall through */ }
   return null;
