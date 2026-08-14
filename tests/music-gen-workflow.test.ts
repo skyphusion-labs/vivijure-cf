@@ -57,9 +57,25 @@ describe("music-gen #155: gen runs in a Workflow, not waitUntil", () => {
     const inv = await worker.fetch(req("/invoke", { hook: "score", input: { film_key: "renders/f/film.mp4" }, config: { prompt: "warm score" } }), env as never, ctx as never);
     const poll = (await inv.json() as { poll: string }).poll;
     const out = await worker.fetch(req("/poll", { poll }), env as never, ctx as never);
-    const j = await out.json() as { ok: boolean; pending?: boolean };
+    const j = await out.json() as { ok: boolean; pending?: boolean; submitted_at?: number; elapsed_ms?: number };
     expect(j.ok).toBe(true);
     expect(j.pending).toBe(true);
+    // #391: pending carries a submit clock so a caller can time out without a wall-clock impression
+    expect(typeof j.submitted_at).toBe("number");
+    expect(typeof j.elapsed_ms).toBe("number");
+    expect(j.elapsed_ms!).toBeGreaterThanOrEqual(0);
+  });
+
+  it("invoke poll token embeds submittedAt (#391)", async () => {
+    const before = Date.now();
+    const { env } = fakeEnv();
+    const inv = await worker.fetch(req("/invoke", { hook: "score", input: { film_key: "renders/f/film.mp4" }, config: { prompt: "warm score" } }), env as never, ctx as never);
+    const poll = (await inv.json() as { poll: string }).poll;
+    const token = JSON.parse(atob(poll)) as { job_id: string; submittedAt?: number };
+    expect(typeof token.job_id).toBe("string");
+    expect(typeof token.submittedAt).toBe("number");
+    expect(token.submittedAt!).toBeGreaterThanOrEqual(before);
+    expect(token.submittedAt!).toBeLessThanOrEqual(Date.now());
   });
 
   it("poll returns the output once the workflow has written the done R2 state (R2-presence authoritative)", async () => {
@@ -86,6 +102,36 @@ describe("music-gen #155: gen runs in a Workflow, not waitUntil", () => {
     const j = await out.json() as { ok: boolean; error?: string };
     expect(j.ok).toBe(false);
     expect(j.error).toMatch(/errored/);
+  });
+
+  it("poll surfaces a terminal failed R2 state (upstream AI Gateway error) as ok:false (#391)", async () => {
+    const { env } = fakeEnv({ workflowStatus: "running" });
+    const inv = await worker.fetch(req("/invoke", { hook: "score", input: { film_key: "renders/f/film.mp4" }, config: { prompt: "warm score" } }), env as never, ctx as never);
+    const poll = (await inv.json() as { poll: string }).poll;
+    const jobId = JSON.parse(atob(poll)).job_id;
+    // Simulate the workflow step exhausting retries after an AI Gateway 5xx and writing failed.
+    await env.R2_RENDERS.put(`music-gen/${jobId}.state.json`, JSON.stringify({
+      status: "failed",
+      error: "AiGatewayError: 2002: Internal server error",
+      applied: ["music:minimax/music-2.6"],
+    }));
+    const out = await worker.fetch(req("/poll", { poll }), env as never, ctx as never);
+    const j = await out.json() as { ok: boolean; error?: string; pending?: boolean };
+    expect(j.ok).toBe(false);
+    expect(j.pending).toBeUndefined();
+    expect(j.error).toMatch(/AiGatewayError: 2002/);
+  });
+
+  it("poll surfaces workflow complete without R2 result as ok:false, not pending (#391)", async () => {
+    const { env } = fakeEnv({ workflowStatus: "complete" });
+    const inv = await worker.fetch(req("/invoke", { hook: "score", input: { film_key: "renders/f/film.mp4" }, config: { prompt: "warm score" } }), env as never, ctx as never);
+    const poll = (await inv.json() as { poll: string }).poll;
+    // R2 still has the initial running state; workflow already complete = silent exit.
+    const out = await worker.fetch(req("/poll", { poll }), env as never, ctx as never);
+    const j = await out.json() as { ok: boolean; error?: string; pending?: boolean };
+    expect(j.ok).toBe(false);
+    expect(j.pending).toBeUndefined();
+    expect(j.error).toMatch(/complete without a result/);
   });
 
   it("invoke surfaces a workflow-create failure as ok:false (failure is data)", async () => {
