@@ -342,11 +342,11 @@ unchanged.
 | 76 | DELETE | `/api/modules/install/:name` | 2.31 |
 | 77 | PATCH | `/api/modules/install/:name` | 2.31 |
 | 78 | GET | `/api/storage/usage` | 2.32 |
-| 78 | POST | `/api/storage/reconcile` | 2.32 |
-| 79 | GET | `/api/demo/menu` | 2.33 |
-| 80 | POST | `/api/demo/render` | 2.33 |
-| 81 | GET | `/api/demo/render/:id` | 2.33 |
-| 82 | POST | `/api/demo/chat` | 2.33 |
+| 79 | POST | `/api/storage/reconcile` | 2.32 |
+| 80 | GET | `/api/demo/menu` | 2.33 |
+| 81 | POST | `/api/demo/render` | 2.33 |
+| 82 | GET | `/api/demo/render/:id` | 2.33 |
+| 83 | POST | `/api/demo/chat` | 2.33 |
 
 ### 2.2 GET /health
 

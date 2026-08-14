@@ -17,7 +17,7 @@ without saying so is the defect, not the subset.
 | Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **83** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
+| Reachable via `studio_request` | **84** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
 | Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
 | Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **83 of 87** route
+`studio_request` sends any method to any path with the studio bearer, so for **84 of 87** route
 entries there is nothing an agent cannot invoke. Curated coverage is 41 of 87 (48%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 83 a low number costs discoverability, not reach, and 46
+contract to find the route. For those 84 a low number costs discoverability, not reach, and 46
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
@@ -143,7 +143,7 @@ are being reconciled in vivijure-cf#334. A curated submit tool with a blocked po
 capability, and 29 tools built on an unreconciled door would freeze the divergence. A test in
 `vivijure-mcp` asserts no curated tool aims at one, and is written to be deleted when #334 lands.
 
-The remaining 33 panel-reachable routes with no curated tool are, method-aware, **29**: the 9 blocked
+The remaining 34 panel-reachable routes with no curated tool are, method-aware, **30**: the 9 blocked
 render-door routes, the 19 deliberately left on `studio_request` (internal helpers, module
 config, session), and `POST /api/cast/:id/train-wan-lora`, panel-reachable since vivijure-local#329
 and with no curated tool yet. Module config write stays on the hatch for a structural reason rather
@@ -309,6 +309,6 @@ so they moved `curatedCovered`, not the route count, and the four structurally-i
 entries stay four. **`view_artifact` makes an image VIEWABLE; it does not make the route stop returning
 bytes.**
 
-Separately, `POST /api/render/frames` (cf#322) takes the route count 86 -> 87. It is the reason a
+Separately, `POST /api/render/frames` (cf#322) takes the route count 85 -> 86. It is the reason a
 byte-returning clip can be looked at at all: it writes a contact sheet as a normal image artifact, so
 the thing the transport can carry is the thing it gets handed. It adds a route, not a curated tool.

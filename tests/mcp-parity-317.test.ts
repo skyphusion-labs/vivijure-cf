@@ -341,14 +341,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
     // because SOME call to the same path exists with a DIFFERENT method (or, for the artifact HEAD
     // route, no call at all). Named so a regression fails with the route in the message, not as a
     // silently different aggregate count.
-    const falsePositives: Route[] = [
-      { method: "GET", pattern: "/api/storyboard/projects/:id" }, // panel only PATCHes/DELETEs it
-      { method: "POST", pattern: "/api/cast/export/:id" }, // panel uses it as a GET download link
-      { method: "DELETE", pattern: "/api/cast/:id/ref" }, // that path is POSTed; deletes go via /refs/*refKey
-      { method: "DELETE", pattern: "/api/cast/:id/source" }, // same shape, via /source/*sourceKey
-      { method: "HEAD", pattern: "/api/artifact/*key" }, // no HEAD request exists anywhere in public/
-    ];
-    for (const route of falsePositives) {
+    for (const route of PATH_ONLY_FALSE_POSITIVES) {
       expect(panelReaches(route), `${route.method} ${route.pattern} should NOT be method-aware reachable`).toBe(
         false,
       );
@@ -434,7 +427,25 @@ const PUBLISHED = {
   tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
   curatedCovered: 41, // route entries reached by a CURATED tool
   panelReachable: 67, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70; cf#353 wired the retry button)
+  // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
+  // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
+  // unnoticed, so they are derived here rather than hand-corrected a fifth time.
+  panelUncurated: 30, // panel-reachable entries with NO curated tool, METHOD-aware
+  panelUncuratedPathOnly: 34, // the same set under the PRE-cf#333 path-only matcher
+  hatchReachable: 84, // reachable via studio_request = routes minus the raw-body class
 };
+
+// Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously
+// inline inside a single test, which meant the path-only/method-aware relationship below could not
+// be expressed at all -- a value unreachable from a test is a finding about the code, not an
+// inconvenience in the test.
+const PATH_ONLY_FALSE_POSITIVES: Route[] = [
+  { method: "GET", pattern: "/api/storyboard/projects/:id" }, // panel only PATCHes/DELETEs it
+  { method: "POST", pattern: "/api/cast/export/:id" }, // panel uses it as a GET download link
+  { method: "DELETE", pattern: "/api/cast/:id/ref" }, // that path is POSTed; deletes go via /refs/*refKey
+  { method: "DELETE", pattern: "/api/cast/:id/source" }, // same shape, via /source/*sourceKey
+  { method: "HEAD", pattern: "/api/artifact/*key" }, // no HEAD request exists anywhere in public/
+];
 
 describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
   it("route entry count matches the published number", () => {
@@ -479,6 +490,34 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
     expect(table.get("Panel-reachable")).toBe(PUBLISHED.panelReachable);
     expect(table.get("MCP tools")).toBe(PUBLISHED.tools);
     expect(table.get("Reached by a CURATED tool")).toBe(PUBLISHED.curatedCovered);
+    expect(table.get("Reachable via `studio_request`")).toBe(PUBLISHED.hatchReachable);
+
+    // The hatch number is DERIVED from the raw-body cell in the same table rather than carried as a
+    // second independent literal, so the two cannot drift apart. The doc states the rule in prose
+    // ("every route EXCEPT the three that read a raw request body"); this is that rule, executed.
+    const rawBody = table.get("Raw-body, unreachable through the HATCH");
+    expect(rawBody, "the raw-body row is gone from the doc table").toBeGreaterThan(0);
+    expect(PUBLISHED.routes - (rawBody as number)).toBe(PUBLISHED.hatchReachable);
+  });
+
+  it("panel-reachable-with-no-curated-tool matches the published number (cf#423)", () => {
+    const cov = curatedCoverage();
+    const uncurated = studioRoutes().filter((r) => panelReaches(r) && !cov.has(routeKey(r)));
+    // Floor first: a zero would make the comparison vacuous, and an extractor that silently returned
+    // nothing would read as agreement.
+    expect(uncurated.length, "no uncurated panel routes parsed -- harness failure").toBeGreaterThan(0);
+    expect(uncurated.length).toBe(PUBLISHED.panelUncurated);
+  });
+
+  it("the PATH-ONLY count is the method-aware one plus the uncurated cf#333 false positives", () => {
+    // 33/34 and 29/30 are two counts of ONE set under two matchers: the method-aware reading, and
+    // the pre-cf#333 path-only reading. The gap is exactly those path-only false positives that ALSO
+    // lack a curated tool -- 4 of the 5, since GET /api/storyboard/projects/:id has get_project.
+    // Deriving the relationship keeps it checkable instead of leaving two literals to drift.
+    const cov = curatedCoverage();
+    const uncuratedFPs = PATH_ONLY_FALSE_POSITIVES.filter((r) => !cov.has(routeKey(r)));
+    expect(uncuratedFPs.length, "the false-positive list no longer matches the coverage map").toBeGreaterThan(0);
+    expect(PUBLISHED.panelUncurated + uncuratedFPs.length).toBe(PUBLISHED.panelUncuratedPathOnly);
   });
 
   it("the doc states which DIRECTION each headline number can be wrong in", () => {
@@ -498,6 +537,14 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
     );
     // Negative control: the matcher must not match a caveat that is not there.
     expect(flat).not.toContain("Panel-reachable (999) can be too LOW");
+    // The prose PAIR (cf#423). Both numbers state the same set under two matchers and move together;
+    // neither was asserted before, and the suite was green with the doc stale by one.
+    expect(flat, "the path-only/method-aware prose pair is stale or reworded").toContain(
+      `The remaining ${PUBLISHED.panelUncuratedPathOnly} panel-reachable routes with no curated tool are, method-aware, **${PUBLISHED.panelUncurated}**`,
+    );
+    expect(flat, "the studio_request prose ratio is stale").toContain(
+      `for **${PUBLISHED.hatchReachable} of ${PUBLISHED.routes}** route`,
+    );
   });
 
   it("the doc's PROSE ratio matches the table, not just the table itself", () => {
