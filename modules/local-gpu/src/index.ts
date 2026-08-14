@@ -12,8 +12,6 @@
 //   POST /cancel      -> stop an in-flight job so a cancelled render does not orphan the GPU
 
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -27,6 +25,10 @@ import {
 } from "./contract";
 import type { DurationGridDecl } from "./contract";
 import { buildI2vBody, readOutput, readDurationGrid, encodePoll, decodePoll, jobGone, classifyGoneState, isSafeJobId, normalizeBackendUrl } from "./i2v";
+// MANIFEST is data-only in ./manifest (cf#285) so quality-tier-drift can import it without
+// this entrypoint's full graph. Re-exported for callers that still load index.
+import { MANIFEST } from "./manifest";
+export { MANIFEST };
 import {
   buildPreviewBody,
   decodeKeyframePoll,
@@ -47,52 +49,6 @@ interface Env {
   // body still submits; the server may run open on a trusted LAN tunnel.
   LOCAL_BACKEND_TOKEN?: SecretsStoreSecret;
 }
-
-// Exported so the core's tier-drift guard (tests/quality-tier-drift.test.ts, #124) can assert this
-// module's `quality` enum stays in lockstep with the core QUALITY_TIERS set. The enum VALUES are the
-// core's shared vocabulary (draft/standard/final); the local backend maps each to an engine config its
-// card can HONESTLY deliver ("final" = the card's honest ceiling, NOT datacenter parity) -- LTX scales
-// the tiers one way, CogVideoX by inference steps. Same names, backend-specific mapping -- exactly as
-// the Wan datacenter backend maps the tiers to its steps.
-export const MANIFEST: ModuleManifest = {
-  name: "local-gpu",
-  version: "0.2.0",
-  api: MODULE_API,
-  hooks: ["motion.backend", "keyframe"],
-  provides: [
-    { id: "i2v-local-gpu", label: "Local GPU (image-to-video on your own card)" },
-    { id: "keyframe-local-gpu", label: "Local GPU Keyframe (SDXL on your own card)" },
-  ],
-  config_schema: {
-    quality: { type: "enum", values: ["draft", "standard", "final"], default: "standard", label: "quality" },
-    quality_tier: { type: "enum", values: ["draft", "standard", "final"], default: "final", label: "keyframe quality tier" },
-    fps: { type: "int", default: 24, min: 8, max: 30, label: "fps (backend may pin its own; e.g. CogVideoX = 8)" },
-    flow_shift: { type: "float", default: 5.0, min: 1, max: 12, label: "motion (flow shift; LTX door only, ignored otherwise)" },
-    negative_prompt: { type: "string", default: "", label: "negative prompt (additive)" },
-    width: { type: "int", default: 1344, min: 512, max: 1536, label: "keyframe width" },
-    height: { type: "int", default: 768, min: 512, max: 1536, label: "keyframe height" },
-    steps: { type: "int", default: 30, min: 1, max: 60, label: "keyframe diffusion steps" },
-    guidance_scale: { type: "float", default: 6.5, min: 0, max: 20, label: "keyframe guidance scale" },
-    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
-  },
-  ui: {
-    section: "motion",
-    order: 4,
-    locality: "local",
-    // local#278: self-host CogVideoX may need registration; commercial product use is via
-    // vivijure-cf / Cloudflare partner channels. No cloud API bill on this door.    // local#278: self-host/vivijure-local = hobby + non-commercial; commercial = vivijure-cf.
-    cost: "Hardware; self-host non-commercial",
-    blurb: "Renders keyframes + motion on your own GPU (no cloud API bill). Self-host only: vivijure-local and the local-gpu door are for hobbyists and non-commercial use. Commercial use of Vivijure is supported via vivijure-cf (Cloudflare partner channels), not this door. Default 16GB CogVideoX and other self-host weights carry their own licences -- see the door licence and docs/DEPLOYMENT.md. The 12GB LTX door is a different engine and licence. Quality scales with your card and backend.",
-    limits: [
-      "Runs whichever local backend you point it at: LTX (12GB floor) or CogVideoX (16GB floor); bigger cards add headroom",
-      "Keyframes (SDXL preview) and short i2v clips share the same card serially",
-      "One GPU job at a time (a consumer card runs a single preview or i2v job)",
-      "Self-host / vivijure-local: hobby and non-commercial only (local#278). Commercial product use: vivijure-cf",
-    ],
-  },
-  cancelable: true,
-  keyframe_label: "SDXL (local)",
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
