@@ -226,11 +226,19 @@ describe("the population under test is the whole one (cf#289)", () => {
       .filter((e) => e.isDirectory() && e.name !== "_shared")
       .map((e) => e.name);
     const read = (name: string): string => {
+      // cf#285 moved some modules' MANIFEST (incl. the `hooks` array) out of index.ts into a
+      // data-only manifest.ts leaf file. Concatenate both -- an extracted module has nothing
+      // manifest-shaped in index.ts and everything in manifest.ts; a not-yet-extracted module is
+      // the reverse, and the runtime-code strings this scan also matches (api.runpod.ai,
+      // _shared/runpod-route) only ever live in index.ts either way.
+      let src = "";
       try {
-        return readFileSync(join(dir, name, "src", "index.ts"), "utf8");
-      } catch {
-        return "";
-      }
+        src += readFileSync(join(dir, name, "src", "index.ts"), "utf8");
+      } catch { /* no index.ts */ }
+      try {
+        src += readFileSync(join(dir, name, "src", "manifest.ts"), "utf8");
+      } catch { /* not extracted */ }
+      return src;
     };
 
     // Derived, not asserted: a module is a RunPod submitter iff it names the RunPod API host OR

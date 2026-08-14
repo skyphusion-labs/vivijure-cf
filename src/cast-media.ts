@@ -10,7 +10,7 @@ import {
   removeSource,
 } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
-import { toPublicCast } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "./cast-public";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 

@@ -368,6 +368,8 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `hooks` | `{ [hook]: string[] }` | Map of hook name -> module **names** serving it, **pre-sorted** in canonical `ui.order` then name order (section 5). The frontend consumes this verbatim and never re-sorts. A hook with no installed module is absent from the map. |
 | `catalog` | `HookCatalogEntry[]` | Every hook (independent of what is installed): `{ name, blurb, cardinality }`. |
 | `render` | `RenderConfigProjection` | Core-owned render config: `{ quality_tiers: { value, label, blurb }[], default_tier }`. See 2.3.1. |
+| `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
+| `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
 
 `HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" }`.
 `PublicModule` = the `ModuleManifest` (section 4) with `binding` removed.
@@ -530,6 +532,20 @@ Note the two success shapes differ by one field: SDXL returns `loraDestKey` (sin
 `lora_status` enum (on the cast row): `"idle" | "training" | "ready" | "failed"`. The training submit
 banks the freshly-trained adapter back onto the cast member (`lora_status` -> `ready`) so a
 character's LoRA is trained ONCE and reused across every project.
+
+**Per-family readiness (cf#383):** a cast can carry two independent adapter sets (`lora_key` for
+SDXL keyframes; `wan_lora_key_high` / `wan_lora_key_low` for Wan motion). `lora_status` is the
+**shared** last training-job state across both families -- `"ready"` means at least one family was
+marked ready, not that both adapters exist. Public cast rows also expose additive booleans derived
+from key presence (cannot disagree with the keys):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `sdxl_lora_ready` | boolean | `lora_key` is under `loras/` (keyframe identity adapter present) |
+| `wan_lora_ready` | boolean | both Wan expert keys are under `loras/` |
+
+Prefer these over `lora_status === "ready"` when selecting cast for a bind. Existing clients that
+only read `lora_status` keep working; they remain subject to the ambiguity this field pair fixes.
 
 ### 2.9a Cast bundle import/export (issue #324)
 
@@ -1997,11 +2013,15 @@ are documented here for total coverage. The API returns them wrapped (`{ cast }`
 | `ref_keys` | `{ key, mime }[]` | LoRA training reference images. |
 | `source_keys` | `{ key, mime }[]` | Human-uploaded source photos (multi-ref conditioning). |
 | `created_at` / `updated_at` | string | Timestamps. |
-| `lora_key` | string \| null | R2 key of the trained LoRA. |
-| `lora_status` | `"idle"\|"training"\|"ready"\|"failed"` | Training state. |
-| `lora_job_id` | string \| null | In-flight training job. |
-| `lora_error` | string \| null | Last training error. |
-| `lora_trained_at` | string \| null | When trained. |
+| `lora_key` | string \| null | R2 key of the trained **SDXL** identity LoRA (keyframes). |
+| `lora_status` | `"idle"\|"training"\|"ready"\|"failed"` | **Legacy shared** last training-job state across SDXL + Wan. `"ready"` does not imply both families have adapters -- use `sdxl_lora_ready` / `wan_lora_ready` (cf#383). |
+| `lora_job_id` | string \| null | In-flight training job (shared slot). |
+| `lora_error` | string \| null | Last training failure when status is `failed`. Non-null alone is not a failure predicate: ops harvest notes have also been written here on ready rows (cf#295). |
+| `lora_trained_at` | string \| null | When a train last completed (either family). |
+| `wan_lora_key_high` | string \| null | R2 key of the Wan high-noise expert adapter. |
+| `wan_lora_key_low` | string \| null | R2 key of the Wan low-noise expert adapter. |
+| `sdxl_lora_ready` | boolean | Derived: SDXL identity adapter present (`lora_key` under `loras/`). Prefer for keyframe binding. |
+| `wan_lora_ready` | boolean | Derived: both Wan experts present under `loras/`. Prefer for Wan motion binding. |
 | `voice_id` | string \| null | Aura-1 speaker (one of the 12; see 2.4). null = unassigned. |
 
 ### A.2 StoryboardProject

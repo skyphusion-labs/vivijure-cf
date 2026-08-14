@@ -27,8 +27,9 @@ import {
 } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import {
   listCast, getCastById, createCast, updateCast, deleteCast,
-  clearPortrait, getCastIdByPublicId, toPublicCast,
+  clearPortrait, getCastIdByPublicId,
 } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "./cast-public";
 import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
 import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
@@ -109,6 +110,7 @@ import { videoFinishHooksUnavailable } from "./video-finish-availability";
 import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
+import { resolveStudioRelease } from "./studio-release";
 import {
   projectWanLorasIntoModuleConfig,
   ensureModuleOverrideConfig,
@@ -2077,8 +2079,13 @@ const hModules: Handler = async (_req, env) => {
   // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
   // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
   // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
-  return json(
-    modulesResponse(modules, renderConfigProjection(), {
+  // cf#287: studio release / build identity is a TOP-LEVEL field on the modules projection
+  // (orthogonal to `host`, which is transport capability). Two tag deploys must never project a
+  // byte-identical registry. Spread AFTER modulesResponse so a future core field of the same name
+  // cannot silently win; the host is the authority on its own release.
+  const release = resolveStudioRelease(env);
+  return json({
+    ...modulesResponse(modules, renderConfigProjection(), {
       dispatch: !!env.MODULE_DISPATCH,
       ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
       // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
@@ -2097,7 +2104,9 @@ const hModules: Handler = async (_req, env) => {
           }
         : {}),
     }),
-  );
+    studio_release: release.studio_release,
+    ...(release.git_sha ? { git_sha: release.git_sha } : {}),
+  });
 };
 
 export const API_ROUTES: Route[] = [

@@ -80,12 +80,16 @@ All commands run with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` in the en
    # on a fresh install where 0001 already set them.
    wrangler d1 execute vivijure-demo --remote -c wrangler.demo.toml \
      --file=migrations/demo/0003_demo_cast_portraits.sql
+   # Drop retired text-overlay catalog row on a LIVE demo D1 that already ran the old 0001 seed
+   # (cf#24; 0001 no longer inserts it on fresh installs). Idempotent DELETE.
+   wrangler d1 execute vivijure-demo --remote -c wrangler.demo.toml \
+     --file=migrations/demo/0004_drop_text_overlay.sql
    ```
 
-   Seeds: the 26 real module manifests (display-only, `script_name = demo-seed-<name>`, invocable by
-   nothing), plus browseable projects, cast (each with an absolute `assets.skyphusion.net` portrait image
-   -- still no R2 binding), and COMPLETED render rows whose `output_key` is an absolute
-   `assets.skyphusion.net` showcase MP4.
+   Seeds: the 25 real module manifests (display-only, `script_name = demo-seed-<name>`, invocable by
+   nothing; `text-overlay` retired, cf#24), plus browseable projects, cast (each with an absolute
+   `assets.skyphusion.net` portrait image -- still no R2 binding), and COMPLETED render rows whose
+   `output_key` is an absolute `assets.skyphusion.net` showcase MP4.
 
 4. **Deploy the Worker** (creates the `demo.vivijure.com` custom domain -- Workers custom domains own
    DNS + the cert; a first-level subdomain under `vivijure.com` gets Universal SSL, NO ACM needed):
@@ -132,6 +136,13 @@ reply is plain text and browse keeps working (honest exhaustion). The prompt is 
 output cap and NO tool/binding reach beyond read-only studio state. `GET /api/modules` projects
 `host.assistant = { model: "oss", note: "..." }` so the "free model" note renders wherever the assistant
 surfaces (constraint 9).
+
+**Anti-proxy posture (cf#31):** the design rests the "structurally worthless as a free public LLM
+proxy" claim on **caps + gateway budget**, not on prompt obedience alone. Soft off-topic still can
+elicit an on-topic-to-the-attacker essay when the model ignores the system prompt -- that is
+accepted and bounded by economics. Clear jailbreak / free-LLM shapes (e.g. "ignore prior
+instructions... write a 500-word essay") are **hard-refused before any counter bump or model call**
+so they do not burn the visitor's daily budget; soft off-topic remains prompt-advisory only.
 
 **The write surface** is exactly two routes: `POST /api/demo/render` and `POST /api/demo/chat`
 (`DEMO_WRITE_ROUTES` in `src/auth-gate.ts`). Every other mutation -- including the prod render/plan/chat

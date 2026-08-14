@@ -3,6 +3,8 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
 ## v1.26.0 -- 2026-08-14
 
 MINOR. Per-route authorization lands, and three telemetry fixes that the production load test is
@@ -479,6 +481,8 @@ plan `duration_seconds`.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
 - **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
+- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
 ### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
 
 `runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
@@ -507,6 +511,15 @@ Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke t
 operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
 (vivijure-core, unreleased).
 
+### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
+
+`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
+null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
+
+- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
+- Legacy `lora_status` retained and documented as shared training-job state only.
+- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
+- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
 ### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
 
 `projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
