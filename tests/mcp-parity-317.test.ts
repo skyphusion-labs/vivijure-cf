@@ -58,7 +58,8 @@ function studioRoutes(): Route[] {
   // GET /api/modules is dispatched in routeRequest BEFORE the table (it opts into a 60s isolate
   // cache), so it is absent from API_ROUTES while being one of the most-used routes on the surface.
   // Counting the table alone would undercount by exactly this one, silently.
-  out.push({ method: "GET", pattern: "/api/modules" });
+  // cf#520: no push here any more -- GET /api/modules is a table route, so the parse already has
+  // it. See tests/no-inline-api-routes.test.ts for the guard that stops the inline form returning.
   return out;
 }
 
@@ -429,10 +430,10 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 86, // studio API route entries (method+pattern), incl. the pre-table GET /api/modules
+  routes: 86, // studio API route entries (method+pattern); all 86 are in API_ROUTES since cf#520
   tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
   curatedCovered: 41, // route entries reached by a CURATED tool
-  panelReachable: 65, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70)
+  panelReachable: 66, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70)
 };
 
 describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
