@@ -3,6 +3,11 @@ import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
   runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS,
 } from "../modules/finish-rife/src/finish";
+// cf#537: conformance runs against the SHIPPED manifest, not a transcribed copy. The copy
+// this replaced could not report anything about the artifact that deploys -- proven on this
+// very change, where adding `participation` made finish-lipsync (which reads the real one)
+// pass while these two stayed red against their own stale transcriptions.
+import { MANIFEST } from "../modules/finish-rife/src/index";
 import { checkManifest, checkInvokeResponse, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { FinishInput } from "../modules/finish-rife/src/contract";
 
@@ -124,23 +129,6 @@ describe("finish-rife: parseBackendOutput", () => {
 });
 
 describe("finish-rife: manifest conformance", () => {
-  const MANIFEST = {
-    name: "finish-rife",
-    version: "0.1.0",
-    api: "vivijure-module/2",
-    hooks: ["finish"],
-    provides: [
-      { id: "interpolate", label: "Smooth motion (RIFE frame interpolation)" },
-      { id: "face_restore", label: "Relock faces (GFPGAN)" },
-    ],
-    config_schema: {
-      interpolate:          { type: "bool",  default: true },
-      interpolation_factor: { type: "int",   default: 2, min: 1, max: 8 },
-      face_restore:         { type: "enum",  values: ["none", "gfpgan", "codeformer"], default: "none" },
-      face_fidelity:        { type: "float", default: 0.7, min: 0, max: 1 },
-      only_faces:           { type: "bool",  default: true },
-    },
-  };
 
   it("passes the conformance manifest checker", () => {
     const checks = checkManifest(MANIFEST);

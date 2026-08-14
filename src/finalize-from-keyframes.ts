@@ -261,6 +261,10 @@ export async function animateFromPreview(
       per_shot_motion: perShotMotion,
       motion_config: mapped.motion_config,
       finish_config: mapped.finish_config,
+      // cf#537: inherited from the PARENT render's stored overrides bag, so a derived render keeps
+      // the selection the original was submitted with. Dropping it here would silently re-enable
+      // every default module on every finalize, which is the original defect wearing a new hat.
+      finish_select: mapped.finish_select,
       speech_config: mapped.speech_config,
       film_finish_config: mapped.film_finish_config,
       master_config: mapped.master_config,

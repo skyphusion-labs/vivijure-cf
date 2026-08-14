@@ -63,6 +63,10 @@ export const MANIFEST: ModuleManifest = {
   },
   // Order < the upscaler's 20 so a lip-synced shot is then upscaled (the 256px face region wants it).
   ui: { section: "finish", icon: "mic", order: 15 },
+  // cf#537: EXPLICIT, behaviour unchanged. See finish-rife for why silence is not an option here.
+  // Lip-sync additionally no-ops on a shot with no dialogue line (finish_consumes_audio, below), so
+  // it was never the unconditional-cost problem blender was.
+  participation: "default",
   // Declared artifact conventions (S6): the MuseTalk container appends _ls to the input clip key.
   finish_artifacts: {
     output_key: { kind: "append_suffix", suffix: "_ls" },
