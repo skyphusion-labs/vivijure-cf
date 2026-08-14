@@ -1,0 +1,76 @@
+-- cf#520: set the ESTATE's four live token scopes after 0020 adds the column.
+--
+-- OPERATOR-RUN, AGAINST THE ESTATE DB ONLY. Run it by hand at v1.26.0 tag time:
+--
+--     npx wrangler d1 execute vivijure-studio --remote \
+--       --file migrations/manual/0021_set_live_token_scopes.sql
+--
+-- WHY THIS IS NOT A TOP-LEVEL MIGRATION. It was one, briefly, and that was a security defect
+-- caught in review. Top-level migrations/*.sql are bundled into the studio release
+-- (scripts/build-studio-release.ts:209) and replayed into every TENANT D1
+-- (vivijure-control-plane src/provisioner.ts:653 -- "the SAME migration files the studio ships,
+-- applied only where missing"). 0009 creates api_tokens in every tenant as well, `name` is its
+-- PRIMARY KEY, and studio-consumer-token.sh mint accepts any [a-z0-9][a-z0-9_-]{0,63}. `conrad`
+-- and `joan` are ordinary first names, so a tenant can legitimately hold rows with those names --
+-- and a name-matching UPDATE shipped in the bundle would SILENTLY PROMOTE that tenant's own
+-- credential to operator. That is precisely cf#520's hole re-opened under a name.
+--
+-- The estate/tenant distinction is not expressible inside a D1 migration: nothing portable tells a
+-- migration which database it is running in. So the split has to be WHICH FILE it lives in, and
+-- migrations/manual/ is the one the release build does not bundle (readdirSync there is
+-- non-recursive; migrations/manual/0004_drop_user_email.sql is the precedent).
+--
+-- The cost is honest: 0020's `consumer` default lands at the tag, so between the deploy and this
+-- file being run, the four credentials below 403. That window is worth it. It is a human-sequenced
+-- operator command at a moment we choose, it moves no plaintext, and it touches no consumer's
+-- configuration -- unlike a revoke+mint reissue, which would rotate four live secrets to
+-- accomplish a schema change with nothing leaked. Run this immediately after the tag deploys.
+--
+-- WHAT BREAKS DURING THE WINDOW, so it is recognised rather than misdiagnosed: every denial is a
+-- 403 from src/index.ts:2202 with {"ev":"authz.deny",...,"required":"operator","held":"consumer"}.
+-- There is NO 401 path in this gate. slate loses !install-config only, so it reads as one broken
+-- command rather than a broken token. crew-mcp loses all 8 operator tools and any studio_request
+-- at those paths, including POST /api/storage/reconcile. The panel and both mobile clients fail
+-- to load or save module config WITH NO RE-AUTH PROMPT: AUTHZ_DENY_REASON deliberately does not
+-- match the paste-once regex at public/auth-token.js:124 (correct -- the token is fine), and the
+-- mobile clients carry no such prompt in any form. The deploy itself goes green throughout.
+--
+-- SCOPE EVIDENCE -- derived from CALL SITES, never from the consumer's name (cf#520). Caller
+-- population derived by enumerating all 49 org repos, NOT from the constellation list, which was
+-- short by three entries and produced a wrong population once already (vivijure#814):
+--
+--   slate-bot  MEASURED  2 of 8 operator routes: GET + PATCH /api/modules/:name/config
+--                        (slate/studio.mjs:101,103, live from bot.mjs behind !install-config).
+--                        Slate has no arbitrary-path escape hatch, so its surface is bounded.
+--   crew-mcp   MEASURED  8 of 8 (vivijure-mcp/src/mcp-tools.ts:998-1088) PLUS studio_request at
+--                        :1810, a documented generic passthrough to any path.
+--   conrad     MEASURED  a named api_tokens row used for panel + mobile access. NOTE it is NOT
+--                        the operator login: STUDIO_API_TOKEN is a separate branch at
+--                        auth-gate.ts:158 that never consults api_tokens and 0020 does not touch
+--                        it. The deciding call sites are public/settings.js:140,199, and
+--                        settings.html is the only panel page reaching an operator route.
+--   joan       DECIDED   no call sites exist -- no service is named `joan`, so the answer is a
+--                        fact about which pages a person opens and code cannot supply it.
+--                        Conrad's call, 2026-08-14: operator. Joan maintains public/settings.js,
+--                        the file holding the two operator call sites. Recorded as a DECISION so
+--                        no later reader mistakes it for a measurement.
+--
+--   Both first-party MOBILE clients drive the FULL operator surface -- vivijure-android
+--   VivijureClient.kt:359-378 and vivijure-ios VivijureClient.swift:660-734, 8 of 8 each -- but
+--   hold no token of their own: each takes a USER-PASTED Bearer (Android
+--   EncryptedSharedPreferences/TokenStore.kt, iOS Keychain + SecureField in OnboardingView.swift).
+--   They present whichever row below a person pastes, which is the second and independent reason
+--   `joan` is operator: on mobile a person drives all eight routes, not settings.html alone.
+--
+--   MEASURED NEGATIVE: vivijure-control-plane touches three operator surfaces on TENANT studios
+--   (src/tenant-modules.ts:788,837,864) but authenticates with STUDIO_API_TOKEN, the operator
+--   SECRET (provisioner.ts:846, injected routing.ts:119). auth-gate.ts:158 returns operator for
+--   that path, so tenant provisioning does not break during the window.
+--
+-- Revoked rows are deliberately left at the `consumer` default: they authenticate nothing.
+-- A token minted after 0020 gets its scope explicitly from `mint <name> <scope>`, which has no
+-- default and refuses to run without one, so nothing here weakens that.
+UPDATE api_tokens
+   SET scope = 'operator'
+ WHERE name IN ('conrad', 'slate-bot', 'joan', 'crew-mcp')
+   AND revoked_at IS NULL;

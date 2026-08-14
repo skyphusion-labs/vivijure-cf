@@ -9,11 +9,26 @@
 --
 -- ITS VALUE IS DELIBERATE AND IT HAS A CONSEQUENCE THE OPERATOR MUST SEQUENCE: 'consumer' is the
 -- least privilege, so applying this migration DOWNGRADES every existing named token to consumer
--- until it is reissued. That is the safe direction (a consumer token that needed more fails CLOSED with a 403 -- there is no 401 path in this gate;
+-- until it is reissued. That is the safe direction (a consumer token that needed more 401s loudly;
 -- an operator default would leave the hole open under a new name), but it means the reissue has to
--- happen with the tag that applies this migration, not after it -- which is why the UPDATE at the
--- bottom of this file does exactly that. Migrations apply in the DEPLOY
+-- happen with the tag that applies this migration, not after it. Migrations apply in the DEPLOY
 -- job on a version tag, so merging this is inert -- tagging is the moment it lands.
+--
+-- THE VALUES LIVE IN migrations/manual/0021_set_live_token_scopes.sql AND MUST NOT BE MOVED HERE.
+-- Setting the four estate scopes in THIS file is the obvious shortcut and it is a security defect:
+-- top-level migrations/*.sql are bundled into the studio release (scripts/build-studio-release.ts:209)
+-- and replayed into every TENANT D1 (vivijure-control-plane src/provisioner.ts:653, "the SAME
+-- migration files the studio ships, applied only where missing"). 0009 creates api_tokens in every
+-- tenant too, `name` is its PRIMARY KEY, and `mint` accepts any [a-z0-9][a-z0-9_-]{0,63} -- so
+-- `conrad` and `joan` are names a TENANT can legitimately choose. A name-matching UPDATE here
+-- silently promotes that tenant's own token to operator: cf#520's hole, reopened under a name, in
+-- the one file whose header forbids exactly that.
+--
+-- The migrations-gate CANNOT catch this. It replays against a fresh local D1 where those rows do
+-- not exist, so the UPDATE matches zero rows and the gate is structurally incapable of going red.
+-- Its pass is not evidence. migrations/manual/ is operator-run and never bundled (that same
+-- build-studio-release comment says so, and readdirSync there is non-recursive), which is why the
+-- values live there and are applied by hand against the estate DB alone.
 --
 -- The CHECK constraint is not retroactive: SQLite does not re-evaluate it for rows that predate
 -- the ALTER. src/auth-gate.ts therefore re-validates every value it reads and fails CLOSED on
@@ -21,63 +36,3 @@
 ALTER TABLE api_tokens
   ADD COLUMN scope TEXT NOT NULL DEFAULT 'consumer'
   CHECK (scope IN ('operator', 'consumer'));
-
--- ---------------------------------------------------------------------------------------------
--- THE FOUR LIVE TOKENS, SET BY NAME. Added before this migration ever ran anywhere (verified: no
--- `scope` column in prod `api_tokens`, and 0 of 52 `v*` tags contain this file, so it has reached
--- no tenant studio either). Amending it in place is therefore safe and leaves no split-brain
--- between a DB that ran the old version and one that ran this.
---
--- WHY THIS IS HERE AND NOT A POST-TAG REISSUE. The header above is right that the DEFAULT must
--- stay `consumer` and right that a blanket operator default would reopen cf#520. This does not do
--- that: it names four rows. What it removes is the WINDOW. Migrations apply in the deploy job, so
--- without these lines every one of these credentials 403s from the moment the tag deploys until a
--- human finishes reissuing -- and `reissue` through studio-consumer-token.sh means revoke+mint,
--- i.e. new plaintext that has to reach a browser, a crew member, slate's env and vivijure-mcp's
--- config before service resumes. Setting the column by name costs nothing, moves no secret, and
--- the end state is identical to a reissue that happened to choose these values.
---
--- A token minted AFTER this migration still gets its scope explicitly from `mint <name> <scope>`,
--- which has no default and refuses to run without one. Nothing here weakens that.
---
--- SCOPE EVIDENCE (derived from call sites, never from the consumer's name -- cf#520):
---   slate-bot  MEASURED  2 of 8 operator routes: GET + PATCH /api/modules/:name/config,
---                        slate/studio.mjs:101,103, reached live from bot.mjs behind !install-config.
---                        Slate has no arbitrary-path escape hatch, so its surface really is bounded.
---   crew-mcp   MEASURED  8 of 8 operator routes, vivijure-mcp/src/mcp-tools.ts:998-1088, PLUS
---                        studio_request at :1810, a documented generic passthrough to any path.
---   conrad     MEASURED  the operator login; public/settings.js:140,199 calls an operator route,
---                        and settings.html is the only panel page that reaches one.
---   joan       DECIDED   no call sites exist: no service is named `joan`, so its scope is a fact
---                        about which pages a person opens and code cannot answer it. Conrad's call,
---                        2026-08-14: operator. Joan maintains public/settings.js -- the file holding
---                        the two operator call sites -- so a consumer scope would break the page she
---                        owns with no re-auth prompt (AUTHZ_DENY_REASON deliberately does not match
---                        the paste-once regex in public/auth-token.js:124), which reads as a release
---                        regression rather than a credential problem. Recorded as a DECISION, not a
---                        measurement, so a later reader does not mistake it for one.
---
--- THE CALLER POPULATION IS FIVE SURFACES, NOT THREE. The first sweep behind this was handed a
--- population (slate, mcp, web panel) instead of deriving one, and its file filter listed
--- .ts/.js/.mjs/.py/.json/.md/.sh -- structurally blind to .kt and .swift. Enumerating all 49 org
--- repos found two more first-party clients that drive the ENTIRE operator surface:
---   vivijure-android  8 of 8  VivijureClient.kt:359-378      Bearer via HttpJson.kt:46
---   vivijure-ios      8 of 8  VivijureClient.swift:660-734   Bearer via HTTPClient.swift:58
--- Neither holds a fifth named token: both take a USER-PASTED Bearer (Android
--- EncryptedSharedPreferences/TokenStore.kt, iOS Keychain + SecureField in OnboardingView.swift),
--- so they present whichever of the four rows below a person pastes. That leaves this UPDATE
--- unchanged and makes `joan` operator for a second, independent reason: a person on mobile drives
--- all eight operator routes, not just settings.html, and the mobile clients carry no paste-once
--- prompt in any form -- on the web the missing prompt is a design choice, on mobile there is
--- nothing to suppress.
---
--- MEASURED NEGATIVE, worth keeping: vivijure-control-plane touches three operator surfaces on
--- TENANT studios (src/tenant-modules.ts:788,837,864) but rides STUDIO_API_TOKEN, the operator
--- SECRET (provisioner.ts:846, injected routing.ts:119). auth-gate.ts:158 returns operator for the
--- secret path, which 0020 does not touch, so tenant provisioning does not break at the tag.
---
--- Revoked rows are deliberately left at the `consumer` default: they authenticate nothing.
-UPDATE api_tokens
-   SET scope = 'operator'
- WHERE name IN ('conrad', 'slate-bot', 'joan', 'crew-mcp')
-   AND revoked_at IS NULL;
