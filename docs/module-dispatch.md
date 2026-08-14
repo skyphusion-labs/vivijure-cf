@@ -9,7 +9,7 @@
 > unbound and the whole dispatch layer is a no-op: the studio runs exactly as before on service bindings.
 >
 > This is an **infrastructure + onboarding** spec layered UNDER the existing module contract
-> (`docs/module-api.md`, `src/modules/types.ts` = `vivijure-module/2`). It changes WHERE a module lives
+> (`docs/module-api.md`, `@skyphusion-labs/vivijure-core modules/types` = `vivijure-module/2`). It changes WHERE a module lives
 > and HOW the core reaches it; it does not (by design, see section 6) change WHAT a module is. Read
 > `docs/module-api.md` first; this is the transport story beneath it.
 >
@@ -24,7 +24,7 @@
 ## 0. Why this exists
 
 Today a module is a standalone Worker bound to the core by a `[[services]]` entry named
-`MODULE_<NAME>` (see `docs/module-authoring.md`). The registry (`src/modules/registry.ts`) discovers
+`MODULE_<NAME>` (see `docs/module-authoring.md`). The registry (`@skyphusion-labs/vivijure-core modules/registry`) discovers
 every `MODULE_*` binding, reads each manifest, and dispatches hook calls over that service binding.
 That works, but installing a module is a **core redeploy**: you add a `[[services]]` block to
 `wrangler.toml.example`, the module must already be deployed (a binding to a missing service makes
@@ -67,7 +67,7 @@ flowchart TD
   end
 
   subgraph core["vivijure-studio (core = OUTBOUND dynamic-dispatch Worker)"]
-    REG["Module registry<br/>(src/modules/registry.ts)"]
+    REG["Module registry<br/>(@skyphusion-labs/vivijure-core modules/registry)"]
     DB[("D1: installed_modules<br/>(name -> namespace script)")]
     DISP["env.MODULE_DISPATCH<br/>(dispatch_namespaces binding)"]
     SB["env.MODULE_*<br/>(legacy [[services]] bindings)"]
@@ -315,7 +315,7 @@ bound to the **user Worker**, not the core:
 This is the operational teeth of "a module that implements the interface but fails conformance is not
 installable" (CLAUDE.md, Module conformance).
 
-- The harness already exists: `src/modules/conformance.ts` (`checkManifest`, `checkInvokeResponse`,
+- The harness already exists: `@skyphusion-labs/vivijure-core modules/conformance` (`checkManifest`, `checkInvokeResponse`,
   `checkHookOutput`) and `tests/conformance.live.test.ts`, run today as
   `MODULE_URL=<deployed-url> npm run conformance` against a deployed worker.
 - In the dispatch world the gate runs in the **install path** (section 4.1), against the
@@ -415,7 +415,7 @@ capabilities in the `GET /api/modules` projection -- a `host` / `meta` block (e.
 (`vivijure-module/2`, which describes the module contract). A module never reads it; an operator,
 the studio UI, or a health probe does. This keeps two distinct facts distinct: WHAT the module
 contract is (the `api` version, unchanged) versus WHAT transports the host offers (a host capability,
-newly advertised). Adding a host capability flag bumps nothing in `src/modules/types.ts`.
+newly advertised). Adding a host capability flag bumps nothing in `@skyphusion-labs/vivijure-core modules/types`.
 
 ## 6. Migration: in-tree-behind-a-flag -> namespace upload
 
@@ -530,7 +530,7 @@ design landing.
 
 - It does not create the namespace, upload any module, or apply any `wrangler.toml` / `env.ts` change.
   The diffs in sections 2.2 / 2.3 are PROPOSED, shown inline for review.
-- It does not change the module-facing contract (`docs/module-api.md`, `src/modules/types.ts`). The
+- It does not change the module-facing contract (`docs/module-api.md`, `@skyphusion-labs/vivijure-core modules/types`). The
   api-version ruling (section 5) is **additive, no bump** -- so this stays a pure host-side +
   onboarding spec layered under the existing `vivijure-module/2` contract. "This host speaks dispatch"
   is advertised as a host capability flag, never a `MODULE_API` version (section 5.3).

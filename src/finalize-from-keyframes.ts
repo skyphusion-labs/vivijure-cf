@@ -283,7 +283,10 @@ export async function animateFromPreview(
     mode: args.deriveMode,
     parentId: args.parent.id,
     projectId: args.parent.project_id,
-  };
+    // cf#393: resolved motion backend for the finalize/animate child row.
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: null,
+  } as NewRenderRow;
   await insertRender(env, row);
 
   return { ok: true, view };

@@ -42,6 +42,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
+import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
 import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
@@ -95,6 +96,7 @@ const MOTION_INPUT = { shot_id: "shot_01", prompt: "a slow push in", keyframe_ur
 
 const CASES: Case[] = [
   { name: "keyframe", worker: keyframeWorker as unknown as Worker, hook: "keyframe", extraEnv: ENDPOINT, input: { project: "p_test", bundle_key: "renders/p_test/bundle.json" }, config: {} },
+  { name: "finish-blender", worker: finishBlenderWorker as unknown as Worker, hook: "finish", extraEnv: ENDPOINT, input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" }, config: {} },
   { name: "finish-upscale", worker: finishUpscaleWorker as unknown as Worker, hook: "finish", extraEnv: ENDPOINT, input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" }, config: {} },
   // finish-rife no-ops deliberately when nothing is enabled, so the config must turn something on or
   // this exercises the no-op path instead of the poll path.

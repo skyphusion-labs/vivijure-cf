@@ -124,7 +124,7 @@ describe("untrainedCastMessage", () => {
       { slot: "B", name: "Mae", reason: "LoRA still training" },
     ]);
     expect(msg).toBe(
-      "These characters have no trained LoRA -- train them on the Cast page first: Bob, Mae (still training).",
+      "These characters have no trained LoRA -- train them on the Cast page first: Bob, Mae (still training). For voice only (no identity adapter), set dialogue_lines[].voice_id instead of cast_loras.",
     );
   });
 

@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 from aiohttp import ClientSession, ClientTimeout, web
 
@@ -33,6 +34,11 @@ FORMATS = ("wav", "mp3")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("audio-master")
+
+
+def _elapsed_ms(t0: float) -> int:
+    """Wall-clock ms since t0 (cf#268 capacity telemetry). Integer, never negative."""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
 
 
 async def health(_req):
@@ -58,6 +64,7 @@ async def _download(session, url, path, cap):
 
 
 async def master(req):
+    t0 = time.monotonic()
     try:
         body = await req.json()
     except Exception:
@@ -146,6 +153,7 @@ async def master(req):
             "lufs": result["lufs"],
             "loudnessTargetLufs": target_lufs,
             "upscaled": upscaled,
+            "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         })
     finally:
         shutil.rmtree(work, ignore_errors=True)
