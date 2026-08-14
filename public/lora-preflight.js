@@ -21,28 +21,35 @@
   var WAN_LORA_BACKEND = "alibaba-wan-lora";
 
   // A cast member's LoRA is reusable (the GPU skips training) only when the
-  // canonical training finished: lora_status === 'ready' AND the adapter keys
-  // resolve for the chosen motion backend. This mirrors resolveCastLoras in core
-  // (cast-loras.ts): SDXL lora_key wins on any backend; Wan renders need both
-  // wan_lora_key_high and wan_lora_key_low when motion_backend is alibaba-wan-lora.
+  // adapter keys resolve for the chosen motion backend. This mirrors
+  // resolveCastLoras in core (cast-loras.ts): SDXL lora_key wins on any backend;
+  // Wan renders need both wan_lora_key_high and wan_lora_key_low when
+  // motion_backend is alibaba-wan-lora.
+  //
+  // cf#383: prefer additive sdxl_lora_ready / wan_lora_ready when the API
+  // provides them; otherwise derive from key presence. Shared lora_status
+  // alone is not family-honest (Wan-only + status ready is not SDXL ready).
   function isCastLoraReady(cast, options) {
-    if (!cast || cast.lora_status !== "ready") return false;
+    if (!cast) return false;
     var motionBackend =
       options && options.motionBackend ? String(options.motionBackend).trim() : "";
-    var sdxlKey =
-      cast.lora_key && String(cast.lora_key).indexOf("loras/") === 0 ? cast.lora_key : null;
-    var wanHigh =
-      cast.wan_lora_key_high && String(cast.wan_lora_key_high).indexOf("loras/") === 0
-        ? cast.wan_lora_key_high
-        : null;
-    var wanLow =
-      cast.wan_lora_key_low && String(cast.wan_lora_key_low).indexOf("loras/") === 0
-        ? cast.wan_lora_key_low
-        : null;
-    if (sdxlKey) return true;
-    if (motionBackend === WAN_LORA_BACKEND) {
-      return !!(wanHigh && wanLow);
-    }
+    var sdxlReady =
+      typeof cast.sdxl_lora_ready === "boolean"
+        ? cast.sdxl_lora_ready
+        : !!(cast.lora_key && String(cast.lora_key).indexOf("loras/") === 0);
+    var wanReady =
+      typeof cast.wan_lora_ready === "boolean"
+        ? cast.wan_lora_ready
+        : !!(
+            cast.wan_lora_key_high &&
+            String(cast.wan_lora_key_high).indexOf("loras/") === 0 &&
+            cast.wan_lora_key_low &&
+            String(cast.wan_lora_key_low).indexOf("loras/") === 0
+          );
+    // Still require non-training shared status so an in-flight retrain is not treated as ready.
+    if (cast.lora_status === "training") return false;
+    if (sdxlReady) return true;
+    if (motionBackend === WAN_LORA_BACKEND) return wanReady;
     return false;
   }
 

@@ -25,7 +25,7 @@ import {
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
 } from "./finish";
 
-import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 
 interface Env {
@@ -42,7 +42,9 @@ interface Env {
   TELEMETRY_DB?: D1Database;
 }
 
-const MANIFEST: ModuleManifest = {
+// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
+// against a transcribed copy in the test file. finish-lipsync already exported its own.
+export const MANIFEST: ModuleManifest = {
   name: "finish-rife",
   version: "0.1.1",
   api: MODULE_API,
@@ -59,6 +61,13 @@ const MANIFEST: ModuleManifest = {
     only_faces:           { type: "bool",  default: true,   label: "faces only (leave background untouched)" },
   },
   ui: { section: "finish", icon: "wand", order: 10 },
+  // cf#537: EXPLICIT rather than absent. Absent is treated as "default" by the core, so this line
+  // changes no behaviour -- interpolation keeps running for every caller that sends no selection.
+  // It is stated because the manifest default is PERMISSIVE, which makes silence at this layer a
+  // signal: a module that ought to be opt-in and says nothing keeps running unasked and nothing
+  // reports it. Conformance therefore requires an explicit value from any module serving a
+  // selectable hook, so the reader can tell "considered, runs by default" from "nobody thought".
+  participation: "default",
   // Declared artifact conventions (S6): the container names its output off the shot id, and its
   // applied marker depends on the interpolate knob. The core's R2 recovery reads THIS, not our name.
   finish_artifacts: {
@@ -229,7 +238,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     return { ok: true, pending: true };
   }
   if (s.status === "FAILED") {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
     return { ok: false, error: "finish-rife job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
   }
   // cf#298: CANCELLED and TIMED_OUT are TERMINAL, and the branch below treats every non-COMPLETED
@@ -245,7 +254,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // requirement.
   const walkedPast = runpodWalkedPastOutcome(s.status);
   if (walkedPast) {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
   }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
@@ -254,14 +263,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(route, endpointId, st.jobId);
-      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output), ...timingFromStatus(s) });
       return { ok: false, error: "finish-rife backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
     return { ok: true, pending: true };
   }
   // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
   // could use the output is a different fact and the chain response is what carries it.
-  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt });
+  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
 
   const out = parseBackendOutput(s.output);
   if (!out?.clip_key) return { ok: false, error: "finish-rife: backend returned no clip_key" };

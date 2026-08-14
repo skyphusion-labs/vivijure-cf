@@ -27,6 +27,18 @@ export function passthroughOutput(
 export interface UpscaleConfig {
   scale: number;   // final factor: 2 | 4
   model: string;   // RealESRGAN_x4plus (photoreal/general) | realesr-animevideov3 (anime/fast)
+  /** Did the CALLER actually set `scale`, or is this the module default?
+   *
+   *  Load-bearing, and it is the third instance in this change of one rule: an absence must never
+   *  render as a value. Here the absence is "the user expressed no preference", and the old
+   *  `Number(cfg.scale ?? base.scale)` could not express it -- an explicit 2 and an absent one were
+   *  byte-identical, so a target-derived factor could not tell a choice from a default and would
+   *  have silently overridden the choice.
+   *
+   *  That is core#174 one field over: `resolveCastTrainFamily` treated an explicit `"wan"` as
+   *  identical to sending nothing and billed a user for a job they did not choose. `scale` has a UI
+   *  control, so setting it is a request actually made. */
+  scaleExplicit: boolean;
 }
 
 const MODELS = ["realesr-animevideov3", "RealESRGAN_x4plus"] as const;
@@ -38,16 +50,112 @@ const MODELS = ["realesr-animevideov3", "RealESRGAN_x4plus"] as const;
 // on a real render. The photoreal-texture rationale of #585 still stands -- the default follows
 // the handler's proven memory envelope, not the wish.
 export function defaultConfig(): UpscaleConfig {
-  return { scale: 2, model: "realesr-animevideov3" };
+  return { scale: 2, model: "realesr-animevideov3", scaleExplicit: false };
 }
 
 export function coerceConfig(cfg: Record<string, unknown>): UpscaleConfig {
   const base = defaultConfig();
-  const scale = Number(cfg.scale ?? base.scale);
+  const raw = Number(cfg?.scale);
+  // A usable number is a PREFERENCE. Garbage is not a choice: treating a typo as explicit would pin
+  // the user to a factor they never expressed and suppress derivation on the strength of it.
+  const scaleExplicit = Number.isFinite(raw) && raw > 0;
+  const scale = scaleExplicit ? raw : base.scale;
   return {
     scale: scale >= 4 ? 4 : 2,   // integer factors; the handler clamps to 2/4 as well
     model: (MODELS as readonly string[]).includes(String(cfg.model)) ? String(cfg.model) : base.model,
+    scaleExplicit,
   };
+}
+
+/** The factor this job will actually request, and WHERE IT CAME FROM.
+ *
+ *  EXPLICIT ALWAYS WINS. Derivation exists to choose sensibly for someone who did not choose;
+ *  someone who chose is not that person. Overriding them would be silent -- a user who set 4 and
+ *  got 2 sees a correct-looking film, no error, no degrade tag, nothing to notice.
+ *
+ *  An explicit factor that CANNOT reach the delivery target is honoured AND the shortfall is
+ *  reported. Not silently overridden ("we ignored you") and not silently under-delivered ("we did
+ *  what you asked and said nothing about what it means"). */
+export function resolveUpscaleScale(
+  cfg: UpscaleConfig,
+  src: { width?: unknown; height?: unknown },
+  target: { width?: unknown; height?: unknown },
+): ScaleChoice {
+  if (cfg.scaleExplicit) {
+    const probe = chooseUpscaleScale(src, target);
+    return {
+      scale: cfg.scale as UpscaleFactor,
+      derived: false,
+      // Only meaningful when the comparison was possible at all; an unmeasurable source cannot
+      // shortfall against anything, and claiming it could would be a guess.
+      undershoots: probe.derived ? cfg.scale < probe.scale || probe.undershoots : false,
+    };
+  }
+  return chooseUpscaleScale(src, target);
+}
+
+/** The only factors the shipped handler will honour. MEASURED at vivijure-upscale origin/main,
+ *  handler.py:446/:623/:714, three identical call sites:
+ *
+ *    final_scale = 4 if int(inp.get("scale", 2) or 2) >= 4 else 2
+ *
+ *  It hard-clamps to 2 or 4 AND `int()` truncates, so a fractional request is silently rounded
+ *  DOWN rather than refused -- asking for 2.18 yields 2 with no error. That is why this module
+ *  chooses deliberately from a closed set instead of computing the exact ratio: a float would be
+ *  a plausible wrong value, which is the same failure shape as the `?? 1920` default this work
+ *  exists to fix. */
+export const UPSCALE_FACTORS = [2, 4] as const;
+export type UpscaleFactor = (typeof UPSCALE_FACTORS)[number];
+
+export interface ScaleChoice {
+  scale: UpscaleFactor;
+  /** True only when BOTH source and target dimensions were known and the factor came from them.
+   *  A defaulted factor and a derived one must never be the same observation -- that exact
+   *  indistinguishability is how a blind `?? 1920` survived in the film path with nothing able to
+   *  flag it. The caller reports this rather than asserting it targeted anything. */
+  derived: boolean;
+  /** True when even the largest factor the handler accepts still lands below the target on some
+   *  axis. Reported, never silently absorbed: downstream will stretch it and the operator should
+   *  know the shortfall came from the source, not from this choice. */
+  undershoots: boolean;
+}
+
+function usableDim(n: unknown): number {
+  const v = Number(n);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** Choose the upscale factor that reaches the DELIVERY target in one learned pass.
+ *
+ *  Smallest factor that clears the target on BOTH axes; the largest available if none does.
+ *  Overshooting is fine and is the point: the downstream resize to the delivery resolution is
+ *  then a DOWNSAMPLE (supersampling) rather than a second, naive upscale.
+ *
+ *  The bug this replaces: a blind 2x on a 864x496 draft clip lands at 1728x992, below a 1080p
+ *  delivery, so ffmpeg stretches it back up -- and the handler had already computed a 4x result on
+ *  the GPU and discarded it down to 992 lines first. Downsample then upsample, in one pipeline.
+ *
+ *  Choosing 4 is a RESIZE decision, not a memory one: both models are 4x native (handler.py:10)
+ *  and a scale-2 request runs the same model then rescales down on the GPU, so 4 costs no more
+ *  model memory than 2. #585's CUDA-OOM was a MODEL decision (RealESRGAN_x4plus, the heavy RRDB)
+ *  and this does not touch the model. */
+export function chooseUpscaleScale(
+  src: { width?: unknown; height?: unknown },
+  target: { width?: unknown; height?: unknown },
+): ScaleChoice {
+  const sw = usableDim(src?.width), sh = usableDim(src?.height);
+  const tw = usableDim(target?.width), th = usableDim(target?.height);
+
+  // Not derivable. Say so; do not dress a default as a measurement.
+  if (!sw || !sh || !tw || !th) {
+    return { scale: defaultConfig().scale as UpscaleFactor, derived: false, undershoots: false };
+  }
+
+  for (const f of UPSCALE_FACTORS) {
+    if (sw * f >= tw && sh * f >= th) return { scale: f, derived: true, undershoots: false };
+  }
+  const largest = UPSCALE_FACTORS[UPSCALE_FACTORS.length - 1];
+  return { scale: largest, derived: true, undershoots: true };
 }
 
 /** The upscaled clip lands beside the source with a `_up` suffix, so the original survives and the
@@ -65,13 +173,30 @@ export const PRESIGN_TTL_SECONDS = 1800;
  *  cf#312: when the core hands video_url + output_url, use the credentialless presigned branch
  *  (no clip_key -- the handler routes on which keys are present). Otherwise R2 shared-bucket mode. */
 export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project: string): { input: Record<string, unknown> } {
+  // cf#507b: the factor now comes from resolveUpscaleScale rather than straight off the config.
+  // TWO QUANTITIES, kept distinct: input.width/height are the MEASURED source (what this clip is),
+  // input.delivery_* is the DECIDED target (what the film ships at). A blind 2x on an 864x496 draft
+  // lands at 1728x992, below a 1080p delivery, and ffmpeg stretches it back up -- after the handler
+  // had already computed a 4x result on the GPU and discarded it down to 992 lines.
+  //
+  // Explicit config still wins; this only decides for a caller who did not.
+  const chosen = resolveUpscaleScale(
+    cfg,
+    { width: input.width, height: input.height },
+    { width: input.delivery_width, height: input.delivery_height },
+  );
+  // MERGE NOTE (cf#312 over cf#507b): the derived factor lives in `common`, so BOTH transports
+  // carry it. Sourcing `scale` from `cfg` here -- which is what this branch did before main gained
+  // resolveUpscaleScale -- would revert the derivation for the presigned path AND the R2 path, and
+  // no test that drives one transport at a time can see that: `cfg.scale` and `chosen.scale` are
+  // equal whenever the caller set `scale` explicitly, which is exactly what a fixture does.
   const output_key = input.output_key ?? upscaledKey(input.clip_key);
   const common = {
     project,
     output_key,
-    scale: cfg.scale,
+    scale: chosen.scale,
     model: cfg.model,
-    ...(input.output_hash ? { output_hash: input.output_hash } : {}),
+    ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
   };
   if (input.video_url && input.output_url) {
     return {
@@ -101,6 +226,18 @@ export interface PollState {
   srcFps: number;
   frames: number;
   submittedAt?: number;
+  /** cf#480 AFFINITY. Which transport minted this job id, recorded so a poll cannot be served by
+   *  the other one. The on-iron door keeps job state in a PER-PROCESS registry
+   *  (`runpod_http_serve.py`'s JobRegistry is an in-memory dict keyed by a uuid4 hex), so a door
+   *  job id means nothing to RunPod and a RunPod job id means nothing to the door -- and the miss
+   *  does not read as a miss: both answer 404, which `runpodJobGone` correctly classifies as a
+   *  GC'd job and, past the grace window, FAILS THE SHOT. Cross-route polling would therefore
+   *  destroy completed work while every component behaved correctly.
+   *
+   *  ABSENT means RunPod. That is deliberate and it is what makes this backward compatible: a
+   *  token minted before this change carries no label and a token minted on the RunPod route
+   *  carries no label, and those two cases want identical handling. */
+  door?: string;
 }
 
 export function encodePoll(s: PollState): string {
@@ -114,6 +251,7 @@ export function decodePoll(token: string): PollState | null {
       return {
         jobId: o.jobId, shotId: o.shotId, srcFps: Number(o.srcFps) || 16, frames: Number(o.frames) || 0,
         submittedAt: typeof o.submittedAt === "number" ? o.submittedAt : undefined,
+        door: typeof o.door === "string" && o.door ? o.door : undefined,
       };
     }
   } catch { /* fall through */ }

@@ -23,7 +23,12 @@
 // Vanilla JS, no framework. Reuses the chat UI's CSS tokens from styles.css.
 
 const SLOT_IDS = ["A", "B", "C", "D"];
-const POLL_INTERVAL_MS = 8000;
+// cf#515: the render-poll cadence moved to poll-schedule.js
+// (pollSchedule.POLL_BASE_MS) along with the jitter, backoff and visibility
+// policy that now govern it. A second copy of the number here would be a
+// hand-maintained duplicate of a value that already has an owner, and those
+// drift; the poll is scheduled through pollSchedule.armPoll, never from a bare
+// constant.
 const HISTORY_LIMIT = 25;
 const HISTORY_AUTO_REFRESH_MS = 30000;
 // v0.38.0: localStorage key for the persisted planner state. Bumped when

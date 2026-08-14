@@ -3,9 +3,667 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
+## Unreleased
+
+## v1.27.0 -- 2026-08-15
+
+### fix(modules): project `studio_release` on `GET /api/modules` (cf#287)
+
+The module registry response carried no studio release identifier, so a caller inspecting
+`/api/modules` could not tell which studio build produced the module set it was looking at. That
+matters for the hosted/self-host parity invariant specifically: both doors resolve the same tag, and
+without the release on the response there is no way to confirm from the outside that they did.
+Adds the projection plus `tests/studio-release-287.test.ts`, and documents the field in
+`docs/CONTRACT.md` and `docs/module-api.md`.
+
+### ci(release): advance the hosted studio pin as part of the release, and verify the published artifact first (cf#372)
+
+`STUDIO_RELEASE` on `vivijure-control-plane` is the single value deciding which studio code a
+hosted tenant runs; self-host pulls the same tag straight from this repo's GitHub release. When the
+pin trails, hosted and self-host run different code from the same nominal tag, against the absolute
+hosted/self-host parity invariant. It has gone stale three times, and twice the fix was to bump the
+value, so the advance now happens on the release path rather than in anyone's memory.
+
+`studio-release.yml` gains two steps after the R2 mirror. The first re-downloads the artifact it
+just PUBLISHED (what a self-hoster would fetch, not the tree this job built), opens the tarball and
+asserts the manifest `tag` FIELD equals the released tag -- a filename is a claim by whoever named
+it. Only then does the second step call `scripts/advance-studio-pin.sh`, which reads the current
+pin, refuses to move it BACKWARDS (this workflow is dispatchable for rebuilds of older tags),
+PATCHes the variable, and reads the value back, because a 204 reports that a call was accepted and
+not that the stored value is what was asked for.
+
+Least-privileged credential: a fine-grained PAT carrying the `vivijure-control-plane` repository
+permission "Variables: read and write" and nothing else, held as `STUDIO_PIN_VARIABLE_TOKEN`. That
+is strictly narrower than the `Contents: write` a `repository_dispatch` requires (the price
+`corpus-notify.yml` pays because its receiver must act), and `GITHUB_TOKEN` cannot do it at all.
+Until that secret exists the step WARNS and does not fail, so a missing credential cannot break
+every studio release; the backstop is in the other repo and does not share this step's condition
+(cp#393 refuses to deploy a trailing pin and reads the live Worker binding daily).
+
+Setting the variable is not deploying it: the control plane binds `STUDIO_RELEASE` at its own
+deploy time, so this stages a value and cp#393's drift check is what observes the gap.
+
+`tests/advance-studio-pin.test.py` drives every refusal arm against a local stand-in for the GitHub
+API. Its load-bearing assertions are the ones about requests NOT sent -- a refusal that still
+issued the PATCH would print a refusal and change hosted anyway, which an exit-code-only test
+cannot distinguish.
+
+### fix(planner): jitter, pause and back off the render poll (cf#515)
+
+The render poll re-armed on a flat 8000ms from four bare `setTimeout` call sites, with `Math.random`
+appearing zero times anywhere under `public/`. Unjittered self-rescheduling timers synchronise, so
+panels starting inside one window converged onto the same 8s boundary and stayed there, arriving as
+a spike; the `visibilitychange` handler cleared only `historyRefreshTimer`, so a backgrounded tab
+polled forever and could never shed load; and both error paths re-armed flat.
+
+This is a change to a MEASUREMENT INSTRUMENT and is recorded as one. `GET
+/api/storyboard/render/<jobId>` drives `advanceFilmJob` and therefore closes a film's renders-DB
+row, so the poll cadence is what sets observation lag, the metric cf#512 insists must never be
+folded into latency. Ruled fix-anyway on cf#515: the unfixed behaviour is itself an artifact and a
+worse one, because real clients drift and an unjittered never-pausing panel is a synthetic arrival
+pattern authoring a spike production would never see. The base cadence is deliberately unchanged;
+only the distribution moves.
+
+Adds `public/poll-schedule.js` (pure, UMD-ish, mirroring `render-eta.js`) with `random`, the timer
+and the hidden flag all injected, because the interval was previously inline in the `setTimeout`
+call where no test could address it. `armPoll` refuses to arm at all while hidden rather than arming
+a longer timer. Every arm goes through one `schedulePollRender()` and a guard asserts no raw
+`setTimeout(pollRender, ...)` survives; `POLL_INTERVAL_MS` is retired rather than duplicated
+alongside `pollSchedule.POLL_BASE_MS`. Plus `public/poll-schedule.d.ts` and
+`tests/poll-schedule-515.test.ts`, whose six guards were each driven red individually with
+sibling-green pairing.
+
+Refs cf#515 defect 1 only. Defect 2 (uncached `discoverModules`) stays open: core `main` still reads
+`const ttl = opts.cacheTtlMs ?? 0;`.
+
+### ci(deploy): the deploy gate now waits on container-tests and migrations-gate (cf#526 follow-up)
+
+`deploy` needed `[ci, assert-on-main]`. `container-tests` and `migrations-gate` both RUN on a tag push
+-- neither carries an `if:`, so the workflow's `tags: ["v*"]` trigger starts them -- and neither was in
+that list, so a tag could deploy to production with either one RED and nothing would report it. The
+deploy job simply never looked. `migrations-gate` is the urgent half: it guards SCHEMA, and a deploy
+that ships a worker whose migrations gate failed is the shape where the code arrives and the database
+it expects does not. Adding them cannot deadlock, because both run unconditionally on this trigger.
+
+### feat(finish): blender is opt-in, and both render doors carry the selection (cf#537)
+
+The cf half of Conrad's cf#537 ruling: per-render, the caller names which finish modules run.
+`finish-blender` declares `participation: "opt_in"` so a render that does not name it does not get an
+unrequested `filmic_warm` grade at strength 1.0. Both render doors carry the selection, and the
+replay paths inherit it via `renderOverrides` so no caller and neither store-shipped native client
+needs to change.
+
+Repins core to `^1.14.0` WITH the regenerated lockfile, and updates the five `filmProgressMarker`
+assertions from the two-part `phase:count` to core#182's three-part `phase:done:steps`. The repin and
+those five fixes must land together: `npm ci` refuses a package.json/lockfile disagreement, and the
+repin alone reddens cf on assertions this change is what corrects.
+
+### ci(changelog): fragment files replace direct edits to the shared release section (cf#539, cf#542, cf#510)
+
+Every CHANGELOG.md entry appended to the same top `## vX.Y.Z` section, so merging any one
+CHANGELOG-touching PR re-conflicted every other open PR appending to it -- measured 2026-08-14:
+7 open PRs, one section, none bumping `package.json`. Separately, main carried no `## Unreleased`
+heading at all, so entries were landing under a stale, already-released heading five minors below
+HEAD (cf#542). Ported `vivijure-control-plane`'s `changelog.d/` fragment convention (cp#358)
+unchanged where possible: one file per PR under `changelog.d/`, filename `<issue>-<slug>.md`,
+content is exactly the `### ...` block that would have gone under `## Unreleased`. A new
+`## Unreleased` heading was added back to CHANGELOG.md so fragments and direct edits have a
+permanent, date-free destination that cannot go stale. `scripts/changelog-entry-required.py` (a
+new PR gate, cf#510) accepts EITHER a fragment or a direct CHANGELOG.md edit during the migration
+window, so no currently-open PR breaks. `scripts/changelog-assemble.py <version> <date>` writes a
+fresh `## <version> -- <date>` section from the accumulated fragments at release-prep time --
+`<version>` is always an explicit argument, never derived from the topmost heading, which is the
+direct fix for cf#542. See `CONTRIBUTING.md`.
+
+### fix(deploy): the hosted studio no longer binds or deploys local-gpu (cf#560)
+
+`local-gpu` was bound on the deployed hosted studio and, at `ui.order` 4, sorted FIRST in both
+`motion.backend` and `keyframe` on the live registry -- while its own manifest blurb reads
+*"Self-host only ... Commercial use of Vivijure is supported via vivijure-cf (Cloudflare partner
+channels), not this door"*, and vivijure-cf IS the hosted deploy.
+
+The control existed and was on the wrong path: `deploy.sh` (self-host, where the door is ALLOWED)
+strips the `LOCAL-GPU` block unless `INSTALL_LOCAL_GPU=1`; the CI render (hosted, where it is
+FORBIDDEN) had no strip at all. The path that permits it defaulted it off; the path that forbids it
+had no switch. The hosted render now strips the block unconditionally and REFUSES to deploy if
+`MODULE_LOCAL_GPU` survives, and the module-worker deploy excludes `local-gpu` by name rather than by
+reintroducing an include-list (cf#197).
+
+The survival check asserts the MODULE_ line DELTA is exactly 1, not merely that
+`MODULE_LOCAL_GPU` is absent. An absence-only guard is one-sided: a removed or renamed CLOSING marker
+leaves the strip running to EOF, and the guard passes because the binding really is gone -- driven at
+481 lines -> 240 with MODULE_ 42 -> 4, and no downstream check catches it either, since every
+downstream-guarded key sits above the truncation point.
+
+## v1.26.0 -- 2026-08-14
+
+MINOR. Per-route authorization lands, and three telemetry fixes that the production load test is
+about to be scored on.
+
+### ⚠️ OPERATOR: THIS TAG NEEDS A SECOND COMMAND. THE DEPLOY WILL NOT TELL YOU.
+
+Migration `0020` adds `api_tokens.scope` with a DEFAULT of `consumer`. It applies in the deploy job
+the moment this tag lands, so **every named token is demoted and starts returning 403 on operator
+routes**. Restore the four live estate scopes IMMEDIATELY AFTER the deploy finishes:
+
+```bash
+npx wrangler d1 execute vivijure-studio --remote \
+  --file migrations/manual/post-0020-set-live-token-scopes.sql
+```
+
+Until it runs: slate loses `!install-config`; crew-mcp loses all 8 operator tools and any
+`studio_request` at those paths, including `POST /api/storage/reconcile`; the panel and both mobile
+clients fail to load or save module config **with no re-auth prompt** (`AUTHZ_DENY_REASON`
+deliberately does not match the paste-once regex at `public/auth-token.js:124`, because the token is
+genuinely fine, and the mobile clients carry no such prompt in any form).
+
+Every denial is a **403** -- there is no 401 path in this gate -- carrying
+`{"ev":"authz.deny",...,"required":"operator","held":"consumer"}`. **The deploy itself goes GREEN
+throughout, so nothing else will tell you this step was missed.**
+
+The file is operator-run and deliberately NOT bundled into tenant releases: a name-matching UPDATE
+in a top-level migration would silently promote a TENANT's own `conrad` or `joan` token to operator,
+which is cf#520's hole reopened under a name. Its header carries the full reasoning.
+
+### feat(authz): enforce per-route scope (cf#520, #521 + #522)
+
+`api_tokens` said WHO a credential belonged to and nothing about WHAT it may do, so every named
+token was operator-equivalent -- a consumer token could call `POST /api/storage/reconcile`, which
+rewrites an estate-wide ledger (cf#516). The `Route` type now carries a required scope field, so
+all 86 routes enumerate their scope at compile time and forgetting one does not compile.
+
+Scopes were derived from CALL SITES, never from a consumer's name: `slate-bot` 2 of 8 operator
+routes, `crew-mcp` 8 of 8 plus a generic passthrough, `conrad` from `public/settings.js:140,199`.
+`joan` has no call sites -- no service bears that name -- so it is recorded as a DECISION rather
+than a measurement. Both mobile clients drive all 8 operator routes but hold no token of their own;
+each takes a user-pasted Bearer.
+
+### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298, #425)
+
+A terminal write lost on the poll path left rows at `submitted` forever. The reconciler closes them,
+and writes `unknown` ONLY when RunPod cannot tell us -- never on age alone. That distinction matters:
+the upsert is first-write-wins, so booking a live job terminal makes the later genuine `completed`
+write a silent no-op, permanently. The pass is registered with `ctx.waitUntil`, and says so loudly
+when it cannot be.
+
+Note for whoever scores the run: `closed` means "no longer open", NOT "resolved" -- it counts
+`unknown` rows too (cf#523).
+
+### feat(modules): wall-clock VPC attribution for finishing fleet calls (cf#396, #440)
+
+Absent wall-clock now lands as `null` end to end rather than rendering as an observed zero, which
+would silently deflate every aggregate it was averaged into. A REPORTED zero is still kept as zero;
+that distinction is pinned by its own assertion. Follows the rule already written at
+`modules/_shared/runpod-job-log.ts:70-85` rather than inventing a second convention for one fact.
+
+### fix(telemetry): make runpod_job_log detail truncation visible (cf#320, #426)
+
+Bound raised 160 -> 480 and truncated values end in a visible marker. The bound is now pinned to its
+VALUE (`expect(DETAIL_MAX).toBe(480)`); previously every assertion tracked the imported constant, so
+halving it left all 33 tests green.
+
+### fix(finish): name the transport that actually ran a gone job (#517)
+
+### refactor(bridge): drop the two cf#393 widening casts, now that core declares the fields (#519)
+
+## v1.25.0 -- 2026-08-14
+
+### feat(finish-upscale): derive the upscale factor from the delivery target, explicit wins (cf#507b)
+
+**The upscale applied a blind 2x and the draft path scaled twice.** 864x496 at 2x lands at 1728x992,
+BELOW a 1080p delivery, so ffmpeg stretched it back up -- after the handler had already computed a
+4x result on the GPU and discarded it down to 992 lines. Downsample then upsample, in one pipeline.
+
+The factor is now chosen against the film's delivery target: the smallest factor that clears it on
+both axes. Measured from the shipped handler, both models are 4x NATIVE and a scale-2 request runs
+the same model then rescales down on the GPU, so choosing 4 costs no more model memory than 2 --
+#585's CUDA-OOM was a MODEL decision and is untouched.
+
+**An explicitly configured `scale` always wins.** Derivation exists to choose for a caller who did
+not choose; someone who chose is not that person. This is core#174 one field over, where an explicit
+`model_family` was treated as byte-identical to sending nothing and a user was billed for a job they
+did not choose. An explicit factor that cannot reach the target is HONOURED and the shortfall
+recorded, rather than silently overridden or silently under-delivered.
+
+**Operator-visible:** a shot whose source dimensions and delivery target are both known may now be
+requested at 4x where it previously requested 2x. This increases GPU seconds per shot on owned iron,
+which has no marginal cost, and removes a naive upscale from the output. With no target on the wire,
+or no measured source, the factor is the module default -- byte-identical to previous behaviour.
+
+### chore(deps): core ^1.11.0 -- the panel can finally SEE a degraded finish stage (cf#507b)
+
+**This ships an observability capability, not a version number.** Until this release an all-degraded
+finish stage and a clean one were BYTE-IDENTICAL in the summary the panel reads:
+
+```
+clean     { total: 5, done: 5, failed: 0, pending: 0, adopted: 0 }
+degraded  { total: 5, done: 5, failed: 0, pending: 0, adopted: 0 }
+```
+
+A soft degrade is a SUCCESS by design (#249/#77: a polish step never fails the chain), so it lands
+in `done` and nothing counted it. `summarizeFilm(...).finish` now carries a `degraded` count, which
+is what `src/index.ts` answers the panel with.
+
+**Why it needed a release rather than a merge.** #511 merged the `^1.11.0` bump on 2026-08-13, but
+`npm ci` installs the LOCKFILE, not the manifest range -- so `v1.24.0` shipped with core **1.10.0**
+and production had no counter. A caret permits a newer version; it does not deploy one. The
+verification for this release is therefore the DEPLOYED artifact: `v1.25.0:package-lock.json` must
+read `vivijure-core 1.11.0`.
+
+**Two semantics an operator reading these numbers needs, because both are easy to misread:**
+
+- It counts `adopted` as well as `applied`, so a shot whose degraded step was REUSED from R2 rather
+  than re-run is still counted. Adoption is the normal completion route on the async drive path, so
+  without that arm a re-driven film would under-report.
+- It counts SHOTS, not STEPS. A shot that degraded at two chain steps counts once. That is the right
+  unit for "how many shots shipped without their polish", but it is not a count of failures, and
+  comparing it against a per-step figure compares two populations.
+
+Counted from the persisted `passthrough:` tag rather than a stored field, so it reads correctly on
+job documents written BEFORE the change -- past renders are comparable, not only future ones.
+
+## v1.24.0 -- 2026-08-14
+
+### feat(upscale): serve finish- and speech-upscale from BOTH GPU doors (cf#507)
+
+**Both upscale modules can now be served by TWO on-iron GPU doors instead of one.** propagandhi and
+fatmike both run the upscale serve containers; until this release the panel bound a single door and
+the second box sat idle. `modules/_shared/finish-door.ts` grows a door POOL (`doorPool`,
+`usableDoors`, `pickDoor`, `resolveDoor`, `doorName`) over the seam cf#480 left for it in v1.21.0.
+The single-door `doorRoute()` is untouched, so finish-blender is unaffected.
+
+**THE SECOND DOOR IS INERT UNLESS ITS BINDING AND TOKEN ARE CONFIGURED.** With
+`VPC_FINISH_UPSCALE_PROPAGANDHI_ID` and `VPC_SPEECH_UPSCALE_PROPAGANDHI_ID` unset, the deploy
+stripper removes the new blocks and behaviour is byte-identical to v1.23.0: one door, or the
+untouched RunPod path when nothing is bound. Turning the second door on is a deploy-time act, never
+a code change.
+
+**Poll affinity is mandatory, not an optimisation.** A door keeps job state in per-process RAM, so a
+poll for an id that process does not hold answers 404, which the client classifies as TERMINAL "job
+gone". A poll landing on the wrong box therefore does not error; it reports a live job as
+finished-and-vanished while the other box is still burning GPU, and past the grace window the shot
+FAILS. So each submit picks a door round-robin and records THAT door's name in the poll token, and
+the poll resolves BY NAME and never re-picks. Transport-level stickiness cannot substitute: the poll
+is a separate Worker invocation with no cookie and no stable source address.
+
+**Bound-ness is still the only door-vs-RunPod branch.** The door branch is taken when the pool is
+NON-EMPTY, never when some door is USABLE. A bound door whose bearer has not propagated stays IN the
+pool and degrades with a named reason; falling through to RunPod there would silently re-rent the
+GPU this exists to stop renting. Door-to-door selection is not failover.
+
+**Back-compat is structural rather than a special case.** The existing door keeps the bare `vpc`
+label instead of being renamed, so an in-flight token's label IS that door's name and no in-flight
+poll is routed through a fallback for the length of the longest job. A legacy fallback still covers
+a deploy that binds only the newer door.
+
+**Self-host installs need the new bearer names seeded.** Each door gets its OWN
+`[[secrets_store_secrets]]` bearer (`FINISH_DOOR_TOKEN_PROPAGANDHI`, `SPEECH_DOOR_TOKEN_PROPAGANDHI`)
+rather than sharing the first door's, because two doors are two services and a shared bearer is a
+coupling nobody declared; an operator may still point both at the same store value. Both names are
+seeded in `deploy/vivijure_deploy.py`. The base self-host render strips `[[vpc_services]]` wholesale
+but does NOT strip `[[secrets_store_secrets]]`, so an unseeded name is a DANGLING BINDING and both
+upscale modules would have failed to deploy on that path.
+
+**The deploy wiring is now asserted, which closes the cf#489 failure.** The optional-VPC id lists in
+`.github/workflows/ci.yml` and `scripts/fill-module-placeholders.sh` are hand-maintained, and cf#489
+is the case where a missed entry deployed GREEN while silently stripping the door, with a single
+deploy log line as the only tell. `tests/optional-binding-wiring-cf507.test.ts` now DERIVES the
+authority from the `cf482-optional:<VAR>` markers the module tomls carry, matched with the same
+whole-comment-line shape `strip-vpc-block.awk` requires so the test and the stripper cannot disagree
+about what a marker is, and asserts both lists against it. A membership list whose right-hand side is
+a second hand-written copy can only fail when an entry is REMOVED; this one fails in the direction
+that actually happens, which is the population GROWING. `deploy/vivijure_deploy.py` is deliberately
+not mirrored there: `deploy/test_secret_map.py` already asserts set EQUALITY over the full secret
+population, which is strictly stronger, and it caught this growth on its first event.
+
+### fix(cast): point the Wan LoRA button at the explicit Wan route (vivijure-local#329, core#174)
+
+**A live consent defect, not a pending regression.** The /cast Wan LoRA button showed a confirm
+dialog promising a Wan 2.2 expert training job at 35 to 45 minutes and a 2-to-4 dollar GPU spend,
+then POSTed the SHARED `/api/cast/:id/train-lora` route with no body at all. That route resolves the
+model family from HOST CONFIG when the body omits `model_family`, so on a host with no Wan training
+endpoint wired the button silently trained SDXL and returned 200. The user agreed to a specific
+model, cost and duration and got a different one, with nothing in the response saying so.
+
+The button now POSTs `/api/cast/:id/train-wan-lora`, which hardcodes family `wan` and answers 501
+when Wan is not wired. The SDXL button is untouched. The 501 renders product language rather than
+forwarding the server's body, which is written for the OPERATOR and names a binding a tenant cannot
+reach; every other failure keeps its server-supplied message unchanged. No core pin bump is needed:
+that route is already served at the pinned `@skyphusion-labs/vivijure-core` 1.10.0.
+
+### deps: bump rembg 2.0.77 -> 2.0.78 in containers/image-prep (#499)
+
+Dependabot, pip-minor-patch group, patch only.
+
+## v1.23.0 -- 2026-08-08
+
+### feat(studio): finish-blender is back in the hosted finish chain, on our own iron (cf#489)
+
+**THE SWITCH-ON.** Restores the MODULE_FINISH_BLENDER service binding that v1.21.1 commented out.
+The chain runs every SERVING module rather than only those named in finish_config, so this puts
+finish-blender in the finish chain of EVERY hosted render. Opt-in here means the BINDING, never
+the per-render config.
+
+**What changed since it was pulled.** It was removed because it failed every render: the RunPod
+endpoint could not serve it, and the module does NOT soft-degrade, so a failed blender job fails
+the whole film. Two real renders died that way after delivering their clips cleanly. The work now
+runs on our own hardware instead: an always-on door on the finishing tier, reached over a Workers
+VPC service (v1.22.0), with the deploy actually passing the service id (v1.22.1). The RunPod
+endpoint stays at workersMax 0 as the rollback and is not coming back.
+
+**Rollback is two levers and they are not equal.** Re-commenting this block removes the module from
+the chain entirely and is the STRONGER one; it is what v1.21.1 used. Unsetting VPC_FINISH_BLENDER_ID
+only strips the door, leaving the module bound and RunPod-only, which with an endpoint at
+workersMax 0 means every hosted film HANGS rather than errors. Under pressure people reach for the
+first lever they read, so the order matters.
+
+**Shipped as its own tag, deliberately.** v1.22.1 made the door reachable while blender was still
+out of every render, so a mistake there cost nothing; this is the only step that puts it in the
+path of a hosted film. Splitting them is what caught the door being silently stripped in v1.22.0 --
+had these landed together, blender would have re-entered every render with no door and hung the
+pipeline.
+
+## v1.22.1 -- 2026-08-08
+
+### fix(ci): pass VPC_FINISH_BLENDER_ID to the module deploy (cf#489)
+
+**v1.22.0 deployed green and silently stripped the blender door.** The repo secret was set and
+correct; it never reached the deploy job, because the deploy env lists the VPC ids explicitly and
+this one was not on that list. Referencing a secret the job cannot see yields empty, which IS the
+unset state, so the strip is byte-indistinguishable from a normal no-door deploy.
+
+The only tell is one line in the deploy log:
+
+    modules/finish-blender/wrangler.toml: VPC_FINISH_BLENDER_ID unset -- stripped its
+    optional blocks; this module keeps its RunPod path
+
+**This was the FIFTH registration site for one door binding and the first that no test caught.**
+The other four each have a denominator test (the cf482 marker and its strip branch, the credential
+classification table, the deploy store-binding union). Nothing asserts this workflow env list
+against the module tomls that declare the markers, and unlike the other four this one fails
+SILENTLY at deploy rather than loudly at CI, leaving an artifact that looks correct.
+
+No behaviour change for anyone: finish-blender is still unbound from the hosted chain (its
+MODULE_FINISH_BLENDER service binding has been commented out since v1.21.1), so this only makes
+the door reachable once that binding is restored.
+
+## v1.22.0 -- 2026-08-08
+
+### feat(finish-blender): reach the on-iron blender door over a Workers VPC service (cf#489)
+
+**finish-blender now prefers our own hardware.** It gains the SINGLE-door transport that
+finish-upscale and speech-upscale already carry (#480): one binding, one door, no pool and no
+rotation. Bound means the door; unbound is the untouched RunPod path, byte for byte.
+
+**The branch is BOUND-ness and never a failover**, the same cp#321 rule as its siblings, and it
+matters more here for two blender-specific reasons. The blender RunPod endpoint is parked at
+workersMax 0 as the rollback, so a failover would HANG rather than merely cost money. And unlike
+the polish steps, this module does not soft-degrade: a failed blender job fails the whole film,
+which is why it was pulled from the hosted chain in v1.21.1. A silent second path is the worst
+possible thing for it to have.
+
+**The poll token records which transport minted the job.** The door keeps job state in a
+per-process registry, so a door job id means nothing to RunPod and the reverse, and the miss does
+not read as a miss: both answer 404, which runpodJobGone classifies as a GC job and, past the
+grace window, FAILS THE SHOT. ABSENT means RunPod, so every pre-existing token keeps working
+unchanged.
+
+**Where the door runs.** Not the GPU twins. Blender is CPU-only, proven rather than assumed, so it
+runs on the finishing tier (descendents, badbrains, jello) as its own swarm stack, published PER
+NODE rather than through the service VIP. The VIP round-robins while the door keeps job state per
+process: measured before per-node addressing landed, twelve polls of ONE job id returned found=4,
+404=8. Exactly one node is bound and the other two are warm spares, the same arrangement fatmike
+is to propagandhi.
+
+It runs in its own stack rather than joining vivijure-media because that stack states it is
+credential-free, and blender needs an R2 credential. Keeping the invariant TRUE where it is
+written beat quietly making it false.
+
+**One new binding needed registration in FOUR places**, and three were found by tests rather than
+by reading: the toml marker, the strip branch in fill-module-placeholders.sh, the credential
+classification table, and the deploy store-binding map. Recorded because the fifth door binding
+will hit the same four.
+
+## v1.21.1 -- 2026-08-07
+
+### fix(studio): pull finish-blender out of the hosted finish chain
+
+**Every hosted render was failing.** Two real renders FAILED at `MODULE_FINISH_BLENDER`
+after delivering their clip cleanly (1/1, 5s, 120 frames), with
+`R2 mode needs R2_ENDPOINT_URL + R2_ACCESS_KEY_ID/SECRET in the endpoint env`.
+
+Three beliefs behind shipping it were wrong, and all three are worth stating because each
+one alone would have stopped this:
+
+- **The finish chain runs every SERVING module, not only those named in `finish_config`.**
+  A render passing only `finish-upscale` still invoked blender. "Opt-in" describes the
+  BINDING, not the per-render config.
+- **It does not soft-degrade.** We believed a failed blender job passed the clip through and
+  that the blast radius was therefore bounded. It fails the whole film. That was asserted,
+  repeated, and never verified.
+- **It is not a cf defect.** Probing the endpoint DIRECTLY reproduces it
+  (`runsync 0uc4dmpxmn8jop` -> FAILED, workerId `8d84om1ludraah`, executionTime 87ms) with
+  the env visibly set on the template, so the `{{ RUNPOD_SECRET_* }}` references are not
+  resolving inside the container. No cf change fixes that.
+
+Removal is the exact inverse of cf#468: the `[[services]]` block binding
+`MODULE_FINISH_BLENDER` is commented out again, returning it to opt-in. `MODULE_*` service
+bindings are how `src/platform/cf-module-transport.ts` discovers modules, so an unbound
+module is not in the chain at all.
+
+**Not** done by unsetting `BLENDER_RUNPOD_ENDPOINT_ID`: that module carries no
+`cf482-optional` marker, so an unset id would leave a binding to a missing Secrets Store
+entry and fail the deploy rather than strip the block.
+
+The blender image defect is separately fixed and published (`0.1.1`, blender#5) and the
+endpoint is re-pinned to it. The secret-resolution defect is filed and is not addressed here.
+
+Refs fleet-chezmoi#1592.
+
+## v1.21.0 -- 2026-08-07
+
+### fix(deploy): comment-aware placeholder guard, and OPTIONAL VPC service ids (#482)
+
+Two defects in `scripts/deploy-module-workers.sh`, plus the capability they were blocking.
+
+**The survivor check was comment-blind.** A bare `grep -q "REPLACE_WITH_"` followed by `exit 1`
+matches inside a `#` comment and aborts the whole module loop, so **one commented-out example block
+in one module toml failed the deploy for every module after it**. Verified with both controls. Its
+message also said `store_id placeholder survived` while guarding five placeholder families, sending
+an operator to the Secrets Store for a VPC problem; it now names the file and every survivor.
+
+**VPC service ids are now two declared classes.** REQUIRED (audio-master, beat-sync, film-titles,
+subtitle) reach their containers ONLY over their binding, so an unset id still refuses -- unbound
+they soft-degrade and the film ships without that phase. OPTIONAL (#480's doors) are an alternative
+to a path that still works, so an unset id **strips the binding's blocks and deploys**. Making every
+id optional would have been the smaller diff and would have deleted a working guard.
+
+An unset optional id has to STRIP rather than leave the block, because a `[[vpc_services]]` block
+naming a nonexistent service dangles the deploy: optional must mean optional all the way down, or
+the module's unbound branch is unreachable in production. The strip is **marker-driven, not
+block-type-driven** -- a door needs a `[[vpc_services]]` block AND a `[[secrets_store_secrets]]`
+block for its bearer, and stripping only the first is a half-strip that fails at deploy.
+
+**The fill is now its own script** (`scripts/fill-module-placeholders.sh`, no network, no wrangler)
+so it is testable: `deploy-module-workers.sh` runs only on a tag, so every defect in it was
+invisible until a release. 16 new cases drive the shipped script and the shipped awk. **Three
+defects were found by those tests and none by reading**, including one control that passed for the
+wrong reason. Guards mutation-proven 6 of 6, each red for its named victim
+(`scripts/cf482-mutation-proof.py`).
+
+**#480's door bindings are now declared in both module tomls.** Safe before the connectivity
+-directory service exists, which is the point: with the id unset -- today's state, and every
+operator without a door -- both blocks are stripped and the module deploys byte-identical to now.
+
+### feat(finish): hosted upscale on our own always-on GPU iron (#480)
+
+`finish-upscale` and `speech-upscale` take an optional Workers VPC service binding
+(`FINISH_UPSCALE_VPC` / `SPEECH_UPSCALE_VPC`) into the always-on door on our own GPU hardware.
+**Bound, every job goes there and RunPod is not called at all. Unbound, the RunPod path is byte for
+byte what shipped before** -- pinned in the suite on URL, method, authorization and content-type,
+because a merged header object is exactly how a content-type gets dropped in a path nobody re-checks.
+
+**The branch is BOUND-ness and never a failover** (the cp#321 rule). A door-to-RunPod failover would
+silently re-rent the GPU this removes, at the moment nobody is watching, with every signal green. A
+door failure soft-degrades the polish step and names the DOOR in the reason.
+
+**The poll token now records which transport minted the job.** This is not an optimisation: the door
+keeps job state in a per-process registry, so a cross-route poll 404s, which reads as a GC'd job and
+past the grace window FAILS THE SHOT. Affinity is what stops finished work being destroyed by
+components all behaving correctly. An absent label means RunPod, which is what every pre-existing
+token carries, so old tokens are unaffected.
+
+`GET /ready` reports the door **only when one is bound**, leaving the module-agnostic `/ready` shape
+byte-identical for the seven modules the control plane's prober reads.
+
+**Operator panel only.** A tenant studio cannot bind this today (cp#359); the four new bindings are
+classified `operator-only` in the cf#394 tenant-reachability register, so adding these modules to
+`TENANT_MODULE_CATALOG` turns CI red rather than shipping a binding a tenant cannot hold.
+
+**Not yet live, and deliberately so:** no `[[vpc_services]]` block ships here, because the
+connectivity-directory services do not exist yet and `scripts/deploy-module-workers.sh` hard-refuses
+any toml still matching `REPLACE_WITH_`. Guards are mutation-proven (6 of 6, each red for its named
+reason); see `docs/cf480-door-mutations.md`, which also states plainly what the stubs cannot prove.
+
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.10.0
+
+Picks up the RunPod ROUTE contract (cp#321 step 1, core#169): a call goes through the control-plane
+proxy when `RUNPOD_PROXY_BASE` is bound, and to `api.runpod.ai` with `RUNPOD_API_KEY` when it is
+not. The branch is on the base being BOUND and is never a failover; the unbound path is the
+self-host door and is permanently supported.
+
+**Pin only. Nothing in this repo imports the new module yet** -- adopting it (replacing
+`modules/_shared/runpod-route.ts` with a re-export of core's) is cp#321 step 2 and lands separately.
+This PR is a no-op for every module and every tenant: 1.10.0 is a superset of 1.9.0 on every symbol
+cf already uses.
+
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.9.0
+
+Homelab SDXL cast train on `LOCAL_BACKEND_URL` (POST `/run` `action:train_lora`) without a
+RunPod train endpoint; `pollCastLoraJob` prefers the door after Wan EP. Also includes tar
+mtime epoch default (cf#460) for stable content-addressed bundle keys.
+
+Keeps finish-blender (and the rest of the module surface) on the current core contract line.
+**No new host migration** for this pin alone (1.8.1 still needs 0017/0018 if not applied).
+
+
+### feat(renders): record motion_backend + keyframe_backend on the render library row (cf#393)
+
+A completed render carried no motion backend, so "which backend rendered this film?" was
+unanswerable from stored data (searching for `own-gpu` or `seedance` returned zero even when
+those backends had run). Clip keys are GPU-assigned and are not a substitute.
+
+- Migration `0018_render_motion_backend.sql`: additive `renders.motion_backend` + `keyframe_backend` TEXT.
+- Submit/finalize/from-keyframes/film insert paths pass the resolved module names into `insertRender`.
+- Read path is in vivijure-core (companion PR); hosts pin after core publishes.
+
+**Dual-panel:** vivijure-local needs the same SQLite columns later.
+
+
 **Dual-panel release gate:** every studio feature ships to vivijure-cf and vivijure-local in the
 same release wave ([[vivijure-hosted-parity-absolute]] in fleet memory:
 `fleet-chezmoi/claude-memory/projects/-home-conrad-dev-vivijure/memory/vivijure-hosted-parity-absolute.md`).
+
+
+### chore(deps): pin @skyphusion-labs/vivijure-core ^1.8.1
+
+Brings PollResponse failure fields (`outcome` / `runpodStatus` / `errorType`), keyframe
+provenance `bundle_key` (cf#388), render `motion_backend`/`keyframe_backend` read path
+(cf#393; requires migration 0018 applied before deploy), scatter D1-empty dialogue
+fallback, plus everything already in 1.8.0 (finish_elapsed_ms, FilmSummary
+assemble/output_ms, cast family readiness, install-patch dropped keys, untrained-LoRA
+voice path)
+copy. **REQUIRES** migration 0017 applied on host D1 before deploy (landed #427).
+Fixture: `finish_elapsed_ms: null` on keyframes-only RenderRow; cast-loras message
+assertion updated for core#156 wording.
+
+
+### feat(finish): containers emit elapsedMs for CPU capacity telemetry (cf#268)
+
+All five CPU finish containers return integer `elapsedMs` (wall clock for the
+request) on success. Destination column `renders.finish_elapsed_ms` (migration
+0017) is ready; core must read `elapsedMs` and write the column (companion PR).
+Does NOT reuse `execution_time_ms` (that is GPU job time, live in the panel).
+### Docs / honesty
+- **runpod_job_log migration comment matches module submit path (cf#315 item 1).** Core no longer submits to RunPod; table exists for module workers. Item 2 (`RUNPOD_ENDPOINT_ID` Env) deliberately untouched -- still live for modules / train path. Item 3 is vivijure-core.
+- **preflight handler comment:** envelope is `storyboard` + `castBindings` + `motionBackend`/`quality`; `bundleKey`/`audioKey` are not read (mcp#26).
+### Docs
+- **`host.render.available` is config-armed, not live door health (cf#28).** Documented in `docs/demo-studio.md` and the `demoRenderEnabled` comment so the public shop window is not read as a health signal.
+### docs: Gate 3 instrumentation closeout (cf#279, cf#295)
+
+Evidence disposition: both original defects are shipped (14/14 job-log writers; 26/26 `/ready`).
+Residuals are structural (wan-train core seam) or documented (tenant catalog population 4).
+See `docs/gate3-instrumentation-closeout.md`.
+### docs(verify): R2 same-key A/B must not trust CF API object-GET (cf#300)
+
+The CF account API object-GET can serve a stale body after an overwrite while listing reports the new
+object. Documented as a HARD RULE in `docs/r2-verification.md`, linked from `CLAUDE.md` and the
+cf#278 harness README. Gate 3 kickoff: instrument defects before metering evidence.
+### Docs: `FilmSummary.assemble_ms` + `output_ms` (cf#365)
+
+CONTRACT 2.21 documents the poll-surface content-length fields that vivijure-core projects from
+the already-persisted `film_output_seconds` map: assemble-stage (pre-film.finish) vs last-writer
+delivered. Closes the observability gap that left a predicted-vs-delivered delta unexplained.
+Fields appear on live poll only after the host pins the core release that adds them; this entry
+is the wire-contract half. Distinct from `finish_elapsed_ms` (CPU wall-clock, cf#268) and from
+plan `duration_seconds`.
+- **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
+### Fixed
+- **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
+- **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
+- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
+### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
+
+`runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
+refusals. Bound raised to 480; cuts end in `...` so a reader knows the string is incomplete.
+`boundDetail` is the single place this happens.
+
+### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298)
+
+A terminal write lost on the poll path used to leave the row at `submitted` forever (measured 2/20
+in a clean run). Retry already narrowed the window; this closes the gap for rows still open:
+
+- Shared reconciler in `modules/_shared/runpod-job-log.ts`: list open rows, re-query RunPod, write
+  terminal outcome; past ~25 min with no answer write `unknown` (new outcome; honest vs inventing
+  completed). Best-effort, never gates render.
+- Wired on **keyframe** and **own-gpu** `/poll` only (the two modules that produced the measured
+  stuck rows). Other modules can adopt later.
+- Docs: `docs/runpod-job-log.md`. Tests: status map, dropped terminal write, retention `unknown`.
+
+Hosted module telemetry (RunPod). Dual-panel N/A for vivijure-local studio door.
+
+### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
+
+Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
+guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
+Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
+operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
+(vivijure-core, unreleased).
+
+### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
+
+`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
+null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
+
+- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
+- Legacy `lora_status` retained and documented as shared training-job state only.
+- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
+- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
+### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
+
+`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
+view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
+required R2 archaeology. The host now:
+
+- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
+  injected or cap-dropped;
+- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
+  (`GET/POST /api/render/film`), and the scatter 201 body;
+- emits `film.wan_lora_projection` structured lines (docs/observability.md).
+
+Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
+bump.
 
 ## v1.20.1 -- 2026-08-05
 

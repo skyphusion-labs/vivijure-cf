@@ -5,11 +5,14 @@ import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifes
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
+// cf#537: the agent door validates its own untrusted `finish_select` with the SAME parser the panel
+// door's overrides bag goes through, so the two doors cannot drift on what a valid selection is.
+import { parseHookSelection } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, summarizeFilm, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
-  normalizeFilmScenes, filterScenesByShotIds,
+  normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
 } from "./film-render-bridge";
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
@@ -27,8 +30,9 @@ import {
 } from "@skyphusion-labs/vivijure-core/storyboard-projects-db";
 import {
   listCast, getCastById, createCast, updateCast, deleteCast,
-  clearPortrait, getCastIdByPublicId, toPublicCast,
+  clearPortrait, getCastIdByPublicId,
 } from "@skyphusion-labs/vivijure-core/cast-db";
+import { toPublicCast } from "./cast-public";
 import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
 import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
@@ -42,6 +46,7 @@ import {
 } from "./cast-media";
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
+import { authorizeRoute, AUTHZ_DENY_REASON, type Scope } from "./authz";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
 import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
@@ -108,9 +113,24 @@ import { videoFinishHooksUnavailable } from "./video-finish-availability";
 import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
-import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
+import { resolveStudioRelease } from "./studio-release";
+import {
+  projectWanLorasIntoModuleConfig,
+  ensureModuleOverrideConfig,
+  shouldProjectWanLoras,
+  persistWanLoraProjectionOnFilm,
+  emitWanLoraProjectionEvent,
+  wanLoraProjectionSurface,
+  WAN_LORA_BACKEND,
+  WAN_LORA_PROJECTION_FIELD,
+} from "./wan-lora-projection";
 import { getUserPrefs, setUserPrefs } from "./user-prefs";
-import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "@skyphusion-labs/vivijure-core/operator-config";
+import {
+  loadInstallConfig,
+  setInstallConfig,
+  hasInstallConfig,
+  installFieldKeys,
+} from "@skyphusion-labs/vivijure-core/operator-config";
 import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
 import { startScoreBedGenerate, pollScoreBedGenerate } from "./score-bed";
 import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
@@ -158,7 +178,23 @@ async function readBody<T>(req: Request): Promise<T> {
 
 // --- routing -------------------------------------------------------------
 type Handler = (req: Request, env: StudioEnv, ctx: ExecutionContext, p: Record<string, string>) => Promise<Response>;
-interface Route { method: string; pattern: string; handler: Handler; }
+/** cf#520: WHO may call this route.
+ *
+ *   operator  -- touches installation, configuration, or estate-wide state.
+ *   consumer  -- touches one tenant's own data, HOWEVER destructive.
+ *
+ *  THE AXIS IS WHOSE DATA, NOT HOW VIOLENT THE VERB. All ten DELETE routes are `consumer`: a user
+ *  deleting their own cast portrait is correct work, and a guard that refuses correct work is the
+ *  guard people switch off. `POST /api/storage/reconcile` is `operator` because it rewrites an
+ *  ESTATE-WIDE ledger, not because it deletes. */
+type RouteScope = Scope;
+
+/** REQUIRED, deliberately. An optional field with a safe default still leaves a rule to remember;
+ *  a required one makes forgetting a COMPILE ERROR, so "someone adds a route under deadline and
+ *  forgets" cannot happen. The compiler also hands over the complete classification list rather
+ *  than a grep anyone has to trust -- the same reason core#177 made FilmFinishSeed's fields
+ *  required and let tsc enumerate the seeds. */
+interface Route { method: string; pattern: string; scope: RouteScope; handler: Handler; }
 
 // Pattern segments are a literal, ":name" (one segment), or a trailing "*name" catch-all that
 // captures the rest of the path -- used for /api/artifact/*key, where the R2 key contains slashes.
@@ -176,7 +212,10 @@ function match(routes: Route[], method: string, pathname: string) {
     }
     // The PATTERN travels with the match (cf#223): the router error line logs the route template
     // instead of the raw pathname, and it can only do that if the matcher says which template won.
-    if (ok) return { handler: r.handler, params: p, pattern: r.pattern };
+    // cf#520: the SCOPE travels with the match for the same reason the pattern does -- the
+    // authorization comparison happens after dispatch has chosen a route, and it can only do that
+    // if the matcher says which route won.
+    if (ok) return { handler: r.handler, params: p, pattern: r.pattern, scope: r.scope };
   }
   return null;
 }
@@ -650,15 +689,26 @@ async function animatePreviewHandler(
 
 const hFinalizePreview: Handler = async (req, env, _c, p) => {
   let audioKey: string | undefined;
+  let motionBackend: string | undefined;
+  let castLoras: Record<string, string> | undefined;
   try {
-    const b = await readBody<{ audioKey?: string; castLoras?: Record<string, string> }>(req);
+    const b = await readBody<{
+      audioKey?: string;
+      castLoras?: Record<string, string>;
+      motion_backend?: string;
+      motionBackend?: string;
+    }>(req);
     audioKey = b.audioKey;
+    castLoras = b.castLoras;
+    // cf#347: accept snake_case (panel) or camelCase
+    const raw = b.motion_backend ?? b.motionBackend;
+    motionBackend = typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
   } catch { /* empty body ok */ }
-  // No motionBackend: animateFromPreview ignores it for "finalized" mode and resolves the gpu
-  // door from the registry by locality (the old hardcoded "own-gpu" here was dead config).
   return animatePreviewHandler(env, await resolveRenderId(env, p.id), {
     deriveMode: "finalized",
     audioKey,
+    motionBackend,
+    castLoras,
   });
 };
 
@@ -792,7 +842,7 @@ const hSubmitRender: Handler = async (req, env) => {
   // paths). motionBackend is undefined on a keyframes-only preview, and non-Wan / no-Wan-cast renders
   // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
   // POST-clamp, keeps the JSON LoRA fields intact through startFilmJob.
-  await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
+  const wanProj = await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -802,6 +852,10 @@ const hSubmitRender: Handler = async (req, env) => {
     keyframe_config: mapped.keyframe_config,
     motion_config: mapped.motion_config,
     finish_config: mapped.finish_config,
+    // cf#537: which finish modules this render asked for. Resolved out of `renderOverrides.select`
+    // by the core, so it rides the SAME bag that `renders.render_overrides` already persists, and a
+    // derived render (regen-shot, finalize, animate-*) replays it with no schema change.
+    finish_select: mapped.finish_select,
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
@@ -814,6 +868,9 @@ const hSubmitRender: Handler = async (req, env) => {
     pretrained_loras: Object.keys(pretrained).length ? pretrained : undefined,
     cast_loras: Object.keys(castIds).length ? castIds : undefined,
   }, modules);
+  // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
+  // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
+  await persistWanLoraProjectionOnFilm(env, job, wanProj);
   const view = filmJobToPollView(job, null);
   const row: NewRenderRow = {
     jobId: view.jobId,
@@ -824,7 +881,10 @@ const hSubmitRender: Handler = async (req, env) => {
     status: view.status,
     mode: b.keyframesOnly ? "keyframes-only" : "full",
     projectId: await resolveProjectRef(env, b.projectId),
-  };
+    // cf#393: resolved backends known at submit (motion undefined on keyframes-only).
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: mapped.keyframe_backend ?? null,
+  } as NewRenderRow;
   await insertRenderBestEffort(env, row);
   return json(view, 201);
 };
@@ -832,7 +892,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   const b = await readBody<{
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
-    motion_backend?: string;
+    motion_backend?: string; castLoras?: Record<string, unknown>;
   }>(req);
   // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
   //
@@ -910,6 +970,17 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     throw badRequest(fromKfPre.refusal.message);
   }
 
+  // cf#334: derive dialogue from the bundle so RFK is not silent-by-default on a voiced package.
+  let fromKfDialogue: DialogueLine[] | undefined;
+  try {
+    const { voices } = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
+    let lines = dialogueLinesFromBundleScenes(parsedScenes, voices);
+    if (lines.length) {
+      lines = resolveExplicitLineVoices(lines, parsedScenes, voices);
+      fromKfDialogue = lines;
+    }
+  } catch { /* best-effort */ }
+
   const job = await startFilmFromKeyframes(env, {
     project,
     bundle_key: fromKfBundleKey,
@@ -918,12 +989,14 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     motion_backend: motionBackend,
     motion_config: mapped.motion_config,
     finish_config: mapped.finish_config,
+    finish_select: mapped.finish_select, // cf#537
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
     derive_mode: "finalized",
     audio_key: b.audioKey,
-  }, modules);
+    dialogue_lines: fromKfDialogue,
+  } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
     return json({ error: job.error || "render from keyframes failed" }, 422);
   }
@@ -937,7 +1010,10 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     status: view.status,
     mode: "finalized",
     projectId: await resolveProjectRef(env, b.projectId),
-  });
+    // cf#393: from-keyframes has motion, no keyframe module pass.
+    motionBackend: motionBackend ?? null,
+    keyframeBackend: null,
+  } as NewRenderRow);
   return json(view, 201);
 };
 const hRegenShot: Handler = async (req, env, _c, p) => {
@@ -1003,6 +1079,20 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     return json({ ok: false, error: job.error || "regen submit failed" }, 422);
   }
   const view = filmJobToPollView(job, null);
+  // cf#339: every other startFilmJob / startFilmFromKeyframes caller writes a renders row.
+  // This door spent GPU with nothing in the history panel. parent_id links the regen child to
+  // the COMPLETED row that supplied the shot; mode is keyframes-only (this path never motion-renders).
+  await insertRenderBestEffort(env, {
+    jobId: view.jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: tier,
+    renderOverrides: row.render_overrides ?? undefined,
+    status: view.status,
+    mode: "keyframes-only",
+    projectId: row.project_id,
+    parentId: row.id,
+  });
   return json({ ok: true, jobId: view.jobId, status: view.status });
 };
 const hPollRender: Handler = async (_req, env, ctx, p) => {
@@ -1125,10 +1215,11 @@ const hScatterRender: Handler = async (req, env) => {
   // fields in the module schema, so they survive validateConfig and reach every shard. Without this a
   // Wan cast scatter would render LoRA-less SILENTLY while render/film worked (the exact Phase C gap).
   // scatterCast is the same resolveCastLoras result the readiness gate above used.
+  let scatterWanProj = { injected: 0, dropped: 0, applied: false as boolean };
   if (shouldProjectWanLoras(scatterBackend, scatterCast.wanPretrained)) {
     const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
     b.renderOverrides = injected.overrides;
-    await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
+    scatterWanProj = await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
   }
   try {
     const job = await startScatterRender(env, {
@@ -1145,7 +1236,22 @@ const hScatterRender: Handler = async (req, env) => {
         project_id: await resolveProjectRef(env, b.projectId),
     });
     const view = scatterJobToPollView(job);
-    return json({ ok: true, jobId: view.jobId, status: view.status }, 201);
+    // cf#392: scatter has no host-owned poll wrapper, so surface on the 201 + structured event.
+    // The LoRAs themselves ride render_overrides into every shard; the counts are for verification.
+    const scatterSurface = wanLoraProjectionSurface(scatterWanProj);
+    if (scatterSurface) {
+      emitWanLoraProjectionEvent({
+        scatter_id: view.jobId,
+        project,
+        result: scatterWanProj,
+      });
+    }
+    return json({
+      ok: true,
+      jobId: view.jobId,
+      status: view.status,
+      ...(scatterSurface ? { [WAN_LORA_PROJECTION_FIELD]: scatterSurface } : {}),
+    }, 201);
   } catch (e) {
     const msg = (e as Error).message || "scatter submit failed";
     return json({ ok: false, error: msg }, 422);
@@ -1162,9 +1268,11 @@ const hAdoptRender: Handler = async (req, env) =>
 
 // --- validation ----------------------------------------------------------
 // Pre-render preflight. The client (planner.js `runPreflight`) POSTs the
-// envelope { storyboard, castBindings?, bundleKey?, audioKey? } and expects a
+// envelope { storyboard, castBindings?, motionBackend?, quality? } and expects a
 // PreflightResult { ok, counts, issues[] } (see ./preflight): it renders the
 // issues, shows the counts, and gates the bundle button on counts.error.
+// bundleKey / audioKey are NOT read here (mcp#26 / cf#315 honesty): do not re-add
+// them to the envelope docs without wiring validation.
 //
 // Two things this handler must get right (both were wrong before #242):
 //   1. Unwrap `.storyboard` from the envelope. The previous code validated the
@@ -1406,7 +1514,7 @@ async function withFilmDownloadUrlBestEffort(
   }
 }
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1496,12 +1604,13 @@ const hStartFilm: Handler = async (req, env) => {
   // Wan cast adapters -> alibaba-wan-lora motion config, in place, before the job starts. hStartFilm
   // carries a.motion_config straight into startFilmJob unclamped, so the projected fields flow through.
   // Guarded so a non-Wan film never materializes an empty motion_config.
+  let filmWanProj = { injected: 0, dropped: 0, applied: false as boolean };
   if (shouldProjectWanLoras(a.motion_backend, resolvedLoras.wanPretrained)) {
     const filmMotionConfig: Record<string, unknown> =
       a.motion_config && typeof a.motion_config === "object" && !Array.isArray(a.motion_config)
         ? (a.motion_config as Record<string, unknown>)
         : {};
-    await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
+    filmWanProj = await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
     a.motion_config = filmMotionConfig;
   }
   const job = await startFilmJob(env, {
@@ -1510,7 +1619,14 @@ const hStartFilm: Handler = async (req, env) => {
     // audio_key: a staged bed (score-bed music/narration) to mux after assemble. startFilmJob runs it
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
     // silent even when the caller supplied a bed (the scored/narrated render path).
-    finish_config: a.finish_config, speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
+    finish_config: a.finish_config,
+    // cf#537: this door takes PRE-RESOLVED config maps and carries no renderOverrides bag (0
+    // mentions in its body type, against 3 for finish_config), so the selection is its own
+    // top-level field rather than a key inside a bag that does not exist here. The panel door and
+    // this one are two different pipelines; a selection wired only into the panel would leave the
+    // agent / MCP / Slate path on run-everything.
+    finish_select: parseHookSelection({ finish: a.finish_select })?.finish,
+    speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
     // TTS+lip-sync stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
     // which read job.dialogue_lines. cast_loras carries the speaking cast (slot -> cast id) so the
@@ -1529,11 +1645,14 @@ const hStartFilm: Handler = async (req, env) => {
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
   }, filmModules);
+  // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
+  // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
+  await persistWanLoraProjectionOnFilm(env, job, filmWanProj);
   // Write a renders-table row so this film shows in the history panel (#164), the same way
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
   await insertRenderBestEffort(env, filmRowFromJob(job));
-  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilm(job, null))) }, 201);
+  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))) }, 201);
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
   const r = await advanceFilmJob(env, p.id);
@@ -1548,7 +1667,8 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
     ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
     : undefined;
   await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob, kfDone), ctx);
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilm(r.job, r.clipJob))) });
+  // cf#392: host summarize relays wan_lora_projection from the job doc when present.
+  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(r.job, r.clipJob))) });
 };
 
 const hEnhance: Handler = async (req, env) => {
@@ -1682,6 +1802,20 @@ const hPatchModuleConfig: Handler = async (req, env, _ctx, p) => {
   if (!hasInstallConfig(mod.config_schema)) throw notFound("module has no install-scope config");
   const body = await readBody<Record<string, unknown>>(req);
   if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("body must be a config object");
+  // Strict write: refuse unknown / render-scope keys with 400 instead of silently clamping to a
+  // no-op (cf#387). Nested shapes like { config: { notify_email } } land here as dropped "config".
+  // (Core also exports droppedInstallKeys / clampInstallPatchDetailed for the same check.)
+  const allowed = installFieldKeys(mod.config_schema);
+  const allowedSet = new Set(allowed);
+  const dropped = Object.keys(body).filter((k) => !allowedSet.has(k));
+  if (dropped.length) {
+    throw badRequest(
+      `unknown or non-install config keys: ${dropped.join(", ")}`
+        + (allowed.length ? ` (allowed: ${allowed.join(", ")})` : ""),
+    );
+  }
+  // Empty object is an intentional no-op (returns current config). Non-empty body with zero
+  // install keys is already covered by the dropped check above.
   const config = await setInstallConfig(env, mod.name, mod.config_schema, body);
   return json({ ok: true, module: mod.name, config });
 };
@@ -1790,8 +1924,10 @@ function demoChatCaps(env: StudioEnv): DemoChatCaps {
   };
 }
 
-/** Is the demo render backend armed? DEMO_RENDER_ENABLED="true" AND the demo-scoped local-gpu door is
- *  bound. Post-credits the operator unsets the var (or unbinds the door) -> renders paused, no outage. */
+/** Is the demo render backend armed in config? DEMO_RENDER_ENABLED="true" AND the demo-scoped
+ *  local-gpu door is bound. This is NOT a live door-box healthcheck (cf#28): a down box still
+ *  reports available=true and fails at submit. Post-credits the operator unsets the var (or unbinds
+ *  the door) -> renders paused, no outage. */
 function demoRenderEnabled(env: StudioEnv): boolean {
   return (env.DEMO_RENDER_ENABLED || "").trim() === "true"
     && !!resolveFetcher(env as unknown as Record<string, unknown>, "MODULE_LOCAL_GPU");
@@ -1924,92 +2060,157 @@ const hStorageReconcile: Handler = async (_req, env) => {
   });
 };
 
+/** cf#520: the 86th route. This was dispatched INLINE inside routeRequest from the host
+ *  bootstrap (d03b57f) onward -- early because it was written FIRST, before the route-table
+ *  pattern existed, not because anything needed it early. Established before moving it: the 60s
+ *  cache is a PARAMETER of discoverModules passed identically at six call sites, so position can
+ *  neither create nor destroy it; and both intervening gates are probed false for this route
+ *  (isSpendRoute returns false for any non-POST). An inline handler carries no `scope` and NO
+ *  COMPILE ERROR EVER SAYS SO, so the required-field guarantee was exactly as complete as the
+ *  table. tests/no-inline-api-routes.test.ts is the guard for the CLASS. */
+const hModules: Handler = async (_req, env) => {
+  // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
+  // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
+  const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
+  // ONE availability computation, used by BOTH the hook report and the demo assistant gate
+  // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
+  // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
+  // gate rather than adding a second mechanism is the point: one answer to "can this host serve
+  // an AI-Gateway hook", consumed everywhere that question is asked.
+  const aiReady = await aiGatewayReady(env);
+  // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
+  // reason the panel prints verbatim.
+  // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
+  // through the SAME channel rather than growing a parallel one -- that is the whole point of
+  // cf#98. Merged, so a host missing both reports both.
+  const hooksUnavailable = {
+    ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
+    ...videoFinishHooksUnavailable(env),
+  };
+  const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
+  const abuseUrl = abuseReportUrl(env);
+  // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
+  // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
+  // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
+  // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
+  // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
+  // cf#287: studio release / build identity is a TOP-LEVEL field on the modules projection
+  // (orthogonal to `host`, which is transport capability). Two tag deploys must never project a
+  // byte-identical registry. Spread AFTER modulesResponse so a future core field of the same name
+  // cannot silently win; the host is the authority on its own release.
+  const release = resolveStudioRelease(env);
+  return json({
+    ...modulesResponse(modules, renderConfigProjection(), {
+      dispatch: !!env.MODULE_DISPATCH,
+      ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
+      // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
+      // operator set it, because the same bundle self-hosts and must never advertise an address
+      // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
+      ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
+      ...(isDemoMode(env)
+        ? {
+            readonly: true,
+            render: { available: demoRenderEnabled(env) },
+            // Assistant capability only when the host can actually reach the gateway. This used
+            // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
+            // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
+            // hook report asks, so the two can never disagree.
+            ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
+          }
+        : {}),
+    }),
+    studio_release: release.studio_release,
+    ...(release.git_sha ? { git_sha: release.git_sha } : {}),
+  });
+};
+
 export const API_ROUTES: Route[] = [
-  { method: "GET",    pattern: "/api/storage/usage",                   handler: hStorageUsage },
-  { method: "POST",   pattern: "/api/storage/reconcile",               handler: hStorageReconcile },
-  { method: "GET",    pattern: "/api/demo/menu",                       handler: hDemoMenu },
-  { method: "POST",   pattern: "/api/demo/render",                     handler: hDemoRender },
-  { method: "GET",    pattern: "/api/demo/render/:id",                 handler: hDemoPoll },
-  { method: "POST",   pattern: "/api/demo/chat",                       handler: hDemoChat },
-  { method: "GET",    pattern: "/api/storyboard/projects",                        handler: hListProjects },
-  { method: "POST",   pattern: "/api/storyboard/projects",                        handler: hCreateProject },
-  { method: "GET",    pattern: "/api/storyboard/projects/:id",                    handler: hGetProject },
-  { method: "PATCH",  pattern: "/api/storyboard/projects/:id",                    handler: hPatchProject },
-  { method: "POST",   pattern: "/api/storyboard/projects/:id/storyboard",         handler: hSaveProjectStoryboard },
-  { method: "DELETE", pattern: "/api/storyboard/projects/:id",                    handler: hDeleteProject },
-  { method: "GET",    pattern: "/api/voices",                          handler: hListVoices },
-  { method: "GET",    pattern: "/api/cast",                            handler: hListCast },
-  { method: "POST",   pattern: "/api/cast",                            handler: hCreateCast },
-  { method: "GET",    pattern: "/api/cast/export/:id",                 handler: hExportCast },
-  { method: "POST",   pattern: "/api/cast/export/:id",                 handler: hExportCast },
-  { method: "POST",   pattern: "/api/cast/import",                     handler: hImportCast },
-  { method: "GET",    pattern: "/api/cast/:id",                        handler: hGetCast },
-  { method: "PATCH",  pattern: "/api/cast/:id",                        handler: hPatchCast },
-  { method: "DELETE", pattern: "/api/cast/:id",                        handler: hDeleteCast },
-  { method: "POST",   pattern: "/api/cast/:id/portrait",               handler: hSetPortrait },
-  { method: "DELETE", pattern: "/api/cast/:id/portrait",               handler: hClearPortrait },
-  { method: "POST",   pattern: "/api/cast/:id/ref",                    handler: hAddRef },
-  { method: "DELETE", pattern: "/api/cast/:id/ref",                    handler: hRemoveRef },
-  { method: "DELETE", pattern: "/api/cast/:id/refs/*refKey",           handler: hRemoveRef },
-  { method: "POST",   pattern: "/api/cast/:id/source",                 handler: hAddSource },
-  { method: "DELETE", pattern: "/api/cast/:id/source",                 handler: hRemoveSource },
-  { method: "DELETE", pattern: "/api/cast/:id/source/*sourceKey",      handler: hRemoveSource },
-  { method: "POST",   pattern: "/api/cast/:id/generate-refs",          handler: hGenerateCastRefs },
-  { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        handler: hPollCastRefs },
-  { method: "POST",   pattern: "/api/cast/:id/train-lora",             handler: hTrainCastLora },
-  { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         handler: hTrainCastWanLora },
-  { method: "GET",    pattern: "/api/cast/:id/lora-status",            handler: hCastLoraStatus },
-  { method: "POST",   pattern: "/api/upload",                          handler: hUpload },
-  { method: "GET",    pattern: "/api/artifact/*key",                   handler: hServeArtifact },
-  { method: "HEAD",   pattern: "/api/artifact/*key",                   handler: hServeArtifact },
-  { method: "GET",    pattern: "/api/artifact-url/*key",               handler: hArtifactUrl },
-  { method: "POST",   pattern: "/api/render/frames",                  handler: hRenderFrames },
-  { method: "POST",   pattern: "/api/storyboard/preflight",            handler: hPreflight },
-  { method: "POST",   pattern: "/api/storyboard/plan",                 handler: hPlan },
-  { method: "POST",   pattern: "/api/storyboard/refine",               handler: hRefine },
-  { method: "POST",   pattern: "/api/chat",                            handler: hChat },
-  { method: "POST",   pattern: "/api/storyboard/score-bed",            handler: hScoreBedGenerate },
-  { method: "POST",   pattern: "/api/storyboard/music-generate",       handler: hScoreBedGenerate },
-  { method: "GET",    pattern: "/api/job/:id",                         handler: hPollScoreBed },
-  { method: "POST",   pattern: "/api/storyboard/enhance",              handler: hEnhance },
-  { method: "GET",    pattern: "/api/models",                          handler: hAllModels },
-  { method: "GET",    pattern: "/api/storyboard/models",               handler: hModels },
-  { method: "POST",   pattern: "/api/storyboard/yaml",                 handler: hYaml },
-  { method: "POST",   pattern: "/api/storyboard/markers",              handler: hMarkers },
-  { method: "POST",   pattern: "/api/storyboard/bundle",               handler: hBundle },
-  { method: "POST",   pattern: "/api/storyboard/audio-upload",         handler: hStoryboardAudioUpload },
-  { method: "POST",   pattern: "/api/storyboard/character-ref",        handler: hStoryboardCharacterRef },
-  { method: "POST",   pattern: "/api/audio/analyze",                   handler: hAudioAnalyze },
-  { method: "POST",   pattern: "/api/storyboard/render",               handler: hSubmitRender },
-  { method: "POST",   pattern: "/api/storyboard/render-plan",          handler: hRenderPlan },
-  { method: "POST",   pattern: "/api/render/clips",                     handler: hStartClips },
-  { method: "GET",    pattern: "/api/render/clips/:id",                 handler: hPollClips },
-  { method: "POST",   pattern: "/api/render/film",                      handler: hStartFilm },
-  { method: "GET",    pattern: "/api/render/film/:id",                  handler: hPollFilm },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", handler: hRegenShot },
-  { method: "POST",   pattern: "/api/storyboard/render/scatter",       handler: hScatterRender },
-  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", handler: hRenderFromKeyframes },
-  { method: "GET",    pattern: "/api/storyboard/render/:jobId",        handler: hPollRender },
-  { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        handler: hCancelRender },
-  { method: "GET",    pattern: "/api/storyboard/renders",              handler: hListRenders },
-  { method: "GET",    pattern: "/api/storyboard/renders/tags",         handler: hListTags },
-  { method: "PATCH",  pattern: "/api/storyboard/renders/:id",          handler: hPatchRender },
-  { method: "DELETE", pattern: "/api/storyboard/renders/:id",          handler: hDeleteRender },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-audio", handler: hAddRenderAudio },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-narration", handler: hAddRenderNarration },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/finalize", handler: hFinalizePreview },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-cloud", handler: hAnimateCloud },
-  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-hybrid", handler: hAnimateHybrid },
-  { method: "POST",   pattern: "/api/storyboard/renders/adopt",        handler: hAdoptRender },
-  { method: "GET",    pattern: "/api/whoami",                          handler: hWhoami },
-  { method: "GET",    pattern: "/api/prefs",                           handler: hGetPrefs },
-  { method: "PATCH",  pattern: "/api/prefs",                           handler: hPatchPrefs },
-  { method: "GET",    pattern: "/api/modules/installed",              handler: hListInstalledModules },
-  { method: "POST",   pattern: "/api/modules/install",                handler: hInstallModule },
-  { method: "DELETE", pattern: "/api/modules/install/:name",          handler: hUninstallModule },
-  { method: "PATCH",  pattern: "/api/modules/install/:name",          handler: hSetModuleEnabled },
-  { method: "GET",    pattern: "/api/modules/:name/config",            handler: hGetModuleConfig },
-  { method: "PATCH",  pattern: "/api/modules/:name/config",            handler: hPatchModuleConfig },
+  { method: "GET",    pattern: "/api/storage/usage",                   scope: "operator",    handler: hStorageUsage },
+  { method: "POST",   pattern: "/api/storage/reconcile",               scope: "operator",    handler: hStorageReconcile },
+  { method: "GET",    pattern: "/api/demo/menu",                       scope: "consumer",    handler: hDemoMenu },
+  { method: "POST",   pattern: "/api/demo/render",                     scope: "consumer",    handler: hDemoRender },
+  { method: "GET",    pattern: "/api/demo/render/:id",                 scope: "consumer",    handler: hDemoPoll },
+  { method: "POST",   pattern: "/api/demo/chat",                       scope: "consumer",    handler: hDemoChat },
+  { method: "GET",    pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hListProjects },
+  { method: "POST",   pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hCreateProject },
+  { method: "GET",    pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hGetProject },
+  { method: "PATCH",  pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hPatchProject },
+  { method: "POST",   pattern: "/api/storyboard/projects/:id/storyboard",         scope: "consumer",    handler: hSaveProjectStoryboard },
+  { method: "DELETE", pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hDeleteProject },
+  { method: "GET",    pattern: "/api/voices",                          scope: "consumer",    handler: hListVoices },
+  { method: "GET",    pattern: "/api/cast",                            scope: "consumer",    handler: hListCast },
+  { method: "POST",   pattern: "/api/cast",                            scope: "consumer",    handler: hCreateCast },
+  { method: "GET",    pattern: "/api/cast/export/:id",                 scope: "consumer",    handler: hExportCast },
+  { method: "POST",   pattern: "/api/cast/export/:id",                 scope: "consumer",    handler: hExportCast },
+  { method: "POST",   pattern: "/api/cast/import",                     scope: "consumer",    handler: hImportCast },
+  { method: "GET",    pattern: "/api/cast/:id",                        scope: "consumer",    handler: hGetCast },
+  { method: "PATCH",  pattern: "/api/cast/:id",                        scope: "consumer",    handler: hPatchCast },
+  { method: "DELETE", pattern: "/api/cast/:id",                        scope: "consumer",    handler: hDeleteCast },
+  { method: "POST",   pattern: "/api/cast/:id/portrait",               scope: "consumer",    handler: hSetPortrait },
+  { method: "DELETE", pattern: "/api/cast/:id/portrait",               scope: "consumer",    handler: hClearPortrait },
+  { method: "POST",   pattern: "/api/cast/:id/ref",                    scope: "consumer",    handler: hAddRef },
+  { method: "DELETE", pattern: "/api/cast/:id/ref",                    scope: "consumer",    handler: hRemoveRef },
+  { method: "DELETE", pattern: "/api/cast/:id/refs/*refKey",           scope: "consumer",    handler: hRemoveRef },
+  { method: "POST",   pattern: "/api/cast/:id/source",                 scope: "consumer",    handler: hAddSource },
+  { method: "DELETE", pattern: "/api/cast/:id/source",                 scope: "consumer",    handler: hRemoveSource },
+  { method: "DELETE", pattern: "/api/cast/:id/source/*sourceKey",      scope: "consumer",    handler: hRemoveSource },
+  { method: "POST",   pattern: "/api/cast/:id/generate-refs",          scope: "consumer",    handler: hGenerateCastRefs },
+  { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        scope: "consumer",    handler: hPollCastRefs },
+  { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
+  { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
+  { method: "POST",   pattern: "/api/upload",                          scope: "consumer",    handler: hUpload },
+  { method: "GET",    pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
+  { method: "HEAD",   pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
+  { method: "GET",    pattern: "/api/artifact-url/*key",               scope: "consumer",    handler: hArtifactUrl },
+  { method: "POST",   pattern: "/api/render/frames",                  scope: "consumer",    handler: hRenderFrames },
+  { method: "POST",   pattern: "/api/storyboard/preflight",            scope: "consumer",    handler: hPreflight },
+  { method: "POST",   pattern: "/api/storyboard/plan",                 scope: "consumer",    handler: hPlan },
+  { method: "POST",   pattern: "/api/storyboard/refine",               scope: "consumer",    handler: hRefine },
+  { method: "POST",   pattern: "/api/chat",                            scope: "consumer",    handler: hChat },
+  { method: "POST",   pattern: "/api/storyboard/score-bed",            scope: "consumer",    handler: hScoreBedGenerate },
+  { method: "POST",   pattern: "/api/storyboard/music-generate",       scope: "consumer",    handler: hScoreBedGenerate },
+  { method: "GET",    pattern: "/api/job/:id",                         scope: "consumer",    handler: hPollScoreBed },
+  { method: "POST",   pattern: "/api/storyboard/enhance",              scope: "consumer",    handler: hEnhance },
+  { method: "GET",    pattern: "/api/models",                          scope: "consumer",    handler: hAllModels },
+  { method: "GET",    pattern: "/api/storyboard/models",               scope: "consumer",    handler: hModels },
+  { method: "POST",   pattern: "/api/storyboard/yaml",                 scope: "consumer",    handler: hYaml },
+  { method: "POST",   pattern: "/api/storyboard/markers",              scope: "consumer",    handler: hMarkers },
+  { method: "POST",   pattern: "/api/storyboard/bundle",               scope: "consumer",    handler: hBundle },
+  { method: "POST",   pattern: "/api/storyboard/audio-upload",         scope: "consumer",    handler: hStoryboardAudioUpload },
+  { method: "POST",   pattern: "/api/storyboard/character-ref",        scope: "consumer",    handler: hStoryboardCharacterRef },
+  { method: "POST",   pattern: "/api/audio/analyze",                   scope: "consumer",    handler: hAudioAnalyze },
+  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: hSubmitRender },
+  { method: "POST",   pattern: "/api/storyboard/render-plan",          scope: "consumer",    handler: hRenderPlan },
+  { method: "POST",   pattern: "/api/render/clips",                     scope: "consumer",    handler: hStartClips },
+  { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
+  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
+  { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
+  { method: "POST",   pattern: "/api/storyboard/render/scatter",       scope: "consumer",    handler: hScatterRender },
+  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
+  { method: "GET",    pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hPollRender },
+  { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hCancelRender },
+  { method: "GET",    pattern: "/api/storyboard/renders",              scope: "consumer",    handler: hListRenders },
+  { method: "GET",    pattern: "/api/storyboard/renders/tags",         scope: "consumer",    handler: hListTags },
+  { method: "PATCH",  pattern: "/api/storyboard/renders/:id",          scope: "consumer",    handler: hPatchRender },
+  { method: "DELETE", pattern: "/api/storyboard/renders/:id",          scope: "consumer",    handler: hDeleteRender },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-audio", scope: "consumer",    handler: hAddRenderAudio },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/add-narration", scope: "consumer",    handler: hAddRenderNarration },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/finalize", scope: "consumer",    handler: hFinalizePreview },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-cloud", scope: "consumer",    handler: hAnimateCloud },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-hybrid", scope: "consumer",    handler: hAnimateHybrid },
+  { method: "POST",   pattern: "/api/storyboard/renders/adopt",        scope: "consumer",    handler: hAdoptRender },
+  { method: "GET",    pattern: "/api/whoami",                          scope: "consumer",    handler: hWhoami },
+  { method: "GET",    pattern: "/api/prefs",                           scope: "consumer",    handler: hGetPrefs },
+  { method: "PATCH",  pattern: "/api/prefs",                           scope: "consumer",    handler: hPatchPrefs },
+  { method: "GET",    pattern: "/api/modules",                       scope: "consumer",    handler: hModules },
+  { method: "GET",    pattern: "/api/modules/installed",              scope: "operator",    handler: hListInstalledModules },
+  { method: "POST",   pattern: "/api/modules/install",                scope: "operator",    handler: hInstallModule },
+  { method: "DELETE", pattern: "/api/modules/install/:name",          scope: "operator",    handler: hUninstallModule },
+  { method: "PATCH",  pattern: "/api/modules/install/:name",          scope: "operator",    handler: hSetModuleEnabled },
+  { method: "GET",    pattern: "/api/modules/:name/config",            scope: "operator",    handler: hGetModuleConfig },
+  { method: "PATCH",  pattern: "/api/modules/:name/config",            scope: "operator",    handler: hPatchModuleConfig },
 ];
 
 // #617: the marketing/welcome page moved off the Worker to the vivijure.com storefront. /welcome
@@ -2062,57 +2263,14 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // (below) stay open; every /api/* request must pass the AUTH_MODE gate -- the studio bearer
     // token (token mode) or a valid Access JWT (access mode / legacy unset). The dev opt-out
     // stays ALLOW_UNAUTHENTICATED, legacy path only. See src/auth-gate.ts.
+    // cf#520: the gate answers WHO is calling. It runs HERE, before any route has been matched,
+    // so it structurally cannot answer WHAT they may do -- there is no route yet. The authorization
+    // comparison therefore lives at the dispatch site below and this decision is carried forward.
+    let credential: Scope | null = null;
     if (url.pathname.startsWith("/api/")) {
       const gate = await gateApi(request, env);
       if (!gate.ok) return json({ error: gate.reason }, gate.status);
-    }
-    if (url.pathname === "/api/modules" && request.method === "GET") {
-      // Cache discovery for 60s per isolate so a refresh storm does not re-fetch every module's
-      // manifest each request (issue #17 follow-up). Only this route opts in; dispatch stays fresh.
-      const modules = await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 });
-      // ONE availability computation, used by BOTH the hook report and the demo assistant gate
-      // (cf#98). The AI-presence gating already existed here but only INSIDE the demo branch, so a
-      // non-demo deploy missing the gateway advertised capability it could not serve. Hoisting the
-      // gate rather than adding a second mechanism is the point: one answer to "can this host serve
-      // an AI-Gateway hook", consumed everywhere that question is asked.
-      const aiReady = await aiGatewayReady(env);
-      // Absent key means available. Only hooks this host genuinely cannot serve appear here, with a
-      // reason the panel prints verbatim.
-      // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
-      // through the SAME channel rather than growing a parallel one -- that is the whole point of
-      // cf#98. Merged, so a host missing both reports both.
-      const hooksUnavailable = {
-        ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
-        ...videoFinishHooksUnavailable(env),
-      };
-      const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
-      const abuseUrl = abuseReportUrl(env);
-      // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
-      // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
-      // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
-      // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
-      // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
-      return json(
-        modulesResponse(modules, renderConfigProjection(), {
-          dispatch: !!env.MODULE_DISPATCH,
-          ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
-          // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
-          // operator set it, because the same bundle self-hosts and must never advertise an address
-          // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
-          ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
-          ...(isDemoMode(env)
-            ? {
-                readonly: true,
-                render: { available: demoRenderEnabled(env) },
-                // Assistant capability only when the host can actually reach the gateway. This used
-                // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
-                // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
-                // hook report asks, so the two can never disagree.
-                ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
-              }
-            : {}),
-        }),
-      );
+      credential = gate.scope;
     }
     if (WELCOME_REDIRECT_PATHS.has(url.pathname) && (request.method === "GET" || request.method === "HEAD")) {
       return Response.redirect(WELCOME_REDIRECT_TARGET, 301);
@@ -2149,6 +2307,23 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     }
     const hit = match(API_ROUTES, request.method, url.pathname);
     if (hit) {
+      // cf#520: AUTHORIZATION -- the first point in the request where BOTH facts exist: what the
+      // route requires (from the table) and what the credential holds (from the gate above). Fails
+      // CLOSED on a null credential, which cannot happen for a table route today (every pattern is
+      // under /api/, asserted in tests/route-scope-authz.test.ts) and would otherwise be the way a
+      // route added outside the gated prefix reached an operator handler unauthenticated.
+      if (!authorizeRoute(hit.scope, credential)) {
+        console.warn(JSON.stringify({
+          ev: "authz.deny",
+          // The route TEMPLATE, never the raw pathname (cf#223): a pathname carries the artifact
+          // key and every :id in the URL, and this line fires on a request that is already refused.
+          route: hit.pattern,
+          method: request.method,
+          required: hit.scope,
+          held: credential,
+        }));
+        return json({ error: AUTHZ_DENY_REASON }, 403);
+      }
       try {
         return await hit.handler(request, env, ctx, hit.params);
       } catch (e) {

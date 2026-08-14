@@ -55,7 +55,31 @@ export interface DemoChatDeps {
 
 export type DemoChatResult =
   | { ok: true; reply: string }
-  | { ok: false; reason: "empty" | "too-long" | "exhausted" | "error"; message: string };
+  | { ok: false; reason: "empty" | "too-long" | "off-topic" | "exhausted" | "error"; message: string };
+
+/**
+ * Cheap pre-model refuse for clear proxy-abuse / jailbreak shapes (cf#31).
+ * Caps remain the real anti-proxy bound; the system prompt is still advisory for soft off-topic.
+ * This only catches high-confidence patterns so a normal demo question is never blocked, and it
+ * runs BEFORE counters so a refused turn does not burn the visitor's daily budget.
+ */
+export function isDemoChatOffTopic(message: string): boolean {
+  const m = message.toLowerCase();
+  // Instruction override / DAN-style jailbreaks.
+  if (/\bignore\b.{0,40}\b(all|prior|previous|above|earlier)\b.{0,40}\b(instruction|prompt|rules?)\b/.test(m)) {
+    return true;
+  }
+  if (/\b(disregard|forget)\b.{0,30}\b(instruction|prompt|system)\b/.test(m)) return true;
+  if (/\byou are now\b/.test(m) || /\bact as (a |an )?(unrestricted|jailbroken|dan)\b/.test(m)) {
+    return true;
+  }
+  // Long-form free-LLM proxy asks (the live 2026-07-10 repro shape).
+  if (/\bwrite\b.{0,20}\b(\d{2,4})\s*[- ]?\s*word\b/.test(m) && /\b(essay|article|paper|report)\b/.test(m)) {
+    return true;
+  }
+  if (/\bact as (a |an )?(free |general )?(public )?(chatbot|llm|ai assistant)\b/.test(m)) return true;
+  return false;
+}
 
 /** Run one capped demo chat turn. Caps are checked (and counted) BEFORE the model call, so an exhausted
  *  visitor never spends a token; a model throw degrades to an honest error, never a silent blank. */
@@ -64,6 +88,15 @@ export async function runDemoChat(deps: DemoChatDeps, input: { ip: string; messa
   if (!message) return { ok: false, reason: "empty", message: "type a question about the demo" };
   if (message.length > deps.caps.maxInputChars) {
     return { ok: false, reason: "too-long", message: "that message is too long for the demo assistant" };
+  }
+  // cf#31: hard-refuse clear proxy abuse before any counter bump or model call.
+  if (isDemoChatOffTopic(message)) {
+    return {
+      ok: false,
+      reason: "off-topic",
+      message:
+        "this demo assistant only helps with the Vivijure demo -- browse the seeded catalog, or run your own studio for a full assistant.",
+    };
   }
   const day = utcDay(deps.now);
   if (await peekCounter(deps.db, `chat:global:${day}`) >= deps.caps.globalDaily) {

@@ -1,5 +1,10 @@
 -- Vivijure Studio -- drop user_email (migration 0004).
 --
+-- migrations-gate: skip legacy-only -- this drops user_email from installs created before
+-- 2026-07-02. The numbered chain builds the post-strip schema directly, so on a fresh chain the
+-- column does not exist and this file correctly fails. Replaying it in CI would test nothing and
+-- fail for the right reason, which is the worst kind of red.
+--
 -- Vivijure is a SINGLE-OPERATOR studio; user_email was legacy multi-tenant cruft from the AI
 -- Playground. Removing the tenancy/identity primitive is a deliberate anti-SaaS design (memory:
 -- vivijure-user-email-strip): with no tenant/identity seam, a forker cannot trivially turn the AGPL

@@ -96,7 +96,21 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   EMAIL: { path: "operator-only", note: "send_email binding on the operator account" },
   DIALOGUE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   SCORE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
+  // CF AI i2v modules (cf-hh1-r2v / cf-seedance / cf-grok-video / cf-flux-3-video): same class as
+  // dialogue/score -- the Workflow class ships with the operator module script; plane has no
+  // mediated tenant path for Workflow bindings today.
+  I2V_WORKFLOW: { path: "operator-only", note: "Workflow binding for CF AI Gateway i2v modules; gen runs in the Workflow step, not waitUntil (#155)" },
   AUDIO_MASTER_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
+  FINISH_UPSCALE_VPC: { path: "operator-only", note: "cf#480: VPC service into the operator's always-on upscale door on our own GPU iron. A tenant CANNOT hold this today and the blocker is measured, not assumed: the plane's uploadTenantModules binds no vpc_service at any of its bindings.push sites, because TenantModuleDeps carries the provisioner credential and CF will not let an API-created token mint one with Connectivity Directory scope (cp#359). Classified here rather than left to prose so a future attempt to add these modules to TENANT_MODULE_CATALOG turns this red" },
+  FINISH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the upscale door's own bearer (LOCAL_FINISH_TOKEN on the container). Operator infrastructure credential; same class as the VPC binding it authenticates against, and read ONLY when that binding is bound" },
+  SPEECH_UPSCALE_VPC: { path: "operator-only", note: "cf#480: VPC service into the operator's always-on speech-enhance door. Same cp#359 tenant blocker as FINISH_UPSCALE_VPC" },
+  SPEECH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the speech door's own bearer. Read only when SPEECH_UPSCALE_VPC is bound" },
+  FINISH_UPSCALE_VPC_PROPAGANDHI: { path: "operator-only", note: "cf#507: the SECOND upscale door, the other GPU box. Identical class to FINISH_UPSCALE_VPC and the same cp#359 tenant blocker -- a second door changes the COUNT of operator bindings, never the tenant answer" },
+  FINISH_DOOR_TOKEN_PROPAGANDHI: { path: "operator-only", note: "cf#507: that door's own bearer. Given its own binding rather than sharing the first door's, because two doors are two services and a shared token binding is an undeclared coupling; an operator may point both at one store secret" },
+  SPEECH_UPSCALE_VPC_PROPAGANDHI: { path: "operator-only", note: "cf#507: the SECOND speech door. Same class and same cp#359 blocker as SPEECH_UPSCALE_VPC" },
+  SPEECH_DOOR_TOKEN_PROPAGANDHI: { path: "operator-only", note: "cf#507: that door's own bearer. Read only when SPEECH_UPSCALE_VPC_PROPAGANDHI is bound" },
+  FINISH_BLENDER_VPC: { path: "operator-only", note: "cf#489: VPC service into the operator always-on blender door on our own iron. Same cp#359 tenant blocker as FINISH_UPSCALE_VPC. Unlike the upscale doors this one is CPU-only work on the finishing tier, and it is addressed PER NODE rather than by service name, because the swarm VIP round-robins while the door keeps job state per process (measured: twelve polls of one job id gave found=4, 404=8)" },
+  BLENDER_DOOR_TOKEN: { path: "operator-only", note: "cf#489: the blender door own bearer (LOCAL_FINISH_TOKEN on the container), the same shared value the four GPU doors carry. Read ONLY when FINISH_BLENDER_VPC is bound" },
   AUDIO_BEAT_SYNC_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   VIDEO_FINISH_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
 

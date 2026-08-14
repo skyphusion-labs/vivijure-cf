@@ -28,6 +28,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
+import photometric_gate
 
 PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
@@ -42,6 +43,11 @@ MAX_KEYFRAME_BYTES = 32 * 1024 * 1024   # keyframe PNG for content-inspect (#523
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-finish")
+
+
+def _elapsed_ms(t0: float) -> int:
+    """Wall-clock ms since t0 (cf#268 capacity telemetry). Integer, never negative."""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +160,7 @@ async def _download(session, url, path, cap):
 
 
 async def finish(req):
+    t0 = time.monotonic()
     try:
         body = await req.json()
     except Exception:
@@ -273,6 +280,8 @@ async def finish(req):
             "height": height,
             # ACTUAL per-clip assembled seconds in submit order (#697/#698); null on the remux path.
             "clipDurations": clip_durations,
+            # cf#268: CPU finish wall clock for capacity planning (not GPU job time).
+            "elapsedMs": _elapsed_ms(t0),
         })
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -561,89 +570,22 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
 
 
 # ---------------------------------------------------------------------------
-# /overlay: burn text overlays onto a single clip via ffmpeg drawtext (#190).
-#
-# The caller (the text-overlay module worker) reads the clip from R2 and POSTs
-# the raw bytes here; the processed bytes are returned in the response body.
-# This bypasses the 1 MB JSON body limit by streaming the video directly and
-# reading the spec from the X-Overlay-Spec header (base64-encoded JSON).
-#
-# Header X-Overlay-Spec: base64( { "filter": "<ffmpeg -vf value>", "output_key": "..." } )
-# Request body:  raw video bytes (Content-Type: video/mp4)
-# Response body: raw video bytes on success; JSON {ok:false, error} on failure.
-
-MAX_OVERLAY_CLIP_BYTES = 256 * 1024 * 1024   # 256 MB (same cap as regular clips)
-
-
-def _draw_overlay(src, dst, vf_filter, *, crf=18, preset="medium"):
-    """Run ffmpeg drawtext on `src`, writing to `dst`. Re-encodes with libx264 so
-    the overlay is baked in (stream-copy cannot apply a video filter). Audio is
-    stream-copied unchanged; `-movflags +faststart` keeps the output web-playable."""
-    cmd = [
-        "ffmpeg", "-y", "-i", src,
-        "-vf", vf_filter,
-        "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        dst,
-    ]
-    _run(cmd)
-
+# /overlay: RETIRED with the text-overlay finish module (vivijure#769 / cf#24).
+# Superseded by /film-titles + the subtitle film.finish path. The route stays
+# registered so a stale caller gets an honest 410 instead of a silent hang or
+# 404-without-explanation. Dead implementation removed; do not re-enable without
+# a first-party module that POSTs here.
 
 async def overlay(req):
-    # Parse the overlay spec from the header (base64 JSON: {filter, output_key}).
-    spec_b64 = req.headers.get("X-Overlay-Spec", "").strip()
-    if not spec_b64:
-        return web.json_response({"ok": False, "error": "X-Overlay-Spec header required"}, status=400)
-    try:
-        spec = _json.loads(base64.b64decode(spec_b64))
-    except Exception:
-        return web.json_response({"ok": False, "error": "X-Overlay-Spec: invalid base64 JSON"}, status=400)
-
-    vf_filter = spec.get("filter", "").strip() if isinstance(spec, dict) else ""
-    if not vf_filter:
-        return web.json_response({"ok": False, "error": "X-Overlay-Spec: filter is required"}, status=400)
-
-    # Stream the raw clip bytes from the request body (bypass the 1 MB JSON body limit).
-    total = 0
-    chunks = []
-    try:
-        async for chunk in req.content.iter_chunked(256 * 1024):
-            total += len(chunk)
-            if total > MAX_OVERLAY_CLIP_BYTES:
-                return web.json_response({"ok": False, "error": "clip too large"}, status=413)
-            chunks.append(chunk)
-    except Exception as e:
-        return web.json_response({"ok": False, "error": f"read body failed: {e}"}, status=400)
-
-    if total == 0:
-        return web.json_response({"ok": False, "error": "clip body required"}, status=400)
-
-    clip_bytes = b"".join(chunks)
-    work = tempfile.mkdtemp(prefix="voverlay-")
-    try:
-        src_path = os.path.join(work, "in.mp4")
-        dst_path = os.path.join(work, "out.mp4")
-        with open(src_path, "wb") as f:
-            f.write(clip_bytes)
-
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(None, _draw_overlay, src_path, dst_path, vf_filter)
-        except subprocess.CalledProcessError as e:
-            log.exception("ffmpeg drawtext failed for key=%s", safe_log_value(spec.get("output_key", "?")))  # codeql[py/log-injection]
-            return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)
-        except Exception as e:  # noqa: BLE001
-            log.exception("overlay failed")
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-        with open(dst_path, "rb") as f:
-            out_bytes = f.read()
-
-        log.info("overlay ok key=%s in=%d out=%d", safe_log_value(spec.get("output_key", "?")), len(clip_bytes), len(out_bytes))  # codeql[py/log-injection]
-        return web.Response(body=out_bytes, content_type="video/mp4")
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    return web.json_response(
+        {
+            "ok": False,
+            "error": "route-retired",
+            "message": "POST /overlay was the text-overlay module door; that module is retired "
+            "(subtitle + film-titles). Use /film-titles or the subtitle film.finish path.",
+        },
+        status=410,
+    )
 
 
 
@@ -822,6 +764,7 @@ async def _film_titles_work(body):
     """The /film-titles work: validate, download the film, prepend/append cards,
     PUT the result. Shared by the synchronous route and the async job runner.
     Raises _JobError(status, message) on any failure; returns the result dict."""
+    t0 = time.monotonic()
     video_url = body.get("videoUrl")
     output_url = body.get("outputUrl")
     output_key = body.get("outputKey", "")
@@ -890,6 +833,7 @@ async def _film_titles_work(body):
             "key": output_key,
             "bytes": len(out_bytes),
             "durationSeconds": round(secs, 3),
+            "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1013,6 +957,7 @@ async def _subtitle_work(body):
     """The /subtitle work: burn a time-synced SRT onto the film and/or write a
     soft .srt sidecar. Shared by the synchronous route and the async job runner.
     Raises _JobError(status, message) on failure; returns the result dict."""
+    t0 = time.monotonic()
     srt_text = body.get("srt")
     mode = str(body.get("mode", "burn"))
     video_url = body.get("videoUrl")
@@ -1115,6 +1060,7 @@ async def _subtitle_work(body):
             "sidecar": sidecar_done,
             "sidecarKey": sidecar_key if sidecar_done else "",
             "durationSeconds": round(out_secs, 3),
+            "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         }
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1177,6 +1123,66 @@ async def inspect(req):
         log.info("/inspect verdict=%s ratio=%.3f kf_sim=%s",
                  result["verdict"], result["metrics"].get("chroma_structure_ratio", 0.0),
                  result.get("keyframe_similarity"))
+        return web.json_response({"ok": True, **result})
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# /photometric-check: pixel-level identity gate (cf#532). #523 Layer 2 (inspect_core, above) catches
+# STRUCTURAL noise -- a clip that does not resemble its conditioning keyframe. It cannot catch a
+# wrong-but-well-structured grade: vivijure-blender#14 shipped frames 3.3x darker with a colour
+# cast, correctly shaped, correctly counted, passing every structural gate and inspect_core's noise
+# heuristic, because keyframe similarity is scale/offset-invariant and a uniform darkening does not
+# move it. This decodes a source frame and its corresponding finished-clip frame and asserts their
+# luma ratio against a MEASURED tolerance (photometric_gate.RATIO_TOLERANCE; see that module's
+# docstring for the derivation). Presigned GET URLs only, read-only, no PUT; bytes never touch the
+# Worker, same shape as /inspect.
+#
+# NOT called automatically by any render today. This container receives only the ALREADY-GRADED
+# per-shot clips for concat/mux, never the pre-grade source, so nothing here can invoke this
+# unattended yet -- a caller that holds both URLs (present or future: the finish module itself, a
+# post-render panel check, a canary sampler) can call it directly. Deciding which layer calls it on
+# every render vs. a canary, and threading a source-clip reference to wherever that call happens, is
+# explicitly out of scope for this route; see cf#532 for the open question.
+#
+# could-not-decode FAILS LOUD as a 500, not a 200 with a skip/unknown verdict folded in --
+# photometric_gate.DecodeFailure is reported as its own error rather than silently becoming an "ok"
+# or a "wrecked" that never happened (cp#335's could-not-determine-is-not-a-determination rule).
+# ---------------------------------------------------------------------------
+async def photometric_check(req):
+    try:
+        body = await req.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    src_url = body.get("srcUrl")
+    output_url = body.get("outputUrl")
+    if not src_url or not output_url:
+        return web.json_response({"ok": False, "error": "srcUrl and outputUrl required"}, status=400)
+    work = tempfile.mkdtemp(prefix="pgate-")
+    try:
+        src_path = os.path.join(work, "src.mp4")
+        output_path = os.path.join(work, "output.mp4")
+        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+            ok, info = await _download(s, src_url, src_path, MAX_CLIP_BYTES)
+            if not ok:
+                sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                return web.json_response({"ok": False, "error": f"src {info}"}, status=sc)
+            ok, info = await _download(s, output_url, output_path, MAX_CLIP_BYTES)
+            if not ok:
+                sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                return web.json_response({"ok": False, "error": f"output {info}"}, status=sc)
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(None, photometric_gate.check_pair, src_path, output_path)
+        except photometric_gate.DecodeFailure as e:
+            log.warning("/photometric-check could not decode: %s", e)
+            return web.json_response({"ok": False, "error": f"could not decode: {e}"}, status=500)
+        except Exception as e:  # noqa: BLE001
+            log.exception("/photometric-check failed")
+            return web.json_response({"ok": False, "error": f"photometric-check failed: {e}"}, status=500)
+        log.info("/photometric-check verdict=%s ratio=%.4f src_frames=%d output_frames=%d",
+                 result["verdict"], result["ratio"], result["src_frames"], result["output_frames"])
         return web.json_response({"ok": True, **result})
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1334,6 +1340,7 @@ app.router.add_post("/overlay", overlay)
 app.router.add_post("/film-titles", film_titles)
 app.router.add_post("/subtitle", subtitle)
 app.router.add_post("/inspect", inspect)
+app.router.add_post("/photometric-check", photometric_check)
 app.router.add_post("/frames", frames)
 app.router.add_post("/async/{route}", async_submit)
 app.router.add_get("/async/status/{jobId}", async_status)

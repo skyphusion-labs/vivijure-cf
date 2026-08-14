@@ -8,6 +8,7 @@ import {
   filmJobToPollView,
   filmRowFromJob,
   stallSignal,
+  summarizeFilmWithProjection,
 } from "../src/film-render-bridge";
 import type { FilmJob } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { KEYFRAME_STALL_SECONDS, orderFinalClips } from "@skyphusion-labs/vivijure-core/film-orchestrator";
@@ -407,6 +408,9 @@ describe("filmRowFromJob (#164 -- film jobs in render history)", () => {
       status: "IN_PROGRESS",
       mode: "full",
       parentId: null,
+      // cf#393: backends carried onto the render row seed
+      motionBackend: "own-gpu",
+      keyframeBackend: null,
     });
   });
 
@@ -486,3 +490,60 @@ describe("filmJobToPollView surfaces the #619 keyframes_incomplete degrade", () 
     expect((view.output as Record<string, unknown>).sidecar_key).toBeUndefined();
   });
 });
+
+// cf#392: host-owned wan_lora_projection on the film job is relayed to the poll view + film summary
+// so phase-1 verification can assert Wan cast-LoRA injection without R2 archaeology.
+describe("filmJobToPollView / summarizeFilmWithProjection surface wan_lora_projection (cf#392)", () => {
+  const base = (over: Partial<FilmJob> & { wan_lora_projection?: { injected: number; dropped: number } }): FilmJob => ({
+    film_id: "film-392",
+    project: "mara",
+    bundle_key: "bundles/mara.json",
+    scenes: [{ shot_id: "shot_01", prompt: "mara walks", seconds: 5 }],
+    motion_backend: "alibaba-wan-lora",
+    motion_config: {},
+    finish_config: {},
+    keyframe_binding: null,
+    phase: "clips",
+    created_at: Date.now(),
+    ...over,
+  });
+
+  it("relays wan_lora_projection on the poll output while in flight", () => {
+    const view = filmJobToPollView(
+      base({ wan_lora_projection: { injected: 1, dropped: 0 } }),
+      null,
+    );
+    expect(view.status).toBe("IN_PROGRESS");
+    expect((view.output as Record<string, unknown>).wan_lora_projection).toEqual({
+      injected: 1,
+      dropped: 0,
+    });
+  });
+
+  it("relays wan_lora_projection on the poll output at done", () => {
+    const view = filmJobToPollView(
+      base({ phase: "done", film_key: "renders/film-392/film.mp4", wan_lora_projection: { injected: 2, dropped: 1 } }),
+      null,
+    );
+    expect(view.status).toBe("COMPLETED");
+    expect((view.output as Record<string, unknown>).wan_lora_projection).toEqual({
+      injected: 2,
+      dropped: 1,
+    });
+  });
+
+  it("omits wan_lora_projection when the job never projected (absence stays absent)", () => {
+    const view = filmJobToPollView(base({}), null);
+    expect((view.output as Record<string, unknown>).wan_lora_projection).toBeUndefined();
+  });
+
+  it("summarizeFilmWithProjection attaches the field on the film-status summary", () => {
+    const summary = summarizeFilmWithProjection(
+      base({ wan_lora_projection: { injected: 1, dropped: 0 } }),
+      null,
+    );
+    expect(summary.wan_lora_projection).toEqual({ injected: 1, dropped: 0 });
+    expect(summarizeFilmWithProjection(base({}), null).wan_lora_projection).toBeUndefined();
+  });
+});
+

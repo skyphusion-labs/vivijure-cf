@@ -10,8 +10,6 @@
 // Failures are DATA (ok:false), never thrown across the wire.
 
 import {
-  MODULE_API,
-  type ModuleManifest,
   type TenantR2Config,
   type InvokeRequest,
   type InvokeResponse,
@@ -25,10 +23,14 @@ import {
 import { buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./keyframe";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
-import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
+import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus, reconcileOpenRunpodJobsBestEffort } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 import { withTenantR2Body } from "../../_shared/tenant-r2-body";
 import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
+// MANIFEST is data-only in ./manifest (cf#285) so quality-tier-drift can import it without
+// this entrypoint's runpod-job-log graph. Re-exported for callers that still load index.
+import { MANIFEST } from "./manifest";
+export { MANIFEST };
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -73,6 +75,32 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, endpointId: string,
   }
 }
 
+/**
+ * cf#298 reconciler status probe: status string, "gone", or null (transient / still running unknown).
+ * Never throws. A plane refusal is null (not a RunPod terminal), same as a transport failure.
+ */
+async function fetchRunpodStatusForReconcile(
+  route: RunpodRoute,
+  endpointId: string,
+  jobId: string,
+): Promise<string | "gone" | null> {
+  try {
+    const resp = await fetch(endpoint(route, endpointId) + "/status/" + jobId, { headers: auth(route) });
+    if (planeRefusalReason(route, resp)) return null;
+    let body: { status?: unknown; title?: unknown } | null = null;
+    try {
+      body = (await resp.json()) as { status?: unknown; title?: unknown };
+    } catch {
+      body = null;
+    }
+    if (runpodJobGone(resp.status, body)) return "gone";
+    if (body && typeof body.status === "string" && body.status.length > 0) return body.status;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value.
  *  Returns "" if unset/unreadable so the existing "not configured" guards still fire. */
 async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
@@ -109,46 +137,6 @@ async function runpodCreds(env: Env): Promise<{ route: RunpodRoute; apiKey: stri
 function credentialProblem(route: RunpodRoute, endpointId: string): string | null {
   return runpodCredentialProblem(route, Boolean(endpointId));
 }
-
-// Exported so the core's tier-drift guard (tests/quality-tier-drift.test.ts, issue #124) can assert
-// this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
-export const MANIFEST: ModuleManifest = {
-  name: "keyframe",
-  version: "0.3.0",
-  api: MODULE_API,
-  hooks: ["keyframe"],
-  provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
-  config_schema: {
-    quality_tier: {
-      type: "enum",
-      values: ["draft", "standard", "final"],
-      default: "final",
-      label: "quality tier",
-    },
-    // Default to a 16:9 landscape keyframe (SDXL-friendly 1344x768). Image-to-video backends conform
-    // the clip to the KEYFRAME's aspect ratio (they ignore an aspect_ratio param once given an input
-    // image), so a square keyframe forced square clips that the assembler then pillarboxed into 16:9
-    // with black bars. A 16:9 keyframe makes the whole chain 16:9. Override via keyframe_config for
-    // portrait/square. (fixes the square showcase clips)
-    width: { type: "int", default: 1344, min: 512, max: 1536, label: "width" },
-    height: { type: "int", default: 768, min: 512, max: 1536, label: "height" },
-    steps: { type: "int", default: 30, min: 1, max: 60, label: "diffusion steps" },
-    guidance_scale: { type: "float", default: 6.5, min: 0, max: 20, label: "guidance scale" },
-    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
-  },
-  ui: { section: "keyframe", order: 10 },
-  // This module is async + GPU-backed, so it implements POST /cancel: the core can stop an in-flight
-  // RunPod job (a cancelled render, or an adopted keyframe phase) instead of orphaning it (#327/#328).
-  cancelable: true,
-  // #454: compact display token for the keyframe-stage backend, so the planner projects it inline
-  // instead of hardcoding "SDXL". OPTIONAL/additive, mirrors src/modules/types.ts.
-  keyframe_label: "SDXL",
-  // cp#270: this module submits to the vivijure-backend endpoint, which may be POOLED across
-  // tenants, so it needs the tenant's per-job R2 credential on the invoke envelope. Declared on
-  // the MANIFEST rather than decided in core: which modules ride a pooled endpoint is a property
-  // of the module, and core must not branch on module identity.
-  needs_tenant_r2: true,
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -206,7 +194,7 @@ async function submit(
   }
 }
 
-async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeOutput>> {
+async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promise<PollResponse<KeyframeOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "keyframe: bad poll token" };
   const { route, endpointId } = await runpodCreds(env);
@@ -214,6 +202,15 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   if (credProblem) {
     return { ok: false, error: "keyframe: " + credProblem };
   }
+
+  // cf#298: while this module is still being polled, re-ask RunPod for OTHER rows of this module
+  // stuck at submitted (lost terminal write after the chain moved on). Fire-and-forget; never
+  // gates this poll. Only keyframe + own-gpu are wired first (the two modules that produced the
+  // measured stuck rows); other modules can adopt the same one-liner later.
+  reconcileOpenRunpodJobsBestEffort(env.TELEMETRY_DB, {
+    module: MANIFEST.name,
+    fetchStatus: (jobId) => fetchRunpodStatusForReconcile(route, endpointId, jobId),
+  }, ctx);
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -251,7 +248,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     return { ok: true, pending: true };
   }
   if (s.status === "FAILED") {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
     return { ok: false, error: "keyframe job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
   }
   // cf#298: CANCELLED and TIMED_OUT are TERMINAL, and the branch below treats every non-COMPLETED
@@ -267,7 +264,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   // requirement.
   const walkedPast = runpodWalkedPastOutcome(s.status);
   if (walkedPast) {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error) });
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: walkedPast, submittedAtMs: st.submittedAt, detail: "runpod status " + String(s.status ?? "unknown"), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
   }
   if (s.status !== "COMPLETED") {
     // F17: a backend whose error path RETURNS (instead of raising) leaves the RunPod job IN_PROGRESS
@@ -276,14 +273,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     const backendErr = terminalErrorInOutput(s.output);
     if (backendErr) {
       await cancelRunpodJobBestEffort(route, endpointId, st.jobId);
-      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output) });
+      await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output), ...timingFromStatus(s) });
       return { ok: false, error: "keyframe backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
     return { ok: true, pending: true };
   }
   // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
   // could use the output is a different fact and the chain response is what carries it.
-  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt });
+  await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
 
   const keyframes = parseKeyframes(s.output);
   if (!keyframes.length) return { ok: false, error: "keyframe job completed but returned no keyframes" };
@@ -320,7 +317,10 @@ async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  // ctx is OPTIONAL only so the handler stays directly invocable from a test without a stub;
+  // the Workers runtime always supplies one, and reconcileOpenRunpodJobsBestEffort falls back to
+  // today's unregistered behaviour when it is absent rather than refusing.
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
     // GET /ready (cf#114): does the version the edge is ACTUALLY SERVING read its credentials?
@@ -375,7 +375,7 @@ export default {
         return json({ ok: false, error: "invalid JSON body" } as PollResponse);
       }
       if (!body || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as PollResponse);
-      return json(await poll(env, body));
+      return json(await poll(env, body, ctx));
     }
     if (request.method === "POST" && url.pathname === "/cancel") {
       let body: CancelRequest;

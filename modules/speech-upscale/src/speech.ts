@@ -82,6 +82,11 @@ export interface PollState {
   shotId: string;
   audioKey: string;   // the INPUT audio, passed through unchanged on a poll-time soft-degrade
   submittedAt?: number;
+  /** cf#480 AFFINITY. Which transport minted this job id. The on-iron door keeps job state in a
+   *  PER-PROCESS registry, so its ids mean nothing to RunPod and vice versa -- and a cross-route
+   *  poll does not read as a mistake, it reads as a GC'd job (404) and degrades the shot. ABSENT
+   *  means RunPod, which is also what every token minted before this change carries. */
+  door?: string;
 }
 
 export function encodePoll(s: PollState): string {
@@ -95,6 +100,7 @@ export function decodePoll(token: string): PollState | null {
       return {
         jobId: o.jobId, shotId: o.shotId, audioKey: o.audioKey,
         submittedAt: typeof o.submittedAt === "number" ? o.submittedAt : undefined,
+        door: typeof o.door === "string" && o.door ? o.door : undefined,
       };
     }
   } catch { /* fall through */ }

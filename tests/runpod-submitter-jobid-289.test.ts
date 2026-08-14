@@ -30,6 +30,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
+import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
 import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
@@ -63,6 +64,14 @@ const CASES: Case[] = [
     hook: "keyframe",
     env: RUNPOD_ENV,
     input: { project: "p_test", bundle_key: "renders/p_test/bundle.json" },
+    config: {},
+  },
+  {
+    name: "finish-blender",
+    worker: finishBlenderWorker as unknown as Worker,
+    hook: "finish",
+    env: RUNPOD_ENV,
+    input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" },
     config: {},
   },
   {
@@ -217,11 +226,19 @@ describe("the population under test is the whole one (cf#289)", () => {
       .filter((e) => e.isDirectory() && e.name !== "_shared")
       .map((e) => e.name);
     const read = (name: string): string => {
+      // cf#285 moved some modules' MANIFEST (incl. the `hooks` array) out of index.ts into a
+      // data-only manifest.ts leaf file. Concatenate both -- an extracted module has nothing
+      // manifest-shaped in index.ts and everything in manifest.ts; a not-yet-extracted module is
+      // the reverse, and the runtime-code strings this scan also matches (api.runpod.ai,
+      // _shared/runpod-route) only ever live in index.ts either way.
+      let src = "";
       try {
-        return readFileSync(join(dir, name, "src", "index.ts"), "utf8");
-      } catch {
-        return "";
-      }
+        src += readFileSync(join(dir, name, "src", "index.ts"), "utf8");
+      } catch { /* no index.ts */ }
+      try {
+        src += readFileSync(join(dir, name, "src", "manifest.ts"), "utf8");
+      } catch { /* not extracted */ }
+      return src;
     };
 
     // Derived, not asserted: a module is a RunPod submitter iff it names the RunPod API host OR

@@ -54,7 +54,42 @@ describe("isCastLoraReady (mirrors the server reuse gate)", () => {
     };
     expect(isCastLoraReady(both, { motionBackend: WAN_LORA_BACKEND })).toBe(true);
   });
-  it("is false for non-ready statuses", () => {
+  it("prefers sdxl_lora_ready / wan_lora_ready when present (cf#383)", () => {
+    // Explicit false even if a stale key is on the row (API is source of truth)
+    expect(
+      isCastLoraReady({
+        id: ADA,
+        name: "vale",
+        lora_status: "ready",
+        lora_key: "loras/stale.safetensors",
+        sdxl_lora_ready: false,
+      }),
+    ).toBe(false);
+    expect(
+      isCastLoraReady(
+        {
+          id: ADA,
+          name: "vale",
+          lora_status: "ready",
+          sdxl_lora_ready: false,
+          wan_lora_ready: true,
+        },
+        { motionBackend: WAN_LORA_BACKEND },
+      ),
+    ).toBe(true);
+  });
+  it("is false while training even when family-ready keys exist", () => {
+    expect(
+      isCastLoraReady({
+        id: ADA,
+        name: "wren",
+        lora_status: "training",
+        lora_key: "loras/wren.safetensors",
+        sdxl_lora_ready: true,
+      }),
+    ).toBe(false);
+  });
+  it("is false for non-ready statuses without keys", () => {
     expect(isCastLoraReady(idle(ADA, "wren"))).toBe(false);
     expect(isCastLoraReady(training(ADA, "wren"))).toBe(false);
   });

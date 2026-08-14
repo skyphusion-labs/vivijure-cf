@@ -41,7 +41,13 @@ vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
 });
 
 // --- capture what each door hands its orchestrator -------------------------------------------------
-const cap = vi.hoisted(() => ({ film: [] as Array<Record<string, unknown>>, scatter: [] as Array<Record<string, unknown>>, wanTrainId: null as number | null }));
+const cap = vi.hoisted(() => ({
+  film: [] as Array<Record<string, unknown>>,
+  scatter: [] as Array<Record<string, unknown>>,
+  wanTrainId: null as number | null,
+  /** R2 film-job docs written by persistWanLoraProjectionOnFilm (cf#392). */
+  filmDocs: [] as Array<{ key: string; body: string }>,
+}));
 
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
@@ -94,10 +100,16 @@ import {
   projectWanLorasIntoModuleConfig,
   shouldProjectWanLoras,
   ensureModuleOverrideConfig,
+  hasWanLoraProjection,
+  wanLoraProjectionSurface,
+  readWanLoraProjection,
+  emitWanLoraProjectionEvent,
+  persistWanLoraProjectionOnFilm,
   WAN_LORA_BACKEND,
   WAN_LORA_DEFAULT_SCALE,
   WAN_LORA_PRESIGN_TTL_SECONDS,
   MAX_LORAS_PER_PASS,
+  WAN_LORA_PROJECTION_FIELD,
 } from "../src/wan-lora-projection";
 import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
@@ -123,7 +135,13 @@ function env(): Env {
     ASSETS: { fetch: async () => new Response("ASSET") },
     SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
     DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
-    R2_RENDERS: { get: async () => null, head: async () => null, put: async () => {} },
+    R2_RENDERS: {
+      get: async () => null,
+      head: async () => null,
+      put: async (key: string, body: string | ArrayBuffer | ArrayBufferView) => {
+        cap.filmDocs.push({ key, body: typeof body === "string" ? body : String(body) });
+      },
+    },
     MODULE_KEYFRAME: fakeModule({ name: "cloud-keyframe", version: "0.1.0", api: MODULE_API, hooks: ["keyframe"] }),
     MODULE_ALIBABA_WAN_LORA: fakeModule({ name: "alibaba-wan-lora", version: "0.1.1", api: MODULE_API, hooks: ["motion.backend"], config_schema: WAN_LORA_SCHEMA, ui: { order: 75, locality: "cloud" } }),
   } as unknown as Env);
@@ -133,7 +151,7 @@ function post(path: string, body: unknown): Request {
 }
 const SCENES = [{ shot_id: "shot_01", prompt: "a shot", seconds: 4 }];
 
-beforeEach(() => { cap.film = []; cap.scatter = []; cap.wanTrainId = null; });
+beforeEach(() => { cap.film = []; cap.scatter = []; cap.wanTrainId = null; cap.filmDocs = []; });
 
 function parseLoras(v: unknown): Array<{ path: string; scale: number }> {
   return JSON.parse(String(v)) as Array<{ path: string; scale: number }>;
@@ -274,6 +292,149 @@ describe("cross-wire control at ALL THREE render paths (Wan cast vs SDXL cast, b
     const ro = (args.render_overrides ?? undefined) as { config?: Record<string, Record<string, unknown>> } | undefined;
     const wcfg = ro?.config?.[WAN_LORA_BACKEND];
     expect(wcfg?.high_noise_loras).toBeUndefined();
+  });
+});
+
+
+
+// ==================================================================================================
+// cf#392: surface {injected, dropped} on poll / film summary / scatter 201 + structured event.
+describe("cf#392 wan_lora_projection surface", () => {
+  it("hasWanLoraProjection / wanLoraProjectionSurface: only when injected or dropped > 0", () => {
+    expect(hasWanLoraProjection({ injected: 0, dropped: 0, applied: false })).toBe(false);
+    expect(wanLoraProjectionSurface({ injected: 0, dropped: 0, applied: false })).toBeUndefined();
+    expect(hasWanLoraProjection({ injected: 1, dropped: 0, applied: true })).toBe(true);
+    expect(wanLoraProjectionSurface({ injected: 1, dropped: 0, applied: true })).toEqual({ injected: 1, dropped: 0 });
+    expect(hasWanLoraProjection({ injected: 0, dropped: 2, applied: false })).toBe(true);
+    expect(wanLoraProjectionSurface({ injected: 0, dropped: 2, applied: false })).toEqual({ injected: 0, dropped: 2 });
+  });
+
+  it("readWanLoraProjection rejects malformed fields (absence over fabrication)", () => {
+    expect(readWanLoraProjection(undefined)).toBeUndefined();
+    expect(readWanLoraProjection({})).toBeUndefined();
+    expect(readWanLoraProjection({ [WAN_LORA_PROJECTION_FIELD]: { injected: "x", dropped: 0 } })).toBeUndefined();
+    expect(readWanLoraProjection({ [WAN_LORA_PROJECTION_FIELD]: { injected: 1, dropped: 0 } })).toEqual({
+      injected: 1,
+      dropped: 0,
+    });
+  });
+
+  it("emitWanLoraProjectionEvent logs film.wan_lora_projection JSON; skips pure no-ops", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    emitWanLoraProjectionEvent({ film_id: "film-1", project: "p", result: { injected: 0, dropped: 0, applied: false } });
+    expect(log).not.toHaveBeenCalled();
+    emitWanLoraProjectionEvent({ film_id: "film-1", project: "p", result: { injected: 2, dropped: 1, applied: true } });
+    expect(log).toHaveBeenCalledTimes(1);
+    const line = JSON.parse(String(log.mock.calls[0][0])) as Record<string, unknown>;
+    expect(line).toEqual({
+      ev: "film.wan_lora_projection",
+      film_id: "film-1",
+      project: "p",
+      injected: 2,
+      dropped: 1,
+      applied: true,
+    });
+    log.mockRestore();
+  });
+
+  it("persistWanLoraProjectionOnFilm writes the field onto the job doc and emits the event", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const puts: Array<{ key: string; body: string }> = [];
+    const job = { film_id: "film-persist", project: "demo" };
+    const e = {
+      R2_RENDERS: {
+        put: async (key: string, body: string) => {
+          puts.push({ key, body });
+        },
+      },
+    } as unknown as Env;
+    const surface = await persistWanLoraProjectionOnFilm(e, job, { injected: 1, dropped: 0, applied: true });
+    expect(surface).toEqual({ injected: 1, dropped: 0 });
+    expect((job as { wan_lora_projection?: unknown }).wan_lora_projection).toEqual({ injected: 1, dropped: 0 });
+    expect(puts).toHaveLength(1);
+    expect(puts[0].key).toContain("film-persist");
+    const stored = JSON.parse(puts[0].body) as { wan_lora_projection: { injected: number; dropped: number } };
+    expect(stored.wan_lora_projection).toEqual({ injected: 1, dropped: 0 });
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it("RENDER: 201 poll view carries output.wan_lora_projection when a Wan cast projected", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const res = await worker.fetch(
+      post("/api/storyboard/render", {
+        bundleKey: "bundles/x.tar.gz",
+        scenes: SCENES,
+        motion_backend: WAN_LORA_BACKEND,
+        castLoras: { A: "wan" },
+      }),
+      env(),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { output?: Record<string, unknown> };
+    expect(body.output?.[WAN_LORA_PROJECTION_FIELD]).toEqual({ injected: 1, dropped: 0 });
+    expect(cap.filmDocs.some((d) => d.body.includes("wan_lora_projection"))).toBe(true);
+    const events = log.mock.calls
+      .map((c) => {
+        try {
+          return JSON.parse(String(c[0])) as { ev?: string };
+        } catch {
+          return null;
+        }
+      })
+      .filter((e): e is { ev?: string } => !!e);
+    expect(events.some((e) => e.ev === "film.wan_lora_projection")).toBe(true);
+    log.mockRestore();
+  });
+
+  it("RENDER: SDXL cast leaves wan_lora_projection ABSENT (no fabricated zeros)", async () => {
+    const res = await worker.fetch(
+      post("/api/storyboard/render", {
+        bundleKey: "bundles/x.tar.gz",
+        scenes: SCENES,
+        motion_backend: WAN_LORA_BACKEND,
+        castLoras: { A: "sdxl" },
+      }),
+      env(),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { output?: Record<string, unknown> };
+    expect(body.output?.[WAN_LORA_PROJECTION_FIELD]).toBeUndefined();
+    expect(cap.filmDocs).toHaveLength(0);
+  });
+
+  it("FILM: 201 summary carries wan_lora_projection when a Wan cast projected", async () => {
+    const res = await worker.fetch(
+      post("/api/render/film", {
+        bundle_key: "bundles/x.tar.gz",
+        scenes: SCENES,
+        motion_backend: WAN_LORA_BACKEND,
+        cast_loras: { A: "wan" },
+      }),
+      env(),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body[WAN_LORA_PROJECTION_FIELD]).toEqual({ injected: 1, dropped: 0 });
+  });
+
+  it("SCATTER: 201 carries wan_lora_projection when a Wan cast projected", async () => {
+    const res = await worker.fetch(
+      post("/api/storyboard/render/scatter", {
+        bundleKey: "bundles/x.tar.gz",
+        shotIds: ["shot_01", "shot_02"],
+        motion_backend: WAN_LORA_BACKEND,
+        castLoras: { A: "wan" },
+      }),
+      env(),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body[WAN_LORA_PROJECTION_FIELD]).toEqual({ injected: 1, dropped: 0 });
   });
 });
 

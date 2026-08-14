@@ -76,7 +76,7 @@ modules/<your-module>/
 
 A module **vendors** the contract shapes it uses (copy them into `src/contract.ts`) so it stays
 independent of the core's repo -- a module in another repo ships its own copy. Copy only what you
-need from [`src/modules/types.ts`](../src/modules/types.ts): `MODULE_API`, the manifest types, the
+need from `@skyphusion-labs/vivijure-core` (`modules/types`): `MODULE_API`, the manifest types, the
 `InvokeRequest`/`InvokeResponse` shapes, and your hook's payload types (e.g. `PlanEnhanceInput` /
 `PlanEnhanceOutput`).
 
@@ -219,6 +219,15 @@ over their real `/invoke` then `/poll` with one stub in three configurations, so
 reads the header, one that ignores it, and one that treats every failure as a refusal are three
 distinguishable outcomes rather than one.
 
+### Cross-repo wire name: `x-vivijure-plane-refusal` (cf#403)
+
+The plane emits, and every module reads, the header name held in `PLANE_REFUSAL_HEADER`
+(`modules/_shared/runpod-route.ts`). The control plane defines the same constant in
+`vivijure-control-plane/src/runpod-proxy-poll.ts`. There is no shared package; both repos pin the
+literal `"x-vivijure-plane-refusal"` in `tests/plane-refusal-header-contract.test.ts` (mirrored on
+the plane). Renaming the header requires updating **both** pins and both source constants in the
+same change wave. A one-sided rename is a silent restore of the forever-pend cf#398 closed.
+
 That is the whole "community becomes the roadmap" play: the RunPod ready-to-deploy hub
 (Wan2.2/SDXL/ComfyUI as `motion.backend`, Whisper STT as `score`, vLLM as a self-hosted
 `plan.enhance`) is a catalog of modules waiting to be wrapped, each one the same four files.
@@ -316,7 +325,7 @@ the core invokes it through your hook. Nothing else is hardcoded.
 ## Prove it conforms
 
 Before you bind a module, run the **conformance harness** against it (see
-[`src/modules/conformance.ts`](../src/modules/conformance.ts)) to confirm it honors the contract --
+[`@skyphusion-labs/vivijure-core` conformance harness](https://github.com/skyphusion-labs/vivijure-core/blob/main/src/modules/conformance.ts)) to confirm it honors the contract --
 a valid manifest, a well-formed `InvokeResponse`, and graceful degradation on a bad request:
 
 ```

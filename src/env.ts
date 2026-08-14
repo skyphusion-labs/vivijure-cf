@@ -48,8 +48,27 @@ export interface Env {
   R2_S3_BUCKET?: string;
 
   // RunPod serverless render endpoint (runpod-submit.ts). Secrets.
-  RUNPOD_API_KEY: SecretsStoreSecret | string;
+  //
+  // RUNPOD_API_KEY IS OPTIONAL AS OF cp#321, and the optionality is the product statement rather
+  // than a loosened type. On a SHARED hosted tenant this binding MUST NOT EXIST: the studio reaches
+  // RunPod through the control-plane proxy and holds no RunPod credential it could extract (Conrad,
+  // 2026-08-03). Declaring it required said the opposite -- that every studio always holds our key.
+  // Nothing in src/ dereferences it; it is read through core's `runpodRoute`, which tolerates an
+  // absent binding and refuses honestly. RUNPOD_ENDPOINT_ID stays REQUIRED because the plane binds
+  // endpoint ids on BOTH modes; only the credential differs between them.
+  RUNPOD_API_KEY?: SecretsStoreSecret | string;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret | string;
+  // The control-plane RunPod proxy pair (cp#321). Bound by the plane for `runpod_mode = 'shared'`
+  // ONLY, which is why both are optional: dedicated, BYO and self-host bind neither and take the
+  // direct path unchanged. BASE is plain_text (the plane's public origin + `/api/runpod/v2`), TOKEN
+  // is the per-tenant `vjp1.<tenant>.<mac>` secret.
+  //
+  // THE BRANCH IS ON BASE BEING BOUND AND IS NEVER A FAILOVER. A studio with the base bound and the
+  // token missing REFUSES; it does not reach for RUNPOD_API_KEY. Resolution lives in core
+  // (`runpodRoute`), reached here through modules/_shared/runpod-route.ts, so there is exactly one
+  // implementation of that rule in the estate.
+  RUNPOD_PROXY_BASE?: SecretsStoreSecret | string;
+  RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
   // Dedicated Wan 2.2 A14B LoRA-training endpoint (runpod-submit submitTrainWanLoraJob, cf#29). Optional
   // so a deploy without Wan training still typechecks; handleCastTrainWanLora fails loud if it is unset.
   RUNPOD_WAN_TRAIN_ENDPOINT_ID?: SecretsStoreSecret | string;
@@ -122,14 +141,13 @@ export interface Env {
 
   // Rate limiting for GPU/spend endpoints (F3, src/rate-limit.ts). The Cloudflare native Rate
   // Limiting binding; added to wrangler.toml [[ratelimits]] by infra (Strummer). Optional: when
-  // unbound the spend routes fail OPEN (allowed + warned), since rate-limit is availability-
-  // protective, not an auth gate. See docs/SECURITY.md.
+  // Default: fail CLOSED when unbound/broken (spend routes 503). Opt out with
+  // SPEND_LIMIT_FAIL_CLOSED="false" for the old allow+warn posture. See src/rate-limit.ts + docs/SECURITY.md.
   SPEND_RATE_LIMITER?: RateLimitBinding;
 
-  // S4 spend-posture knobs ([vars], both off unless set; src/rate-limit.ts):
-  // "true" flips the spend checks to FAIL CLOSED: a broken/unbound limiter or a failing daily-
-  // ceiling check DENIES spend routes (503) instead of allowing. For operators who prefer blocked
-  // renders over unmetered spend.
+  // S4 spend-posture knobs ([vars]; src/rate-limit.ts):
+  // Default fail-closed. Only the literal "false" opts into fail-open (allow + warn when the check
+  // is broken/unbound). Prefer blocked renders over unmetered spend.
   SPEND_LIMIT_FAIL_CLOSED?: string;
   // Positive integer: max spend-route submissions per UTC day, counted atomically in D1
   // (spend_counter, migration 0008). Over the ceiling denies 429, Retry-After = UTC midnight.
@@ -145,6 +163,14 @@ export interface Env {
   // clip must reach before the render fails loud (a truncated clip, not a beat-trim). [vars] entry,
   // parsed + clamped to [0,1] (resolveClipDurationFloor); unset defaults to 0.5, 0 disables the gate.
   FILM_CLIP_DURATION_FLOOR?: string;
+
+  // cf#287: studio release / build identity projected on GET /api/modules as top-level
+  // `studio_release` (+ optional `git_sha`). Unset => the baked package.json version is projected
+  // so two tag deploys are still distinguishable. The control plane may bind STUDIO_RELEASE to the
+  // tenant's live tag (the value it already stores as tenants.studio_release); self-host can leave
+  // both unset. See src/studio-release.ts.
+  STUDIO_RELEASE?: string;
+  STUDIO_GIT_SHA?: string;
 
   // BYOK OpenAI image gen (transparent PNG for gpt-image-1.5). Optional.
   OPENAI_API_KEY?: string;
