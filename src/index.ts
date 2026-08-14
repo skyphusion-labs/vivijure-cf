@@ -112,7 +112,12 @@ import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/viviju
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { projectWanLorasIntoModuleConfig, ensureModuleOverrideConfig, shouldProjectWanLoras, WAN_LORA_BACKEND } from "./wan-lora-projection";
 import { getUserPrefs, setUserPrefs } from "./user-prefs";
-import { loadInstallConfig, setInstallConfig, hasInstallConfig } from "@skyphusion-labs/vivijure-core/operator-config";
+import {
+  loadInstallConfig,
+  setInstallConfig,
+  hasInstallConfig,
+  installFieldKeys,
+} from "@skyphusion-labs/vivijure-core/operator-config";
 import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
 import { startScoreBedGenerate, pollScoreBedGenerate } from "./score-bed";
 import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
@@ -1053,6 +1058,20 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     return json({ ok: false, error: job.error || "regen submit failed" }, 422);
   }
   const view = filmJobToPollView(job, null);
+  // cf#339: every other startFilmJob / startFilmFromKeyframes caller writes a renders row.
+  // This door spent GPU with nothing in the history panel. parent_id links the regen child to
+  // the COMPLETED row that supplied the shot; mode is keyframes-only (this path never motion-renders).
+  await insertRenderBestEffort(env, {
+    jobId: view.jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: tier,
+    renderOverrides: row.render_overrides ?? undefined,
+    status: view.status,
+    mode: "keyframes-only",
+    projectId: row.project_id,
+    parentId: row.id,
+  });
   return json({ ok: true, jobId: view.jobId, status: view.status });
 };
 const hPollRender: Handler = async (_req, env, ctx, p) => {
@@ -1734,6 +1753,20 @@ const hPatchModuleConfig: Handler = async (req, env, _ctx, p) => {
   if (!hasInstallConfig(mod.config_schema)) throw notFound("module has no install-scope config");
   const body = await readBody<Record<string, unknown>>(req);
   if (!body || typeof body !== "object" || Array.isArray(body)) throw badRequest("body must be a config object");
+  // Strict write: refuse unknown / render-scope keys with 400 instead of silently clamping to a
+  // no-op (cf#387). Nested shapes like { config: { notify_email } } land here as dropped "config".
+  // (Core also exports droppedInstallKeys / clampInstallPatchDetailed for the same check.)
+  const allowed = installFieldKeys(mod.config_schema);
+  const allowedSet = new Set(allowed);
+  const dropped = Object.keys(body).filter((k) => !allowedSet.has(k));
+  if (dropped.length) {
+    throw badRequest(
+      `unknown or non-install config keys: ${dropped.join(", ")}`
+        + (allowed.length ? ` (allowed: ${allowed.join(", ")})` : ""),
+    );
+  }
+  // Empty object is an intentional no-op (returns current config). Non-empty body with zero
+  // install keys is already covered by the dropped check above.
   const config = await setInstallConfig(env, mod.name, mod.config_schema, body);
   return json({ ok: true, module: mod.name, config });
 };
