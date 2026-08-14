@@ -117,6 +117,14 @@ describe("recordRunpodJob: what it writes", () => {
 });
 
 describe("boundDetail (cf#320)", () => {
+  // cf#320: pin the BOUND ITSELF. Every other assertion in this block is written against the
+  // imported DETAIL_MAX, so they track whatever the constant says and stay green if it is
+  // reverted to the pre-fix 160 -- the exact regression this change exists to prevent. This is
+  // the only assertion here that can go red for that.
+  it("holds the bound at 480 (a revert to the pre-fix 160 must go red here)", () => {
+    expect(DETAIL_MAX).toBe(480);
+  });
+
   it("returns null for absent detail", () => {
     expect(boundDetail(undefined)).toBeNull();
     expect(boundDetail(null)).toBeNull();
