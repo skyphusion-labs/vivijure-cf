@@ -61,7 +61,9 @@ interface Env {
   FINISH_DOOR_TOKEN?: SecretsStoreSecret | string;
 }
 
-const MANIFEST: ModuleManifest = {
+// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
+// against a transcribed copy in the test file. finish-lipsync already exported its own.
+export const MANIFEST: ModuleManifest = {
   name: "finish-upscale",
   version: "0.2.0",
   api: MODULE_API,
@@ -74,6 +76,8 @@ const MANIFEST: ModuleManifest = {
     model: { type: "enum", values: ["realesr-animevideov3", "RealESRGAN_x4plus"], default: "realesr-animevideov3", label: "model" },
   },
   ui: { section: "finish", icon: "expand", order: 20 },
+  // cf#537: EXPLICIT, behaviour unchanged. See finish-rife for why silence is not an option here.
+  participation: "default",
   // Declared artifact conventions (S6): the Real-ESRGAN container appends _up to the input clip key.
   finish_artifacts: {
     output_key: { kind: "append_suffix", suffix: "_up" },
