@@ -130,7 +130,11 @@ finding.
 Do one of these instead:
 - compare `etag` and `size` from the LISTING route, matching the **exact key** (a prefix query returns
   sidecars like `<key>.hash` and `<key>.prov` too, and `result[0]` is not necessarily your object);
-- or write each variant to a DISTINCT key and compare bodies across keys.
+- or write each variant to a DISTINCT key and compare bodies across keys;
+- or body A/B via the R2 S3 API with real credentials, verifying response `ETag` against the listing
+  before trusting bytes.
+
+Constellation write-up (runbook wording, S3 path): **`docs/r2-verification.md`**.
 
 ### Two things a future run needs to know before it plans
 

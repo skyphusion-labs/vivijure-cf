@@ -5,6 +5,8 @@ import {
 } from "../modules/audio-master/src/master";
 import { checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { MasterInput } from "../modules/audio-master/src/contract";
+import worker from "../modules/audio-master/src/index";
+import { VPC_ELAPSED_APPLIED_PREFIX } from "../modules/_shared/vpc-call-log";
 
 const SAMPLE_INPUT: MasterInput = {
   film_id: "film_neon_01",
@@ -150,5 +152,62 @@ describe("audio-master: passthroughOutput (degrade observability #77)", () => {
       expect(o.applied[0]).toBe(`passthrough:${reason}`);
       expect(o.degraded).toBeTruthy();
     }
+  });
+});
+
+// cf#396: the wall-clock attribution wraps the VPC hop, so it is only reachable through the worker.
+// These are the first tests in this file that drive worker.fetch; the helper tests above sit inside
+// the wrapper and pass whether or not the attribution exists.
+describe("audio-master: VPC wall-clock attribution (cf#396)", () => {
+  const vpcEnv = (over: { body?: unknown; status?: number; throws?: boolean } = {}) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      env: {
+        AUDIO_MASTER_VPC: {
+          async fetch(input: Request | string) {
+            calls.push(typeof input === "string" ? input : input.url);
+            if (over.throws) throw new TypeError("Invalid URL");
+            return new Response(
+              JSON.stringify(over.body ?? { ok: true, key: "renders/neon/audio/bed_mastered.wav", bytes: 12, lufs: -14 }),
+              { status: over.status ?? 200, headers: { "content-type": "application/json" } },
+            );
+          },
+        },
+      } as unknown as Parameters<typeof worker.fetch>[1],
+    };
+  };
+  const invoke = (input: MasterInput) =>
+    new Request("https://module/invoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hook: "master", input, config: {}, context: {} }),
+    });
+
+  it("stamps exactly one well-formed elapsed tag on a successful master", async () => {
+    const { env } = vpcEnv();
+    const json = (await (await worker.fetch(invoke(SAMPLE_INPUT), env)).json()) as
+      { ok: boolean; output: { applied: string[] } };
+    expect(json.ok).toBe(true);
+    const tags = json.output.applied.filter((t) => t.startsWith(VPC_ELAPSED_APPLIED_PREFIX));
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).toMatch(/^vpc:elapsed_ms=\d+$/);
+  });
+
+  it("does not displace the tags the module actually earned", async () => {
+    const { env } = vpcEnv();
+    const json = (await (await worker.fetch(invoke(SAMPLE_INPUT), env)).json()) as
+      { output: { applied: string[] } };
+    const earned = json.output.applied.filter((t) => !t.startsWith(VPC_ELAPSED_APPLIED_PREFIX));
+    expect(earned.length).toBeGreaterThan(0);
+    expect(earned).toEqual(masterOutputFromResult(SAMPLE_INPUT, { ok: true, key: "renders/neon/audio/bed_mastered.wav", bytes: 12, lufs: -14 }).applied);
+  });
+
+  it("claims NO elapsed tag on a degrade -- the call never completed, so there is nothing to attribute", async () => {
+    const { env } = vpcEnv({ throws: true });
+    const json = (await (await worker.fetch(invoke(SAMPLE_INPUT), env)).json()) as
+      { ok: boolean; output: { applied: string[]; degraded?: string } };
+    expect(json.ok).toBe(true);
+    expect(json.output.applied.some((t) => t.startsWith(VPC_ELAPSED_APPLIED_PREFIX))).toBe(false);
   });
 });
