@@ -162,8 +162,26 @@ The cost of that property is that **these files only ever run because a human ru
 tagging, check whether the release contains one:
 
 ```bash
-git diff --name-only <previous-tag> HEAD -- migrations/manual/
+git diff --name-status <previous-tag> HEAD -- migrations/manual/
 ```
+
+**`--name-status`, not `--name-only`, and the letter is the whole point.** At v1.26.0 that
+command returns TWO rows:
+
+```
+M   migrations/manual/0004_drop_user_email.sql
+A   migrations/manual/post-0020-set-live-token-scopes.sql
+```
+
+Only the `A` is new and needs running. The `M` is `0004`, which was comment-edited in this release
+to carry a `migrations-gate: skip` marker -- and whose own header reads *"DESTRUCTIVE (drops
+columns / recreates a table -- irreversible)"*. With `--name-only` an operator sees two bare paths
+and nothing distinguishing "new, run this" from "old, touched, do NOT run". That is a bad thing to
+hand someone at the end of a deploy.
+
+Do NOT reach for `--diff-filter=A` to make the M disappear. A modified operator-run migration is
+something you should SEE and decide about; a command that silently drops it is trading one wrong
+answer for a quieter one.
 
 **For v1.26.0 specifically**, immediately after the deploy job finishes:
 
