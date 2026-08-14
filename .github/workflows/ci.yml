@@ -398,8 +398,19 @@ jobs:
           VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
           # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
           # deploy stayed GREEN while silently stripping the door blocks. The log line reading
-          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks is the ONLY tell, and
-          # nothing asserts this list against the module tomls that declare the markers.
+          # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks was the ONLY tell.
+          #
+          # THAT IS NO LONGER TRUE AND THE OLD WORDING IS WORTH CORRECTING RATHER THAN DELETING.
+          # This comment used to end "nothing asserts this list against the module tomls that
+          # declare the markers". cf#507 shipped exactly that assertion:
+          # tests/optional-binding-wiring-cf507.test.ts derives the marker set from the module
+          # tomls and fails if any declared marker is absent from THIS env block or from the
+          # optional-var loop in fill-module-placeholders.sh, with a denominator and a negative
+          # control so an empty derivation cannot pass vacuously.
+          #
+          # Left as a correction because the stale sentence actively costs time: it invites a
+          # reader to re-file the gap as open, which is the failure mode it was warning about,
+          # pointed at itself.
           VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
           # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
           # normal state and strips the blocks, so adding these lines changes nothing until the

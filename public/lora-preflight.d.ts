@@ -10,6 +10,9 @@ export interface CastMember {
   lora_key?: string | null;
   wan_lora_key_high?: string | null;
   wan_lora_key_low?: string | null;
+  // cf#383: optional additive family readiness from GET /api/cast
+  sdxl_lora_ready?: boolean;
+  wan_lora_ready?: boolean;
 }
 
 export interface UnreadyLoraSlot {
