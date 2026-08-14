@@ -22,6 +22,9 @@ import {
   terminalOutcomeFromRunpodStatus,
   reconcileOpenRunpodJobs,
   reconcileOpenRunpodJobsBestEffort,
+  isResolvedRunpodOutcome,
+  RESOLVED_RUNPOD_OUTCOMES,
+  type RunpodJobOutcome,
   LIST_OPEN_RUNPOD_JOBS_SQL,
   RECONCILE_MIN_AGE_SEC,
   RECONCILE_UNKNOWN_AFTER_SEC,
@@ -510,7 +513,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => "COMPLETED",
       nowMs,
     });
-    expect(result).toEqual({ examined: 1, closed: 1, unknown: 0 });
+    expect(result).toEqual({ examined: 1, resolved: 1, unknown: 0, stillOpen: 0, skipped: 0 });
     expect(lists[0][0]).toBe("keyframe");
     expect(lists[0][1]).toBe(nowSec - RECONCILE_MIN_AGE_SEC);
     expect(upserts).toHaveLength(1);
@@ -528,7 +531,9 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => "gone",
       nowMs,
     });
-    expect(result.closed).toBe(1);
+    // `gone` is an ANSWER from RunPod, so it is resolved, not abandoned.
+    expect(result.resolved).toBe(1);
+    expect(result.unknown).toBe(0);
     expect(upserts[0][2]).toBe("gone");
   });
 
@@ -542,7 +547,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => null, // retention expired / fetch failed
       nowMs,
     });
-    expect(result).toEqual({ examined: 1, closed: 1, unknown: 1 });
+    expect(result).toEqual({ examined: 1, resolved: 0, unknown: 1, stillOpen: 0, skipped: 0 });
     expect(upserts[0][2]).toBe("unknown");
   });
 
@@ -555,12 +560,12 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => "IN_PROGRESS",
       nowMs,
     });
-    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(result).toEqual({ examined: 1, resolved: 0, unknown: 0, stillOpen: 1, skipped: 0 });
     expect(upserts).toHaveLength(0);
   });
 
   // cf#298: THE CASE THE TEST ABOVE CANNOT SEE. That one sits INSIDE the retention window, so its
-  // `closed: 0` comes from the age gate whether or not the status is ever consulted -- deleting the
+  // `stillOpen: 1` comes from the age gate whether or not the status is ever consulted -- deleting the
   // entire status-handling block leaves it green. Here the age gate FIRES, so the only thing that
   // can keep the row open is the affirmative IN_PROGRESS, and a reconciler that concludes from age
   // alone books a job RunPod just told us is alive as terminally `unknown`.
@@ -579,7 +584,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => "IN_PROGRESS", // RunPod affirmatively reports it alive
       nowMs,
     });
-    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(result).toEqual({ examined: 1, resolved: 0, unknown: 0, stillOpen: 1, skipped: 0 });
     expect(upserts).toHaveLength(0);
   });
 
@@ -595,7 +600,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => null,
       nowMs,
     });
-    expect(result).toEqual({ examined: 1, closed: 1, unknown: 1 });
+    expect(result).toEqual({ examined: 1, resolved: 0, unknown: 1, stillOpen: 0, skipped: 0 });
     expect(upserts[0][2]).toBe("unknown");
   });
 
@@ -611,7 +616,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       fetchStatus: async () => "IN_QUEUE",
       nowMs,
     });
-    expect(result).toEqual({ examined: 1, closed: 0, unknown: 0 });
+    expect(result).toEqual({ examined: 1, resolved: 0, unknown: 0, stillOpen: 1, skipped: 0 });
     expect(upserts).toHaveLength(0);
   });
 
@@ -632,7 +637,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
   it("returns zeros and does not throw when there is no D1 binding", async () => {
     await expect(
       reconcileOpenRunpodJobs(undefined, { module: "keyframe", fetchStatus: async () => "COMPLETED", nowMs }),
-    ).resolves.toEqual({ examined: 0, closed: 0, unknown: 0 });
+    ).resolves.toEqual({ examined: 0, resolved: 0, unknown: 0, stillOpen: 0, skipped: 0 });
   });
 
   it("survives a list() failure without rejecting", async () => {
@@ -651,7 +656,7 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
     } as unknown as D1Database;
     await expect(
       reconcileOpenRunpodJobs(db, { module: "keyframe", fetchStatus: async () => "COMPLETED", nowMs }),
-    ).resolves.toEqual({ examined: 0, closed: 0, unknown: 0 });
+    ).resolves.toEqual({ examined: 0, resolved: 0, unknown: 0, stillOpen: 0, skipped: 0 });
     expect(warns.join("|")).toContain("reconcile list failed");
   });
 
@@ -666,8 +671,84 @@ describe("reconcileOpenRunpodJobs (cf#298)", () => {
       },
       nowMs,
     });
-    expect(result.closed).toBe(0);
+    expect(result.resolved).toBe(0);
+    expect(result.stillOpen).toBe(1);
     expect(upserts).toHaveLength(0);
     expect(warns.join("|")).toContain("reconcile fetch failed");
+  });
+
+  // ------------------------------------------------------------------------------------------
+  // cf#523. `closed` MEANT TWO THINGS AND ONE OF THEM WAS A GIVE-UP.
+  //
+  // The old shape incremented `closed` on the SAME row as `unknown`, so a caller scoring a run on
+  // it counted every job we stopped waiting for as a job we watched finish. These pin the split.
+  // If someone re-sums them into one number, the first test here goes RED.
+
+  it("a gave-up row counts as unknown and NOT as resolved (cf#523)", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "gave-up", module: "keyframe", submitted_at: nowSec - RECONCILE_UNKNOWN_AFTER_SEC - 10 },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async () => null, // RunPod could not tell us anything
+      nowMs,
+    });
+    expect(upserts[0][2]).toBe("unknown");
+    expect(result.unknown).toBe(1);
+    // THE LOAD-TEST ASSERTION. Not "resolved is small" -- resolved is ZERO. Summing the two back
+    // into one counter makes this line fail, which is the point of writing it this way.
+    expect(result.resolved).toBe(0);
+    expect(result).toEqual({ examined: 1, resolved: 0, unknown: 1, stillOpen: 0, skipped: 0 });
+  });
+
+  it("the four buckets sum to examined, so no row is silently uncounted (cf#523)", async () => {
+    const { db } = reconcileDb([
+      { job_id: "done", module: "keyframe", submitted_at: nowSec - 200 },
+      { job_id: "", module: "keyframe", submitted_at: nowSec - 200 },
+      { job_id: "young", module: "keyframe", submitted_at: nowSec - 200 },
+    ]);
+    const result = await reconcileOpenRunpodJobs(db, {
+      module: "keyframe",
+      fetchStatus: async (id) => (id === "done" ? "COMPLETED" : null),
+      nowMs,
+    });
+    expect(result.examined).toBe(3);
+    expect(result.resolved + result.unknown + result.stillOpen + result.skipped).toBe(result.examined);
+    expect(result.skipped).toBe(1);
+    expect(result.resolved).toBe(1);
+    expect(result.stillOpen).toBe(1); // "young" is inside the retention window: not given up on yet
+  });
+
+  it("terminal_at is filled for unknown too, which is WHY it is not a completion predicate (cf#523)", async () => {
+    const { db, upserts } = reconcileDb([
+      { job_id: "aged", module: "keyframe", submitted_at: nowSec - RECONCILE_UNKNOWN_AFTER_SEC - 10 },
+    ]);
+    await reconcileOpenRunpodJobs(db, { module: "keyframe", fetchStatus: async () => null, nowMs });
+    expect(upserts[0][2]).toBe("unknown");
+    // The row a `terminal_at IS NOT NULL` completion metric would count as finished. It is not a
+    // finished job; this is the whole hazard, pinned rather than described.
+    expect(upserts[0][5]).toBe(nowSec);
+    expect(isResolvedRunpodOutcome(String(upserts[0][2]))).toBe(false);
+  });
+
+  it("isResolvedRunpodOutcome classifies EVERY outcome, and a new one breaks the build until it is classified", () => {
+    // Compiler-derived population: a Record over the union is exhaustive, so adding a seventh
+    // outcome upstream fails typecheck here until someone decides which side it falls on. A
+    // hand-written array would silently not cover it.
+    const EXPECTED: Record<RunpodJobOutcome, boolean> = {
+      submitted: false, // not terminal at all
+      completed: true,
+      "backend-error": true,
+      failed: true,
+      gone: true,
+      cancelled: true,
+      unknown: false, // the give-up
+    };
+    for (const [outcome, want] of Object.entries(EXPECTED)) {
+      expect(isResolvedRunpodOutcome(outcome), outcome).toBe(want);
+    }
+    // Floor: the loop ran over a real population rather than an empty object.
+    expect(Object.keys(EXPECTED)).toHaveLength(7);
+    expect(RESOLVED_RUNPOD_OUTCOMES).toHaveLength(5);
   });
 });
