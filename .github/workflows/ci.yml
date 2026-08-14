@@ -242,16 +242,17 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          # Coverage is ASSERTED, not merely counted. Any change to these two numbers is a
-          # deliberate line in a diff, which is the only thing that makes an added skip visible.
-          # A bare "checked >= 1" floor does not scale: with two files and one permanent skip it is
-          # tight by arithmetic accident, but at five files an accidental opt-out still leaves
-          # checked >= 1 and passes. The guard has to scale with the directory it guards.
-          EXPECTED_CHECKED=1
-          EXPECTED_SKIPPED=1
+          # Coverage is asserted as two SETS OF FILENAMES, not two counts. Counts cannot see a
+          # SWAP: if 0004 lost its marker while post-0020 gained one, the totals would still read
+          # 1 checked / 1 skipped while coverage was exactly inverted. Sets express the thing the
+          # assertion is actually for -- "these files are covered, those are deliberately not" --
+          # and every failure names which file moved, so the diff that changes coverage is the diff
+          # that updates these lists.
+          EXPECTED_CHECKED="post-0020-set-live-token-scopes.sql"
+          EXPECTED_SKIPPED="0004_drop_user_email.sql"
           files=(migrations/manual/*.sql)
           echo "manual files found: ${#files[@]}"
-          checked=0; skipped=0
+          got_checked=""; got_skipped=""
           # Order is glob sort, i.e. filename order. Stated because it is load-bearing the moment a
           # second checked file appears and one depends on the other.
           for f in "${files[@]}"; do
@@ -261,8 +262,8 @@ jobs:
             # literal. Every one of those failure modes lands on SKIP, i.e. silently less coverage
             # with a green step, which is the same self-concealing shape this gate exists to catch.
             if reason=$(head -20 "$f" | grep -m1 -oP '^-- migrations-gate: skip \K\S.*'); then
-              echo "SKIP      $f -- $reason"
-              skipped=$((skipped+1))
+              echo "SKIP        $f -- $reason"
+              got_skipped="$got_skipped $(basename "$f")"
               continue
             fi
             # PARSE+APPLY, not "validated". This proves the file parses and is schema-compatible
@@ -270,11 +271,21 @@ jobs:
             # tables are empty, so a row-matching UPDATE legitimately matches nothing and passes.
             echo "PARSE+APPLY $f"
             npx wrangler d1 execute DB --local --config wrangler.migrations-gate.toml --file "$f"
-            checked=$((checked+1))
+            got_checked="$got_checked $(basename "$f")"
           done
-          echo "manual/ replay: ${checked} checked, ${skipped} skipped, ${#files[@]} total"
-          if [ "$checked" -ne "$EXPECTED_CHECKED" ] || [ "$skipped" -ne "$EXPECTED_SKIPPED" ]; then
-            echo "::error::manual/ coverage changed: expected ${EXPECTED_CHECKED} checked / ${EXPECTED_SKIPPED} skipped, got ${checked} / ${skipped}. If this is intended, update EXPECTED_CHECKED / EXPECTED_SKIPPED in this step in the same PR, so the coverage change is reviewable rather than incidental."
+          # `|| true` is load-bearing: grep returns 1 on no match, and under `set -e` that killed
+          # the step before it could print WHY it failed. An empty migrations/manual/ then exited
+          # non-zero with no diagnosis -- correct direction, useless message. A guard that fails
+          # without asserting its own reason is only half a guard.
+          norm() { tr " " "\n" <<<"$1" | { grep -v '^$' || true; } | sort | tr "\n" " " | sed "s/ $//"; }
+          got_c=$(norm "$got_checked"); got_s=$(norm "$got_skipped")
+          exp_c=$(norm "$EXPECTED_CHECKED"); exp_s=$(norm "$EXPECTED_SKIPPED")
+          echo "manual/ replay -- checked: [$got_c]  skipped: [$got_s]"
+          if [ "$got_c" != "$exp_c" ] || [ "$got_s" != "$exp_s" ]; then
+            echo "::error::migrations/manual/ coverage does not match what this step asserts."
+            echo "::error::  checked  expected [$exp_c]  got [$got_c]"
+            echo "::error::  skipped  expected [$exp_s]  got [$got_s]"
+            echo "::error::A file moved between covered and skipped, was added, or was removed. If that is intended, edit EXPECTED_CHECKED / EXPECTED_SKIPPED in this step in the SAME PR so the coverage change is reviewed. Do NOT empty these lists to make this pass -- an empty EXPECTED_CHECKED makes this step permanently vacuous, which is the failure it exists to prevent."
             exit 1
           fi
 
