@@ -108,6 +108,45 @@ function schedulePreflight() {
   }, PREFLIGHT_DEBOUNCE_MS);
 }
 
+// cf#540 -- the planner's half of the finish budget, merged into the server's issue list.
+//
+// WHY THIS IS CLIENT-SIDE AT ALL. The permitted shot length is a function of the finish chain THIS
+// render selects, and of what each selected module declares about its own cost. The panel already
+// holds both: plannerRegistry has fetched GET /api/modules, and the selection is resolved from
+// `participation` exactly as the core's selectForChain resolves it. Sending a second copy of the
+// registry back to the server to be told what the panel already knows would add a wire field and a
+// second source of truth for no gain.
+//
+// Absence of a declaration ADMITS and says so once; it never refuses. See the long argument at the
+// top of finish-budget-checks.js -- the short form is that no manifest declares a finish cost yet,
+// so refusing on unknown would refuse every render on day one, and a guard that fires on correct
+// work is the guard people switch off.
+function mergeFinishBudgetIssues(data) {
+  if (!data || !window.finishBudgetChecks || !window.plannerRegistry) return;
+  var registry = window.plannerRegistry;
+  var serving;
+  try {
+    serving = registry.hookModules ? registry.hookModules("finish") : [];
+  } catch (e) {
+    return;
+  }
+  // registryUnavailable() answers a DIFFERENT question from an empty serving list: "I could not
+  // ask" versus "this studio installed none". Those belong to different parties and read
+  // differently to a user, which is why cf#344 tracked it separately in the first place.
+  var unavailable = !!(registry.registryUnavailable && registry.registryUnavailable());
+  var budget = window.finishBudgetChecks.finishBudget(serving, undefined, unavailable);
+  var extra = window.finishBudgetChecks.finishBudgetIssues(planState.storyboard, budget);
+  if (!extra.length) return;
+  data.issues = (data.issues || []).concat(extra);
+  data.counts = data.counts || { error: 0, warning: 0, info: 0 };
+  for (var i = 0; i < extra.length; i++) {
+    data.counts[extra[i].level] = (data.counts[extra[i].level] || 0) + 1;
+  }
+  // Recompute rather than AND-ing, so `ok` keeps its single definition (no errors) instead of
+  // acquiring a second one that could drift from the count it is supposed to summarize.
+  data.ok = (data.counts.error || 0) === 0;
+}
+
 async function runPreflight() {
   if (!planState.storyboard) return;
   if (preflightRunning) {
@@ -144,6 +183,14 @@ async function runPreflight() {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
+    // cf#540: merge the planner-side finish-budget projection into the SAME issue list, so the
+    // existing "errors gate the bundle" rule covers it with no parallel surface and no second
+    // place for a reader to look. The server cannot answer this one: the door's budget and the
+    // chain's rate are facts a MODULE declares, and the finish chain a render selects is resolved
+    // from the registry the panel has already fetched. Sibling of the #707 duration-grid warning
+    // above, which asks the same question one hook over and is answered server-side because the
+    // motion backend is named on the envelope.
+    mergeFinishBudgetIssues(data);
     preflightLastResult = data;
     renderPreflightIssues(data);
     if (data.ok) {
