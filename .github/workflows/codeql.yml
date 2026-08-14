@@ -9,7 +9,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   schedule:
     - cron: "20 4 * * 0"
 
@@ -40,7 +39,11 @@ jobs:
 
       - uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
+          # fc#1652: this repo carries 39 Python files (350KB by the linguist census),
+          # including containers/*/app.py and the deploy and provisioning scripts under
+          # scripts/, and none of it was analysed. Both extractors are build-mode none,
+          # so this is one extra extraction and no new step.
+          languages: javascript-typescript,python
           build-mode: none
           config-file: ./.github/codeql/codeql-config.yml
 

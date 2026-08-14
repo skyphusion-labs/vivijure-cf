@@ -38,6 +38,7 @@
 
 import type { Env } from "./env";
 import { gateApiRequest, type AccessDecision, type VerifyOpts } from "./access-auth";
+import { isScope, type Scope } from "./authz";
 
 export const TOKEN_COOKIE = "vivijure_token";
 
@@ -101,16 +102,33 @@ export async function sha256Hex(s: string): Promise<string> {
 // attacker can climb). Returns the consumer name on a live match, null otherwise. FAIL CLOSED for
 // this credential class: no DB binding or a D1 error just means no named token matches -- the
 // operator secret path is untouched either way.
-async function namedTokenConsumer(presented: string, env: Env): Promise<string | null> {
+async function namedTokenConsumer(presented: string, env: Env): Promise<{ name: string; scope: Scope } | null> {
   if (!env.DB) return null;
   try {
     const hash = await sha256Hex(presented);
     const row = await env.DB.prepare(
-      "SELECT name FROM api_tokens WHERE token_hash = ?1 AND revoked_at IS NULL",
+      "SELECT name, scope FROM api_tokens WHERE token_hash = ?1 AND revoked_at IS NULL",
     )
       .bind(hash)
-      .first<{ name: string }>();
-    return row?.name ?? null;
+      .first<{ name: string; scope: unknown }>();
+    if (!row) return null;
+    // cf#520: a row whose scope is not in the union is a CONFIGURATION DEFECT -- migration 0020 not
+    // applied, or a value written around the CHECK constraint. Fail CLOSED: deny the credential
+    // outright rather than guess a privilege level for it. Guessing `consumer` would silently
+    // downgrade a working operator token; guessing `operator` would be the hole this issue closes.
+    if (!isScope(row.scope)) {
+      // Loud in the log, silent on the wire. The DENY REASON the caller sees stays byte-identical
+      // to any other bad token (below), so a prober cannot learn that the token it presented is
+      // real -- but an operator reading tail sees exactly which row is unusable.
+      console.error(JSON.stringify({
+        ev: "authz.token_scope_invalid",
+        name: row.name,
+        scope: typeof row.scope === "string" ? row.scope : String(row.scope),
+        msg: "api_tokens row has no usable scope -- denying. Apply migration 0020 and reissue this token.",
+      }));
+      return null;
+    }
+    return { name: row.name, scope: row.scope };
   } catch {
     return null; // table missing (migration not applied) or D1 down -> named tokens deny
   }
@@ -137,14 +155,17 @@ export async function verifyTokenRequest(request: Request, env: Env): Promise<Ac
     return { ok: false, status: 403, reason: "missing API token: send Authorization: Bearer <your studio API token>" };
   }
   if (await constantTimeEqual(presented, secret)) {
-    return { ok: true, sub: "studio-api-token", email: null };
+    // cf#520: the operator secret IS the operator. Unchanged.
+    return { ok: true, sub: "studio-api-token", email: null, scope: "operator" };
   }
   // Not the operator token: try the named per-consumer tokens (#445). Same transport rules
   // (bearer any method, cookie GET/HEAD only) because both ride presentedToken above. The deny
   // reason is IDENTICAL to the operator miss so a probe cannot tell which class it failed.
   const consumer = await namedTokenConsumer(presented, env);
   if (consumer !== null) {
-    return { ok: true, sub: `api-token:${consumer}`, email: null };
+    // cf#520: the scope comes from the token's own row. This is the whole point of the issue --
+    // before it, this line admitted every named token at operator authority.
+    return { ok: true, sub: `api-token:${consumer.name}`, email: null, scope: consumer.scope };
   }
   return { ok: false, status: 403, reason: "bad API token" };
 }
@@ -177,11 +198,16 @@ export const DEMO_WRITE_ROUTES: ReadonlySet<string> = new Set(["/api/demo/render
 
 export function verifyDemoRequest(request: Request): AccessDecision {
   const method = request.method.toUpperCase();
+  // cf#520: a demo visitor is a CONSUMER. There is no operator path into a demo deploy through the
+  // API by design, so granting anything else would be inventing an authority the mode does not have.
+  // MEASURED CONSEQUENCE, not a prediction: on 2026-08-14 `GET /api/modules/installed` answered 200
+  // to an anonymous caller on demo.vivijure.com; under this grant it answers 403. Nothing under
+  // public/ calls that route (measured: zero hits), so no demo affordance depends on it.
   if (method === "GET" || method === "HEAD") {
-    return { ok: true, sub: "demo-visitor", email: null };
+    return { ok: true, sub: "demo-visitor", email: null, scope: "consumer" };
   }
   if (method === "POST" && DEMO_WRITE_ROUTES.has(new URL(request.url).pathname)) {
-    return { ok: true, sub: "demo-visitor", email: null };
+    return { ok: true, sub: "demo-visitor", email: null, scope: "consumer" };
   }
   return {
     ok: false,
