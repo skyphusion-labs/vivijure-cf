@@ -16,6 +16,7 @@ import {
 } from "./film-render-bridge";
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
+import { retryFailedRender } from "./render-retry";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
@@ -687,6 +688,31 @@ async function animatePreviewHandler(
   return json({ ok: true, ...r.view }, 201);
 }
 
+
+const hRetryRender: Handler = async (req, env, _c, p) => {
+  // cf#353: re-submit STORED row args; failed row stays; new row is the retry.
+  const renderId = await resolveRenderId(env, p.id);
+  const row = await getRenderByIdForUser(env, renderId);
+  if (!row) throw notFound("render");
+  const r = await retryFailedRender(env, row);
+  if (!r.ok) return json({ ok: false, error: r.error }, r.status);
+  const view = r.view;
+  await insertRenderBestEffort(env, {
+    jobId: view.jobId,
+    project: row.project,
+    bundleKey: row.bundle_key,
+    qualityTier: row.quality_tier,
+    renderOverrides: row.render_overrides ?? undefined,
+    status: view.status,
+    mode: (r.mode === "keyframes-only" || r.mode === "finalized" || r.mode === "cloud-finalized"
+      ? r.mode
+      : "full") as NewRenderRow["mode"],
+    projectId: row.project_id,
+    parentId: row.id,
+  });
+  return json({ ok: true, ...view }, 201);
+};
+
 const hFinalizePreview: Handler = async (req, env, _c, p) => {
   let audioKey: string | undefined;
   let motionBackend: string | undefined;
@@ -843,6 +869,23 @@ const hSubmitRender: Handler = async (req, env) => {
   // no-op inside the helper. mapped.motion_config is the already-clamped config object; injecting here,
   // POST-clamp, keeps the JSON LoRA fields intact through startFilmJob.
   const wanProj = await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, mapped.motion_config);
+  // cf#334 door 1: derive dialogue from the bundle when the panel did not send dialogue_lines,
+  // so a voiced storyboard does not ship silent from the main Render button.
+  let panelDialogue: DialogueLine[] | undefined;
+  if (!b.keyframesOnly) {
+    try {
+      const bundleScenes = await readBundleScenes(env, bundleKey);
+      let lines = dialogueLinesFromBundleScenes(bundleScenes, {});
+      // Prefer cast voices when cast was resolved above
+      const voiceMap: Record<string, string> = {};
+      // cast voices live on resolveCastLoras; panelPre.cast may only expose pretrained/castIds.
+      // Empty voices still yield default voice ids via dialogueLinesFromBundleScenes.
+      if (lines.length) {
+        lines = resolveExplicitLineVoices(lines, bundleScenes, voiceMap);
+        panelDialogue = lines;
+      }
+    } catch { /* best-effort */ }
+  }
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -867,6 +910,7 @@ const hSubmitRender: Handler = async (req, env) => {
     film_titles: b.keyframesOnly ? undefined : b.film_titles,
     pretrained_loras: Object.keys(pretrained).length ? pretrained : undefined,
     cast_loras: Object.keys(castIds).length ? castIds : undefined,
+    dialogue_lines: panelDialogue,
   }, modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -2200,6 +2244,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/storyboard/renders/:id/finalize", scope: "consumer",    handler: hFinalizePreview },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-cloud", scope: "consumer",    handler: hAnimateCloud },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/animate-hybrid", scope: "consumer",    handler: hAnimateHybrid },
+  { method: "POST",   pattern: "/api/storyboard/renders/:id/retry",       scope: "consumer",    handler: hRetryRender },
   { method: "POST",   pattern: "/api/storyboard/renders/adopt",        scope: "consumer",    handler: hAdoptRender },
   { method: "GET",    pattern: "/api/whoami",                          scope: "consumer",    handler: hWhoami },
   { method: "GET",    pattern: "/api/prefs",                           scope: "consumer",    handler: hGetPrefs },
