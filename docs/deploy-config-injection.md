@@ -189,6 +189,45 @@ Things worth understanding:
   per `modules/*/wrangler.toml`, plus a `REPLACE_WITH_VPC_*_ID` fill for the media modules (#520),
   before each `wrangler deploy` -- the same free-self-host-safe placeholder discipline as the core.
 
+### 3d-bis. HOW MANY PATHS RENDER THIS TEMPLATE (cf#560)
+
+Section 3d calls `ci.yml` "the authoritative step". That is true of the PROD STUDIO DEPLOY and it is
+not true of the template, and the difference cost cf#560 twice. `wrangler.toml.example` is rendered
+by more than one thing, the hosted invariant that local-gpu is never bound applies to more than one
+of them, and until cf#560 was reopened nobody knew the count. **A gate that passes because it was
+never asked is not evidence.**
+
+**The rule, not a frozen list** (a hand-maintained list of paths is the artifact whose drift caused
+this issue twice): a path is a HOSTED render if it produces a `wrangler.toml` from
+`wrangler.toml.example` for a deploy that runs on OUR account or ships to a hosted tenant. Derive
+the current members rather than trusting this table; `tests/local-gpu-strip-cf560.test.ts` derives
+the workflow half automatically and refuses if a member does not call the shared strip.
+
+| Path | Kind | local-gpu | Mechanism |
+|---|---|---|---|
+| `.github/workflows/ci.yml` | HOSTED, prod studio deploy | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
+| `.github/workflows/studio-release.yml` | HOSTED, the tenant release artifact | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
+| `deploy.sh` | SELF-HOST installer | **allowed** | its own strip, kept unless `INSTALL_LOCAL_GPU=1` |
+| `deploy/vivijure_deploy.py` (`render_core_toml`) | SELF-HOST installer (python) | allowed | no marker handling at all; see the note below |
+| `.dev-modbound/dev-modbound.sh` | LOCAL dev only | n/a | `wrangler dev --local`, never deploys |
+
+Two configs are NOT renders of this template and must not be reasoned about as though they were:
+`wrangler.demo.toml.example` builds the separate `vivijure-demo` Worker, and `tail/wrangler.toml.example`
+builds `vivijure-tail`.
+
+**The self-host paths are a considered exclusion, not an omission.** The door's own manifest says
+self-host is where it belongs, so an unconditional hosted strip bolted onto `deploy.sh` would remove
+a door its operator is entitled to run. Note the inversion that was the original defect: the path
+that PERMITS the door defaulted it off, and the path that FORBIDS it had no switch at all.
+
+**Open, and deliberately not fixed here (reported on cf#560):** `render_core_toml` in
+`deploy/vivijure_deploy.py` strips `[[vpc_services]]`, `tail_consumers`, `[[routes]]` and
+`[[migrations]]` on the stated contract that it removes "every binding whose target a base install
+does not create", and it has zero occurrences of `LOCAL-GPU`, `SATELLITE` or `SELFHOST-SKIP`. So it
+leaves the `MODULE_LOCAL_GPU` service binding in place against its own contract. That is a dangling
+binding on a self-host install, a different defect from the hosted invariant, and it belongs in its
+own change rather than folded into this one.
+
 ### 3e. The deploy gate
 The `deploy` job only runs for a pushed version tag:
 ```yaml
