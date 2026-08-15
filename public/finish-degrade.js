@@ -115,9 +115,91 @@
     return where + " did not run, so part of the finishing pass is missing from this render.";
   }
 
+  // cf#549: THE BAND -- what render history has to be able to COUNT.
+  //
+  // `degradeFrom()` above answers exactly ONE question ("is there a degrade to render?")
+  // and is deliberately null for BOTH "no degrade" and "junk", because on the LIVE render
+  // view a parse failure must never tell a user their good film is broken. That
+  // one-directional forgiveness is correct there and it is NOT sufficient here: a null
+  // that means three different things is precisely the defect cf#549 is about. So this is
+  // a SECOND, wider projection over the SAME field. `degradeFrom` is untouched and still
+  // owns the parse; nothing below re-implements it.
+  //
+  // FOUR BANDS, never two:
+  //   "unmeasured"    -- no readable output payload on this row, so nothing can be said.
+  //   "none-reported" -- payload readable; it reports no finishing degrade.
+  //   "unreadable"    -- the payload REPORTED something and it could not be read.
+  //   "reported"      -- a degrade, normalized by degradeFrom().
+  //
+  // "none-reported" IS NOT "the film is complete", and no caller may render it as one. It
+  // means one thing: this payload reports no assemble/mux soft-degrade. Title cards and
+  // subtitles degrade through `film_finish.degraded`, which vivijure-core#203 would put on
+  // this same `output` object and WHICH DOES NOT EXIST TODAY -- so that entire class of
+  // degradation is outside what this function can see, in every band, on every row. A
+  // caller that reads "none-reported" as a clean verdict rebuilds cf#549 one field over.
+  //
+  // WHEN #203 LANDS it is a SECOND signal in this same vocabulary and needs no redesign:
+  // a second per-signal band function plus a combining rule, with the band names and the
+  // row's `data-finish-degrade` contract unchanged. The combining rule must NOT be
+  // worst-of: a row whose assemble/mux signal is "none-reported" while its film_finish
+  // signal is "unmeasured" is PARTIALLY measured, which is its own fact, and folding that
+  // into either neighbour is the same collapse this band vocabulary exists to prevent.
+  var BAND_UNMEASURED = "unmeasured";
+  var BAND_NONE_REPORTED = "none-reported";
+  var BAND_UNREADABLE = "unreadable";
+  var BAND_REPORTED = "reported";
+
+  function degradeBand(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return BAND_UNMEASURED;
+    var raw = output.finish_unavailable;
+    // The orchestrator writes this key ONLY when it degrades, so absent-or-null on a
+    // payload we could read is a real report of "no degrade at this step" rather than a
+    // silence we have to guess about.
+    if (raw === null || raw === undefined) return BAND_NONE_REPORTED;
+    if (degradeFrom(output)) return BAND_REPORTED;
+    // Present and unreadable. degradeFrom() forgives this to null for the live view; here
+    // it gets its own band, because "the studio said something we could not read" and
+    // "the studio said nothing" are different facts, and only one of them needs a human.
+    return BAND_UNREADABLE;
+  }
+
+  // The visible tell for a band, or null for the bands that must render nothing.
+  //
+  // Only the two bands that need a human are badged. "unmeasured" is the ordinary state of
+  // every in-flight row and "none-reported" the ordinary state of every finished one, so
+  // badging either would fire on a healthy list, and a badge that fires on healthy rows is
+  // a badge people learn to ignore. Both are still asserted POSITIVELY on every row
+  // through `data-finish-degrade`, so all four states stay distinguishable to anything
+  // counting them without putting four badges on a clean page.
+  function bandNote(band) {
+    if (band === BAND_REPORTED) {
+      return {
+        label: "finished with limits",
+        title:
+          "the finishing step degraded on this render: it delivered less than a full finish. Expand the row for what was delivered and why.",
+      };
+    }
+    if (band === BAND_UNREADABLE) {
+      return {
+        label: "degrade unreadable",
+        title:
+          "this render reported a finishing limit and the report could not be read. Treat what was delivered as unknown; the raw payload is on the render panel under view.",
+      };
+    }
+    return null;
+  }
+
   return {
     NO_REASON: NO_REASON,
+    DEGRADE_BANDS: {
+      UNMEASURED: BAND_UNMEASURED,
+      NONE_REPORTED: BAND_NONE_REPORTED,
+      UNREADABLE: BAND_UNREADABLE,
+      REPORTED: BAND_REPORTED,
+    },
+    bandNote: bandNote,
     clipsFrom: clipsFrom,
+    degradeBand: degradeBand,
     degradeFrom: degradeFrom,
     deliverable: deliverable,
     deliveredSummary: deliveredSummary,

@@ -23,7 +23,11 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # cf#562: a tag run now PUBLISHES (the studio-release job below) as well as deploys, so
+  # cancelling it mid-flight can abandon a half-published release -- exactly what the old
+  # studio-release.yml cancel-in-progress: false existed to prevent before it was folded in here.
+  # Branch and PR runs keep cancelling, which is what keeps the queue usable; tag runs never do.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   ci:
@@ -533,40 +537,26 @@ jobs:
           # vivijure-cf IS this deploy. It was bound here anyway, and because it sorts at ui.order 4
           # it was the FIRST entry in both `motion.backend` and `keyframe` on the live registry.
           #
-          # The control existed and was on the wrong path. `deploy.sh` (SELF-HOST, where local-gpu is
-          # ALLOWED) strips this block unless INSTALL_LOCAL_GPU=1. This render (HOSTED, where it is
-          # FORBIDDEN) had no strip at all -- a bare envsubst. So the path that permits it defaults it
-          # OFF and the path that forbids it had no switch, which is the inversion rather than a gap.
+          # THE STRIP AND ITS TWO-SIDED GUARD NOW LIVE IN scripts/strip-local-gpu.sh, NOT HERE, and
+          # that move IS the cf#560 fix rather than a tidy-up. They were inline, correct, and passing
+          # -- on ONE path. studio-release.yml rendered the same template with a bare envsubst and no
+          # strip at all, so a green refusing gate here read as coverage of the invariant, and nothing
+          # anywhere reported that a second path existed with no gate on it. A gate that passes
+          # because it matched nothing is not evidence, and a gate that was never asked is not
+          # evidence either. The remedy for a control that can sit on the wrong path is not a better
+          # copy of it, it is not having copies: one definition, invoked by every hosted render, with
+          # tests/local-gpu-strip-cf560.test.ts DERIVING the set of hosted render paths from the
+          # workflows themselves and refusing if any member does not call it.
           #
           # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour. SATELLITE
           # and SELFHOST-SKIP blocks are deliberately NOT stripped -- hosted wants the satellite
           # finish doors, and SELFHOST-SKIP marks our-fleet-only blocks, which hosted IS.
-          awk '
-            /^# >>> LOCAL-GPU:/ { skip=1; next }
-            /^# <<< LOCAL-GPU:/ { skip=0; next }
-            !skip { print }
-          ' wrangler.toml.example > .wrangler.hosted.toml
-          # TWO-SIDED GUARD. Absence alone is not enough, and the direction it cannot see is
-          # SILENT TRUNCATION.
           #
-          # `skip` is set on the OPENING marker and cleared only on the CLOSING one, so a removed or
-          # renamed CLOSING marker leaves skip=1 to EOF. Driven: 481 lines -> 240, MODULE_ lines
-          # 41 -> 4, and the absence check PASSES -- because MODULE_LOCAL_GPU really is gone, eaten
-          # along with 37 other binding lines. Nothing downstream catches it either: every
-          # downstream-guarded key (AUTH_MODE, ACCESS_AUD, R2_S3_*, the secrets-store placeholder)
-          # lives BEFORE line 241, so all of them survive and all of them pass, and the placeholder
-          # check cannot fire because truncation REMOVES placeholders rather than adding them.
-          #
-          # So assert the DELTA, not the absence. Exactly one MODULE_ line may disappear.
-          before_mod=$(grep -c 'MODULE_' wrangler.toml.example || true)
-          after_mod=$(grep -c 'MODULE_' .wrangler.hosted.toml || true)
-          if grep -q 'MODULE_LOCAL_GPU' .wrangler.hosted.toml; then
-            echo "::error::cf#560: LOCAL-GPU block survived the strip -- refusing to deploy the hosted studio with local-gpu bound"; exit 1
-          fi
-          if [ "$((before_mod - after_mod))" -ne 1 ]; then
-            echo "::error::cf#560: the LOCAL-GPU strip removed $((before_mod - after_mod)) MODULE_ lines, expected exactly 1 (before=$before_mod after=$after_mod) -- a marker is probably malformed and the strip ran past the block"; exit 1
-          fi
-          echo "LOCAL-GPU stripped: MODULE_ lines ${before_mod} -> ${after_mod} (delta 1, as required)"
+          # deploy.sh (SELF-HOST, where local-gpu is ALLOWED) keeps its own INSTALL_LOCAL_GPU switch
+          # and deliberately does NOT call this: the invariant is about the HOSTED studio, and
+          # bolting the unconditional strip onto the self-host path would remove a door its operator
+          # is entitled to run.
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
           envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a
@@ -735,3 +725,40 @@ jobs:
           if grep -v '^[[:space:]]*#' wrangler.mcp.toml | grep -qF '${'; then echo "::error::unsubstituted placeholder in wrangler.mcp.toml"; grep -nF '${' wrangler.mcp.toml | grep -v ':[[:space:]]*#'; exit 1; fi
           echo "Deploying vivijure-studio-mcp to ${MCP_HOST} (studio ${MCP_STUDIO_URL})..."
           npx wrangler deploy -c wrangler.mcp.toml
+
+  # -----------------------------------------------------------------------------------------------
+  # THE TENANT-PROVISIONABLE RELEASE ARTIFACT, GATED BY CONSTRUCTION (cf#562).
+  #
+  # This was .github/workflows/studio-release.yml carrying its own push: tags: ["v*"] trigger. Same
+  # tag, separate file, and needs: cannot cross workflow files -- so it ran in PARALLEL with the four
+  # gates below and could publish the artifact every hosted tenant provisions from, and advance the
+  # hosted STUDIO_RELEASE pin, while migrations-gate was still deciding. Observed on the v1.27.0 tag:
+  # both workflows in_progress at once. Nothing went wrong on that tag, and nothing had determined
+  # that it would not.
+  #
+  # cf#562 listed three options. Querying the check runs for the tag's sha (option 2) is the smallest
+  # and the one that can fail OPEN -- an unqueryable check result is not a pass, a rule this estate
+  # has now had to restate in three separate files. Copying the gate jobs into the other workflow
+  # (option 1) gives the invariant two definitions, which is how cf#560's local-gpu strip came to sit
+  # on one render path and not the other. This is option 3: ONE workflow owns everything a v* tag
+  # triggers, so needs: works by construction and there is no assertion left to keep true.
+  #
+  # NO DEADLOCK. ci, container-tests and migrations-gate all run unconditionally on this trigger and
+  # assert-on-main carries the same tag-only if: this job does, so every entry in needs: reaches a
+  # conclusion rather than waiting on a job that never starts. That is the check to run before
+  # widening a needs: array, and it is the same argument the deploy job above makes.
+  #
+  # NOT a required status check, and it must not become one: it runs only on refs/tags/v*, so on a PR
+  # it is skipped, and a required check that never runs blocks every merge. The required contexts on
+  # this repo are ci, migrations-gate, coverage and CodeQL.
+  studio-release:
+    needs: [ci, container-tests, migrations-gate, assert-on-main]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write # the called workflow uploads the release asset; nothing else
+    concurrency:
+      # Moved here with the workflow it guards. A half-published release must never be cancelled.
+      group: studio-release-${{ github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/studio-release.yml
+    secrets: inherit

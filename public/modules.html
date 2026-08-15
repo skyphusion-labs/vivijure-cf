@@ -70,6 +70,9 @@
     <script src="readonly-gate.js"></script>
     <script src="abuse-link-checks.js"></script>
     <script src="abuse-link.js"></script>
+    <!-- cf#515: the shared poll jitter/backoff policy. MUST load before any
+         script that arms a poll; on this page that is demo-steer.js. -->
+    <script src="poll-schedule.js"></script>
     <script src="demo-steer.js"></script>
     <script src="studio-chrome.js"></script>
     <script src="topbar.js"></script>

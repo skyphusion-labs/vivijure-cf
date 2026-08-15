@@ -26,6 +26,31 @@ function buildHistoryRow(r, childrenByParent) {
   const isExpanded = historyState.expandedIds.has(r.id);
   if (!isExpanded) li.classList.add("planner-history-item-collapsed");
 
+  // cf#549: render history was structurally blind to degradation. A film that shipped
+  // without part of its finish was `done`, `errors: []`, and byte-identical here to one
+  // that shipped complete -- so the incidence could not be counted, and a load test could
+  // not fail on this axis at all. The payload has carried `output.finish_unavailable`
+  // since cf#118 (assemble -> per-shot clips, mux -> silent film, with a reason) and this
+  // row threw it away. `finish-degrade.js` was already on the page -- planner.html loads
+  // it before this file -- and the row simply never called it.
+  //
+  // The band is stamped on EVERY row, in all four values, as a POSITIVE assertion rather
+  // than as the absence of a badge: "not measured" and "nothing reported" are different
+  // facts and neither may be read as "this film is complete". Degraded renders are
+  // `[data-finish-degrade="reported"]`; what could not be measured is
+  // `[data-finish-degrade="unmeasured"]`, which is the count that stops a run of
+  // unmeasurable rows from scoring as a clean run.
+  //
+  // With the helper absent the band is "unmeasured", which is the honest answer: no
+  // projection ran, so nothing was measured. It is never silently "nothing reported".
+  const finishBand = window.finishDegrade
+    ? window.finishDegrade.degradeBand(r.output)
+    : "unmeasured";
+  const finishDegradeInfo = window.finishDegrade
+    ? window.finishDegrade.degradeFrom(r.output)
+    : null;
+  li.dataset.finishDegrade = finishBand;
+
   const meta = document.createElement("div");
   meta.className = "planner-history-meta";
   meta.tabIndex = 0;
@@ -181,6 +206,20 @@ function buildHistoryRow(r, childrenByParent) {
           .join("\n")
       : "some shots failed and were skipped from the assembled cut";
     meta.appendChild(partBadge);
+  }
+
+  // cf#549: the finishing-degrade badge. Only the two bands that need a human are badged;
+  // the other two ride on data-finish-degrade above. Warn-toned, never error-toned -- the
+  // render SUCCEEDED, it just delivered less than a full finish.
+  const finishBandNote = window.finishDegrade
+    ? window.finishDegrade.bandNote(finishBand)
+    : null;
+  if (finishBandNote) {
+    const degBadge = document.createElement("span");
+    degBadge.className = "planner-history-mode planner-history-mode-degraded";
+    degBadge.textContent = finishBandNote.label;
+    degBadge.title = finishBandNote.title;
+    meta.appendChild(degBadge);
   }
 
   // v0.145.2: backlink to the keyframes preview this animation derives from.
@@ -443,24 +482,21 @@ function buildHistoryRow(r, childrenByParent) {
   rerun.addEventListener("click", () => rerunBundle(r));
   actions.appendChild(rerun);
 
-  // cf#331: the "retry" button that used to render here is GONE, and its absence is deliberate.
-  //
-  // It POSTed /api/storyboard/renders/<id>/retry, a route that has never existed in this repo or in
-  // vivijure-local -- `git log -S` finds it was never added. So every click on it, on the one
-  // control a user reaches for at the one moment a render has just failed, produced a bare 404.
-  //
-  // It was not removed in favour of a panel-side equivalent, because there is none to build
-  // honestly. The button promised a SERVER-side re-POST of the row's STORED args (project,
-  // bundle_key, quality_tier, render_overrides, mode) with the GPU resuming off its network volume
-  // so already-trained LoRAs and already-rendered shots are reused. A panel cannot resume a volume,
-  // and re-submitting from the panel's CURRENT state would silently render from different inputs
-  // than the original -- worse than a dead button, because the dead one at least failed loudly.
-  //
-  // Nobody is stranded: "re-render" above is ungated by status, so a failed row still offers it. It
-  // stages the bundle back into the render section and the user re-picks a tier. What is genuinely
-  // lost is the cheap one-click path that reuses the row's own arguments, and that is filed rather
-  // than quietly dropped -- it wants a real route, through the shared render door, not a ninth
-  // entry point.
+  // cf#353: real retry -- re-POSTs the row's STORED args via /renders/:id/retry.
+  // Server creates a NEW history row; the failed row stays for the audit trail.
+  // "re-render" above still stages the bundle into the panel for a fresh manual submit.
+  const isFailed =
+    r.status === "FAILED" || r.status === "CANCELLED" || r.status === "TIMED_OUT";
+  if (isFailed && r.mode !== "finalized" && r.mode !== "cloud-finalized") {
+    // Finalize/cloud failures use their own finalize/animate controls on the parent preview.
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "planner-history-action";
+    retry.textContent = "retry";
+    retry.title = "re-submit this render with the same stored args (new history row; GPU may resume off volume)";
+    retry.addEventListener("click", () => retryFailedRender(r, retry));
+    actions.appendChild(retry);
+  }
 
   // v0.35.4: delete the row from history (and the silent MP4 from R2 when
   // no other row references it). Confirmation prompt before any destructive
@@ -474,6 +510,32 @@ function buildHistoryRow(r, childrenByParent) {
   actions.appendChild(del);
 
   li.appendChild(actions);
+
+  // cf#549: the disclosure itself, in the expanded row, built from the SAME projection the
+  // live render view uses rather than a second parse of the same field. Our structural
+  // sentence first, then the studio reason VERBATIM -- never rewritten, never softened,
+  // because the studio wrote the truest available description of why the step is dead.
+  //
+  // Rendered only for the "reported" band. "unreadable" gets the badge and its title and
+  // no prose here, because there is nothing readable to quote and inventing a cause is the
+  // one thing this projection must never do.
+  if (finishDegradeInfo) {
+    const degWrap = document.createElement("div");
+    degWrap.className = "render-degrade planner-history-degrade";
+    degWrap.setAttribute("role", "note");
+    const degSummary = window.finishDegrade.deliveredSummary(finishDegradeInfo);
+    if (degSummary) {
+      const p = document.createElement("p");
+      p.className = "render-degrade-summary";
+      p.textContent = degSummary;
+      degWrap.appendChild(p);
+    }
+    const why = document.createElement("p");
+    why.className = "render-degrade-reason";
+    why.textContent = finishDegradeInfo.reason;
+    degWrap.appendChild(why);
+    li.appendChild(degWrap);
+  }
 
   // v0.129.0: inline movie player, full card width, directly below the action
   // buttons (view / re-render / delete). Completed rows that produced a silent
@@ -919,6 +981,130 @@ async function regenShot(row, kf, btnEl, imgEl) {
 // Reuses the existing /api/storyboard/render/<jobId> route (no new
 // poll endpoint; the GPU job is just another RunPod job from the
 // platform's perspective).
+// cf#515: the flat 4000ms this loop used to re-arm at, now the jitter BASE.
+const REGEN_POLL_MS = 4000;
+
+// cf#573 / cf#581: one poll loop per regen job, keyed by regen key, so two
+// concurrent regens back off, pause and resume independently. The loop object owns
+// the timer, the error streak and the paused flag; before this the return value of
+// the setTimeout was DISCARDED, so a regen poll could not be cancelled by anything
+// and there was nothing for a visibility handler to hold on to.
+const regenLoops = new Map();
+
+// cf#573: an attempt cap on the error path. Backoff bounds the RATE of retries but
+// nothing bounded the TOTAL, so a persistently failing route was polled forever by
+// every open tab, and the tab could not even be backgrounded to stop it. Five
+// consecutive failures against a 4s base with doubling backoff is roughly a minute
+// of trying before the regen is declared lost and the button is handed back to the
+// user. A regen that takes longer than that to answer at all is not coming back.
+const REGEN_MAX_ERROR_STREAK = 5;
+
+// cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
+// PR #563 for the render poll). Resolved at CALL time rather than load time,
+// because several vitest suites `eval` this file in plain Node where the global
+// does not exist; only a live poll needs the policy. It THROWS when the script is
+// missing rather than falling back to a flat interval: a silent fallback would
+// reintroduce exactly the unjittered loop this change removes, and would read as
+// working.
+function pollPolicy() {
+  var ps = (typeof pollSchedule !== "undefined" && pollSchedule)
+    || (typeof globalThis !== "undefined" && globalThis.pollSchedule);
+  if (!ps) throw new Error("poll-schedule.js is not loaded; refusing to poll unjittered (cf#515)");
+  return ps;
+}
+
+// cf#515 / cf#573 / cf#581: the ONE place the regen poll re-arms. This loop hits
+// GET /api/storyboard/render/<jobId> -- the SAME route the main render poll uses,
+// which drives advanceFilmJob and closes the film DB row -- at a 4s base, harder
+// than the render poll 8s base, and it can run CONCURRENTLY with the render poll
+// while a board is polling. Unjittered it synchronised exactly as the render poll
+// did before PR #563.
+//
+// THE DESIGN QUESTION cf#573 ASKS, ANSWERED RATHER THAN LEFT OPEN. Should a list
+// view hold a poller on a state-advancing route at all, and if it must, what owns
+// the lifecycle across page loads?
+//
+//   1. It is not the LIST that holds it. The poll is armed at the regen submit
+//      (regenShot below) and on restore of a submitted regen, never by rendering
+//      the history list. A list sitting at rest polls nothing on this path, so the
+//      claim that opening render history advances the jobs it lists is wrong.
+//      Holding a poller on a job the user just started is legitimate.
+//   2. What was NOT legitimate is that nothing owned the lifecycle. The timer
+//      handle was discarded, so the poll could not be cancelled; there was no
+//      visibility pause, so a backgrounded tab polled the state-advancing route
+//      forever; and the catch path re-armed with no cap, so a dead route was
+//      polled indefinitely.
+//   3. The lifecycle owner is now the loop object, one per regen key, held in
+//      regenLoops. Across page loads it is the PERSISTED entry that owns it:
+//      savePersistedState snapshots the regen job, restoreRegenJobs re-arms it,
+//      and that restore is already age-capped so a stale entry is dropped rather
+//      than re-armed. Terminal status destroys the loop and drops the entry, so
+//      the two halves cannot disagree.
+//
+// The base cadence is deliberately unchanged. cf#573 says in as many words that it
+// is not a request to change the interval, and moving a rate in the same change
+// that moves a distribution would confound the two in any measurement taken across
+// it (the reason PR #563 and PR #575 both left cadences alone).
+function regenLoop(regenKey) {
+  let loop = regenLoops.get(regenKey);
+  if (!loop) {
+    loop = pollPolicy().createLoop({
+      baseMs: REGEN_POLL_MS,
+      run: function () {
+        pollRegenJob(regenKey);
+      },
+      // Active while the job is still in the map. Terminal handling deletes the
+      // entry before destroying the loop, so a finished regen can neither be
+      // marked paused nor resumed by a later visibility change.
+      isActive: function () {
+        return historyState.regenJobs.has(regenKey);
+      },
+      maxErrorStreak: REGEN_MAX_ERROR_STREAK,
+      onGiveUp: function (streak) {
+        giveUpOnRegen(regenKey, streak);
+      },
+    });
+    regenLoops.set(regenKey, loop);
+  }
+  return loop;
+}
+
+// Drop a regen loop for good. Called on terminal status and on give-up, so the
+// per-key registry does not grow without bound across a long session.
+function destroyRegenLoop(regenKey) {
+  const loop = regenLoops.get(regenKey);
+  if (loop) loop.destroy();
+  regenLoops.delete(regenKey);
+}
+
+// cf#573: the attempt cap fired. Hand the button back rather than leaving it
+// disabled on a job nobody is polling any more, and drop the persisted entry so a
+// page reload does not resurrect the same dead poll.
+function giveUpOnRegen(regenKey, streak) {
+  const state = historyState.regenJobs.get(regenKey);
+  historyState.regenJobs.delete(regenKey);
+  destroyRegenLoop(regenKey);
+  savePersistedState();
+  if (!state) return;
+  const li = document.querySelector(
+    ".planner-history-item[data-id=" + JSON.stringify(String(state.rowId)) + "]",
+  );
+  const img = li && li.querySelector(
+    ".planner-history-keyframe-img[data-shot-id=" + JSON.stringify(cssEscape(state.shotId)) + "]",
+  );
+  const btn = li && li.querySelector(
+    ".planner-history-keyframe-regen[data-shot-id=" + JSON.stringify(cssEscape(state.shotId)) + "]",
+  );
+  if (img) img.classList.remove("planner-history-keyframe-img-regen-pending");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "regen";
+  }
+  console.warn(
+    "regen poll gave up for " + state.shotId + " after " + streak + " consecutive failures",
+  );
+}
+
 function pollRegenJob(regenKey) {
   const state = historyState.regenJobs.get(regenKey);
   if (!state) return;
@@ -933,7 +1119,7 @@ function pollRegenJob(regenKey) {
           || status === "TIMED_OUT"
       );
       if (!terminal) {
-        setTimeout(() => pollRegenJob(regenKey), 4000);
+        regenLoop(regenKey).armAfterSuccess(); // cf#515: a good poll clears the backoff
         return;
       }
       // Locate the current DOM nodes for this row + shot. The row may
@@ -949,6 +1135,7 @@ function pollRegenJob(regenKey) {
         '.planner-history-keyframe-regen[data-shot-id="' + cssEscape(state.shotId) + '"]',
       );
       historyState.regenJobs.delete(regenKey);
+      destroyRegenLoop(regenKey); // cf#515/cf#581: terminal; drop its loop and backoff state
       // v0.41.1: clear the stashed entry on terminal status so a
       // subsequent reload does not try to re-poll a finished job.
       savePersistedState();
@@ -976,7 +1163,9 @@ function pollRegenJob(regenKey) {
     })
     .catch((err) => {
       console.warn("regen poll failed:", err);
-      setTimeout(() => pollRegenJob(regenKey), 4000);
+      // cf#515: back off rather than re-arm flat. cf#573: and give up at the cap
+      // rather than re-arming against a dead route forever.
+      regenLoop(regenKey).armAfterError();
     });
 }
 
@@ -1644,12 +1833,6 @@ function resumeRender(row) {
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
     $("#planner-render-output-content").textContent = JSON.stringify(row.output, null, 2);
-    if (row.output_key) {
-      const url = "/api/artifact/" + row.output_key;
-      $("#planner-render-download").href = url;
-      $("#planner-render-download").download = (row.project || "silent") + ".mp4";
-      $("#planner-render-open").href = url;
-    }
     // In-flight rows may carry a render log on the persisted output blob;
     // surface it for visual continuity with a live poll.
     if (row.output && typeof row.output === "object" && Array.isArray(row.output.log)) {
@@ -1658,6 +1841,44 @@ function resumeRender(row) {
       $("#planner-render-log").textContent = row.output.log.join("\n");
     }
   }
+
+  // cf#549, found while wiring the band above and fixed in the same pass. This path
+  // repaints the render panel from a history row and never touched the cf#118 degrade
+  // disclosure or the CLEARED state of the download anchors: both are written only by
+  // renderDeliverable() on the live-poll path. So viewing a clean row after a degraded one
+  // left the previous render's warning standing over it, and in the other direction left
+  // the download button hidden on a row that does have a film. That is the same
+  // stale-artifact class cf#118 fixed for the live view, surviving in the resume path.
+  //
+  // Routed through the SAME projection instead of re-deriving the anchors here: every
+  // branch of renderDeliverable() writes them, including the empty case, and it repaints
+  // the degrade note from scratch so a stale one cannot outlive the render that made it.
+  //
+  // The input is composed rather than passed straight through, and WHICH SOURCE WINS is
+  // the load-bearing part. renderDeliverable() reads `output.output_key` off the poll
+  // BLOB; the row also carries a D1 `output_key` COLUMN, and they can disagree.
+  // MEASURED in the shipped core (`@skyphusion-labs/vivijure-core` 1.14.0,
+  // `dist/renders-db.js`): the advance path writes `output_key = COALESCE(?, output_key)`
+  // and `output_json = ?`. The column is therefore STICKY and the blob is rewritten on
+  // every advance, so a render that later degrades keeps a column value the blob no longer
+  // names. The blob wins whenever there is a blob: preferring the column there would
+  // resurrect the previous artifact on exactly the degraded render this change exists to
+  // make visible, which is the cf#118 stale-link bug pointed the other way.
+  // The column is used ONLY when there is no blob to read (`view.output === undefined`
+  // stores NULL), where it is the sole source rather than the stale one. `project` rides
+  // along purely to keep the download filename identical to the old resume behaviour.
+  const resumeOut =
+    row.output && typeof row.output === "object" && !Array.isArray(row.output)
+      ? Object.assign({}, row.output, {
+          project: row.output.project || row.project || null,
+        })
+      : row.output_key
+        ? { output_key: row.output_key, project: row.project || null }
+        : null;
+  renderDeliverable(
+    resumeOut,
+    window.finishDegrade ? window.finishDegrade.degradeFrom(row.output) : null,
+  );
 
   if (row.error) {
     const err = $("#planner-render-error");
@@ -1687,3 +1908,45 @@ function formatRelative(unixSeconds) {
   return Math.floor(delta / 86400) + "d ago";
 }
 
+
+
+// cf#353: one-click retry for a FAILED / CANCELLED / TIMED_OUT row.
+// POSTs /api/storyboard/renders/<id>/retry; Worker re-submits stored args.
+async function retryFailedRender(row, btnEl) {
+  const confirmMsg =
+    "retry this render?\n\n"
+    + "the studio re-submits the row's stored args (project, bundle, tier, overrides). "
+    + "a NEW history row is created; this failed row stays for the audit trail. "
+    + "on the same GPU endpoint within the volume retention window, already-trained "
+    + "LoRAs and shots may be reused.\n\ncontinue?";
+  if (!window.confirm(confirmMsg)) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = "submitting...";
+
+  let resp = null;
+  let data = null;
+  try {
+    resp = await fetch(
+      "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/retry",
+      { method: "POST" },
+    );
+    data = await resp.json();
+  } catch (err) {
+    btnEl.disabled = false;
+    btnEl.textContent = "retry";
+    window.alert("retry submit failed: " + err.message);
+    return;
+  }
+  if (!resp.ok || !data || !data.ok) {
+    btnEl.disabled = false;
+    btnEl.textContent = "retry";
+    const msg = (data && (data.error
+      || (Array.isArray(data.errors) && data.errors.join(", "))))
+      || ("HTTP " + (resp ? resp.status : "?"));
+    window.alert("retry submit failed: " + msg);
+    return;
+  }
+  btnEl.textContent = "retry submitted";
+  loadHistory();
+}

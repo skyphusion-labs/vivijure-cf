@@ -79,6 +79,15 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/renders\/[^/]+\/regen-shot$/,
   /^\/api\/storyboard\/renders\/[^/]+\/finalize$/,
   /^\/api\/storyboard\/renders\/[^/]+\/add-narration$/,
+  // cf#423: /retry is the FOURTH render-child GPU submit to reach this list late, and the second
+  // time this same family has drifted. retryFailedRender (src/render-retry.ts) calls startFilmJob
+  // for full / keyframes-only rows and animateFromPreview for finalize rows -- the identical submit
+  // paths as regen-shot and finalize above, re-dispatched from a stored row. The panel disables its
+  // button, but the MCP studio_request hatch reaches this route directly and never touches the DOM,
+  // so the button is not a bound. Asserted against the ROUTER, not against a transcribed list, in
+  // tests/spend-surface-render-children.test.ts: a render-child POST route added later fails there
+  // until it is classified, which is the check this list has twice lacked.
+  /^\/api\/storyboard\/renders\/[^/]+\/retry$/,
   /^\/api\/cast\/[^/]+\/train-lora$/,
   /^\/api\/cast\/[^/]+\/train-wan-lora$/,
   /^\/api\/cast\/[^/]+\/generate-refs$/,

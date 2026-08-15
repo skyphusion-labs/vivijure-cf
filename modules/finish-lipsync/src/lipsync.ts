@@ -148,6 +148,12 @@ export function classifyGoneState(
  *  version, applied:["lipsync:v15"] }. It echoes the new key as `clip_key`. */
 export interface BackendOutput {
   clip_key?: string;
+  /** cf#578 PRESIGNED MODE. vivijure-musetalk carries TWO return shapes and dispatches on the
+   *  INPUT: with `clip_key` it runs the credentialed R2 branch and echoes the written key back as
+   *  `clip_key` (handler.py:671); without it, it runs the credentialless presigned branch and
+   *  returns the SAME written key as `output_key` (handler.py:717). One artifact, two field names.
+   *  Reading only the first turned a finished, uploaded, paid-for artifact into a parse failure. */
+  output_key?: string;
   applied?: string[];
 }
 
@@ -156,8 +162,19 @@ export function parseBackendOutput(output: unknown): BackendOutput | null {
   const o = output as Record<string, unknown>;
   return {
     clip_key: typeof o.clip_key === "string" ? o.clip_key : undefined,
+    output_key: typeof o.output_key === "string" ? o.output_key : undefined,
     applied: Array.isArray(o.applied) ? (o.applied as string[]) : [],
   };
+}
+
+/** The key the endpoint actually WROTE, whichever transport it ran on (cf#578).
+ *
+ *  Which field carries it is decided by a branch on the SATELLITE (key present -> R2 -> `clip_key`;
+ *  key absent -> presigned -> `output_key`), so the caller cannot know from its own response which
+ *  to read, and must not have to. `undefined` means the job COMPLETED and produced no artifact -- a
+ *  real absence, and the only case that degrades. */
+export function finishedKey(out: BackendOutput | null): string | undefined {
+  return out?.clip_key ?? out?.output_key;
 }
 
 // Cold-start cap: on a VIRGIN host the image pull (10-20GB) can outlive the normal #141 grace window

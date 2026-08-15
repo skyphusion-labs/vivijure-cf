@@ -25,7 +25,9 @@ import {
   type FinishOutput,
 } from "./contract";
 import {
-  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
+  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey, appliedTags,
+  passthroughOutput,
+  type PollState,
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
 } from "./finish";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
@@ -252,6 +254,31 @@ function passthrough(
   return { ok: true, output };
 }
 
+
+/** cf#578 POLL-TIME SOFT DEGRADE, the same decision speech-upscale already makes at its poll site.
+ *
+ *  A finish step is POLISH. When the endpoint completes but yields no artifact, the honest answer is
+ *  the input clip passed through with the reason RECORDED, not a chain failure: an `ok:false` here
+ *  routes to the chain failure path and never reaches the degrade accounting, so the entire class is
+ *  invisible in telemetry while the render dies. Only MALFORMED I/O fails loud.
+ *
+ *  Returns null when the token predates cf#578 and carries no clipKey. There is nothing to pass
+ *  through then, and inventing a key would be worse than the error it replaced -- the caller keeps
+ *  the terminal error and its message says which case it is.
+ */
+function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> | null {
+  if (!st.clipKey) return null;
+  console.warn(`finish-upscale: poll passthrough (${reason}) shot=${st.shotId}`);
+  return {
+    ok: true,
+    output: passthroughOutput(
+      { shot_id: st.shotId, clip_key: st.clipKey, src_fps: st.srcFps, frames: st.frames },
+      reason,
+      detail ? { detail } : {},
+    ),
+  };
+}
+
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
   if (!input?.shot_id || !input?.clip_key) {
@@ -334,6 +361,10 @@ async function submitVia(
       pending: true,
       poll: encodePoll({
         jobId, shotId: input.shot_id, srcFps: input.src_fps ?? 24, frames: input.frames ?? 0, submittedAt,
+        // cf#578: the INPUT clip, so the poll site can pass it through on a real absence instead
+        // of failing the chain. finish-lipsync has always carried it; that asymmetry is why the
+        // two poll sites could not make the same decision before.
+        clipKey: input.clip_key,
         // cf#480 affinity. Undefined on the RunPod arm, which is what every pre-existing token
         // carries, so old tokens and RunPod tokens stay the same object.
         door: t.name || undefined,
@@ -361,11 +392,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     const door = resolveDoor(await doorsFor(env), st.door);
     if (!door) {
       // The binding was removed while this job was in flight. Refusing to guess is the only honest
-      // answer: a poll against RunPod would 404 and fail the shot, and there is nothing to degrade
-      // to -- this module's poll token carries shotId/srcFps/frames but NOT the input clip_key, so
-      // a poll-time passthrough cannot reconstruct the clip it would be passing through. (Its
-      // sibling speech-upscale CAN degrade here, because its token does carry audio_key. Same
-      // rule, different answer, decided by what the token holds and not by preference.)
+      // answer, and cf#578 CHANGED THE REASON WITHOUT CHANGING THE ANSWER, so the reason is
+      // restated rather than left as it was. It used to be that the poll token carried no
+      // `clip_key` and a passthrough could not reconstruct the clip; the token now carries it
+      // (clipKey), so the module COULD degrade here. It still must not: this job may be RUNNING or
+      // FINISHED on the box that was unbound, and passing the input through would report a
+      // finished shot as unpolished and discard an artifact that exists. The no-artifact degrade
+      // at the poll site below is a different fact -- there the endpoint COMPLETED and produced
+      // nothing, which is knowable; here nothing is knowable at all.
       return { ok: false, error: "finish-upscale: door " + st.door + " is not bound; job " + st.jobId + " was in flight on it; cannot poll (cf#480/#507)" };
     }
     const problem = doorProblem(door);
@@ -464,15 +498,30 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
 
   const out = parseBackendOutput(s.output);
-  if (!out?.clip_key) return { ok: false, error: "finish-upscale: backend returned no clip_key" };
+  // cf#578: the endpoint completed. WHICH FIELD carries the written key depends on a branch on the
+  // SATELLITE, not on anything visible here -- R2 mode echoes it as `clip_key`, presigned mode
+  // returns it as `output_key` and sends no `applied`. Reading only `clip_key` turned a finished,
+  // uploaded, paid-for artifact into a parse failure on the exact path cf#449 makes preferred.
+  const key = finishedKey(out);
+  if (!key) {
+    // A REAL absence: COMPLETED with no artifact. Polish never fails the chain (#77/#249), and an
+    // `ok:false` here would also skip the degrade accounting entirely, so the class would be
+    // invisible. Same decision as speech-upscale and finish-lipsync, at the same site.
+    const degraded = pollPassthrough(st, "no-output-key");
+    if (degraded) return degraded;
+    return { ok: false, error: "finish-upscale: backend returned no clip_key or output_key, and this poll token predates cf#578 so there is no clip to pass through" };
+  }
   return {
     ok: true,
     output: {
-      shot_id: out.shot_id ?? st.shotId,
-      clip_key: out.clip_key,
-      out_fps: out.out_fps ?? st.srcFps,
-      frames: out.frames ?? st.frames,
-      applied: out.applied ?? [],
+      shot_id: out?.shot_id ?? st.shotId,
+      clip_key: key,
+      out_fps: out?.out_fps ?? st.srcFps,
+      frames: out?.frames ?? st.frames,
+      // cf#578: presigned mode sends no applied array, but DOES report the scale it ran at, so
+      // the provenance tag is derived from the endpoint own report rather than lost or invented.
+      // See appliedTags in finish.ts for why the config is not an acceptable source.
+      applied: appliedTags(out),
     },
   };
 }

@@ -551,9 +551,20 @@
     const motionWrap = document.getElementById("planner-motion-backend-wrap");
     if (!root || !global.plannerRegistry) return;
 
-    await global.plannerRegistry.load();
-    const resp = await fetch("/api/modules");
-    const data = resp.ok ? await resp.json() : { modules: [], hooks: {}, catalog: [] };
+    // cf#515: USE what the shared registry already fetched, rather than awaiting it and
+    // then issuing a SECOND request for the same payload on the next line. planner-registry.js
+    // exists to make GET /api/modules "one fetch" (its own header says so) and this was the
+    // one caller defeating it, on adjacent lines.
+    //
+    // load() returns the same {modules, hooks, catalog, render} payload and degrades to the
+    // same empty shape on a non-ok response, so this is behaviour-identical on both paths --
+    // and strictly MORE robust on a transport throw, which load() catches and the bare fetch
+    // did not.
+    //
+    // It also removes a real inconsistency rather than only a request: this panel could
+    // previously render a DIFFERENT registry snapshot than every other planner control, since
+    // the others all read the memo and this one re-fetched.
+    const data = await global.plannerRegistry.load();
     renderTierPicker(data.render);
 
     const byName = Object.fromEntries((data.modules || []).map((m) => [m.name, m]));
