@@ -279,3 +279,121 @@ describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render 
     expect(sh).not.toContain(SCRIPT);
   });
 });
+
+// ------------------------------------------------------------------------------------------------
+// cf#560 ROUND THREE: the strip being CALLED is not the strip's output being DEPLOYED.
+//
+// The block above asserts that every derived hosted render path carries a line which RUNS
+// scripts/strip-local-gpu.sh. Driven on 2026-08-16, that is not sufficient, and the gap is one line
+// wide. Leave ci.yml's strip invocation exactly where it is and revert only the NEXT line, so the
+// render reads the TEMPLATE again instead of the stripped intermediate:
+//
+//   sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml   <- untouched
+//   envsubst ... < wrangler.toml.example > wrangler.toml                        <- reverted
+//
+// The strip still runs, still exits 0, still prints "delta 1, as required", and writes its output to
+// an intermediate that nothing then reads. local-gpu ships to the hosted studio and THIS SUITE
+// REPORTED 14/14 GREEN. That is this file's own lesson moved up exactly one level: it already knew a
+// MENTION IS NOT A CALLER, and the same shape survived one rung higher, because A CALLER IS NOT A
+// CONSUMER. The guard could not go red on the defect it exists for.
+//
+// So assert the DATA PATH rather than the invocation: the file the strip WRITES must be the file the
+// render READS.
+// ------------------------------------------------------------------------------------------------
+describe("cf#560 -- the strip OUTPUT is what gets rendered, not merely that the strip ran", () => {
+  /** Per workflow: every strip invocation OUT argument must feed the rendered wrangler.toml. */
+  function stripDataPath(text: string): { calls: number; consumed: number } {
+    const lines = text.split("\n");
+    let calls = 0;
+    let consumed = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t.startsWith("sh " + SCRIPT + " ")) continue;
+      calls++;
+      const out = t.split(/\s+/)[3];
+      if (!out) continue;
+      const feeds = lines
+        .slice(i + 1)
+        .some((l) => l.includes("< " + out) && />\s*wrangler\.toml\b/.test(l));
+      if (feeds) consumed++;
+    }
+    return { calls, consumed };
+  }
+
+  it("NEGATIVE CONTROL: the matcher refuses the exact reversion that kept this suite green", () => {
+    // The mutation is applied to the REAL ci.yml rather than to a hand-written fixture, so the
+    // control cannot drift away from the file it is a control for.
+    const ci = readFileSync(join(WORKFLOW_DIR, "ci.yml"), "utf8");
+    const real = stripDataPath(ci);
+    expect(real.calls).toBeGreaterThan(0);
+    expect(real.consumed).toBe(real.calls);
+
+    const reverted = ci.replace(
+      "< .wrangler.hosted.toml > wrangler.toml",
+      "< wrangler.toml.example > wrangler.toml",
+    );
+    expect(reverted).not.toBe(ci); // the mutation must LAND before the result means anything
+    const broken = stripDataPath(reverted);
+    // The strip is still INVOKED exactly as often -- that is the point. Only the data path breaks.
+    expect(broken.calls).toBe(real.calls);
+    expect(broken.consumed).toBe(0);
+    expect(invokesStrip(reverted)).toBe(true);
+  });
+
+  for (const { name, text } of hostedRenderWorkflows()) {
+    it(name + ": every strip invocation output feeds the rendered wrangler.toml", () => {
+      const { calls, consumed } = stripDataPath(text);
+      expect(calls).toBeGreaterThan(0); // a zero would make the next line vacuously true
+      expect(consumed).toBe(calls);
+    });
+  }
+});
+
+// ------------------------------------------------------------------------------------------------
+// THE HOSTED PATHS THAT RENDER NO CONFIG AT ALL.
+//
+// The population derived above answers "which paths render wrangler.toml.example", which is a
+// NARROWER question than the invariant. The invariant is about HOSTED STUDIOS. Two hosted paths
+// carry a local-gpu control that nothing asserted, and neither renders the template, so neither can
+// ever appear in that derivation:
+//
+//   * ci.yml exports EXCLUDE="... local-gpu" before scripts/deploy-module-workers.sh, which deploys
+//     every modules/*/wrangler.toml to OUR account. Delete that export and no test noticed.
+//   * scripts/tenant-release-modules.txt drives the tenant module bundles studio-release.yml
+//     publishes. Add local-gpu to that file and no test noticed.
+//
+// An uncovered path that reads as covered because a NEIGHBOURING path is covered is the entire
+// cf#560 shape. Named and asserted here rather than left to be rediscovered a fourth time.
+// ------------------------------------------------------------------------------------------------
+describe("cf#560 -- hosted paths that render no config still exclude local-gpu", () => {
+  const ci = readFileSync(join(WORKFLOW_DIR, "ci.yml"), "utf8");
+
+  it("ci.yml excludes local-gpu BEFORE it invokes the module-worker deployer", () => {
+    const lines = ci.split("\n");
+    const at = lines.findIndex((l) => l.trim().startsWith("scripts/deploy-module-workers.sh"));
+    // FLOOR: if the deployer is no longer invoked, the ordering assertion below proves nothing.
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(0, at).join("\n")).toMatch(/^\s*export EXCLUDE=.*local-gpu/m);
+  });
+
+  it("...and the deployer HONOURS EXCLUDE (an export nothing reads is decoration)", () => {
+    // Half a control is not a control: the caller setting a variable and the callee acting on it
+    // are two independent facts, and asserting only the first is how a gate stops being one.
+    const sh = readFileSync("scripts/deploy-module-workers.sh", "utf8");
+    expect(sh).toContain("EXCLUDE=");
+    expect(sh).toContain("for ex in $EXCLUDE");
+  });
+
+  it("the tenant release module list does not publish local-gpu", () => {
+    const names = readFileSync("scripts/tenant-release-modules.txt", "utf8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("#"));
+    // FLOOR + POSITIVE CONTROL. An empty list satisfies the absence below for the wrong reason, and
+    // a matcher that can find nothing cannot prove that local-gpu in particular is missing.
+    expect(names.length).toBeGreaterThan(1);
+    expect(names).toContain("keyframe");
+    expect(names).not.toContain("local-gpu");
+    expect(names).not.toContain("i2v-local-gpu");
+  });
+});
