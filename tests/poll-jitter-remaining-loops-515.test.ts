@@ -36,7 +36,11 @@ describe("cf#515: every remaining poll loop arms through the shared policy", () 
     // or the null below is a statement about the regex and not about the file.
     expect((code + "\n    }, POLL_MS);").match(/\}, POLL_MS\);/g)?.length).toBe(1);
     expect(code.match(/\}, POLL_MS\);/g)).toBe(null);
-    expect(code).toContain("nextPollDelayMs({ baseMs: POLL_MS })");
+    // cf#581: the delay call moved INSIDE the shared loop primitive, so what is
+    // asserted here is that the base is still handed to the policy, and that the
+    // loop now owns the lifecycle too.
+    expect(code).toContain("baseMs: POLL_MS");
+    expect(code).toContain("createLoop({");
   });
 
   it("cast.js arms the LoRA poll through the policy and backs off on error", () => {
@@ -45,13 +49,13 @@ describe("cf#515: every remaining poll loop arms through the shared policy", () 
       .match(/setTimeout\(\(\) => pollLoraStatus\(id\), LORA_POLL_MS\)/g)?.length).toBe(1);
     expect(code.match(/setTimeout\(\(\) => pollLoraStatus\(id\), LORA_POLL_MS\)/g)).toBe(null);
     expect(code).toContain("baseMs: LORA_POLL_MS");
-    // Backoff is a SEPARATE property from jitter: assert both directions of the
-    // streak, because an increment with no reset backs off forever.
-    expect(code).toContain("loraPollErrorStreak += 1");
-    // Negative lookbehind on `let `: the DECLARATION is `let loraPollErrorStreak = 0;`,
-    // so a bare toContain here is satisfied by the declaration and stays green when the
-    // RESET is deleted. The mutation pass caught that; reading the assertion did not.
-    expect(code.match(/(?<!let )loraPollErrorStreak = 0/g)?.length).toBe(1);
+    // cf#581: the per-file error streak moved INTO the shared primitive, which owns
+    // the timer, the streak and the paused flag together. Backoff is still a
+    // SEPARATE property from jitter, so both directions are still asserted; they are
+    // now named calls rather than a hand-rolled counter, which is what removed the
+    // declaration-satisfies-the-assertion trap this test used to have to dodge.
+    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(1);
+    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(1);
   });
 
   it("planner-audio.js routes BOTH arms through one scheduler and backs off", () => {
@@ -59,15 +63,14 @@ describe("cf#515: every remaining poll loop arms through the shared policy", () 
     expect((code + "\n    musicPollTimer = setTimeout(pollScoreBedJob, MUSIC_POLL_MS);")
       .match(/setTimeout\(pollScoreBedJob, MUSIC_POLL_MS\)/g)?.length).toBe(1);
     expect(code.match(/setTimeout\(pollScoreBedJob, MUSIC_POLL_MS\)/g)).toBe(null);
-    // TWO call sites, so this is the shared path and not a helper sitting beside a
+    // TWO arms, so this is the shared path and not a helper sitting beside a
     // surviving inline re-arm. The error arm was the flat one #563 fixed for render.
-    // Negative lookbehind excludes the function DECLARATION: a definition is not a
-    // call site, and counting it inflated this to 3 on correct code. Chased rather
-    // than absorbed into the expectation.
-    expect((code.match(/(?<!function )scheduleScoreBedPoll\(\)/g) || []).length).toBe(2);
-    expect(code).toContain("musicPollErrorStreak += 1");
-    // Same declaration-satisfies-the-assertion trap as cast.js above.
-    expect(code.match(/(?<!let )musicPollErrorStreak = 0/g)?.length).toBe(1);
+    // cf#581 replaced the local scheduleScoreBedPoll funnel with the loop object,
+    // which made that funnel dead code; it was removed rather than left as a
+    // one-line passthrough nothing calls.
+    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(1);
+    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(1);
+    expect(code).toContain("createLoop({");
   });
 
   it("planner-history-row.js routes BOTH arms through one scheduler and backs off", () => {
@@ -75,13 +78,14 @@ describe("cf#515: every remaining poll loop arms through the shared policy", () 
     expect((code + "\n        setTimeout(() => pollRegenJob(regenKey), 4000);")
       .match(/setTimeout\(\(\) => pollRegenJob\(regenKey\), 4000\)/g)?.length).toBe(1);
     expect(code.match(/setTimeout\(\(\) => pollRegenJob\(regenKey\), 4000\)/g)).toBe(null);
-    expect((code.match(/(?<!function )scheduleRegenPoll\(regenKey\)/g) || []).length).toBe(2);
     expect(code).toContain("baseMs: REGEN_POLL_MS");
-    expect(code).toContain("regenPollErrorStreaks.set(");
-    // TWO deletes: one clears the backoff on a good poll, one drops the job state when
-    // the job goes terminal. Counting them means removing either one reddens; a bare
-    // toContain is satisfied by whichever survives.
-    expect((code.match(/regenPollErrorStreaks\.delete\(/g) || []).length).toBe(2);
+    // cf#581: the per-key streak Map became a per-key LOOP, which owns the streak.
+    // Both directions are still counted, one arm each, so deleting either reddens.
+    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(1);
+    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(1);
+    // cf#573: and the loop is DESTROYED on the terminal path and on give-up, so the
+    // per-key registry cannot grow without bound across a long session.
+    expect((code.match(/destroyRegenLoop\(/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 
   it("planner-history-list.js jitters its auto-refresh and KEEPS its hidden guard", () => {
