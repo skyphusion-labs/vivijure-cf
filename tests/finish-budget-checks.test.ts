@@ -247,3 +247,171 @@ describe("cf#540 the file introduces NO constant of its own", () => {
     expect(a.maxSeconds).not.toBe(b.maxSeconds);
   });
 });
+
+// ---------------------------------------------------------------------------
+// cf#540 second pass: the COUNTABLE denominator.
+//
+// The first pass shipped "unknown admits, and says so once per render". That was endorsed with a
+// requirement attached, and the requirement is a correction to our own reasoning: one info line
+// per render is a LOG ENTRY, and a log entry is what nobody reads. Six months on, every module
+// still declares nothing, the guard has never refused once, and it reads on the board as shipped
+// and working -- a gate that passes because it matched nothing, rebuilt inside the decision we
+// argued for.
+//
+// The sharper half: we separated `unavailable` from `undeclared` per render BECAUSE they are
+// different facts owned by different parties, and then failed to apply that same distinction one
+// level up. An aggregate that renders "could not read the registry" as a low N is exactly the
+// collapse we refused per-module.
+// ---------------------------------------------------------------------------
+
+describe("cf#540 the coverage denominator is DERIVED, never hardcoded", () => {
+  it("counts modules that declare a finish cost against the finish modules INSTALLED", () => {
+    const c = checks.finishCostCoverage([UPSCALE, RIFE_NO_COST, BLENDER], false);
+    expect(c.state).toBe("measured");
+    expect(c.declared).toBe(1);
+    expect(c.installed).toBe(3);
+  });
+
+  it("the denominator MOVES with the registry, so it cannot drift from what is installed", () => {
+    const two = checks.finishCostCoverage([UPSCALE, RIFE_NO_COST], false);
+    const three = checks.finishCostCoverage([UPSCALE, RIFE_NO_COST, BLENDER], false);
+    expect(two.installed).toBe(2);
+    expect(three.installed).toBe(3);
+    expect(two.installed).not.toBe(three.installed);
+  });
+
+  it("counts an OPT-IN module too, because it is installed whether or not this render selects it", () => {
+    // The coverage number is a property of the STUDIO, not of one render. An opt_in module that
+    // declares nothing is still a hole in the estate's coverage, and excluding it would let the
+    // number read complete while a selectable module remains silent.
+    const c = checks.finishCostCoverage([UPSCALE, BLENDER], false);
+    expect(c.installed).toBe(2);
+    expect(c.undeclared.map((m) => m.name)).toContain("finish-blender");
+  });
+
+  it("names WHICH modules are silent, so the number is actionable and not just a score", () => {
+    const c = checks.finishCostCoverage([UPSCALE, RIFE_NO_COST], false);
+    expect(c.undeclared.map((m) => m.name)).toEqual(["finish-rife"]);
+  });
+
+  it("zero installed finish modules is a real MEASURED zero, not an absence", () => {
+    const c = checks.finishCostCoverage([], false);
+    expect(c.state).toBe("measured");
+    expect(c.declared).toBe(0);
+    expect(c.installed).toBe(0);
+  });
+
+  it("a partial declaration does not count as declared, matching costOf", () => {
+    const partial = mod({ name: "finish-partial", finish_cost: { seconds_per_second: 268 } as never });
+    const c = checks.finishCostCoverage([partial], false);
+    expect(c.declared).toBe(0);
+    expect(c.installed).toBe(1);
+  });
+});
+
+describe("cf#540 THE AGGREGATE CARRIES THE SAME THREE-WAY SPLIT AS THE PER-RENDER PATH", () => {
+  // This block is the whole point of the second pass. If these can be satisfied by an
+  // implementation that reports a number when it could not read the registry, nothing has changed.
+
+  it("an unreadable registry reports UNAVAILABLE, never a count", () => {
+    const c = checks.finishCostCoverage([], true);
+    expect(c.state).toBe("unavailable");
+  });
+
+  it("STRUCTURAL: an unreadable registry reports NULL, never 0 of 0", () => {
+    const c = checks.finishCostCoverage([], true);
+    expect(c.declared).toBeNull();
+    expect(c.installed).toBeNull();
+    expect(c.declared).not.toBe(0);
+    expect(c.installed).not.toBe(0);
+  });
+
+  it("STRUCTURAL: an unreadable registry reports NULL even when modules were passed, never 0 of M", () => {
+    // The dangerous shape: a stale or partial module list survives a failed refetch and gets
+    // counted, so "could not ask" renders as a low score against a real-looking denominator.
+    const c = checks.finishCostCoverage([UPSCALE, RIFE_NO_COST, BLENDER], true);
+    expect(c.state).toBe("unavailable");
+    expect(c.declared).toBeNull();
+    expect(c.installed).toBeNull();
+  });
+
+  it("DISCRIMINATION: cannot-ask and nothing-installed differ, with IDENTICAL module inputs", () => {
+    const cannotAsk = checks.finishCostCoverage([], true);
+    const noneInstalled = checks.finishCostCoverage([], false);
+    expect(cannotAsk.state).not.toBe(noneInstalled.state);
+    expect(cannotAsk.installed).toBeNull();
+    expect(noneInstalled.installed).toBe(0);
+  });
+
+  it("DISCRIMINATION: cannot-ask and none-declared differ, with IDENTICAL module inputs", () => {
+    const cannotAsk = checks.finishCostCoverage([RIFE_NO_COST], true);
+    const noneDeclared = checks.finishCostCoverage([RIFE_NO_COST], false);
+    expect(cannotAsk.state).not.toBe(noneDeclared.state);
+    expect(cannotAsk.declared).toBeNull();
+    expect(noneDeclared.declared).toBe(0);
+  });
+});
+
+describe("cf#540 the coverage line is STRUCTURED, and readable without grepping renders", () => {
+  it("renders a machine-readable triple a check can assert on", () => {
+    const a = checks.coverageAttrs(checks.finishCostCoverage([UPSCALE, RIFE_NO_COST], false));
+    expect(a["data-finish-cost-state"]).toBe("measured");
+    expect(a["data-finish-cost-declared"]).toBe("1");
+    expect(a["data-finish-cost-installed"]).toBe("2");
+  });
+
+  it("the machine-readable triple carries NO number when the registry could not be read", () => {
+    const a = checks.coverageAttrs(checks.finishCostCoverage([UPSCALE], true));
+    expect(a["data-finish-cost-state"]).toBe("unavailable");
+    expect(a["data-finish-cost-declared"]).toBe("");
+    expect(a["data-finish-cost-installed"]).toBe("");
+  });
+
+  it("the human line states N of M in terms", () => {
+    const t = checks.coverageText(checks.finishCostCoverage([UPSCALE, RIFE_NO_COST], false));
+    expect(t).toContain("declared by 1 of 2 installed finish modules");
+  });
+
+  it("the human line for a total hole reads as an argument with a denominator attached", () => {
+    const t = checks.coverageText(checks.finishCostCoverage([RIFE_NO_COST, BLENDER], false));
+    expect(t).toContain("declared by 0 of 2 installed finish modules");
+  });
+
+  it("the human line for an unreadable registry states the FAILURE, never a score", () => {
+    const t = checks.coverageText(checks.finishCostCoverage([UPSCALE], true));
+    expect(t).toContain("could not be read");
+    expect(t).not.toMatch(/\d+ of \d+/);
+  });
+
+  it("NEGATIVE CONTROL: no coverage line ever claims the shots are safe", () => {
+    const lines = [
+      checks.coverageText(checks.finishCostCoverage([UPSCALE], false)),
+      checks.coverageText(checks.finishCostCoverage([RIFE_NO_COST], false)),
+      checks.coverageText(checks.finishCostCoverage([UPSCALE], true)),
+    ];
+    for (const t of lines) {
+      expect(t).not.toMatch(/\bwill finish\b|\bis fine\b|\bno problem\b|\bsafe\b/i);
+    }
+  });
+});
+
+describe("cf#540 the per-render info line carries the COUNT, so the render path is countable too", () => {
+  it("the undeclared notice states N of M rather than only naming modules", () => {
+    const b = checks.finishBudget([UPSCALE, RIFE_NO_COST], undefined, false);
+    const m = checks.finishBudgetIssues(sb([{ id: "s", target_seconds: 60 }]), b, [UPSCALE, RIFE_NO_COST])[0].message;
+    expect(m).toContain("1 of 2 installed finish modules");
+  });
+
+  it("the guard the lead asked to survive: that notice still never reassures", () => {
+    const b = checks.finishBudget([RIFE_NO_COST], undefined, false);
+    const m = checks.finishBudgetIssues(sb([{ id: "s", target_seconds: 60 }]), b, [RIFE_NO_COST])[0].message;
+    expect(m).not.toMatch(/\bwill finish\b|\bis fine\b|\bno problem\b|\bsafe\b/i);
+    expect(m).toContain("may still fail at the finish door");
+  });
+
+  it("omitting the module list keeps the notice honest rather than printing a wrong denominator", () => {
+    const b = checks.finishBudget([RIFE_NO_COST], undefined, false);
+    const m = checks.finishBudgetIssues(sb([{ id: "s", target_seconds: 60 }]), b)[0].message;
+    expect(m).not.toMatch(/\d+ of \d+ installed/);
+  });
+});

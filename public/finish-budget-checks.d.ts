@@ -96,4 +96,36 @@ export function finishBudget(
 export function finishBudgetIssues(
   storyboard: StoryboardLike | null | undefined,
   budget: FinishBudget | null | undefined,
+  /** cf#579: the INSTALLED finish modules, so the per-render notice can state N of M. Omit it and
+   *  the notice prints no denominator rather than a wrong one. */
+  installed?: FinishModuleLike[] | null,
 ): FinishBudgetIssue[];
+
+/** cf#579: the registry-derived coverage census.
+ *
+ *  `declared` and `installed` are NUMBERS when state is "measured" and NULL when the registry could
+ *  not be read. Null rather than zero is the load-bearing part: a zero here is a measurement, and
+ *  reporting one we did not take is the collapse the per-render path already refuses. */
+export interface FinishCostCoverage {
+  state: "measured" | "unavailable";
+  declared: number | null;
+  installed: number | null;
+  declaredModules: FinishModuleLike[];
+  undeclared: FinishModuleLike[];
+}
+
+export const MEASURED: string;
+/** Census over the INSTALLED finish modules (the registry projection), not over one render's
+ *  selection: an opt_in module that declares nothing is still a hole in the studio's coverage. */
+export function finishCostCoverage(
+  installed: FinishModuleLike[] | null | undefined,
+  registryUnavailable: boolean,
+): FinishCostCoverage;
+/** The machine-readable triple. Empty strings, never "0", when the registry could not be read. */
+export function coverageAttrs(cov: FinishCostCoverage | null | undefined): {
+  "data-finish-cost-state": string;
+  "data-finish-cost-declared": string;
+  "data-finish-cost-installed": string;
+};
+export function coverageText(cov: FinishCostCoverage | null | undefined): string;
+
