@@ -26,6 +26,31 @@ function buildHistoryRow(r, childrenByParent) {
   const isExpanded = historyState.expandedIds.has(r.id);
   if (!isExpanded) li.classList.add("planner-history-item-collapsed");
 
+  // cf#549: render history was structurally blind to degradation. A film that shipped
+  // without part of its finish was `done`, `errors: []`, and byte-identical here to one
+  // that shipped complete -- so the incidence could not be counted, and a load test could
+  // not fail on this axis at all. The payload has carried `output.finish_unavailable`
+  // since cf#118 (assemble -> per-shot clips, mux -> silent film, with a reason) and this
+  // row threw it away. `finish-degrade.js` was already on the page -- planner.html loads
+  // it before this file -- and the row simply never called it.
+  //
+  // The band is stamped on EVERY row, in all four values, as a POSITIVE assertion rather
+  // than as the absence of a badge: "not measured" and "nothing reported" are different
+  // facts and neither may be read as "this film is complete". Degraded renders are
+  // `[data-finish-degrade="reported"]`; what could not be measured is
+  // `[data-finish-degrade="unmeasured"]`, which is the count that stops a run of
+  // unmeasurable rows from scoring as a clean run.
+  //
+  // With the helper absent the band is "unmeasured", which is the honest answer: no
+  // projection ran, so nothing was measured. It is never silently "nothing reported".
+  const finishBand = window.finishDegrade
+    ? window.finishDegrade.degradeBand(r.output)
+    : "unmeasured";
+  const finishDegradeInfo = window.finishDegrade
+    ? window.finishDegrade.degradeFrom(r.output)
+    : null;
+  li.dataset.finishDegrade = finishBand;
+
   const meta = document.createElement("div");
   meta.className = "planner-history-meta";
   meta.tabIndex = 0;
@@ -181,6 +206,20 @@ function buildHistoryRow(r, childrenByParent) {
           .join("\n")
       : "some shots failed and were skipped from the assembled cut";
     meta.appendChild(partBadge);
+  }
+
+  // cf#549: the finishing-degrade badge. Only the two bands that need a human are badged;
+  // the other two ride on data-finish-degrade above. Warn-toned, never error-toned -- the
+  // render SUCCEEDED, it just delivered less than a full finish.
+  const finishBandNote = window.finishDegrade
+    ? window.finishDegrade.bandNote(finishBand)
+    : null;
+  if (finishBandNote) {
+    const degBadge = document.createElement("span");
+    degBadge.className = "planner-history-mode planner-history-mode-degraded";
+    degBadge.textContent = finishBandNote.label;
+    degBadge.title = finishBandNote.title;
+    meta.appendChild(degBadge);
   }
 
   // v0.145.2: backlink to the keyframes preview this animation derives from.
@@ -471,6 +510,32 @@ function buildHistoryRow(r, childrenByParent) {
   actions.appendChild(del);
 
   li.appendChild(actions);
+
+  // cf#549: the disclosure itself, in the expanded row, built from the SAME projection the
+  // live render view uses rather than a second parse of the same field. Our structural
+  // sentence first, then the studio reason VERBATIM -- never rewritten, never softened,
+  // because the studio wrote the truest available description of why the step is dead.
+  //
+  // Rendered only for the "reported" band. "unreadable" gets the badge and its title and
+  // no prose here, because there is nothing readable to quote and inventing a cause is the
+  // one thing this projection must never do.
+  if (finishDegradeInfo) {
+    const degWrap = document.createElement("div");
+    degWrap.className = "render-degrade planner-history-degrade";
+    degWrap.setAttribute("role", "note");
+    const degSummary = window.finishDegrade.deliveredSummary(finishDegradeInfo);
+    if (degSummary) {
+      const p = document.createElement("p");
+      p.className = "render-degrade-summary";
+      p.textContent = degSummary;
+      degWrap.appendChild(p);
+    }
+    const why = document.createElement("p");
+    why.className = "render-degrade-reason";
+    why.textContent = finishDegradeInfo.reason;
+    degWrap.appendChild(why);
+    li.appendChild(degWrap);
+  }
 
   // v0.129.0: inline movie player, full card width, directly below the action
   // buttons (view / re-render / delete). Completed rows that produced a silent
@@ -1641,12 +1706,6 @@ function resumeRender(row) {
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
     $("#planner-render-output-content").textContent = JSON.stringify(row.output, null, 2);
-    if (row.output_key) {
-      const url = "/api/artifact/" + row.output_key;
-      $("#planner-render-download").href = url;
-      $("#planner-render-download").download = (row.project || "silent") + ".mp4";
-      $("#planner-render-open").href = url;
-    }
     // In-flight rows may carry a render log on the persisted output blob;
     // surface it for visual continuity with a live poll.
     if (row.output && typeof row.output === "object" && Array.isArray(row.output.log)) {
@@ -1655,6 +1714,44 @@ function resumeRender(row) {
       $("#planner-render-log").textContent = row.output.log.join("\n");
     }
   }
+
+  // cf#549, found while wiring the band above and fixed in the same pass. This path
+  // repaints the render panel from a history row and never touched the cf#118 degrade
+  // disclosure or the CLEARED state of the download anchors: both are written only by
+  // renderDeliverable() on the live-poll path. So viewing a clean row after a degraded one
+  // left the previous render's warning standing over it, and in the other direction left
+  // the download button hidden on a row that does have a film. That is the same
+  // stale-artifact class cf#118 fixed for the live view, surviving in the resume path.
+  //
+  // Routed through the SAME projection instead of re-deriving the anchors here: every
+  // branch of renderDeliverable() writes them, including the empty case, and it repaints
+  // the degrade note from scratch so a stale one cannot outlive the render that made it.
+  //
+  // The input is composed rather than passed straight through, and WHICH SOURCE WINS is
+  // the load-bearing part. renderDeliverable() reads `output.output_key` off the poll
+  // BLOB; the row also carries a D1 `output_key` COLUMN, and they can disagree.
+  // MEASURED in the shipped core (`@skyphusion-labs/vivijure-core` 1.14.0,
+  // `dist/renders-db.js`): the advance path writes `output_key = COALESCE(?, output_key)`
+  // and `output_json = ?`. The column is therefore STICKY and the blob is rewritten on
+  // every advance, so a render that later degrades keeps a column value the blob no longer
+  // names. The blob wins whenever there is a blob: preferring the column there would
+  // resurrect the previous artifact on exactly the degraded render this change exists to
+  // make visible, which is the cf#118 stale-link bug pointed the other way.
+  // The column is used ONLY when there is no blob to read (`view.output === undefined`
+  // stores NULL), where it is the sole source rather than the stale one. `project` rides
+  // along purely to keep the download filename identical to the old resume behaviour.
+  const resumeOut =
+    row.output && typeof row.output === "object" && !Array.isArray(row.output)
+      ? Object.assign({}, row.output, {
+          project: row.output.project || row.project || null,
+        })
+      : row.output_key
+        ? { output_key: row.output_key, project: row.project || null }
+        : null;
+  renderDeliverable(
+    resumeOut,
+    window.finishDegrade ? window.finishDegrade.degradeFrom(row.output) : null,
+  );
 
   if (row.error) {
     const err = $("#planner-render-error");
