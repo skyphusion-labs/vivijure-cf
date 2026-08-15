@@ -34,12 +34,25 @@
 // a degrade that must be ABSORBED or a crash that must stay LOUD, and the loud half is what stops
 // the fix from being "absorb everything".
 //
-// ONE ASYMMETRY IS DELIBERATE AND IS ASSERTED RATHER THAN HIDDEN. cf#585 made finish-lipsync and
-// finish-upscale degrade on a COMPLETED result carrying no artifact key at all, scoped to those two
-// on measured evidence about their satellites; finish-rife and finish-blender still fail loud there
-// because vivijure-backend and vivijure-blender cannot produce that shape. cf#594 does not touch
-// that decision, so `completedNoKey` below records which module does which. That case is NOT the
-// soft-degrade contract: a soft degrade is `ok === false`, which is uniform in all four.
+// THE ASYMMETRY THIS FILE USED TO ASSERT IS GONE AS OF cf#604, and the reason it went is worth more
+// than the asymmetry was. cf#585 made finish-lipsync and finish-upscale degrade on a COMPLETED result
+// carrying no artifact key at all; finish-rife and finish-blender failed loud there, recorded here as
+// deliberate on the grounds that vivijure-backend and vivijure-blender cannot produce that shape.
+//
+// That reason was measured and is still true (re-measured 2026-08-15 at the same shas: vivijure-blender
+// 4fa33fe emits `clip_key` on every success, handler.py:389/:397; vivijure-backend f9dc930 has one
+// completed finish_clip return, harness/handler.py:471-476, hardcoding `clip_key`). But it is a reason
+// about ANOTHER REPO AT A SHA, and it was load-bearing for a branch whose else-arm DESTROYS A FILM:
+// `ok:false` at the MODULE layer is classified deterministic by the core's failOrRetry. A door version
+// skew, a self-hosted door under AGPL, or a COMPLETED envelope with no parseable output all reach it,
+// and none of them are bounded by a measurement of someone else default branch. The degrade costs
+// nothing when the branch is unreachable and saves the film when it is not, so all four now degrade.
+//
+// `completedNoKey` is kept rather than deleted so the parameter still has to be stated per module and
+// a future divergence has somewhere to be recorded instead of being silent. cf#604 did NOT widen the
+// read to `clip_key ?? output_key` in those two: that half of cf#578 is genuinely satellite-shaped and
+// neither door can emit it. That case is NOT the soft-degrade contract either: a soft degrade is
+// `ok === false`, which is uniform in all four.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readdirSync } from "node:fs";
@@ -55,8 +68,8 @@ type Worker = { fetch(r: Request, e: never): Promise<Response> };
 const SUBJECTS: Array<{ name: string; worker: Worker; completedNoKey: "degrade" | "loud" }> = [
   { name: "finish-lipsync", worker: finishLipsync as unknown as Worker, completedNoKey: "degrade" },
   { name: "finish-upscale", worker: finishUpscale as unknown as Worker, completedNoKey: "degrade" },
-  { name: "finish-rife", worker: finishRife as unknown as Worker, completedNoKey: "loud" },
-  { name: "finish-blender", worker: finishBlender as unknown as Worker, completedNoKey: "loud" },
+  { name: "finish-rife", worker: finishRife as unknown as Worker, completedNoKey: "degrade" },
+  { name: "finish-blender", worker: finishBlender as unknown as Worker, completedNoKey: "degrade" },
 ];
 
 const SOURCE_CLIP = "renders/lighthouse/clips/shot_01_seedance.mp4";
@@ -178,8 +191,10 @@ for (const { name, worker, completedNoKey } of SUBJECTS) {
       expect(outcomes(calls)).toEqual(["failed"]);
     });
 
-    it("a COMPLETED result with NO artifact key behaves as cf#585 scoped it: " + completedNoKey, async () => {
-      // NOT the cf#594 contract, asserted here so the asymmetry is visible rather than inferred.
+    it("a COMPLETED result with NO artifact key behaves as cf#604 settled it: " + completedNoKey, async () => {
+      // NOT the cf#594 contract, asserted here so the decision is visible rather than inferred. All
+      // four now read `degrade`; the branch is kept parameterised so a future divergence has to be
+      // written down rather than discovered. See the header note for why the asymmetry was retired.
       const { body } = await pollWith(worker, { status: "COMPLETED", output: { ok: true } });
       if (completedNoKey === "degrade") {
         expect(body.ok).toBe(true);

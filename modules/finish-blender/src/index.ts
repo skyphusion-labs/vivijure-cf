@@ -518,7 +518,30 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   }
 
   const out = parseBackendOutput(s.output);
-  if (!out?.clip_key) return { ok: false, error: "finish-blender: backend returned no clip_key" };
+  if (!out?.clip_key) {
+    // cf#604: A REAL absence -- the job reached COMPLETED and produced no artifact key. Polish never
+    // fails the chain (#77/#249), and an `ok:false` HERE is not the safe shape it looks like: it is
+    // the MODULE layer, so vivijure-core failOrRetry classifies it deterministic and FAILS THE FILM
+    // on a render that ran to completion and was paid for. It also skips the degrade accounting
+    // entirely -- applyFinishOutput never sees an ok:false -- so the class was uncountable by
+    // construction rather than merely uncounted. Same decision as speech-upscale, finish-lipsync and
+    // finish-upscale, at the same site; this module and finish-rife were the two the cf#578 sweep
+    // did not reach.
+    //
+    // The reason string is `no-output-key` verbatim, not a blender-specific one, because
+    // summarizeFinish (vivijure-core src/film-model.ts:421-423) counts a degraded shot by its
+    // `passthrough:`-prefixed tag and one grep across the five doors has to find the whole class.
+    //
+    // DELIBERATELY NOT the other half of cf#578, the `clip_key ?? output_key` read: vivijure-blender
+    // at 4fa33fe emits `clip_key` on EVERY success and never `output_key` as a response field
+    // (handler.py:389 `result_key = output_key or "presigned"`, :397 `"clip_key": result_key`), so
+    // this door cannot produce the shape that fix exists for, and widening the read here would be
+    // changing code on a hypothesis. See the EXEMPT census in
+    // tests/presigned-finish-output-key-cf578.test.ts, which measured that and said so.
+    const passed = pollPassthrough(st, "no-output-key");
+    if (passed) return passed;
+    return { ok: false, error: "finish-blender: backend returned no clip_key, and this poll token carries no clip to pass through" };
+  }
   return {
     ok: true,
     output: {
