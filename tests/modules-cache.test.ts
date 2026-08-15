@@ -41,17 +41,35 @@ describe("discoverModules per-isolate cache (issue #17 follow-up)", () => {
     expect(counts.fetches).toBe(2);
   });
 
-  it("does NOT cache without a TTL (dispatch paths stay always-fresh)", async () => {
+  // core#216 INVERTED this contract. The scan cache used to be OPT-IN (default TTL 0, so a caller
+  // passing nothing never cached); it is now OPT-OUT (default SERVICE_SCAN_TTL_MS, 30s). The test
+  // that stood here asserted the OLD default and is not repairable by adjusting its number, because
+  // the property it named no longer exists.
+  it("the DEFAULT caches the service scan -- opt-out now, not opt-in (core#216)", async () => {
     const { env, counts } = countingEnv();
-    await discoverModules(env);
-    await discoverModules(env);
+    await discoverModules(env, { nowMs: 1000 });
+    await discoverModules(env, { nowMs: 1001 });
+    expect(counts.fetches).toBe(1);
+  });
+
+  it("cacheTtlMs 0 still forces a cold scan, so the opt-out survives the new default", async () => {
+    const { env, counts } = countingEnv();
+    await discoverModules(env, { cacheTtlMs: 0, nowMs: 1000 });
+    await discoverModules(env, { cacheTtlMs: 0, nowMs: 1001 });
     expect(counts.fetches).toBe(2);
   });
 
-  it("an uncached caller never reads the route's cache (no stale dispatch)", async () => {
+  // WAS: "an uncached caller never reads the route cache". That test passed here for a reason
+  // unrelated to what it claimed. It populated at nowMs 1000 and then called with NO nowMs, so the
+  // second call used the REAL clock, against which an entry expiring at 61000 is ancient. It missed
+  // and re-fetched. Give it a CONSISTENT clock and it takes 1 fetch, not 2 -- measured. Under the
+  // new default there is no such thing as an uncached caller, so the property is gone and only the
+  // clock artifact was keeping it green. The real remaining property is that an EXPLICIT cold caller
+  // ignores a populated cache, asserted below on one clock so it cannot pass by accident.
+  it("an EXPLICIT cold caller (cacheTtlMs 0) ignores a live populated cache", async () => {
     const { env, counts } = countingEnv();
-    await discoverModules(env, { cacheTtlMs: TTL, nowMs: 1000 }); // populate
-    await discoverModules(env); // uncached -> fresh discovery, ignores the cache
+    await discoverModules(env, { cacheTtlMs: TTL, nowMs: 1000 });
+    await discoverModules(env, { cacheTtlMs: 0, nowMs: 1001 });
     expect(counts.fetches).toBe(2);
   });
 });
