@@ -15,6 +15,35 @@
 
 const MUSIC_POLL_MS = 5000;
 let musicPollTimer = null;
+// cf#515: consecutive poll failures. The catch arm below re-armed at a FLAT
+// MUSIC_POLL_MS, which is the same no-backoff defect PR #563 fixed for the render
+// poll, still live here: a studio having a bad minute got retried at full rate by
+// every open panel at once.
+let musicPollErrorStreak = 0;
+
+// cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
+// PR #563 for the render poll). Resolved at CALL time rather than load time,
+// because several vitest suites `eval` this file in plain Node where the global
+// does not exist; only a live poll needs the policy. It THROWS when the script is
+// missing rather than falling back to a flat interval: a silent fallback would
+// reintroduce exactly the unjittered loop this change removes, and would read as
+// working.
+function pollPolicy() {
+  var ps = (typeof pollSchedule !== "undefined" && pollSchedule)
+    || (typeof globalThis !== "undefined" && globalThis.pollSchedule);
+  if (!ps) throw new Error("poll-schedule.js is not loaded; refusing to poll unjittered (cf#515)");
+  return ps;
+}
+
+// cf#515: one place that arms the music poll, so a future edit cannot reintroduce a
+// bare setTimeout on one of the two paths and leave the other jittered.
+function scheduleScoreBedPoll() {
+  const delay = pollPolicy().nextPollDelayMs({
+    baseMs: MUSIC_POLL_MS,
+    errorStreak: musicPollErrorStreak,
+  });
+  musicPollTimer = setTimeout(pollScoreBedJob, delay);
+}
 
 // Score modules -- populated from GET /api/modules via plannerRegistry.
 let scoreMusicState = { modules: [] };
@@ -451,10 +480,12 @@ async function pollScoreBedJob() {
       persistSoon();
       return;
     }
-    musicPollTimer = setTimeout(pollScoreBedJob, MUSIC_POLL_MS);
+    musicPollErrorStreak = 0; // cf#515: a good poll clears the backoff
+    scheduleScoreBedPoll();
   } catch (err) {
     setScoreBedStatus(kind, "poll error: " + err.message + " (retrying)", "error");
-    musicPollTimer = setTimeout(pollScoreBedJob, MUSIC_POLL_MS);
+    musicPollErrorStreak += 1; // cf#515: back off rather than re-arm flat
+    scheduleScoreBedPoll();
   }
 }
 

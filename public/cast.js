@@ -1312,6 +1312,23 @@
   const LORA_POLL_MS = 5000;
   let loraPollTimer = null;
   let loraPollInflight = false;
+  // cf#515: consecutive poll failures, so the catch path backs off instead of
+  // re-arming flat. Reset to 0 on every successful poll.
+  let loraPollErrorStreak = 0;
+
+  // cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
+  // PR #563 for the render poll). Resolved at CALL time rather than load time,
+  // because several vitest suites `eval` this file in plain Node where the global
+  // does not exist; only a live poll needs the policy. It THROWS when the script is
+  // missing rather than falling back to a flat interval: a silent fallback would
+  // reintroduce exactly the unjittered loop this change removes, and would read as
+  // working.
+  function pollPolicy() {
+    var ps = (typeof pollSchedule !== "undefined" && pollSchedule)
+      || (typeof globalThis !== "undefined" && globalThis.pollSchedule);
+    if (!ps) throw new Error("poll-schedule.js is not loaded; refusing to poll unjittered (cf#515)");
+    return ps;
+  }
 
   function timeAgoSeconds(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0) return "";
@@ -1558,9 +1575,14 @@
     }
   }
 
+  // cf#515: jittered + backed off. Was a flat 5s self-rescheduling setTimeout.
   function schedulePollLoraStatus(id) {
     if (loraPollTimer) clearTimeout(loraPollTimer);
-    loraPollTimer = setTimeout(() => pollLoraStatus(id), LORA_POLL_MS);
+    const delay = pollPolicy().nextPollDelayMs({
+      baseMs: LORA_POLL_MS,
+      errorStreak: loraPollErrorStreak,
+    });
+    loraPollTimer = setTimeout(() => pollLoraStatus(id), delay);
   }
 
   async function pollLoraStatus(id) {
@@ -1583,6 +1605,7 @@
         renderLoraPane(data.cast);
         renderWanLoraPane(data.cast);
       }
+      loraPollErrorStreak = 0; // cf#515: a good poll clears the backoff
       if (data.cast && data.cast.lora_status === "training") {
         schedulePollLoraStatus(id);
       } else {
@@ -1590,6 +1613,7 @@
       }
     } catch (e) {
       setLoraStatusText("poll error: " + e.message + " (retrying)", "error");
+      loraPollErrorStreak += 1; // cf#515: back off rather than re-arm flat
       schedulePollLoraStatus(id);
     } finally {
       loraPollInflight = false;

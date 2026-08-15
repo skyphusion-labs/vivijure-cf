@@ -11,6 +11,20 @@
   var REPO_URL = "https://github.com/skyphusion-labs/vivijure";
   var POLL_MS = 8000;
 
+  // cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
+  // PR #563 for the render poll). Resolved at CALL time rather than load time,
+  // because several vitest suites `eval` this file in plain Node where the global
+  // does not exist; only a live poll needs the policy. It THROWS when the script is
+  // missing rather than falling back to a flat interval: a silent fallback would
+  // reintroduce exactly the unjittered loop this change removes, and would read as
+  // working.
+  function pollPolicy() {
+    var ps = (typeof pollSchedule !== "undefined" && pollSchedule)
+      || (typeof globalThis !== "undefined" && globalThis.pollSchedule);
+    if (!ps) throw new Error("poll-schedule.js is not loaded; refusing to poll unjittered (cf#515)");
+    return ps;
+  }
+
   fetch("/api/modules")
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
@@ -271,6 +285,10 @@
   }
 
   function pollRender(jobId) {
+    // cf#515: jittered. This loop drove /api/demo/render on a flat 8s, so demo
+    // clients that started in the same window converged onto one boundary and
+    // stayed there. No backoff arm here on purpose: the .catch below STOPS the
+    // loop rather than re-arming it, so there is no error re-arm to back off.
     setTimeout(function () {
       fetch("/api/demo/render/" + encodeURIComponent(jobId))
         .then(function (r) {
@@ -289,7 +307,7 @@
           pollRender(jobId);
         })
         .catch(function () { renderDone(); showLive(friendlyBlock("Lost contact with the render. Try again in a moment.", false)); });
-    }, POLL_MS);
+    }, pollPolicy().nextPollDelayMs({ baseMs: POLL_MS }));
   }
 
   function showDone(clipUrl) {

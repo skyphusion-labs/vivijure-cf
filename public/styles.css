@@ -1381,6 +1381,11 @@ body.demo-steer-active #planner-history { display: none !important; }
   font-size: 12px;
   line-height: 1.6;
 }
+/* cf#549: the same disclosure on a render-history row. Declared AFTER .render-degrade so
+   the row-local margins win, and collapse-gated like every other expanded-row block. */
+.planner-history-mode-degraded { color: var(--warn, #f2c14e); border-color: #5b4a20; }
+.planner-history-degrade { margin: 0 14px 12px; }
+.planner-history-item-collapsed .planner-history-degrade { display: none; }
 .planner-status-warn { color: var(--warn, #f2c14e); }
 
 .hook-unavailable-note {
