@@ -1,4 +1,4 @@
-// cf#515 (adjacent, in-lane): the planner made FOUR requests for GET /api/modules per page
+// cf#515 (adjacent, in-lane): the planner made FIVE requests for GET /api/modules per page
 // load where planner-registry.js's own header says "one fetch of GET /api/modules".
 //
 // The sharpest instance, and the only one this change touches: renderPanel() in
@@ -45,16 +45,19 @@ describe("cf#515: the planner fetches /api/modules through the shared memo", () 
   });
 
   it("DECLARED OUT OF SCOPE: the page-chrome fetchers keep their own request", () => {
-    // abuse-link.js, hook-availability.js and demo-steer.js also read /api/modules, and each
-    // loads on pages that do NOT ship planner-registry.js (cast.html, modules.html,
-    // settings.html), so they cannot route through the planner memo without a new shared
-    // primitive. Measured and left alone deliberately; asserted so their absence from this
-    // change reads as a decision and not an oversight.
+    // abuse-link.js, hook-availability.js and demo-steer.js also read /api/modules. All three
+    // DO load on planner.html alongside planner-registry.js, so the barrier is not that the memo
+    // is unavailable to them there; it is that each ALSO loads on pages that do not ship the
+    // registry (cast.html, modules.html, settings.html), so none can depend on it
+    // unconditionally without a new shared primitive. Measured and left alone deliberately;
+    // asserted so their absence from this change reads as a decision and not an oversight.
     for (const f of ["abuse-link.js", "hook-availability.js", "demo-steer.js"]) {
       expect(codeLines(readPublic(f))).toContain('fetch("/api/modules")');
     }
-    // Control: none of those three is loaded by planner.html's registry, i.e. the reason
-    // above is real. planner.html does NOT load planner-registry.js for their benefit.
+    // Control, and it proves something narrower than the sentence above needs: cast.html ships
+    // a chrome fetcher and does NOT ship planner-registry.js, which is the half of the reason
+    // that actually blocks routing these three through the memo. It says nothing about
+    // planner.html, where all three DO load alongside the registry.
     expect(readPublic("cast.html")).not.toContain('<script src="planner-registry.js">');
   });
 });
