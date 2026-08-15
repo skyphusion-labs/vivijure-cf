@@ -165,8 +165,13 @@ export function upscaledKey(clipKey: string): string {
   return dot > clipKey.lastIndexOf("/") ? `${clipKey.slice(0, dot)}_up${clipKey.slice(dot)}` : `${clipKey}_up`;
 }
 
-/** The RunPod /run body for the dedicated vivijure-upscale endpoint (R2 mode: it reads `clip_key`
- *  and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does for finish). */
+/** TTL used by the core when it presigns finish satellite URLs (cf#312). Documented here so a
+ *  module-side reader sees the same envelope; the core is the authority that mints the URLs. */
+export const PRESIGN_TTL_SECONDS = 1800;
+
+/** The RunPod /run body for vivijure-upscale.
+ *  cf#312: when the core hands video_url + output_url, use the credentialless presigned branch
+ *  (no clip_key -- the handler routes on which keys are present). Otherwise R2 shared-bucket mode. */
 export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project: string): { input: Record<string, unknown> } {
   // cf#507b: the factor now comes from resolveUpscaleScale rather than straight off the config.
   // TWO QUANTITIES, kept distinct: input.width/height are the MEASURED source (what this clip is),
@@ -180,14 +185,33 @@ export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project:
     { width: input.width, height: input.height },
     { width: input.delivery_width, height: input.delivery_height },
   );
+  // MERGE NOTE (cf#312 over cf#507b): the derived factor lives in `common`, so BOTH transports
+  // carry it. Sourcing `scale` from `cfg` here -- which is what this branch did before main gained
+  // resolveUpscaleScale -- would revert the derivation for the presigned path AND the R2 path, and
+  // no test that drives one transport at a time can see that: `cfg.scale` and `chosen.scale` are
+  // equal whenever the caller set `scale` explicitly, which is exactly what a fixture does.
+  const output_key = input.output_key ?? upscaledKey(input.clip_key);
+  const common = {
+    project,
+    output_key,
+    scale: chosen.scale,
+    model: cfg.model,
+    ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
+  };
+  if (input.video_url && input.output_url) {
+    return {
+      input: {
+        ...common,
+        video_url: input.video_url,
+        output_url: input.output_url,
+        ...(input.hash_url ? { hash_url: input.hash_url } : {}),
+      },
+    };
+  }
   return {
     input: {
-      project,
+      ...common,
       clip_key: input.clip_key,
-      output_key: upscaledKey(input.clip_key),
-      scale: chosen.scale,
-      model: cfg.model,
-      ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
     },
   };
 }

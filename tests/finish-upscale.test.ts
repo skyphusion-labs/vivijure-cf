@@ -63,6 +63,7 @@ describe("finish-upscale: buildRunPodBody", () => {
     expect(input.scale).toBe(4);
     expect(input.model).toBe("RealESRGAN_x4plus");
     expect(input.action).toBeUndefined();  // dedicated endpoint, not a vivijure-backend action
+    expect(input.video_url).toBeUndefined();
   });
 
   it("threads the caller project into the body, not a hardcoded placeholder", () => {
@@ -77,6 +78,27 @@ describe("finish-upscale: buildRunPodBody", () => {
     expect(withHash.input.output_hash).toBe("abc123");
     const without = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}), "neon");
     expect("output_hash" in without.input).toBe(false);
+  });
+
+  it("cf#312: prefers presigned video_url/output_url and omits clip_key (credentialless branch)", () => {
+    const { input } = buildRunPodBody(
+      {
+        ...SAMPLE_INPUT,
+        video_url: "https://r2.example/get",
+        output_url: "https://r2.example/put",
+        output_key: "renders/neon/clips/shot_01_seedance_up.mp4",
+        output_hash: "deadbeef",
+        hash_url: "https://r2.example/hash",
+      },
+      coerceConfig({ scale: 2 }),
+      "neon",
+    );
+    expect(input.video_url).toBe("https://r2.example/get");
+    expect(input.output_url).toBe("https://r2.example/put");
+    expect(input.output_key).toBe("renders/neon/clips/shot_01_seedance_up.mp4");
+    expect(input.hash_url).toBe("https://r2.example/hash");
+    expect(input.output_hash).toBe("deadbeef");
+    expect(input.clip_key).toBeUndefined(); // presence of clip_key would force R2 mode on the satellite
   });
 });
 
