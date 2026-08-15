@@ -344,11 +344,19 @@
     var meta = document.getElementById(META_ID);
     if (!root) return;
 
-    fetch("/api/modules", { headers: { accept: "application/json" } })
-      .then(function (r) {
-        return r.ok ? r.json() : Promise.reject(new Error("/api/modules -> " + r.status));
-      })
+    // cf#580: reads the SHARED per-page memo. This was one of the two call sites the previous
+    // test could not see at all -- its matcher required a closing paren immediately after the URL
+    // string, and this call passed a second argument.
+    //
+    // The dropped accept header costs nothing: the route answers JSON unconditionally and no caller
+    // negotiated on it. load() never rejects, so the rejection that drove the error copy below is now
+    // the cf#344 flag; registryFailureReason() carries the same status string, so the message a
+    // reader sees is unchanged.
+    moduleRegistry.load()
       .then(function (data) {
+        if (moduleRegistry.registryUnavailable()) {
+          throw new Error(moduleRegistry.registryFailureReason());
+        }
         var modules = (data && data.modules) || [];
         var withInstall = [];
         for (var i = 0; i < modules.length; i++) {

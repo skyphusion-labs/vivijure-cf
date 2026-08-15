@@ -244,7 +244,7 @@ describe("film-titles prepend_seconds reporting (#663)", () => {
   });
 
   it("completedOutput reports prepend_seconds = the title card duration, omits it when there is no title", () => {
-    const st: FinishPoll = { jobId: "j", filmKey: "renders/film-x/film.mp4", outputKey: "renders/film-x/film-ff1.mp4", submittedAt: 0, titleSeconds: 3 };
+    const st: FinishPoll = { jobId: "j", filmKey: "renders/film-x/film.mp4", outputKey: "renders/film-x/film-ff1.mp4", submittedAt: 0, notFoundStreak: 0, titleSeconds: 3 };
     const out = completedOutput({ key: "renders/film-x/film-ff1.mp4" }, st);
     expect(out.prepend_seconds).toBe(3);
     // credits-only / no title -> titleSeconds 0 -> field omitted (no prepend)
@@ -253,7 +253,7 @@ describe("film-titles prepend_seconds reporting (#663)", () => {
   });
 
   it("the async poll token carries titleSeconds (survives encode/decode; legacy tokens default to 0)", () => {
-    const token = encodePoll({ jobId: "j", filmKey: "f", outputKey: "o", submittedAt: 10, titleSeconds: 8 });
+    const token = encodePoll({ jobId: "j", filmKey: "f", outputKey: "o", submittedAt: 10, notFoundStreak: 0, titleSeconds: 8 });
     expect(decodePoll(token)?.titleSeconds).toBe(8);
     // a pre-#663 token with no titleSeconds decodes to 0 (no prepend reported)
     const legacy = btoa(JSON.stringify({ jobId: "j", filmKey: "f", outputKey: "o", submittedAt: 10 }));

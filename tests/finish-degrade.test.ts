@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEGRADE_BANDS,
   NO_REASON,
+  bandNote,
   clipsFrom,
+  degradeBand,
   degradeFrom,
   deliverable,
   deliveredSummary,
@@ -170,5 +173,123 @@ describe("deliveredSummary", () => {
   it("CONTROL: no degrade -> no summary", () => {
     expect(deliveredSummary(null)).toBeNull();
     expect(deliveredSummary(degradeFrom(HEALTHY))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// cf#549: render history was structurally blind to degradation. A film that shipped
+// without part of its finish was `done`, `errors: []`, and byte-identical in render
+// history to one that shipped complete, so the incidence could not be counted and a load
+// test could not fail on this axis at all.
+//
+// `degradeFrom` above answers "is there a degrade to RENDER" and returns null for three
+// different situations on purpose, because on the live view a parse failure must not tell
+// a user their good film is broken. `degradeBand` answers "what do we KNOW about this
+// row", which is a different question and cannot afford that collapse. These two suites
+// exist to keep the four bands apart; every assertion below names the band string it
+// expects, never merely that something was truthy, so a guard that has quietly stopped
+// discriminating still has to produce a value it can no longer produce.
+
+const NO_PAYLOAD_BANDS = ["unmeasured", "none-reported", "unreadable", "reported"] as const;
+
+describe("degradeBand (cf#549)", () => {
+  it("a reported degrade bands as reported, at either step", () => {
+    expect(degradeBand(CLIPS_DEGRADE)).toBe("reported");
+    expect(degradeBand(MUX_DEGRADE)).toBe("reported");
+  });
+
+  it("a readable payload that reports no degrade bands as none-reported, NEVER as clean", () => {
+    // The emitter writes `finish_unavailable` only when it degrades, so absent-or-null on
+    // a payload we could read is a real report of "no degrade at this step".
+    expect(degradeBand(HEALTHY)).toBe("none-reported");
+    expect(degradeBand({} as RenderOutput)).toBe("none-reported");
+    expect(degradeBand({ finish_unavailable: null } as RenderOutput)).toBe("none-reported");
+    // The band is deliberately not called "clean" or "complete": it says nothing about
+    // `film_finish.degraded` (vivijure-core#203), which is not on the payload today.
+    expect(degradeBand(HEALTHY)).not.toBe("reported");
+  });
+
+  it("no readable payload at all bands as unmeasured", () => {
+    expect(degradeBand(null)).toBe("unmeasured");
+    expect(degradeBand(undefined)).toBe("unmeasured");
+    expect(degradeBand("nope" as unknown as RenderOutput)).toBe("unmeasured");
+    expect(degradeBand(7 as unknown as RenderOutput)).toBe("unmeasured");
+    // An array is typeof "object" and is not a payload we can read.
+    expect(degradeBand([] as unknown as RenderOutput)).toBe("unmeasured");
+  });
+
+  it("a degrade the studio reported and we cannot read bands as unreadable, not as silence", () => {
+    expect(degradeBand({ finish_unavailable: "broken" } as RenderOutput)).toBe("unreadable");
+    expect(degradeBand({ finish_unavailable: [] } as RenderOutput)).toBe("unreadable");
+    expect(degradeBand({ finish_unavailable: {} } as RenderOutput)).toBe("unreadable");
+    // Neither structural fact, which degradeFrom() forgives to null for the live view.
+    expect(degradeBand({ finish_unavailable: { reason: "x" } } as RenderOutput)).toBe("unreadable");
+  });
+
+  it("THE COLLAPSE TEST: three situations degradeFrom() returns null for land in THREE bands", () => {
+    // This is the assertion cf#549 exists for. degradeFrom() maps all three to one null,
+    // deliberately. If render history ever maps them to one band again, that is the same
+    // defect rebuilt one field over, and this is the test that has to go red for it.
+    const unmeasured = null;
+    const noneReported: RenderOutput = { project: "p1", output_key: "renders/f/film.mp4" };
+    const unreadable = { finish_unavailable: { reason: "x" } } as RenderOutput;
+
+    expect(degradeFrom(unmeasured)).toBeNull();
+    expect(degradeFrom(noneReported)).toBeNull();
+    expect(degradeFrom(unreadable)).toBeNull();
+
+    const bands = [degradeBand(unmeasured), degradeBand(noneReported), degradeBand(unreadable)];
+    expect(bands).toEqual(["unmeasured", "none-reported", "unreadable"]);
+    expect(new Set(bands).size).toBe(3);
+  });
+
+  it("CONTROL: every band this function can return is one of the four declared names", () => {
+    // A positive control on the vocabulary itself: if a band string is ever renamed on one
+    // side only, the row's data-finish-degrade contract and its readers drift silently.
+    expect(Object.values(DEGRADE_BANDS).sort()).toEqual([...NO_PAYLOAD_BANDS].sort());
+    for (const out of [null, HEALTHY, CLIPS_DEGRADE, { finish_unavailable: {} } as RenderOutput]) {
+      expect(NO_PAYLOAD_BANDS).toContain(degradeBand(out));
+    }
+  });
+});
+
+describe("bandNote (cf#549)", () => {
+  it("the reported band is badged, and says a degrade happened rather than a failure", () => {
+    const note = bandNote("reported");
+    expect(note?.label).toBe("finished with limits");
+    expect(note?.title).toContain("delivered less than a full finish");
+  });
+
+  it("the unreadable band is badged, and says the report could not be read", () => {
+    const note = bandNote("unreadable");
+    expect(note?.label).toBe("degrade unreadable");
+    expect(note?.title).toContain("could not be read");
+    // It must not claim to know what was delivered, because it does not.
+    expect(note?.title).toContain("unknown");
+  });
+
+  it("the two ordinary bands render NOTHING, so a badge cannot fire on a healthy list", () => {
+    // They are still asserted positively on every row via data-finish-degrade; what is
+    // suppressed here is the badge, not the state.
+    expect(bandNote("none-reported")).toBeNull();
+    expect(bandNote("unmeasured")).toBeNull();
+  });
+
+  it("an unrecognised band renders nothing rather than an empty badge", () => {
+    expect(bandNote("clean")).toBeNull();
+    expect(bandNote(null)).toBeNull();
+    expect(bandNote(undefined)).toBeNull();
+  });
+
+  it("the two badged notes are DIFFERENT text: one check wearing two names would not be", () => {
+    const reported = bandNote("reported");
+    const unreadable = bandNote("unreadable");
+    // Both non-null FIRST. Written without this the inequality passes vacuously when one
+    // side goes missing (undefined !== a string), which the mutation pass caught: deleting
+    // the unreadable badge left this assertion green while the badge test alone went red.
+    expect(reported).not.toBeNull();
+    expect(unreadable).not.toBeNull();
+    expect(reported?.label).not.toBe(unreadable?.label);
+    expect(reported?.title).not.toBe(unreadable?.title);
   });
 });

@@ -54,3 +54,42 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/changelog-entry-required.py . "$BASE_SHA" "$HEAD_SHA" "$LABELS_JSON"
+
+  # CHANGELOG IMMUTABILITY (cf#551 piece 2). A released `## vX.Y.Z` section should be byte-identical
+  # to the same section in CHANGELOG.md AT its own git tag; scripts/changelog-released-immutable.py
+  # checks that property of the TREE, not of a diff. Ported from vivijure-control-plane
+  # (scripts/changelog-released-immutable.py, cp#219/cp#245); see that script own docstring for the
+  # full mechanism and tests/changelog-released-immutable.test.py for the mutation-test proof.
+  #
+  # ADVISORY, NOT BLOCKING, ON PURPOSE. Live-measured at PR-open time (sha 38e7f620, 2026-08-15): the
+  # guard currently reports THREE released sections with pre-existing drift on main -- v1.21.0
+  # (seven entries stranded there by hand-edited merges, cf#551 piece 1), v1.20.1 (a retroactive
+  # write-up: the section was a bare heading with no body at the tag), and v1.2.5 (a self-declared
+  # reconstruction, per its own text in CHANGELOG.md). None of that is new work introduced by this
+  # job; it is debt cf#551 already found and explicitly scoped OUT of this port as a release-lane
+  # content decision, not a code change. Wiring the live-repo check below as a normal blocking step
+  # would turn every open and future PR permanently red on debt this job cannot fix. So only the
+  # "guard against the real CHANGELOG.md" step below is continue-on-error; the mutation-test step
+  # above it is a real bar (it proves the MECHANISM works, entirely on synthetic fixtures plus a
+  # self-consistency check that adapts to whatever drift main currently has, so it is not expected to
+  # ever go red for a reason unrelated to the guard itself). Once cf#551 piece 1 lands and a live run
+  # is clean, this job can be tightened to a normal blocking step -- see the guard own docstring.
+  changelog-immutability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Changelog immutability guard tests (cf#551 piece 2)
+        run: python3 tests/changelog-released-immutable.test.py
+
+      - name: Changelog immutability against the live CHANGELOG.md (advisory, cf#551 piece 1 pending)
+        continue-on-error: true
+        run: python3 scripts/changelog-released-immutable.py .

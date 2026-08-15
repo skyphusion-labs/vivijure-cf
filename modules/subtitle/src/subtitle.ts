@@ -4,6 +4,7 @@
 // (it owns the per-shot dialogue + the real shot durations); this module only FORMATS and BURNS.
 
 import type { FilmFinishInput, FilmFinishOutput, CaptionCue } from "./contract";
+import { parseNotFoundStreak } from "../../_shared/video-finish-404";
 
 export type SubtitleMode = "burn" | "sidecar" | "both";
 export type SubtitlePosition = "bottom" | "top" | "middle";
@@ -154,7 +155,8 @@ export interface FinishPoll {
   jobId: string;       // the container's background job id
   filmKey: string;     // the input film key (the sidecar-only / passthrough result key)
   outputKey: string;   // the deterministic key the container writes the burned film to
-  submittedAt: number | null; // epoch ms; grace window + wall-clock. null = the token carried none.
+  submittedAt: number | null; // epoch ms; 90-min 404 backstop + wall-clock. null = the token carried none.
+  notFoundStreak: number; // consecutive video-finish 404s; 0 = none. fleet-chezmoi#1662.
 }
 
 export function encodePoll(s: FinishPoll): string {
@@ -165,15 +167,22 @@ export function decodePoll(token: string): FinishPoll | null {
   try {
     const o = JSON.parse(atob(token)) as FinishPoll;
     if (o && typeof o.jobId === "string" && typeof o.filmKey === "string" && typeof o.outputKey === "string") {
-      return { jobId: o.jobId, filmKey: o.filmKey, outputKey: o.outputKey, submittedAt: typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt) ? o.submittedAt : null };
+      const notFoundStreak = parseNotFoundStreak(o.notFoundStreak);
+      return {
+        jobId: o.jobId,
+        filmKey: o.filmKey,
+        outputKey: o.outputKey,
+        submittedAt: typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt) ? o.submittedAt : null,
+        notFoundStreak,
+      };
     }
   } catch { /* fall through */ }
   return null;
 }
 
-// How long after submit a container "job not found" is a restart race (keep polling) vs a real drop
-// (fail, so the core re-dispatches or degrades). The container job store is in-process.
-export const CONTAINER_NOTFOUND_GRACE_MS = 30_000;
+// 404 policy lives in modules/_shared/video-finish-404.ts (fleet-chezmoi#1662). Re-export the
+// previous 30s name so an older import still typechecks; it is no longer the terminal rule.
+export { CONTAINER_NOTFOUND_GRACE_MS } from "../../_shared/video-finish-404";
 
 /** Map the container's completed /subtitle result to a FilmFinishOutput, composing an HONEST `applied`:
  *  "subtitle" only when captions were actually burned (film_key then points at the burned film),

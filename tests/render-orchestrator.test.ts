@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { describe, it, expect, beforeEach } from "vitest";
 import { summarizeJob, describeClipFailures, applyPoll, classifyTransientFailure, clipFileMatchesShot, finishedClipFileMatchesShot, listClipsByShotId, reclaimClipsFromR2, advanceClipJob, startClipJob, cancelInFlightClips } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { ClipJob, ClipShot } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -9,6 +10,16 @@ const job = (statuses: ClipShot["status"][]): ClipJob => ({
   job_id: "j", project: "p", motion_backend: "seedance", binding: "MODULE_SEEDANCE", created_at: 0,
   shots: statuses.map((status, i) => ({ shot_id: "s" + i, keyframe_url: "u", prompt: "x", seconds: 5, status })),
 });
+
+// core#216 moved the MODULE_* service-scan cache from opt-in (TTL 0) to a 30s DEFAULT, and the
+// cache is a module-level variable keyed on the binding NAME SET, with no manifest content in
+// the key. In production that is sound: the binding set is fixed per deploy, and a deploy is a
+// new isolate. In a vitest FILE the premise does not hold -- many cases share one isolate, so
+// two cases binding the SAME names while stubbing DIFFERENT manifests collide and the second
+// silently gets the first scan. Every case in this file asserts over MODULE_* service bindings
+// only and none touches the WfP dispatch set, which is re-read on every call, so resetting here
+// cannot hide a real staleness defect -- a service binding cannot change without a redeploy.
+beforeEach(() => _resetModuleDiscoveryCache());
 
 describe("summarizeJob", () => {
   it("counts states and is incomplete while any pending", () => {

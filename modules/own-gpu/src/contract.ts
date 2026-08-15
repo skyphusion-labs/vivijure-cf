@@ -81,8 +81,14 @@ export type InvokeResponse<O = unknown> =
 export interface PollRequest {
   poll: string;
 }
+/**
+ * Backend-neutral wait phase while pending (cf#307). Optional and additive.
+ * accepted = queue / cold start; running = compute underway. Not RunPod vocabulary.
+ */
+export type PollWaitPhase = "accepted" | "running";
+
 export type PollResponse<O = unknown> =
-  | { ok: true; pending: true }
+  | { ok: true; pending: true; wait?: PollWaitPhase }
   | { ok: true; output: O }
   | { ok: false; error: string };
 

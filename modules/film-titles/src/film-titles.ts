@@ -2,6 +2,7 @@
 // passthrough output. No I/O here, so it unit-tests without the runtime, the container, or ffmpeg.
 
 import type { FilmFinishInput, FilmFinishOutput } from "./contract";
+import { parseNotFoundStreak } from "../../_shared/video-finish-404";
 
 export interface TitlesConfig {
   font: string;
@@ -90,7 +91,8 @@ export interface FinishPoll {
   jobId: string;       // the container's background job id
   filmKey: string;     // the input film key (the fallback result key)
   outputKey: string;   // the deterministic key the container writes the carded film to
-  submittedAt: number | null; // epoch ms; grace window + wall-clock. null = the token carried none.
+  submittedAt: number | null; // epoch ms; 90-min 404 backstop + wall-clock. null = the token carried none.
+  notFoundStreak: number; // consecutive video-finish 404s; 0 = none. fleet-chezmoi#1662.
   titleSeconds: number; // seconds prepended by the opening title card (0 = none); reported back to the
                         // core as prepend_seconds so it can re-time the .srt sidecar (#663)
 }
@@ -103,16 +105,23 @@ export function decodePoll(token: string): FinishPoll | null {
   try {
     const o = JSON.parse(atob(token)) as FinishPoll;
     if (o && typeof o.jobId === "string" && typeof o.filmKey === "string" && typeof o.outputKey === "string") {
-      return { jobId: o.jobId, filmKey: o.filmKey, outputKey: o.outputKey, submittedAt: typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt) ? o.submittedAt : null, titleSeconds: typeof o.titleSeconds === "number" && Number.isFinite(o.titleSeconds) && o.titleSeconds > 0 ? o.titleSeconds : 0 };
+      const notFoundStreak = parseNotFoundStreak(o.notFoundStreak);
+      return {
+        jobId: o.jobId,
+        filmKey: o.filmKey,
+        outputKey: o.outputKey,
+        submittedAt: typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt) ? o.submittedAt : null,
+        notFoundStreak,
+        titleSeconds: typeof o.titleSeconds === "number" && Number.isFinite(o.titleSeconds) && o.titleSeconds > 0 ? o.titleSeconds : 0,
+      };
     }
   } catch { /* fall through */ }
   return null;
 }
 
-// How long after submit a container "job not found" is treated as a restart race (keep polling) vs a
-// real drop (fail, so the core re-dispatches or degrades). The container job store is in-process, so a
-// container restart drops the job; the deterministic output key makes a core re-run idempotent.
-export const CONTAINER_NOTFOUND_GRACE_MS = 30_000;
+// 404 policy lives in modules/_shared/video-finish-404.ts (fleet-chezmoi#1662). Re-export the
+// previous 30s name so an older import still typechecks; it is no longer the terminal rule.
+export { CONTAINER_NOTFOUND_GRACE_MS } from "../../_shared/video-finish-404";
 
 /** Map the container's completed /film-titles result to a FilmFinishOutput. A real write lands the
  *  carded film at outputKey (result.key echoes it); a missing key falls back to the deterministic

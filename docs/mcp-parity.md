@@ -13,11 +13,11 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **86** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Until cf#520, 85 were in the table and `GET /api/modules` was dispatched inline before it, so every consumer of this number had to compensate by hand; the route was moved into the table and the compensations deleted. |
-| Panel-reachable | **66** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
+| Studio API route entries | **87** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Until cf#520, 85 were in the table and `GET /api/modules` was dispatched inline before it, so every consumer of this number had to compensate by hand; the route was moved into the table and the compensations deleted. cf#353 then added `POST /api/storyboard/renders/:id/retry`. |
+| Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **83** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
+| Reachable via `studio_request` | **84** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
 | Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
 | Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **83 of 86** route
-entries there is nothing an agent cannot invoke. Curated coverage is 41 of 86 (48%), and that number
+`studio_request` sends any method to any path with the studio bearer, so for **84 of 87** route
+entries there is nothing an agent cannot invoke. Curated coverage is 41 of 87 (48%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 83 a low number costs discoverability, not reach, and 45
+contract to find the route. For those 84 a low number costs discoverability, not reach, and 46
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
@@ -143,7 +143,7 @@ are being reconciled in vivijure-cf#334. A curated submit tool with a blocked po
 capability, and 29 tools built on an unreconciled door would freeze the divergence. A test in
 `vivijure-mcp` asserts no curated tool aims at one, and is written to be deleted when #334 lands.
 
-The remaining 33 panel-reachable routes with no curated tool are, method-aware, **29**: the 9 blocked
+The remaining 34 panel-reachable routes with no curated tool are, method-aware, **30**: the 9 blocked
 render-door routes, the 19 deliberately left on `studio_request` (internal helpers, module
 config, session), and `POST /api/cast/:id/train-wan-lora`, panel-reachable since vivijure-local#329
 and with no curated tool yet. Module config write stays on the hatch for a structural reason rather
@@ -156,7 +156,7 @@ Every measurement in this document can err in ONE direction, and a reader a year
 work that out from the number. Both instrument defects found while producing this revision ran in
 the flattering direction, which is exactly why they survived.
 
-- **Panel-reachable (66) can be too LOW.** Until cf#333 this was a path-only matcher published as
+- **Panel-reachable (67) can be too LOW.** Until cf#333 this was a path-only matcher published as
   **70**, and that number could only ever be too HIGH: it compared path segments and ignored METHOD,
   so a route entry inherited reachability from any panel call to its path. It is now derived from the
   panel's own call sites (`fetch`/`api` calls, `.href`/`.src` DOM assignments, one hop of variable
@@ -168,7 +168,7 @@ the flattering direction, which is exactly why they survived.
 - **Reached by a curated tool (41) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
-- **Route entries (86) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+- **Route entries (87) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
   registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
   added explicitly; a second would be invisible.
 - **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.
@@ -276,6 +276,7 @@ structurally invisible to the MCP.
 | `DELETE` | `/api/storyboard/renders/:id` | yes | `delete_render` | json |
 | `POST` | `/api/storyboard/renders/:id/add-audio` | yes | `add_render_audio` | json |
 | `POST` | `/api/storyboard/renders/:id/add-narration` | yes | `add_render_narration` | json |
+| `POST` | `/api/storyboard/renders/:id/retry` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/finalize` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/animate-cloud` | yes | -- | json |
 | `POST` | `/api/storyboard/renders/:id/animate-hybrid` | yes | -- | json |
