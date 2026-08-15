@@ -981,6 +981,41 @@ async function regenShot(row, kf, btnEl, imgEl) {
 // Reuses the existing /api/storyboard/render/<jobId> route (no new
 // poll endpoint; the GPU job is just another RunPod job from the
 // platform's perspective).
+// cf#515: the flat 4000ms this loop used to re-arm at, now the jitter BASE.
+const REGEN_POLL_MS = 4000;
+
+// cf#515: consecutive regen-poll failures, keyed per regen job so two concurrent
+// regens back off independently.
+const regenPollErrorStreaks = new Map();
+
+// cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
+// PR #563 for the render poll). Resolved at CALL time rather than load time,
+// because several vitest suites `eval` this file in plain Node where the global
+// does not exist; only a live poll needs the policy. It THROWS when the script is
+// missing rather than falling back to a flat interval: a silent fallback would
+// reintroduce exactly the unjittered loop this change removes, and would read as
+// working.
+function pollPolicy() {
+  var ps = (typeof pollSchedule !== "undefined" && pollSchedule)
+    || (typeof globalThis !== "undefined" && globalThis.pollSchedule);
+  if (!ps) throw new Error("poll-schedule.js is not loaded; refusing to poll unjittered (cf#515)");
+  return ps;
+}
+
+// cf#515: the ONE place the regen poll re-arms. This loop hits
+// GET /api/storyboard/render/<jobId> -- the SAME route the main render poll uses,
+// which drives advanceFilmJob and closes the film's DB row -- on a flat 4000ms,
+// harder than the render poll's 8s, from two arm sites, and it can run CONCURRENTLY
+// with the render poll while a board is polling. Unjittered it synchronises exactly
+// as the render poll did before PR #563.
+function scheduleRegenPoll(regenKey) {
+  const delay = pollPolicy().nextPollDelayMs({
+    baseMs: REGEN_POLL_MS,
+    errorStreak: regenPollErrorStreaks.get(regenKey) || 0,
+  });
+  setTimeout(() => pollRegenJob(regenKey), delay);
+}
+
 function pollRegenJob(regenKey) {
   const state = historyState.regenJobs.get(regenKey);
   if (!state) return;
@@ -995,7 +1030,8 @@ function pollRegenJob(regenKey) {
           || status === "TIMED_OUT"
       );
       if (!terminal) {
-        setTimeout(() => pollRegenJob(regenKey), 4000);
+        regenPollErrorStreaks.delete(regenKey); // cf#515: a good poll clears the backoff
+        scheduleRegenPoll(regenKey);
         return;
       }
       // Locate the current DOM nodes for this row + shot. The row may
@@ -1011,6 +1047,7 @@ function pollRegenJob(regenKey) {
         '.planner-history-keyframe-regen[data-shot-id="' + cssEscape(state.shotId) + '"]',
       );
       historyState.regenJobs.delete(regenKey);
+      regenPollErrorStreaks.delete(regenKey); // cf#515: job is terminal; drop its backoff state
       // v0.41.1: clear the stashed entry on terminal status so a
       // subsequent reload does not try to re-poll a finished job.
       savePersistedState();
@@ -1038,7 +1075,9 @@ function pollRegenJob(regenKey) {
     })
     .catch((err) => {
       console.warn("regen poll failed:", err);
-      setTimeout(() => pollRegenJob(regenKey), 4000);
+      // cf#515: back off rather than re-arm flat.
+      regenPollErrorStreaks.set(regenKey, (regenPollErrorStreaks.get(regenKey) || 0) + 1);
+      scheduleRegenPoll(regenKey);
     });
 }
 
