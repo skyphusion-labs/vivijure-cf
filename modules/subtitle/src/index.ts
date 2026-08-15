@@ -32,11 +32,14 @@ import {
 } from "./contract";
 import {
   coerceConfig, hasCaptions, buildSrt, buildContainerSpec, passthroughOutput,
-  encodePoll, decodePoll, completedOutput, durationFields, CONTAINER_NOTFOUND_GRACE_MS,
+  encodePoll, decodePoll, completedOutput, durationFields,
 } from "./subtitle";
 import {
   timedVpcFetch, logVpcAsyncTerminal, withVpcElapsedApplied,
 } from "../../_shared/vpc-call-log";
+import {
+  classifyVideoFinish404, nextNotFoundStreak,
+} from "../../_shared/video-finish-404";
 
 interface Env {
   VIDEO_FINISH_VPC: { fetch(url: RequestInfo, init?: RequestInit): Promise<Response> };
@@ -187,7 +190,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   // container (back-compat). A sync fallback that itself fails soft-degrades (#190), never drops the film.
   const jobId = await submitAsync(env, spec, corr);
   if (jobId) {
-    return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now() }) };
+    return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0 }) };
   }
   return invokeSync(env, input, spec, corr);
 }
@@ -218,14 +221,12 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
   }
   const resp = timed.resp;
   if (resp.status === 404) {
-    // The container lost the job (its store is in-process; a restart drops it). Brief grace for a
-    // post-submit race; past it, report gone so the core re-dispatches -- the deterministic output key
-    // makes a re-run idempotent (#141 GC-grace discipline, container flavor).
-    // No submit time => the grace window is unmeasurable, so it is NOT granted. Same outcome as
-    // before (epoch 0 always exceeded the window); the absence is now explicit rather than
-    // disguised as a very old timestamp.
-    if (st.submittedAt !== null && Date.now() - st.submittedAt < CONTAINER_NOTFOUND_GRACE_MS) {
-      return { ok: true, pending: true };
+    // A lone 404 is a peer's answer on the 3-replica VIP, not a restart
+    // (fleet-chezmoi#1662). Decision is classifyVideoFinish404.
+    const now = Date.now();
+    const notFoundStreak = nextNotFoundStreak(st.notFoundStreak);
+    if (classifyVideoFinish404({ consecutiveNotFound: notFoundStreak, submittedAt: st.submittedAt, now }) === "pending") {
+      return { ok: true, pending: true, poll: encodePoll({ ...st, notFoundStreak }) };
     }
     logVpcAsyncTerminal({
       module: MANIFEST.name,
@@ -239,7 +240,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
       containerJobId: st.jobId,
       filmKey: st.filmKey,
     });
-    return { ok: false, error: "subtitle: video-finish container job not found (restarted); resubmit" };
+    return { ok: false, error: "subtitle: video-finish container job not found (no replica holds it); resubmit" };
   }
   if (!resp.ok) return { ok: true, pending: true }; // 5xx gateway blip: re-poll
   let s: { status?: string; result?: { ok?: boolean; key?: string; burned?: boolean; sidecar?: boolean; durationSeconds?: number } | null; error?: string };
@@ -289,6 +290,9 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
       filmKey: st.filmKey,
     });
     return { ok: false, error: "subtitle: container job failed: " + (s.error ?? "unknown") };
+  }
+  if (st.notFoundStreak > 0) {
+    return { ok: true, pending: true, poll: encodePoll({ ...st, notFoundStreak: 0 }) };
   }
   return { ok: true, pending: true }; // pending / unknown -> keep polling
 }

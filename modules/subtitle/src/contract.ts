@@ -41,7 +41,7 @@ export type InvokeResponse<O = unknown> =
   | { ok: false; error: string };
 export interface PollRequest { poll: string; }
 export type PollResponse<O = unknown> =
-  | { ok: true; pending: true }
+  | { ok: true; pending: true; poll?: string }
   | { ok: true; output: O }
   | { ok: false; error: string };
 
