@@ -1310,11 +1310,7 @@
   // ---------- v0.57.0: standalone LoRA training ----------
 
   const LORA_POLL_MS = 5000;
-  let loraPollTimer = null;
   let loraPollInflight = false;
-  // cf#515: consecutive poll failures, so the catch path backs off instead of
-  // re-arming flat. Reset to 0 on every successful poll.
-  let loraPollErrorStreak = 0;
 
   // cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
   // PR #563 for the render poll). Resolved at CALL time rather than load time,
@@ -1575,14 +1571,56 @@
     }
   }
 
-  // cf#515: jittered + backed off. Was a flat 5s self-rescheduling setTimeout.
+  // cf#581: the LoRA poll watches a USER-INITIATED job -- a training run that costs
+  // real GPU minutes and that the user is sitting there waiting on. That is exactly
+  // why PR #575 shipped jitter here and stopped: a visibility pause with no matching
+  // resume would leave the pane reading "training" forever for a run that actually
+  // finished, which is a worse defect than the synchronisation it fixes.
+  //
+  // The lifecycle now lives in the shared policy instead of here. createLoop owns
+  // the timer, the error streak and the paused flag, and registers the loop with the
+  // ONE visibilitychange listener the policy attaches per document. That listener is
+  // the reason this works on cast.html AT ALL: cast.html does not load
+  // planner-init.js, which was the only file in the tree with a visibilitychange
+  // handler, so a pause wired the planner way would never have fired on this page.
+  // Measured before this change: 6 poll loops, 2 with a hidden guard, and both of
+  // those on planner.html.
+  let loraPollLoop = null;
+  // The character id currently being polled. Null means no LoRA poll is in flight,
+  // which is what makes a stopped loop inert rather than merely un-armed.
+  let loraPollId = null;
+
+  function loraLoop() {
+    if (!loraPollLoop) {
+      loraPollLoop = pollPolicy().createLoop({
+        baseMs: LORA_POLL_MS,
+        run: function () {
+          if (loraPollId !== null) pollLoraStatus(loraPollId);
+        },
+        // Active only while the character being polled is still the selected one.
+        // Resume must not restart a poll for a character the user navigated away
+        // from while the tab was hidden, and pause must not mark a finished run as
+        // paused (it would resume on the next visibility change and poll a job that
+        // is already done).
+        isActive: function () {
+          return loraPollId !== null && state.selectedId === loraPollId;
+        },
+      });
+    }
+    return loraPollLoop;
+  }
+
   function schedulePollLoraStatus(id) {
-    if (loraPollTimer) clearTimeout(loraPollTimer);
-    const delay = pollPolicy().nextPollDelayMs({
-      baseMs: LORA_POLL_MS,
-      errorStreak: loraPollErrorStreak,
-    });
-    loraPollTimer = setTimeout(() => pollLoraStatus(id), delay);
+    loraPollId = id;
+    loraLoop().arm();
+  }
+
+  // Terminal, or the user moved on: clear the poll id FIRST so isActive() reads
+  // false, then stop. Order matters -- stopping while still active would leave the
+  // loop resumable.
+  function stopLoraPoll() {
+    loraPollId = null;
+    if (loraPollLoop) loraPollLoop.stop();
   }
 
   async function pollLoraStatus(id) {
@@ -1593,7 +1631,7 @@
     if (state.selectedId !== id) {
       // User switched to another character; let the new selection
       // restart polling if needed.
-      loraPollTimer = null;
+      stopLoraPoll();
       return;
     }
     loraPollInflight = true;
@@ -1605,16 +1643,16 @@
         renderLoraPane(data.cast);
         renderWanLoraPane(data.cast);
       }
-      loraPollErrorStreak = 0; // cf#515: a good poll clears the backoff
       if (data.cast && data.cast.lora_status === "training") {
-        schedulePollLoraStatus(id);
+        loraPollId = id;
+        loraLoop().armAfterSuccess(); // cf#515: a good poll clears the backoff
       } else {
-        loraPollTimer = null;
+        stopLoraPoll();
       }
     } catch (e) {
       setLoraStatusText("poll error: " + e.message + " (retrying)", "error");
-      loraPollErrorStreak += 1; // cf#515: back off rather than re-arm flat
-      schedulePollLoraStatus(id);
+      loraPollId = id;
+      loraLoop().armAfterError(); // cf#515: back off rather than re-arm flat
     } finally {
       loraPollInflight = false;
     }
