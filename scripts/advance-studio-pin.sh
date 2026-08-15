@@ -36,12 +36,53 @@ case "$TAG" in
   *) echo "::error::${TAG} is not a vX.Y.Z tag -- refusing to pin hosted tenants to it"; exit 1 ;;
 esac
 
-# Presence-check only. `${var:+SET}` is the whole form: it has no else branch, because every `:-`
-# variant expands to the VALUE in exactly the case being tested.
+# MODE. Default advances the pin; --assert only READS and asserts, so the release path can check
+# the outcome even on a run where no write happened. That separation is the cf#372 fix: the old
+# shape let a skip and a success share exit 0, so a release that never touched the pin reported
+# exactly what a release that advanced it reported.
+MODE=advance
+case "${2:-}" in
+  --assert) MODE=assert ;;
+  "") ;;
+  *) echo "::error::unknown argument ${2} (expected --assert or nothing)"; exit 1 ;;
+esac
+
+# CREDENTIAL, AND THE BRANCH THAT USED TO BE THE BUG.
+#
+# This check used to warn and exit 0 unconditionally when the token was absent. It ran that way on
+# the v1.27.0 and v1.28.0 tags, reported SUCCESS both times, and never attempted a read or a write:
+# the secret had never been provisioned at all. An annotation is not a gate. A ::warning renders a
+# yellow badge, a zero exit and a green check, obliges nobody, and rendered on both run summaries
+# where it was seen by nobody. Meanwhile the deployed studio reached v1.28.0 while hosted stayed
+# pinned at v1.26.0, so hosted and self-host ran different code from the same nominal release,
+# against the parity invariant, and the gap grew by one every ship.
+#
+# So the skip is now SCOPED to the only case where it is legitimate: a fork or a self-hoster, who
+# has no business writing our control plane and for whom the secret correctly does not exist. On
+# the canonical repository the absent credential is a FAILURE, because a release that silently
+# does not advance the pin is a parity violation and must not be reported as a release.
+#
+# AMBIGUITY FAILS CLOSED. An unset GITHUB_REPOSITORY cannot be read as "probably a fork": that is
+# the same reasoning that produced the original defect, where an absent thing was treated as a
+# benign one. GitHub Actions always sets it, so unset means somebody is running this by hand.
+CANONICAL="${STUDIO_PIN_CANONICAL_REPO:-skyphusion-labs/vivijure-cf}"
+HERE="${GITHUB_REPOSITORY:-}"
 if [ -z "${STUDIO_PIN_VARIABLE_TOKEN:+SET}" ]; then
-  echo "::warning::STUDIO_PIN_VARIABLE_TOKEN is unset -- the hosted pin was NOT advanced to ${TAG}."
-  echo "backstop: cp#393 refuses to DEPLOY a trailing pin and reports the live binding daily."
-  exit 0
+  if [ -n "$HERE" ] && [ "$HERE" != "$CANONICAL" ]; then
+    echo "::warning::STUDIO_PIN_VARIABLE_TOKEN is unset and this is ${HERE}, not ${CANONICAL}."
+    echo "Skipping: a fork or self-host deployment does not pin our hosted control plane."
+    exit 0
+  fi
+  echo "::error::STUDIO_PIN_VARIABLE_TOKEN is unset on ${HERE:-an unidentified repository}."
+  echo "::error::Refusing to report a release that did not advance the hosted pin to ${TAG}."
+  echo "  The hosted pin decides which studio code a hosted tenant runs; self-host takes the same"
+  echo "  tag straight from the release. A release that moves one and not the other ships"
+  echo "  different code to the two doors under one version number."
+  echo "  FIX: provision a fine-grained PAT on ${CANONICAL} as the repository secret"
+  echo "  STUDIO_PIN_VARIABLE_TOKEN, carrying ONLY the ${CP} permission Variables: read and write."
+  echo "  This step previously WARNED here and exited 0; that is what let the pin trail six"
+  echo "  releases while every run reported success (cf#372)."
+  exit 1
 fi
 
 auth=(-H "Accept: application/vnd.github+json"
@@ -60,6 +101,24 @@ if [ "$cur" = "ABSENT" ]; then
   exit 1
 fi
 echo "current hosted pin: ${cur}; this release: ${TAG}"
+
+# ASSERT MODE ends here, and this is the assertion that runs even when no write happened.
+#
+# The invariant after a release run is NOT pin == tag, it is pin NOT BEHIND tag. Re-running an
+# older tag CI run is the sanctioned way to rebuild that tag artifact, and on such a run the
+# advance correctly declines a backwards move; demanding equality would paint that red for doing
+# the right thing. Trailing is the actual defect, and this is red exactly then.
+if [ "$MODE" = assert ]; then
+  behind="$(printf %s\\n%s\\n "${cur#v}" "${TAG#v}" | sort -V | head -1)"
+  if [ "$cur" != "$TAG" ] && [ "$behind" = "${cur#v}" ]; then
+    echo "::error::hosted pin is BEHIND the release: pin ${cur}, release ${TAG}."
+    echo "  Both numbers are printed so this reads as a comparison rather than a bare failure."
+    echo "  Hosted tenants would run ${cur} while self-host takes ${TAG} from the same release."
+    exit 1
+  fi
+  echo "assert OK: hosted pin ${cur} is not behind release ${TAG}."
+  exit 0
+fi
 
 if [ "$cur" = "$TAG" ]; then
   echo "hosted pin is already ${TAG}; nothing to advance."
