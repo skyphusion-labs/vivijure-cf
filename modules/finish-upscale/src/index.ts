@@ -33,6 +33,10 @@ import {
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
+// cf#594: the poll-path soft-degrade contract, shared by all four finish modules. This module had NO
+// such branch before cf#594: a door's honest degrade fell through to the artifact parse and
+// destroyed the film.
+import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
 
@@ -463,6 +467,32 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     return { ok: true, pending: true };
   }
   if (s.status === "FAILED") {
+    // cf#594: RunPod lifts a top-level `error` key out of a handler RETURN into a job-level FAILED
+    // envelope (cf#565), so a door's honest structured soft-degrade ({ok:false} kept in output)
+    // arrives HERE wearing a failure envelope, never at the COMPLETED branch below. Pass the
+    // original clip through (recorded, #77) instead of failing the shot; a genuine crash (a raise
+    // leaves no structured output) still fails loud, and that discriminator is the whole safety
+    // property.
+    //
+    // TELEMETRY ORDERING, decided BEFORE the row is written. THIS DOES NOT CONTRADICT cf#279, whose
+    // rule (record the endpoint outcome before parsing, "because whether WE could use the output is
+    // a different fact") is correct and is still obeyed: the outcome recorded is the ENDPOINT's,
+    // written before anything is parsed for our own use. The narrower point is that RunPod's FAILED
+    // here is an artifact of the lift, not an endpoint failure -- the endpoint ran to completion and
+    // returned a structured result -- so `failed` is wrong ABOUT THE ENDPOINT, independently of
+    // whether we recovered anything. Recording it anyway would over-report backend failures and
+    // under-report degrades, both errors pointing at the door.
+    //
+    // A token with no source clip (pollPassthrough returns null) has nothing honest to pass through,
+    // so it falls through to the pre-cf#594 terminal path below, row and message unchanged.
+    const degrade = softDegradeInFailedEnvelope(s);
+    if (degrade !== null) {
+      const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, degrade || undefined);
+      if (passed) {
+        await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
+        return passed;
+      }
+    }
     await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
     return { ok: false, error: "finish-upscale job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
   }
@@ -496,6 +526,18 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
   // could use the output is a different fact and the chain response is what carries it.
   await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
+
+  // cf#594: a door that soft-degraded using the CURRENT `detail` key is NOT lifted by RunPod, so it
+  // arrives COMPLETED with `{ok:false}` intact. Recovered here, before the output is parsed for an
+  // artifact key -- which would otherwise find none, return module ok:false, and have the core's
+  // failOrRetry classify it deterministic and FAIL THE FILM. Same shared decision as the FAILED
+  // route above, so the two door shapes cannot get different answers. A token with no source clip
+  // falls through to the pre-cf#594 terminal path below.
+  const softDegrade = softDegradeInCompletedOutput(s.output);
+  if (softDegrade !== null) {
+    const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, softDegrade || undefined);
+    if (passed) return passed;
+  }
 
   const out = parseBackendOutput(s.output);
   // cf#578: the endpoint completed. WHICH FIELD carries the written key depends on a branch on the

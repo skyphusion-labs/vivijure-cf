@@ -3,6 +3,15 @@
 
 import type { FinishInput, FinishOutput } from "./contract";
 
+// cf#594: `softDegradeInFailedEnvelope` MOVED to modules/_shared/finish-soft-degrade.ts. It was the
+// only implementation of the poll-path soft-degrade contract in the estate, and the three other
+// finish modules DESTROYED THE FILM on the exact shape it recovers, so it is now one implementation
+// with four callers rather than one module's local behaviour. Re-exported from here because it is
+// part of this module's tested surface (tests/finish-lipsync.test.ts imports it from this file) and
+// because the move has to be provably behaviour-identical: that suite runs against the lifted code,
+// unchanged, and is what proves the lift.
+export { softDegradeInFailedEnvelope } from "../../_shared/finish-soft-degrade";
+
 /** Passthrough FinishOutput that records WHY the clip went through unchanged, so a real failure
  *  (misconfig / backend down) is never indistinguishable from the legitimate no-op (the silent-degrade
  *  bug of #77). A genuine degrade tags `applied` with `passthrough:<reason>` and sets `degraded`; the
@@ -219,21 +228,4 @@ export function terminalErrorInOutput(output: unknown): string | null {
   if (typeof err === "string" && err.length > 0) return err;
   if (o.status === "error") return "backend reported status=error with no error detail";
   return null;
-}
-
-/** Pure: is a job-level FAILED envelope actually the handler's own structured soft-degrade? RunPod
- *  lifts any top-level `error` key in a handler RETURN into a job-level `status:"FAILED"` envelope,
- *  so the musetalk soft-degrade ({ok:false, error:"..."}) never arrives as COMPLETED -- the
- *  COMPLETED ok:false passthrough branch is unreachable for it (#565). The handler's `ok:false`
- *  survives inside `output`, while a genuine crash (a raise) leaves no structured output there:
- *  that is the discriminator. Returns the degrade detail ("" when the envelope kept none) for a
- *  structured soft-degrade, or null for a real failure. */
-export function softDegradeInFailedEnvelope(s: { status?: string; output?: unknown; error?: unknown }): string | null {
-  if (s.status !== "FAILED") return null;
-  if (!s.output || typeof s.output !== "object") return null;
-  if ((s.output as { ok?: unknown }).ok !== false) return null;
-  const o = s.output as { error?: unknown; detail?: unknown };
-  if (typeof o.detail === "string" && o.detail.length > 0) return o.detail.slice(0, 120);
-  if (typeof o.error === "string" && o.error.length > 0) return o.error.slice(0, 120);
-  return typeof s.error === "string" ? s.error.slice(0, 120) : "";
 }
