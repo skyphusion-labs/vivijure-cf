@@ -61,19 +61,38 @@ export function lipsyncedKey(clipKey: string): string {
   return dot > clipKey.lastIndexOf("/") ? `${clipKey.slice(0, dot)}_ls${clipKey.slice(dot)}` : `${clipKey}_ls`;
 }
 
-/** The RunPod /run body for the dedicated vivijure-musetalk endpoint (R2 mode: it reads `clip_key` +
- *  `audio_key` and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does
- *  for finish). Caller guarantees `audio_key` is present (no-dialogue shots no-op before submit). */
+/** TTL used by the core when it presigns finish satellite URLs (cf#312). */
+export const PRESIGN_TTL_SECONDS = 1800;
+
+/** The RunPod /run body for vivijure-musetalk.
+ *  cf#312: when the core hands video_url + audio_url + output_url, use the credentialless presigned
+ *  branch (no clip_key/audio_key). Otherwise R2 shared-bucket mode. Caller guarantees audio is
+ *  present (no-dialogue shots no-op before submit). */
 export function buildRunPodBody(input: FinishInput, cfg: LipsyncConfig, project: string): { input: Record<string, unknown> } {
+  const output_key = input.output_key ?? lipsyncedKey(input.clip_key);
+  const common = {
+    project,
+    output_key,
+    version: cfg.version,
+    bbox_shift: cfg.bbox_shift,
+    ...(input.output_hash ? { output_hash: input.output_hash } : {}),
+  };
+  if (input.video_url && input.audio_url && input.output_url) {
+    return {
+      input: {
+        ...common,
+        video_url: input.video_url,
+        audio_url: input.audio_url,
+        output_url: input.output_url,
+        ...(input.hash_url ? { hash_url: input.hash_url } : {}),
+      },
+    };
+  }
   return {
     input: {
-      project,
+      ...common,
       clip_key: input.clip_key,
       audio_key: input.audio_key,
-      output_key: lipsyncedKey(input.clip_key),
-      version: cfg.version,
-      bbox_shift: cfg.bbox_shift,
-      ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
     },
   };
 }
