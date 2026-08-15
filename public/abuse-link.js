@@ -18,18 +18,18 @@
   var checks = window.abuseLinkChecks;
   var FOOTER_CLASS = "studio-foot";
 
-  fetch("/api/modules")
-    .then(function (r) {
-      return r.ok ? r.json() : null;
-    })
-    .then(function (d) {
-      var spec = checks ? checks.abuseLink(d) : null;
-      if (spec) render(spec);
-    })
-    .catch(function () {
-      // A failed registry read means we do not KNOW of an address. Rendering a guessed one would be
-      // worse than rendering none: silence is honest here, and the front door still carries the path.
-    });
+  // cf#580: reads the SHARED per-page memo instead of issuing its own request. This file loads on
+  // all four studio pages, which is what made it one of the six un-memoised callers.
+  //
+  // The catch is gone because load() never rejects: a failed read resolves the documented empty
+  // shape, abuseLink() finds no host.abuse_report_url on it and returns null, and nothing renders.
+  // Byte-identical to the old catch, and for the same reason: a failed registry read means we do not
+  // KNOW of an address, and rendering a guessed one would be worse than rendering none. Silence is
+  // honest here, and the front door still carries the path.
+  moduleRegistry.load().then(function (d) {
+    var spec = checks ? checks.abuseLink(d) : null;
+    if (spec) render(spec);
+  });
 
   function render(spec) {
     if (document.querySelector("." + FOOTER_CLASS)) return;
