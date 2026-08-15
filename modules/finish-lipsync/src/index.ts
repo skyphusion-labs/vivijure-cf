@@ -7,8 +7,9 @@
 //   POST /invoke      -> submit to RunPod, return { ok, pending, poll } immediately
 //   POST /poll        -> check job status; return output on completion
 //
-// R2 transport: the endpoint reads `clip_key` + `audio_key` and writes `output_key` in the shared
-// bucket itself (exactly as finish-upscale / vivijure-backend do), so this worker holds no R2 creds.
+// R2 transport (cf#312): prefer credentialless presigned mode when the core hands video_url +
+// audio_url + output_url (no endpoint R2 env; poolable). Fall back to shared-bucket R2 mode
+// (clip_key + audio_key + output_key) when those URLs are absent.
 //
 // Failures are DATA, never an exception across the wire. For a chain hook the soft degrade (pass the
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot
@@ -25,7 +26,8 @@ import {
   type FinishOutput,
 } from "./contract";
 import {
-  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
+  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey, passthroughOutput,
+  type PollState,
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput,
   softDegradeInFailedEnvelope, RUNPOD_COLD_GRACE_MS,
 } from "./lipsync";
@@ -171,6 +173,29 @@ function passthrough(
   const output = passthroughOutput(input, reason, opts);
   if (output.degraded) console.warn(`finish-lipsync: passthrough (${output.degraded}) shot=${input.shot_id}`);
   return { ok: true, output };
+}
+
+/** cf#578 POLL-TIME SOFT DEGRADE, the same decision speech-upscale already makes at its poll site.
+ *
+ *  A finish step is POLISH. When the endpoint completes but yields no artifact, the honest answer is
+ *  the input clip passed through with the reason RECORDED, not a chain failure: an `ok:false` here
+ *  routes to the chain failure path and never reaches the degrade accounting, so the whole class is
+ *  invisible in telemetry. Only MALFORMED I/O fails loud.
+ *
+ *  Unlike its finish-upscale sibling this needs no legacy-token guard: this module has carried the
+ *  input clip in its poll token since it shipped (PollState.clipKey), which is exactly why the two
+ *  poll sites could not previously make the same decision.
+ */
+function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> {
+  console.warn(`finish-lipsync: poll passthrough (${reason}) shot=${st.shotId}`);
+  return {
+    ok: true,
+    output: passthroughOutput(
+      { shot_id: st.shotId, clip_key: st.clipKey, src_fps: st.srcFps, frames: st.frames },
+      reason,
+      detail ? { detail } : {},
+    ),
+  };
 }
 
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
@@ -341,15 +366,26 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     };
   }
   const out = parseBackendOutput(s.output);
-  if (!out?.clip_key) return { ok: false, error: "finish-lipsync: backend returned no clip_key" };
+  // cf#578: WHICH FIELD carries the written key depends on a branch on the SATELLITE, not on
+  // anything visible here -- R2 mode echoes it as `clip_key` (musetalk handler.py:671), presigned
+  // mode returns it as `output_key` (:717). Reading only `clip_key` turned a finished, uploaded,
+  // paid-for artifact into a parse failure on the exact path cf#449 makes preferred.
+  const key = finishedKey(out);
+  if (!key) {
+    // A REAL absence: COMPLETED with no artifact. Polish never fails the chain (#77/#249), and an
+    // `ok:false` here would also skip the degrade accounting entirely, so the class would be
+    // invisible in telemetry while the render died. Same decision as speech-upscale and
+    // finish-upscale, at the same site.
+    return pollPassthrough(st, "no-output-key");
+  }
   return {
     ok: true,
     output: {
       shot_id: st.shotId,
-      clip_key: out.clip_key,
+      clip_key: key,
       out_fps: st.srcFps,    // lip-sync preserves fps + frame count
       frames: st.frames,
-      applied: out.applied ?? [],
+      applied: out?.applied ?? [],
     },
   };
 }

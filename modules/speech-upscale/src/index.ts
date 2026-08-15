@@ -11,8 +11,9 @@
 //   POST /invoke      -> submit to RunPod, return { ok, pending, poll } immediately
 //   POST /poll        -> check job status; return output on completion
 //
-// R2 transport: the endpoint reads `audio_key` and writes `output_key` itself, so this worker holds
-// no R2 creds.
+// R2 transport (cf#312): prefer credentialless presigned mode when the core hands audio_url +
+// output_url (no endpoint R2 env; poolable). Fall back to shared-bucket R2 mode (audio_key +
+// output_key) when those URLs are absent.
 //
 // POLISH step: a disabled toggle, a missing endpoint, OR an endpoint failure all SOFT-DEGRADE (input
 // audio through unchanged, applied:[], `degraded` set) -- never a hard chain failure, never a fake

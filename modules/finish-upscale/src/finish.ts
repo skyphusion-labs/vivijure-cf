@@ -165,8 +165,13 @@ export function upscaledKey(clipKey: string): string {
   return dot > clipKey.lastIndexOf("/") ? `${clipKey.slice(0, dot)}_up${clipKey.slice(dot)}` : `${clipKey}_up`;
 }
 
-/** The RunPod /run body for the dedicated vivijure-upscale endpoint (R2 mode: it reads `clip_key`
- *  and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does for finish). */
+/** TTL used by the core when it presigns finish satellite URLs (cf#312). Documented here so a
+ *  module-side reader sees the same envelope; the core is the authority that mints the URLs. */
+export const PRESIGN_TTL_SECONDS = 1800;
+
+/** The RunPod /run body for vivijure-upscale.
+ *  cf#312: when the core hands video_url + output_url, use the credentialless presigned branch
+ *  (no clip_key -- the handler routes on which keys are present). Otherwise R2 shared-bucket mode. */
 export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project: string): { input: Record<string, unknown> } {
   // cf#507b: the factor now comes from resolveUpscaleScale rather than straight off the config.
   // TWO QUANTITIES, kept distinct: input.width/height are the MEASURED source (what this clip is),
@@ -180,14 +185,33 @@ export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project:
     { width: input.width, height: input.height },
     { width: input.delivery_width, height: input.delivery_height },
   );
+  // MERGE NOTE (cf#312 over cf#507b): the derived factor lives in `common`, so BOTH transports
+  // carry it. Sourcing `scale` from `cfg` here -- which is what this branch did before main gained
+  // resolveUpscaleScale -- would revert the derivation for the presigned path AND the R2 path, and
+  // no test that drives one transport at a time can see that: `cfg.scale` and `chosen.scale` are
+  // equal whenever the caller set `scale` explicitly, which is exactly what a fixture does.
+  const output_key = input.output_key ?? upscaledKey(input.clip_key);
+  const common = {
+    project,
+    output_key,
+    scale: chosen.scale,
+    model: cfg.model,
+    ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
+  };
+  if (input.video_url && input.output_url) {
+    return {
+      input: {
+        ...common,
+        video_url: input.video_url,
+        output_url: input.output_url,
+        ...(input.hash_url ? { hash_url: input.hash_url } : {}),
+      },
+    };
+  }
   return {
     input: {
-      project,
+      ...common,
       clip_key: input.clip_key,
-      output_key: upscaledKey(input.clip_key),
-      scale: chosen.scale,
-      model: cfg.model,
-      ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
     },
   };
 }
@@ -199,6 +223,14 @@ export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project:
 export interface PollState {
   jobId: string;
   shotId: string;
+  /** cf#578 THE INPUT CLIP, so a poll-time degrade can pass it through.
+   *
+   *  OPTIONAL, and the optionality is the backward compatibility, exactly as `door` above: a token
+   *  minted before this change carries no clipKey, and a poll-time degrade cannot invent the clip it
+   *  would be passing through. Those tokens keep the pre-cf#578 terminal error, which says so.
+   *  finish-lipsync has carried this field since it shipped; this is the sibling catching up, and
+   *  the reason the two modules could not make the same decision at their poll sites before. */
+  clipKey?: string;
   srcFps: number;
   frames: number;
   submittedAt?: number;
@@ -226,6 +258,7 @@ export function decodePoll(token: string): PollState | null {
     if (o && typeof o.jobId === "string" && typeof o.shotId === "string") {
       return {
         jobId: o.jobId, shotId: o.shotId, srcFps: Number(o.srcFps) || 16, frames: Number(o.frames) || 0,
+        clipKey: typeof o.clipKey === "string" && o.clipKey ? o.clipKey : undefined,
         submittedAt: typeof o.submittedAt === "number" ? o.submittedAt : undefined,
         door: typeof o.door === "string" && o.door ? o.door : undefined,
       };
@@ -263,7 +296,18 @@ export function classifyGoneState(
 export interface BackendOutput {
   shot_id?: string;
   clip_key?: string;   // the upscaled key (the handler echoes output_key here)
+  /** cf#578 PRESIGNED MODE. The satellite carries TWO return shapes and dispatches on the INPUT:
+   *  with `clip_key` it runs the credentialed R2 branch and echoes the written key back as
+   *  `clip_key`; without it, it runs the credentialless presigned branch and returns the SAME
+   *  written key as `output_key` (vivijure-upscale handler.py, presigned return). One artifact, two
+   *  field names. Reading only the first is what made a finished, paid-for upload read as a parse
+   *  failure. */
+  output_key?: string;
   out_fps?: number;
+  /** cf#578: the factor the ENDPOINT reports it ran at. Present on BOTH branches (R2 :674,
+   *  presigned :770). Load-bearing because the presigned branch is the one that sends no
+   *  `applied` -- see appliedTags below. */
+  scale?: number;
   frames?: number;
   applied?: string[];
 }
@@ -274,10 +318,41 @@ export function parseBackendOutput(output: unknown): BackendOutput | null {
   return {
     shot_id: typeof o.shot_id === "string" ? o.shot_id : undefined,
     clip_key: typeof o.clip_key === "string" ? o.clip_key : undefined,
+    output_key: typeof o.output_key === "string" ? o.output_key : undefined,
     out_fps: typeof o.out_fps === "number" ? o.out_fps : undefined,
+    scale: typeof o.scale === "number" ? o.scale : undefined,
     frames: typeof o.frames === "number" ? o.frames : undefined,
     applied: Array.isArray(o.applied) ? (o.applied as string[]) : [],
   };
+}
+
+
+/** The key the endpoint actually WROTE, whichever transport it ran on (cf#578).
+ *
+ *  Named apart from the two fields on purpose: which field carries it is decided by a branch on the
+ *  SATELLITE (key present -> R2 -> `clip_key`; key absent -> presigned -> `output_key`), so the
+ *  caller cannot know from its own response which to read, and must not have to. `undefined` means
+ *  the job COMPLETED and produced no artifact -- a real absence, and the only case that degrades. */
+export function finishedKey(out: BackendOutput | null): string | undefined {
+  return out?.clip_key ?? out?.output_key;
+}
+
+/** The provenance tags for a COMPLETED job (cf#578).
+ *
+ *  The R2 branch sends `applied: ["upscale:Nx"]`; the presigned branch (vivijure-upscale
+ *  handler.py:770) sends NO `applied` at all, while still reporting the `scale` it ran at. Mapping
+ *  only the key name would therefore have cost the module its provenance tag on every presigned
+ *  render, silently, and `applied: []` is the value a caller reads as "nothing was done".
+ *
+ *  THE TAG IS DERIVED FROM WHAT THE ENDPOINT REPORTED, NEVER FROM WHAT WE ASKED FOR. `out.scale` is
+ *  the endpoint own account of the factor it ran; the config is only our request, and a tag built
+ *  from a request is a fabricated tag whether or not it happens to be right. No scale reported means
+ *  no tag: an absence must not render as a value.
+ */
+export function appliedTags(out: BackendOutput | null): string[] {
+  if (out?.applied && out.applied.length > 0) return out.applied;
+  if (typeof out?.scale === "number") return [`upscale:${out.scale}x`];
+  return [];
 }
 
 // Cold-start cap: on a VIRGIN host the image pull (10-20GB) can outlive the normal #141 grace window

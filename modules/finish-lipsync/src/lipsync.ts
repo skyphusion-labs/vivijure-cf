@@ -52,19 +52,38 @@ export function lipsyncedKey(clipKey: string): string {
   return dot > clipKey.lastIndexOf("/") ? `${clipKey.slice(0, dot)}_ls${clipKey.slice(dot)}` : `${clipKey}_ls`;
 }
 
-/** The RunPod /run body for the dedicated vivijure-musetalk endpoint (R2 mode: it reads `clip_key` +
- *  `audio_key` and writes `output_key` in the shared bucket itself, exactly as vivijure-backend does
- *  for finish). Caller guarantees `audio_key` is present (no-dialogue shots no-op before submit). */
+/** TTL used by the core when it presigns finish satellite URLs (cf#312). */
+export const PRESIGN_TTL_SECONDS = 1800;
+
+/** The RunPod /run body for vivijure-musetalk.
+ *  cf#312: when the core hands video_url + audio_url + output_url, use the credentialless presigned
+ *  branch (no clip_key/audio_key). Otherwise R2 shared-bucket mode. Caller guarantees audio is
+ *  present (no-dialogue shots no-op before submit). */
 export function buildRunPodBody(input: FinishInput, cfg: LipsyncConfig, project: string): { input: Record<string, unknown> } {
+  const output_key = input.output_key ?? lipsyncedKey(input.clip_key);
+  const common = {
+    project,
+    output_key,
+    version: cfg.version,
+    bbox_shift: cfg.bbox_shift,
+    ...(input.output_hash ? { output_hash: input.output_hash } : {}),
+  };
+  if (input.video_url && input.audio_url && input.output_url) {
+    return {
+      input: {
+        ...common,
+        video_url: input.video_url,
+        audio_url: input.audio_url,
+        output_url: input.output_url,
+        ...(input.hash_url ? { hash_url: input.hash_url } : {}),
+      },
+    };
+  }
   return {
     input: {
-      project,
+      ...common,
       clip_key: input.clip_key,
       audio_key: input.audio_key,
-      output_key: lipsyncedKey(input.clip_key),
-      version: cfg.version,
-      bbox_shift: cfg.bbox_shift,
-      ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
     },
   };
 }
@@ -129,6 +148,12 @@ export function classifyGoneState(
  *  version, applied:["lipsync:v15"] }. It echoes the new key as `clip_key`. */
 export interface BackendOutput {
   clip_key?: string;
+  /** cf#578 PRESIGNED MODE. vivijure-musetalk carries TWO return shapes and dispatches on the
+   *  INPUT: with `clip_key` it runs the credentialed R2 branch and echoes the written key back as
+   *  `clip_key` (handler.py:671); without it, it runs the credentialless presigned branch and
+   *  returns the SAME written key as `output_key` (handler.py:717). One artifact, two field names.
+   *  Reading only the first turned a finished, uploaded, paid-for artifact into a parse failure. */
+  output_key?: string;
   applied?: string[];
 }
 
@@ -137,8 +162,19 @@ export function parseBackendOutput(output: unknown): BackendOutput | null {
   const o = output as Record<string, unknown>;
   return {
     clip_key: typeof o.clip_key === "string" ? o.clip_key : undefined,
+    output_key: typeof o.output_key === "string" ? o.output_key : undefined,
     applied: Array.isArray(o.applied) ? (o.applied as string[]) : [],
   };
+}
+
+/** The key the endpoint actually WROTE, whichever transport it ran on (cf#578).
+ *
+ *  Which field carries it is decided by a branch on the SATELLITE (key present -> R2 -> `clip_key`;
+ *  key absent -> presigned -> `output_key`), so the caller cannot know from its own response which
+ *  to read, and must not have to. `undefined` means the job COMPLETED and produced no artifact -- a
+ *  real absence, and the only case that degrades. */
+export function finishedKey(out: BackendOutput | null): string | undefined {
+  return out?.clip_key ?? out?.output_key;
 }
 
 // Cold-start cap: on a VIRGIN host the image pull (10-20GB) can outlive the normal #141 grace window

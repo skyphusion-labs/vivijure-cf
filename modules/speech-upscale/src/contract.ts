@@ -58,6 +58,10 @@ export type PollResponse<O = unknown> =
 export interface SpeechInput {
   shot_id: string;
   audio_key: string;  // R2 key of the shot's dialogue audio (from job.dialogue_audio[shot_id])
+  // cf#312 credentialless satellite transport (additive). Core presigns when it can; absent => R2 mode.
+  audio_url?: string;
+  output_url?: string;
+  output_key?: string;
 }
 
 /** What a `speech` module returns: the (maybe enhanced) dialogue audio plus what it did. On success
