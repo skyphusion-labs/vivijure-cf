@@ -226,7 +226,8 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
     httpStatus = resp.status;
     s = (await resp.json()) as typeof s;
   } catch {
-    return { ok: true, pending: true }; // transient; poll again
+    // Transient transport: no honest wait signal; omit rather than invent accepted/running.
+    return { ok: true, pending: true };
   }
   // RunPod GC'd the job (HTTP 404 / "job not found"): without this guard the poll below would treat the
   // numeric 404 status as "not COMPLETED" and report pending forever (issue #141). Past the grace window
@@ -242,12 +243,12 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
         classifyGoneState(st.submittedAt, now, RUNPOD_COLD_GRACE_MS) === "gone-grace" &&
         (await endpointStillCold(route, endpointId))
       ) {
-        return { ok: true, pending: true };
+        return { ok: true, pending: true, wait: "accepted" };
       }
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "gone", submittedAtMs: st.submittedAt });
       return { ok: false, error: "own-gpu job not found on RunPod (GC'd or never ran); failing shot " + st.shotId + " (#141)" };
     }
-    return { ok: true, pending: true }; // still inside the grace window
+    return { ok: true, pending: true, wait: "accepted" }; // still inside the grace window
   }
   if (s.status === "FAILED") {
     await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
@@ -278,7 +279,19 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output), ...timingFromStatus(s) });
       return { ok: false, error: "own-gpu backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
-    return { ok: true, pending: true }; // IN_QUEUE / IN_PROGRESS
+    // cf#307: map RunPod queue vs running onto the backend-neutral wait field.
+    //
+    // cf#538: SUBMITTED was dropped here. It is not RunPod vocabulary at all -- it is OUR render-row
+    // status for the pre-confirmation window -- and `s` is the raw RunPod /status envelope, so the
+    // branch could never fire. RUNNING is documented, was unmodelled, and means what IN_PROGRESS
+    // means. Same edit as keyframe; see the longer note there.
+    const wait =
+      s.status === "IN_QUEUE"
+        ? ("accepted" as const)
+        : s.status === "IN_PROGRESS" || s.status === "RUNNING"
+          ? ("running" as const)
+          : undefined;
+    return wait ? { ok: true, pending: true, wait } : { ok: true, pending: true };
   }
   // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
   // could use the output is a different fact and the chain response is what carries it.

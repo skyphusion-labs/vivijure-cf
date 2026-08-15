@@ -225,7 +225,8 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
     httpStatus = resp.status;
     s = (await resp.json()) as typeof s;
   } catch {
-    return { ok: true, pending: true }; // transient; caller polls again
+    // Transient transport: no honest wait signal; omit rather than invent accepted/running.
+    return { ok: true, pending: true };
   }
   // RunPod GC'd the job (HTTP 404 / "job not found"): the numeric 404 status would otherwise read as
   // "not COMPLETED" and the poll would report pending forever (issue #141). Past the grace window (or a
@@ -240,12 +241,14 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
         classifyGoneState(st.submittedAt, now, RUNPOD_COLD_GRACE_MS) === "gone-grace" &&
         (await endpointStillCold(route, endpointId))
       ) {
-        return { ok: true, pending: true };
+        // Still cold: closest honest wait is accepted (not started).
+        return { ok: true, pending: true, wait: "accepted" };
       }
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "gone", submittedAtMs: st.submittedAt });
       return { ok: false, error: "keyframe job " + st.jobId + " not found on RunPod (GC'd or never ran); failing (#141)" };
     }
-    return { ok: true, pending: true };
+    // Inside grace after 404: treat as accepted (not yet visible / not started).
+    return { ok: true, pending: true, wait: "accepted" };
   }
   if (s.status === "FAILED") {
     await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
@@ -276,7 +279,28 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
       await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "backend-error", submittedAtMs: st.submittedAt, detail: backendErr, errorType: parseRunpodErrorType(s.output), ...timingFromStatus(s) });
       return { ok: false, error: "keyframe backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
-    return { ok: true, pending: true };
+    // cf#307: map RunPod queue vs running onto the backend-neutral wait field. Host core 1.8+
+    // stores this as keyframe_wait and surfaces IN_QUEUE when accepted.
+    //
+    // cf#538: the vocabulary tested here is RunPod's, because `s` is the raw /status envelope.
+    // RunPod documents exactly seven request job states -- IN_QUEUE, IN_PROGRESS, RUNNING,
+    // COMPLETED, FAILED, CANCELLED, TIMED_OUT -- and SUBMITTED is NOT one of them. SUBMITTED is
+    // OUR OWN render-row status (vivijure-core writes it in render-adopt for the pre-confirmation
+    // window, and the planner history buckets it as in-flight), so matching it against a RunPod
+    // envelope was a branch that could never fire. Dropped here rather than repo-wide: the
+    // frontend uses of SUBMITTED read render rows and are correct.
+    //
+    // RUNNING is documented and was unmodelled, which left a real state with no phase. It means
+    // the same thing IN_PROGRESS does ("a worker has picked up the job and is actively processing
+    // it"), so it maps to running. Anything still outside the set reports NO phase rather than
+    // the most flattering of the two we know.
+    const wait =
+      s.status === "IN_QUEUE"
+        ? ("accepted" as const)
+        : s.status === "IN_PROGRESS" || s.status === "RUNNING"
+          ? ("running" as const)
+          : undefined;
+    return wait ? { ok: true, pending: true, wait } : { ok: true, pending: true };
   }
   // cf#279: the ENDPOINT completed. Recorded before the output is parsed, because whether WE
   // could use the output is a different fact and the chain response is what carries it.
