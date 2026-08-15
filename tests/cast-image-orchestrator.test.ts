@@ -4,6 +4,7 @@ import {
   summarizeCastRefs,
   castRefsJobKey,
   freshCastRefImages,
+  pendingImagesViolation,
   type CastRefsJob,
 } from "../src/cast-image-orchestrator";
 
@@ -20,6 +21,30 @@ describe("cast-image orchestrator pure logic", () => {
     ])).toEqual([{ key: "cast-gen/7/ref_02.jpg", mime: "image/jpeg" }]);
     expect(freshCastRefImages([], undefined)).toEqual([]);
     expect(freshCastRefImages([], [])).toEqual([]);
+  });
+
+  it("freshCastRefImages drops non-STRING key/mime (addRefs appends verbatim)", () => {
+    // A truthiness test passes `123` and `{}` straight through to `addRefs`, which writes them into
+    // ref_keys_json unvalidated. The `cast.image` output contract requires isStr on both.
+    const junk = [
+      { key: 123, mime: "image/png" },
+      { key: "cast-gen/7/ok.png", mime: {} },
+      { key: "cast-gen/7/good.png", mime: "image/png" },
+    ] as unknown as { key?: string; mime?: string }[];
+    expect(freshCastRefImages([], junk)).toEqual([{ key: "cast-gen/7/good.png", mime: "image/png" }]);
+  });
+
+  it("pendingImagesViolation applies the cast.image per-image rule to a PENDING poll", () => {
+    const good = [{ key: "cast-gen/7/ref_01.png", mime: "image/png" }];
+    expect(pendingImagesViolation("cast-image", good)).toBeNull();
+    expect(pendingImagesViolation("cast-image", [])).toBeNull();
+    expect(pendingImagesViolation("cast-image", undefined)).toBeNull(); // legacy bare { pending: true }
+    expect(pendingImagesViolation("cast-image", [{ key: 123, mime: {} }]))
+      .toBe("cast-image pending poll: each cast.image needs key + mime");
+    expect(pendingImagesViolation("cast-image", [null]))
+      .toBe("cast-image pending poll: each cast.image needs key + mime");
+    expect(pendingImagesViolation("cast-image", "nope"))
+      .toBe("cast-image pending poll: images must be an array");
   });
 
   it("selectSeedKeys: portrait first, then requested valid sources, de-duped + capped", () => {

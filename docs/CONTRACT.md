@@ -505,6 +505,13 @@ Both respond `200 { ok: true, ...CastRefsSummary }` (POST: `201`). `CastRefsSumm
 | `images` | `{ key, mime }[]` | The generated reference images so far (R2 keys + mime). Grows with `registered`. |
 | `error?` | string | Set when `phase === "failed"`. |
 
+A `cast.image` module's progressive images are held to the same output contract as its terminal batch
+(each needs a string `key` + `mime`); a pending poll carrying a non-conformant image fails the job
+rather than writing it onto the member. Registration is never silently partial either: if the member's
+row is unavailable when the final batch is written, the job ends `phase: "failed"` with
+`registered k of n generated refs; cast row unavailable`, not `done`. Refs already registered stay
+registered and stay reported in `registered` / `images`.
+
 Errors: `404` if the cast member (POST) or job (GET) is unknown.
 
 ### 2.9 Cast LoRA training

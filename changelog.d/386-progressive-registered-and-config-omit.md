@@ -7,6 +7,12 @@ was byte-identical to a healthy mid-run under that signal. The module now return
 lands. `registered` and `images` grow while `phase === "generating"`. A legacy bare-pending module
 still batches at done (graceful).
 
+Two honesty rules came with it. Mid-run images are checked against the same `cast.image` per-image
+rule the terminal batch already went through (`addRefs` appends verbatim, so the fold was the only
+unguarded path onto the member), and a terminal registration failure now ends the job
+`phase: "failed"` with `registered k of n generated refs; cast row unavailable` instead of reporting
+`done` with a `registered` self-consistent with a batch that was dropped.
+
 ### Docs: omitting a `*_config` does not skip a chain hook (cf#386)
 
 Intended: every serving module for a chain hook runs, clamped to schema defaults. Natural reading of

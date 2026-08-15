@@ -88,8 +88,31 @@ const putJob = (env: Env, job: CastRefsJob) =>
     httpMetadata: { contentType: "application/json" },
   });
 
+/** Pure: the per-image rule the `cast.image` OUTPUT contract already enforces (`isStr(i.key) &&
+ *  isStr(i.mime)`, modules/conformance), applied to the images a PENDING poll carries. The terminal
+ *  branch is checked by `hookOutputViolation`; the mid-run fold had no check at all and `addRefs`
+ *  validates nothing, so a non-conformant module returning `{ key: 123, mime: {} }` on a pending poll
+ *  got it written onto the cast member while the identical payload on the terminal poll was refused.
+ *  Same predicate on both paths, so the contract is what makes a module swappable rather than a rule
+ *  one code path happens to check. `undefined` is the legacy bare `{ pending: true }` shape: no
+ *  images claimed, so nothing to violate. */
+export function pendingImagesViolation(moduleName: string, images: unknown): string | null {
+  if (images === undefined || images === null) return null;
+  if (!Array.isArray(images)) return `${moduleName} pending poll: images must be an array`;
+  const bad = images.some(
+    (i) =>
+      !i ||
+      typeof i !== "object" ||
+      typeof (i as { key?: unknown }).key !== "string" ||
+      typeof (i as { mime?: unknown }).mime !== "string",
+  );
+  return bad ? `${moduleName} pending poll: each cast.image needs key + mime` : null;
+}
+
 /** Pure: refs in `incoming` that are not already tracked on the job (by key). Used so mid-run
- *  progress folds and the terminal batch both de-dupe against what was already written. */
+ *  progress folds and the terminal batch both de-dupe against what was already written. The type
+ *  test is not decoration: this helper is the LAST thing between a module's payload and `addRefs`,
+ *  which appends verbatim, so a truthiness test alone would let a non-string key through. */
 export function freshCastRefImages(
   already: CastRefImage[],
   incoming: { key?: string; mime?: string }[] | undefined,
@@ -97,7 +120,8 @@ export function freshCastRefImages(
   const known = new Set(already.map((i) => i.key));
   const out: CastRefImage[] = [];
   for (const i of incoming || []) {
-    if (!i || !i.key || !i.mime) continue;
+    if (!i || typeof i.key !== "string" || !i.key) continue;
+    if (typeof i.mime !== "string" || !i.mime) continue;
     if (known.has(i.key)) continue;
     known.add(i.key);
     out.push({ key: i.key, mime: i.mime });
@@ -115,7 +139,10 @@ async function foldGeneratedRefs(
   const fresh = freshCastRefImages(job.images, incoming);
   if (!fresh.length) return;
   const row = await addRefs(env, job.cast_id, fresh);
-  if (!row) return; // cast vanished mid-run; leave registered as-is, terminal path will surface
+  // The cast row is gone (deleted mid-run). Leave `job.images` and `registered` untouched, so these
+  // keys stay FRESH and a later fold retries them; `finalize` compares the module's terminal output
+  // against what actually landed, which is what makes "the terminal path will surface it" true.
+  if (!row) return;
   job.images.push(...fresh);
   job.registered = job.images.length;
 }
@@ -123,10 +150,27 @@ async function foldGeneratedRefs(
 /** Internal: a finished module run -> register any remaining refs onto the cast member, record what
  *  it applied, phase -> done. Mid-run folds (cf#386) may already have registered some; only the
  *  residual is written here. A run that produced nothing still completes (the caller sees
- *  registered=0, not an error -- the failure, if any, is in the module's error). */
+ *  registered=0, not an error -- the failure, if any, is in the module's error).
+ *
+ *  A registration failure is never a SILENT one (#245/#249, #77). `addRefs` returns null when the
+ *  cast row is gone, and `foldGeneratedRefs` then advances neither `job.images` nor `job.registered`
+ *  -- so an unconditional `phase = "done"` reported no error and a `registered` self-consistent with
+ *  `job.images` while the whole final batch was dropped, which reads exactly like success. Compare
+ *  what the module says it generated against what actually landed and fail LOUDLY with "k of n".
+ *  The comparison is against the terminal OUTPUT, not a running failure counter, so a mid-run drop
+ *  that a later fold recovered does not fail a job that ended up complete. */
 async function finalize(env: Env, job: CastRefsJob, output: CastImageOutput): Promise<void> {
   await foldGeneratedRefs(env, job, output.images);
   job.applied = output.applied || [];
+  const landed = new Set(job.images.map((i) => i.key));
+  const dropped = freshCastRefImages([], output.images).filter((i) => !landed.has(i.key));
+  if (dropped.length) {
+    job.phase = "failed";
+    job.error =
+      `registered ${job.images.length} of ${job.images.length + dropped.length} generated refs; ` +
+      "cast row unavailable";
+    return;
+  }
   job.phase = "done";
 }
 
@@ -248,7 +292,11 @@ export async function advanceCastRefsJob(env: Env, castId: number, jobId: string
     // refs onto the member now so `registered` moves while the job runs. A legacy module that
     // returns bare `{ pending: true }` is unchanged (registered stays 0 until the terminal batch).
     const partial = p as { images?: { key?: string; mime?: string }[] };
-    await foldGeneratedRefs(env, job, partial.images);
+    // Mid-run images are module OUTPUT and are held to the same contract as the terminal batch --
+    // `addRefs` appends verbatim, so this is the only gate before they land on the member.
+    const violation = pendingImagesViolation(job.module_name ?? "cast.image", partial.images);
+    if (violation) { job.phase = "failed"; job.error = violation; }
+    else await foldGeneratedRefs(env, job, partial.images);
   } else {
     const out = (p as { output: CastImageOutput }).output;
     const violation = hookOutputViolation(job.module_name ?? "cast.image", "cast.image", out);
