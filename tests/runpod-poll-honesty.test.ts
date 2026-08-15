@@ -278,6 +278,27 @@ describe.each(CASES)("$module /poll wiring (worker-level, stubbed fetch)", ({ wo
     expect(await body(poll("j-q"))).toEqual({ ok: true, pending: true, wait: "accepted" });
   });
 
+  it("cf#538: RUNNING is documented RunPod vocabulary and maps to running, not to nothing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "j-r", status: "RUNNING" }), { status: 200 })),
+    );
+    expect(await body(poll("j-r"))).toEqual({ ok: true, pending: true, wait: "running" });
+  });
+
+  it("cf#538: SUBMITTED is NOT RunPod vocabulary, so it gets no wait phase from a RunPod envelope", async () => {
+    // Settled empirically rather than assumed. RunPod documents seven request job states and
+    // SUBMITTED is not among them; it is OUR OWN render-row status, written by vivijure-core for
+    // the pre-confirmation window and bucketed in-flight by the planner history. This poll path
+    // reads the raw RunPod /status envelope, so the branch that matched it could never fire.
+    // Asserted rather than merely deleted, so re-adding it has to argue with a test.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ id: "j-s", status: "SUBMITTED" }), { status: 200 })),
+    );
+    expect(await body(poll("j-s"))).toEqual({ ok: true, pending: true });
+  });
+
   it("cf#307: an UNMODELLED non-terminal status stays pending and reports NO wait phase", async () => {
     // The honest branch: the module does not know what phase this is, so it says nothing rather
     // than picking the most flattering of the two it does know.
