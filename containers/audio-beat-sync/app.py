@@ -16,6 +16,7 @@ import librosa
 import numpy as np
 from aiohttp import ClientSession, ClientTimeout, web
 
+from bearer import bearer_middleware
 from url_guard import guarded_get, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -158,7 +159,7 @@ def _compute(path, clip_s, mode, min_s, max_s, force_shots, audio_key):
     }
 
 
-app = web.Application()
+app = web.Application(middlewares=[bearer_middleware])
 app.router.add_get("/health", health)
 app.router.add_post("/analyze", analyze)
 
