@@ -14,12 +14,6 @@
 // snap that rounds each scene's target_seconds to a musical-phrase multiple.
 
 const MUSIC_POLL_MS = 5000;
-let musicPollTimer = null;
-// cf#515: consecutive poll failures. The catch arm below re-armed at a FLAT
-// MUSIC_POLL_MS, which is the same no-backoff defect PR #563 fixed for the render
-// poll, still live here: a studio having a bad minute got retried at full rate by
-// every open panel at once.
-let musicPollErrorStreak = 0;
 
 // cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
 // PR #563 for the render poll). Resolved at CALL time rather than load time,
@@ -35,14 +29,42 @@ function pollPolicy() {
   return ps;
 }
 
-// cf#515: one place that arms the music poll, so a future edit cannot reintroduce a
-// bare setTimeout on one of the two paths and leave the other jittered.
-function scheduleScoreBedPoll() {
-  const delay = pollPolicy().nextPollDelayMs({
-    baseMs: MUSIC_POLL_MS,
-    errorStreak: musicPollErrorStreak,
-  });
-  musicPollTimer = setTimeout(pollScoreBedJob, delay);
+// cf#515 / cf#581: one place that arms the music poll, so a future edit cannot
+// reintroduce a bare setTimeout on one of the two paths and leave the other
+// jittered, and now one place that owns its LIFECYCLE too.
+//
+// The music poll watches a USER-INITIATED job (a score-bed generation the user is
+// waiting on), which is why PR #575 shipped jitter and deliberately stopped short
+// of a visibility pause: a pause with no matching resume leaves the panel reading
+// "generating" forever for a bed that finished while the tab was in the background.
+// createLoop supplies both halves, and registers the loop with the ONE
+// visibilitychange listener the shared policy attaches per document.
+//
+// FIX-FORWARD, found while doing this: the old musicPollTimer was WRITE-ONLY. It
+// was assigned on every arm and never read and never cleared, so the music poll
+// could not be cancelled by anything, ever. The loop object owns the handle now.
+let musicPollLoop = null;
+
+function musicLoop() {
+  if (!musicPollLoop) {
+    musicPollLoop = pollPolicy().createLoop({
+      baseMs: MUSIC_POLL_MS,
+      run: pollScoreBedJob,
+      // Active exactly when there is a pending job to ask about. Every terminal
+      // path below nulls these two fields, so a finished bed reads inactive and
+      // can neither be marked paused nor resumed.
+      isActive: function () {
+        return !!(planState.pendingMusicChatId && planState.pendingMusicModule);
+      },
+    });
+  }
+  return musicPollLoop;
+}
+
+// Terminal: the job is done, failed, or was abandoned. Called after the pending
+// fields are cleared, so isActive() already reads false.
+function stopScoreBedPoll() {
+  if (musicPollLoop) musicPollLoop.stop();
 }
 
 // Score modules -- populated from GET /api/modules via plannerRegistry.
@@ -478,14 +500,13 @@ async function pollScoreBedJob() {
       setScoreBedStatus(kind, "model failed: " + (data.job_error || "(no detail)"), "error");
       setScoreBedButtonDisabled(kind, false);
       persistSoon();
+      stopScoreBedPoll();
       return;
     }
-    musicPollErrorStreak = 0; // cf#515: a good poll clears the backoff
-    scheduleScoreBedPoll();
+    musicLoop().armAfterSuccess(); // cf#515: a good poll clears the backoff
   } catch (err) {
     setScoreBedStatus(kind, "poll error: " + err.message + " (retrying)", "error");
-    musicPollErrorStreak += 1; // cf#515: back off rather than re-arm flat
-    scheduleScoreBedPoll();
+    musicLoop().armAfterError(); // cf#515: back off rather than re-arm flat
   }
 }
 

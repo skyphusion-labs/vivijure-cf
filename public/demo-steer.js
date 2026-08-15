@@ -25,14 +25,14 @@
     return ps;
   }
 
-  fetch("/api/modules")
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (d) {
-      var host = (d && d.host) || {};
-      if (!host.readonly) return;
-      domReady(function () { init(host); });
-    })
-    .catch(function () { /* modules unreachable: leave the studio as-is */ });
+  // cf#580: reads the SHARED per-page memo. The catch is gone because load() never rejects: an
+  // unreachable registry resolves the documented empty shape, which carries no host, so host.readonly
+  // is falsy and the studio is left as-is -- what the old catch did.
+  moduleRegistry.load().then(function (d) {
+    var host = (d && d.host) || {};
+    if (!host.readonly) return;
+    domReady(function () { init(host); });
+  });
 
   function domReady(fn) {
     if (document.body) fn();
@@ -218,6 +218,15 @@
   }
 
   var activeJob = false;
+  // cf#581: the job currently being polled, and the loop that polls it. Before this
+  // the setTimeout handle was DISCARDED, so the demo poll could not be cancelled and
+  // there was nothing for a visibility handler to hold. It matters more here than
+  // anywhere else in the tree: modules.html and cast.html do not load
+  // planner-init.js, which was the only file carrying a visibilitychange listener,
+  // so these pages had no pause mechanism of any kind. The shared policy attaches
+  // its own listener per document, which is what makes a pause reach this page.
+  var demoJobId = null;
+  var demoPollLoop = null;
 
   function setScenesDisabled(disabled) {
     var btns = document.querySelectorAll("#demo-scenes .demo-scene-btn");
@@ -284,30 +293,60 @@
     return friendlyBlock((body && body.error) || "That render could not start. Try another scene, or run your own studio.", true);
   }
 
+  function demoLoop() {
+    if (!demoPollLoop) {
+      demoPollLoop = pollPolicy().createLoop({
+        baseMs: POLL_MS,
+        run: pollDemoOnce,
+        // Active while a demo render is in flight. renderDone() clears activeJob on
+        // every terminal path, so a finished demo can neither be marked paused nor
+        // resumed by a later visibility change.
+        isActive: function () {
+          return activeJob && demoJobId !== null;
+        },
+      });
+    }
+    return demoPollLoop;
+  }
+
+  // cf#515: jittered. This loop drove /api/demo/render on a flat 8s, so demo
+  // clients that started in the same window converged onto one boundary and
+  // stayed there. No backoff arm here on purpose: the .catch below STOPS the
+  // loop rather than re-arming it, so there is no error re-arm to back off.
+  // cf#581: and it now pauses when the tab is hidden and resumes when it comes
+  // back, which a demo visitor who tabs away is otherwise charged for.
   function pollRender(jobId) {
-    // cf#515: jittered. This loop drove /api/demo/render on a flat 8s, so demo
-    // clients that started in the same window converged onto one boundary and
-    // stayed there. No backoff arm here on purpose: the .catch below STOPS the
-    // loop rather than re-arming it, so there is no error re-arm to back off.
-    setTimeout(function () {
-      fetch("/api/demo/render/" + encodeURIComponent(jobId))
-        .then(function (r) {
-          if (r.status === 404) return { status: "failed", error: "This render expired. Try another scene." };
-          return r.ok ? r.json() : { status: "failed", error: "Lost contact with the render. Try again." };
-        })
-        .then(function (d) {
-          if (!d) d = { status: "failed", error: "Lost contact with the render. Try again." };
-          if (d.status === "done") { renderDone(); showDone(d.clipUrl); return; }
-          if (d.status === "failed") {
-            renderDone();
-            showLive(friendlyBlock("This render did not finish: " + (d.error || "unknown error") + ". Try another scene, or run your own studio.", true));
-            return;
-          }
-          reportQueue(d);
-          pollRender(jobId);
-        })
-        .catch(function () { renderDone(); showLive(friendlyBlock("Lost contact with the render. Try again in a moment.", false)); });
-    }, pollPolicy().nextPollDelayMs({ baseMs: POLL_MS }));
+    demoJobId = jobId;
+    demoLoop().arm();
+  }
+
+  // Terminal. Clear the job id FIRST so isActive() reads false, then stop.
+  function stopDemoPoll() {
+    demoJobId = null;
+    if (demoPollLoop) demoPollLoop.stop();
+  }
+
+  function pollDemoOnce() {
+    var jobId = demoJobId;
+    if (jobId === null) return;
+    fetch("/api/demo/render/" + encodeURIComponent(jobId))
+      .then(function (r) {
+        if (r.status === 404) return { status: "failed", error: "This render expired. Try another scene." };
+        return r.ok ? r.json() : { status: "failed", error: "Lost contact with the render. Try again." };
+      })
+      .then(function (d) {
+        if (!d) d = { status: "failed", error: "Lost contact with the render. Try again." };
+        if (d.status === "done") { stopDemoPoll(); renderDone(); showDone(d.clipUrl); return; }
+        if (d.status === "failed") {
+          stopDemoPoll();
+          renderDone();
+          showLive(friendlyBlock("This render did not finish: " + (d.error || "unknown error") + ". Try another scene, or run your own studio.", true));
+          return;
+        }
+        reportQueue(d);
+        demoLoop().arm();
+      })
+      .catch(function () { stopDemoPoll(); renderDone(); showLive(friendlyBlock("Lost contact with the render. Try again in a moment.", false)); });
   }
 
   function showDone(clipUrl) {
