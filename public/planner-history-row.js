@@ -984,9 +984,20 @@ async function regenShot(row, kf, btnEl, imgEl) {
 // cf#515: the flat 4000ms this loop used to re-arm at, now the jitter BASE.
 const REGEN_POLL_MS = 4000;
 
-// cf#515: consecutive regen-poll failures, keyed per regen job so two concurrent
-// regens back off independently.
-const regenPollErrorStreaks = new Map();
+// cf#573 / cf#581: one poll loop per regen job, keyed by regen key, so two
+// concurrent regens back off, pause and resume independently. The loop object owns
+// the timer, the error streak and the paused flag; before this the return value of
+// the setTimeout was DISCARDED, so a regen poll could not be cancelled by anything
+// and there was nothing for a visibility handler to hold on to.
+const regenLoops = new Map();
+
+// cf#573: an attempt cap on the error path. Backoff bounds the RATE of retries but
+// nothing bounded the TOTAL, so a persistently failing route was polled forever by
+// every open tab, and the tab could not even be backgrounded to stop it. Five
+// consecutive failures against a 4s base with doubling backoff is roughly a minute
+// of trying before the regen is declared lost and the button is handed back to the
+// user. A regen that takes longer than that to answer at all is not coming back.
+const REGEN_MAX_ERROR_STREAK = 5;
 
 // cf#515: shared jitter/backoff policy lives in public/poll-schedule.js (added by
 // PR #563 for the render poll). Resolved at CALL time rather than load time,
@@ -1002,18 +1013,96 @@ function pollPolicy() {
   return ps;
 }
 
-// cf#515: the ONE place the regen poll re-arms. This loop hits
+// cf#515 / cf#573 / cf#581: the ONE place the regen poll re-arms. This loop hits
 // GET /api/storyboard/render/<jobId> -- the SAME route the main render poll uses,
-// which drives advanceFilmJob and closes the film's DB row -- on a flat 4000ms,
-// harder than the render poll's 8s, from two arm sites, and it can run CONCURRENTLY
-// with the render poll while a board is polling. Unjittered it synchronises exactly
-// as the render poll did before PR #563.
-function scheduleRegenPoll(regenKey) {
-  const delay = pollPolicy().nextPollDelayMs({
-    baseMs: REGEN_POLL_MS,
-    errorStreak: regenPollErrorStreaks.get(regenKey) || 0,
-  });
-  setTimeout(() => pollRegenJob(regenKey), delay);
+// which drives advanceFilmJob and closes the film DB row -- at a 4s base, harder
+// than the render poll 8s base, and it can run CONCURRENTLY with the render poll
+// while a board is polling. Unjittered it synchronised exactly as the render poll
+// did before PR #563.
+//
+// THE DESIGN QUESTION cf#573 ASKS, ANSWERED RATHER THAN LEFT OPEN. Should a list
+// view hold a poller on a state-advancing route at all, and if it must, what owns
+// the lifecycle across page loads?
+//
+//   1. It is not the LIST that holds it. The poll is armed at the regen submit
+//      (regenShot below) and on restore of a submitted regen, never by rendering
+//      the history list. A list sitting at rest polls nothing on this path, so the
+//      claim that opening render history advances the jobs it lists is wrong.
+//      Holding a poller on a job the user just started is legitimate.
+//   2. What was NOT legitimate is that nothing owned the lifecycle. The timer
+//      handle was discarded, so the poll could not be cancelled; there was no
+//      visibility pause, so a backgrounded tab polled the state-advancing route
+//      forever; and the catch path re-armed with no cap, so a dead route was
+//      polled indefinitely.
+//   3. The lifecycle owner is now the loop object, one per regen key, held in
+//      regenLoops. Across page loads it is the PERSISTED entry that owns it:
+//      savePersistedState snapshots the regen job, restoreRegenJobs re-arms it,
+//      and that restore is already age-capped so a stale entry is dropped rather
+//      than re-armed. Terminal status destroys the loop and drops the entry, so
+//      the two halves cannot disagree.
+//
+// The base cadence is deliberately unchanged. cf#573 says in as many words that it
+// is not a request to change the interval, and moving a rate in the same change
+// that moves a distribution would confound the two in any measurement taken across
+// it (the reason PR #563 and PR #575 both left cadences alone).
+function regenLoop(regenKey) {
+  let loop = regenLoops.get(regenKey);
+  if (!loop) {
+    loop = pollPolicy().createLoop({
+      baseMs: REGEN_POLL_MS,
+      run: function () {
+        pollRegenJob(regenKey);
+      },
+      // Active while the job is still in the map. Terminal handling deletes the
+      // entry before destroying the loop, so a finished regen can neither be
+      // marked paused nor resumed by a later visibility change.
+      isActive: function () {
+        return historyState.regenJobs.has(regenKey);
+      },
+      maxErrorStreak: REGEN_MAX_ERROR_STREAK,
+      onGiveUp: function (streak) {
+        giveUpOnRegen(regenKey, streak);
+      },
+    });
+    regenLoops.set(regenKey, loop);
+  }
+  return loop;
+}
+
+// Drop a regen loop for good. Called on terminal status and on give-up, so the
+// per-key registry does not grow without bound across a long session.
+function destroyRegenLoop(regenKey) {
+  const loop = regenLoops.get(regenKey);
+  if (loop) loop.destroy();
+  regenLoops.delete(regenKey);
+}
+
+// cf#573: the attempt cap fired. Hand the button back rather than leaving it
+// disabled on a job nobody is polling any more, and drop the persisted entry so a
+// page reload does not resurrect the same dead poll.
+function giveUpOnRegen(regenKey, streak) {
+  const state = historyState.regenJobs.get(regenKey);
+  historyState.regenJobs.delete(regenKey);
+  destroyRegenLoop(regenKey);
+  savePersistedState();
+  if (!state) return;
+  const li = document.querySelector(
+    ".planner-history-item[data-id=" + JSON.stringify(String(state.rowId)) + "]",
+  );
+  const img = li && li.querySelector(
+    ".planner-history-keyframe-img[data-shot-id=" + JSON.stringify(cssEscape(state.shotId)) + "]",
+  );
+  const btn = li && li.querySelector(
+    ".planner-history-keyframe-regen[data-shot-id=" + JSON.stringify(cssEscape(state.shotId)) + "]",
+  );
+  if (img) img.classList.remove("planner-history-keyframe-img-regen-pending");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "regen";
+  }
+  console.warn(
+    "regen poll gave up for " + state.shotId + " after " + streak + " consecutive failures",
+  );
 }
 
 function pollRegenJob(regenKey) {
@@ -1030,8 +1119,7 @@ function pollRegenJob(regenKey) {
           || status === "TIMED_OUT"
       );
       if (!terminal) {
-        regenPollErrorStreaks.delete(regenKey); // cf#515: a good poll clears the backoff
-        scheduleRegenPoll(regenKey);
+        regenLoop(regenKey).armAfterSuccess(); // cf#515: a good poll clears the backoff
         return;
       }
       // Locate the current DOM nodes for this row + shot. The row may
@@ -1047,7 +1135,7 @@ function pollRegenJob(regenKey) {
         '.planner-history-keyframe-regen[data-shot-id="' + cssEscape(state.shotId) + '"]',
       );
       historyState.regenJobs.delete(regenKey);
-      regenPollErrorStreaks.delete(regenKey); // cf#515: job is terminal; drop its backoff state
+      destroyRegenLoop(regenKey); // cf#515/cf#581: terminal; drop its loop and backoff state
       // v0.41.1: clear the stashed entry on terminal status so a
       // subsequent reload does not try to re-poll a finished job.
       savePersistedState();
@@ -1075,9 +1163,9 @@ function pollRegenJob(regenKey) {
     })
     .catch((err) => {
       console.warn("regen poll failed:", err);
-      // cf#515: back off rather than re-arm flat.
-      regenPollErrorStreaks.set(regenKey, (regenPollErrorStreaks.get(regenKey) || 0) + 1);
-      scheduleRegenPoll(regenKey);
+      // cf#515: back off rather than re-arm flat. cf#573: and give up at the cap
+      // rather than re-arming against a dead route forever.
+      regenLoop(regenKey).armAfterError();
     });
 }
 
