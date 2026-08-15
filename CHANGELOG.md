@@ -5,6 +5,538 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.28.0 -- 2026-08-15
+
+### feat(modules): keyframe + own-gpu poll report wait accepted|running (cf#307)
+
+Optional additive `wait` on pending `/poll` responses. Maps RunPod `IN_QUEUE` -> `accepted`,
+`IN_PROGRESS`/`RUNNING` -> `running`. Host core 1.8+ (PR core#144) stores and surfaces IN_QUEUE
+for accepted. Modules that omit wait keep prior behaviour.
+
+### fix(finish): prefer satellite presigned mode when core hands URLs (cf#312)
+
+The finish satellites already branched on presigned URLs and nothing ever sent them one. Every
+caller shipped `clip_key` / `audio_key`, which is what selects the shared-bucket R2 path on the
+handler side, so `vivijure-upscale`, `vivijure-musetalk` and `vivijure-audio-upscale` were pinned to
+the credentialed transport and could not be pooled. The branch was live code with no producer.
+
+`buildRunPodBody` in `finish-upscale`, `finish-lipsync` and `speech-upscale` now emits the
+credentialless shape when the core attaches presigned URLs (`video_url` + `output_url`, plus
+`audio_url` for lipsync and audio), and OMITS the key fields while doing so. The omission is the
+load-bearing half: the handler routes on which keys are PRESENT, so sending both shapes would select
+R2 mode and the presigned URLs would be ignored silently, which is the failure this change would
+otherwise ship. Absent URLs keep the legacy R2 body byte for byte, so an older core, or one with
+`PRESIGNER` unbound, is unaffected rather than broken.
+
+The four transport fields (`video_url`, `output_url`, `output_key`, `hash_url`, plus `audio_url`
+where it applies) are additive and optional on each module's VENDORED `FinishInput`. They are
+mirrored rather than imported, because these contracts are copied on purpose so a module does not
+depend on the core repo; a field the core adds does not arrive here on a dependency bump.
+
+`output_key` is now taken from the core when supplied and falls back to the module's own derivation
+(`upscaledKey` / `lipsyncedKey` / `enhancedAudioKey`) when it is not, so the presigned PUT target and
+the key the chain reports downstream cannot disagree.
+
+The cf#507b derived upscale factor is unaffected and reaches BOTH transports: `resolveUpscaleScale`
+still decides the factor, and the result lives in the object both return paths spread, so a
+presigned job asks the GPU for the same scale a shared-bucket job would.
+
+`finish-rife` is deliberately unchanged. It drives `vivijure-backend`'s `finish_clip`, which has no
+presigned branch at all (its R2 I/O is open ended and would need per job credentials or endpoint
+env), so giving it URLs would be a shape the handler cannot read.
+
+### feat(render): real retry route, and the main door derives dialogue from the bundle (cf#353, cf#334)
+
+Adds the real retry route (cf#353), and makes the panel's main Render button derive dialogue from the
+bundle storyboard when the panel omits `dialogue_lines`, so a voiced storyboard no longer ships silent
+from door 1 (cf#334).
+
+The door ledger declares door 1's dialogue capability as `yes` rather than `internal`. `internal` is an
+exemption: the ledger's per-door assertion skips the observed-vs-declared comparison for it, so the
+only test covering this feature stopped comparing at the exact moment the feature was added. Declaring
+`yes` restores the comparison -- deleting the derivation now fails with
+`1 panel MAIN render.dialogue: declared yes, observed false`, and passes with it intact.
+
+### fix(planner): jitter and back off the remaining client poll loops (cf#515)
+
+PR #563 fixed the render poll and shipped `public/poll-schedule.js` as the shared policy. It did not
+fix the rest of the herd. Five more self-rescheduling loops, seven arm sites in total, were still
+re-arming at a flat interval with no jitter, measured identically at `v1.27.0` and on `main`:
+
+| file | interval | route |
+| --- | --- | --- |
+| `demo-steer.js` | 8000 | `GET /api/demo/render/<jobId>` |
+| `cast.js` | 5000 | `GET /api/cast/<id>/lora-status` |
+| `planner-audio.js` (2 sites) | 5000 | `GET /api/job/<id>` |
+| `planner-history-row.js` (2 sites) | 4000 | `GET /api/storyboard/render/<jobId>` |
+| `planner-history-list.js` | 30000 | history refresh |
+
+**This changes the poll path that drives `advanceFilmJob`.** `planner-history-row.js` polls
+`GET /api/storyboard/render/<jobId>`, the same route as the main render poll, the one that closes a
+film's renders-DB row and therefore sets observation lag (cf#512 metric 2). It does so at a HARDER
+4s cadence than the render poll's 8s, from two arm sites, and it can run CONCURRENTLY with the
+render poll while a board is polling. A load-test result taken across this change has a different
+driver than one taken before it, and that is recorded here deliberately rather than left for
+someone to discover in the numbers.
+
+`planner-audio.js` carried the flat error-path re-arm that PR #563 fixed for the render poll, still
+live: on a poll error it re-armed at the same `MUSIC_POLL_MS`, so a studio having a bad minute was
+retried at full rate by every open panel at once. `cast.js` and `planner-history-row.js` had the
+same shape. All three now back off through the shared policy and reset the streak on a good poll.
+
+The base cadences are all unchanged. Only the DISTRIBUTION of arrivals moves, for the same reason
+#563 left the render cadence alone: moving the rate as well would confound two effects in any
+measurement taken across the change.
+
+`public/poll-schedule.js` now also loads on `cast.html` and `modules.html`, which host `cast.js` and
+`demo-steer.js` and previously had no access to it. `settings.html` arms no poll and deliberately
+does not load it; a test asserts that, so "fix" it everywhere and the pair fails.
+
+**Deliberately NOT in scope, stated rather than omitted:**
+
+- **Visibility pause.** Only `planner-render.js` (via #563) and `planner-history-list.js` pause on
+  `document.hidden`. Adding it to the others needs a matching resume path per loop, and a pause
+  without a correct resume strands a user's in-flight LoRA, music or regen poll permanently, which
+  is a worse defect than the one being fixed. Jitter is the property the synchronisation argument
+  actually turns on. Filed as follow-up rather than smuggled in here.
+- **`cast.js`'s bounded refs-job loop** (`await new Promise((r) => setTimeout(r, 1500))`). A bounded
+  `for` loop capped by `maxPolls`, not a self-rescheduling timer, and each GET drives one image
+  render server-side. Different shape, left alone, and asserted by a test so its absence from this
+  change reads as a decision and not an oversight.
+
+Refs #515
+
+### fix(planner): stop the render-config panel double-fetching /api/modules (cf#515)
+
+`planner-registry.js` exists so the planner reads `GET /api/modules` once; its own header says
+"one fetch of GET /api/modules". `renderPanel()` in `planner-render-config.js` defeated it on
+adjacent lines: it awaited the memoised `plannerRegistry.load()` and then issued its own
+un-memoised `fetch("/api/modules")` for the same payload.
+
+```js
+await global.plannerRegistry.load();
+const resp = await fetch("/api/modules");
+```
+
+Measured under `public/`: six direct `fetch("/api/modules")` call sites, exactly one memoised. Five
+of the six load on `planner.html` (every one except `app.js`), so one planner page load made five
+requests where the design says one. This removes the one that is a pure duplicate; it is now four.
+
+Behaviour-identical on both paths, and strictly more robust on one. `load()` returns the same
+`{modules, hooks, catalog, render}` payload and degrades to the same empty shape on a non-ok
+response, and it also CATCHES a transport throw, which the bare fetch did not.
+
+It removes a real inconsistency rather than only a request: this panel could previously render a
+DIFFERENT registry snapshot than every other planner control, because the others all read the memo
+and this one re-fetched.
+
+**Corrected in the de-escalating direction:** this is NOT a per-poll fan-out. `renderPanel()` is
+called once, from `planner-init.js`, at init; no poll loop touches it. It is a per-page-load cost.
+
+**Declared out of scope, with the reason, corrected:** `abuse-link.js`, `hook-availability.js`
+and `demo-steer.js` also read `/api/modules`. All three DO load on `planner.html` alongside
+`planner-registry.js`, so the barrier is not that the memo is unavailable to them there; it is that
+each ALSO loads on pages that do not ship the registry (`cast.html`, `modules.html`,
+`settings.html`), so none of them can depend on it unconditionally without a new shared primitive.
+All three issue the request at IIFE entry and gate only after the response, so each is a real
+request on a planner page load. Measured, left alone deliberately, and asserted by a test so their
+absence from this change reads as a decision.
+
+Refs #515
+
+### Fixed
+
+- **Reconcile counters no longer conflate "we saw it finish" with "we stopped waiting" (cf#523).**
+  `reconcileOpenRunpodJobs` incremented `closed` on the same row as `unknown`, so scoring a run on
+  `closed` counted every job we gave up on as a job we observed finishing -- silently, and in the
+  flattering direction. The single `closed` field is REMOVED rather than renamed, because a name
+  nobody can reach cannot be misread. The pass now returns `examined`, `resolved`, `unknown`,
+  `stillOpen` and `skipped`, and the suite asserts the four buckets sum to `examined` so no row is
+  uncounted.
+- **`isResolvedRunpodOutcome` / `RESOLVED_RUNPOD_OUTCOMES` are exported for the database path.** A
+  terminal write fills `terminal_at` for every outcome except `submitted`, so
+  `terminal_at IS NOT NULL` is NOT a completion predicate: it is true of a job we watched finish and
+  equally true of one we abandoned. Any completion or capacity metric keys on `outcome` instead, and
+  the classifier is a `Record` over the outcome union so a new outcome fails typecheck until someone
+  decides which side it falls on.
+
+### feat(video-finish): a pixel-decode identity gate that catches a well-formed WRONG picture (cf#532)
+
+No gate anywhere in the estate decoded a pixel. vivijure-blender#14 shipped a grade that darkened
+frames 3.3x with a colour cast, on a preset that is a mathematical identity -- and every check
+passed: correct frame count, valid mp4 structure, `degraded: 0`, and #523's own noise heuristic
+(keyframe cross-correlation is scale/offset-invariant, so a uniform darkening never moved it). A
+structurally-valid clip and a correct clip were the same fact to everything the estate owned.
+
+Adds `containers/video-finish/photometric_gate.py`: decodes a source frame and its finished-clip
+counterpart, computes each side's mean luma, and asserts the ratio against a tolerance derived from
+measurement rather than guessed (cf#532 issue comment 5294980863) -- an identity-preset render
+through this container's decode/composite/encode path measures 0.9926, a lossless round trip
+measures 1.0038, the known-bad pre-fix case measures 0.298 (fifteen times outside a 0.02 band).
+Fails loud (`DecodeFailure`) on could-not-decode rather than skipping: an unread frame is not a
+passing frame. `check_shots` reports a denominator (shots checked / total / wrecked) rather than a
+single pass/fail bit.
+
+Exposed over HTTP as `POST /photometric-check` (`srcUrl` + `outputUrl`, presigned GET, read-only),
+mirroring `/inspect`'s shape. `test_photometric_gate.py` (stdlib only, wired into `container-tests`
+CI) proves the ratio math against an injected decoder; `test_local.py` (real ffmpeg, matching the
+audio containers' existing not-run-in-CI pattern) drives the gate against ACTUALLY decoded frames --
+a real lossy h264 round trip lands at ratio 1.0001 (inside the band), a real darkened clip lands at
+ratio 0.4821 (26x outside it) -- so the band is shown to discriminate on live decode, not merely to
+exist as a constant.
+
+**Not wired into any render automatically.** `video-finish` receives only already-graded per-shot
+clips for concat/mux, never the pre-grade source, so nothing can invoke this unattended today.
+Deciding which layer calls it (the finish module, a post-render panel check, a canary sampler), on
+every render or a canary, and threading a source-clip reference to wherever that call happens, is
+explicitly out of scope here and needs its own follow-up issue.
+
+### Added
+
+- **The planner refuses a shot the selected finish chain cannot finish, before the GPU is booked
+  (cf#540).** `SCENE_MAX_SECONDS` admits 60s and its comment justifies that by Wan I2V motion cost;
+  it is silent about finish cost, and the finish door has a budget of its own that a 60s shot cannot
+  fit inside. Three constants govern this in three repositories (`FFMPEG_TIMEOUT = 1200` in the
+  upscale handler, `PHASE_HARD_DEADLINE_SECONDS = 5400` in core, `SCENE_MAX_SECONDS = 60` in core),
+  none referencing another and nothing asserting any relationship between them, which is how they
+  came to disagree silently. `public/finish-budget-checks.js` derives the permitted length from the
+  finish chain THIS render selects and emits an `error` per over-budget scene, naming the number,
+  the chain, the door budget, the rate and the measurement's provenance. A silent clamp was never a
+  candidate: it produces a film the user did not ask for and did not consent to.
+- **No fourth constant.** The new file carries no number at all. Every term comes from a module's
+  own manifest, which reaches the browser unchanged because registry `toPublic` strips only
+  `binding`, so a module that declares its cost lights this up with no further UI work. Selection
+  mirrors the core's `selectForChain` for the `finish` hook, consuming cf#537's `participation`
+  rather than inventing a second policy. Issues are emitted in the server preflight's own shape, so
+  they merge into the existing list and the existing errors-gate-the-bundle rule with no parallel
+  surface.
+- **Unknown admits, and is never silent.** No manifest declares a finish cost yet, so refusing on
+  unknown would refuse one hundred percent of correct work on day one, and a guard that fires on
+  correct work is the guard people switch off. A wrong refusal costs the guard itself; a wrong admit
+  costs one job that dies at the door guard, which is today's behaviour and is recoverable. So an
+  underivable ceiling ADMITS and reports one info line naming the modules that declared nothing,
+  once per render rather than once per scene, and a test asserts that notice never says the shot is
+  safe or will finish. A registry that failed to load is a THIRD state, because "I could not ask"
+  and "this studio installed none" are different facts owned by different parties (cf#344); a test
+  drives both with otherwise identical inputs and asserts they differ.
+- **Every guard mutation-tested.** Each was patched to a fall-through and watched go red for its own
+  named reason with the siblings staying green in the same run, the patch's application asserted
+  (`applied 1 of 1`, abort on zero) and the restore verified back to baseline. 7 of 7 red, 0
+  untested. This ships the planner half only: the core cap, the upscale host-memory guard and the
+  `finish_cost` manifest field remain open elsewhere.
+
+### feat(planner): render history states what it knows about degradation, in four bands (cf#549)
+
+A film that soft-degraded at assemble (per-shot clips instead of an assembled film) or at mux (a
+silent film) was recorded and DISPLAYED in render history byte-identically to one that shipped
+complete: `done`, `errors: []`, same row. The observable was not missing from the system, only from
+the place anyone looks -- cf#118 has put `output.finish_unavailable {at, reason, delivered}` on the
+poll view all along, the live render view consumes it through `public/finish-degrade.js`, and
+`planner.html` loads that helper (line 606) BEFORE `planner-history-row.js` (line 624). Measured
+with a control in the same command: the same matchers return 3 hits against `finish-degrade.js` and
+`planner-render.js` and **0** against `planner-history-row.js` and `planner-history-list.js`, while
+the row reads `r.output` for eight other fields. The projection was on the page and the row never
+called it.
+
+`degradeFrom()` returns `null` for "no degrade" and for a junk payload alike, deliberately: on the
+live view a parse failure must never tell a user their good film is broken. That forgiveness is
+correct there and insufficient here, because history has to be COUNTABLE and a null meaning three
+things is the defect itself. So this adds a SECOND, wider projection over the same field --
+`degradeFrom` is untouched and still owns the parse. `degradeBand()` returns `unmeasured` (no
+readable payload), `none-reported` (readable, reports no degrade), `unreadable` (reported something
+we could not read) or `reported`.
+
+**`none-reported` is deliberately not "clean" and nothing renders it as a verdict.** It means this
+payload reports no assemble/mux soft-degrade and nothing more; `film_finish.degraded`
+(vivijure-core#203) is unmerged and absent from every row today, so title-card and subtitle
+degradation is outside what any band here can see. No UI pretends that field exists and no clean
+verdict is derived from its absence. A comment records what dropping it in later requires, including
+that the combining rule must not be worst-of, because a partially-measured row is its own fact.
+
+Every row carries the band as `data-finish-degrade`, in all four values, so a degraded row is
+distinguishable by something it POSITIVELY renders rather than by a missing badge, and the
+unmeasurable rows are countable too -- that second number is what stops a run of unmeasurable rows
+scoring as a clean run. Only the two bands needing a human are badged, because a badge firing on
+every healthy row is a badge people learn to ignore. The expanded row shows the structural sentence
+from `deliveredSummary()` and then the studio reason verbatim.
+
+Also fixed here, found while wiring the above: `resumeRender()` repainted the render panel from a
+history row and never touched the cf#118 degrade disclosure or the CLEARED state of the download
+anchors, both written only by `renderDeliverable()` on the live-poll path. Viewing a clean row after
+a degraded one left the previous render's warning standing over it; the other direction left the
+download button hidden on a row that has a film. Routed through the same projection, which writes
+the anchors on every branch. Which source wins is measured against the shipped core
+(`dist/renders-db.js`): the advance path writes `output_key = COALESCE(?, output_key)` beside an
+unconditional `output_json = ?`, so the column is STICKY and the blob is the fresh truth; the blob
+wins wherever there is one, and the column is used only when there is none.
+
+`tests/finish-degrade.test.ts` gains 11 assertions, each driven RED by a mutation with its siblings
+shown green in the same run. Collapsing any band into a neighbour reddens that band's own assertion
+plus the shared collapse test and leaves 25 of 27 green, which is what distinguishes three
+assertions from one check wearing three names. The mutation pass also caught a vacuous assertion in
+this change's own tests (two badge notes compared for inequality stayed green when one went
+missing), now fixed by asserting both non-null first.
+
+**Refs #549, does not close it.** `film_finish.degraded` is core-side and unmerged, so the
+title-card and subtitle half of this gap is untouched.
+
+### fix(finish): accept the presigned satellite return shape, and degrade instead of failing (cf#578)
+
+In presigned mode the finish satellites return the written key as `output_key` and no `clip_key`,
+and `finish-upscale` and `finish-lipsync` both treated that as a hard failure. The job burned the
+GPU, PUT the artifact, and then died on the response parse. Because it came back `ok:false` it
+routed to the chain failure path rather than the degrade path, which fails the whole film and leaves
+no countable record of what happened.
+
+Both poll sites now resolve the written key through `finishedKey`, which reads whichever field the
+satellite used, and both soft-degrade on a genuinely empty result the way `speech-upscale` already
+did. `finish-upscale` also carries the input clip in its poll token now, which is what it was
+missing to be able to make that same decision.
+
+Second, smaller loss found on the way: vivijure-upscale sends no `applied` array on its presigned
+branch while sending one on the R2 branch, so mapping only the key name would have dropped the
+provenance tag on every presigned render. The tag is now derived from the `scale` the endpoint
+itself reports, never from the config we asked for.
+
+Scope is 2 of the 5 finish-class doors, not the 4 that hard-fail on a missing `clip_key`:
+`finish-rife` talks to a backend with no presigned branch at all, and `finish-blender` talks to a
+satellite that emits `clip_key` in both modes. Neither can produce the shape.
+
+### feat(planner): count the finish-cost silence, N of M installed modules (cf#579)
+
+The cf#540 guard admits when no module declares a finish cost, which stays the right
+call. This adds the forcing function it lacked: a registry-derived census,
+`finishCostCoverage`, reported as `declared by N of M installed finish modules` with
+machine-readable `data-finish-cost-*` attributes on the preflight panel. The aggregate
+carries the same three-way split as the per-render path: a registry that could not be
+read reports NULL, never 0 and never 0 of M.
+
+### fix(panel): one GET /api/modules per page load, not five (cf#580)
+
+Every studio page fetched the module registry once per script that needed it. `planner.html` and
+`modules.html` made FIVE `GET /api/modules` per load; `cast.html` and `settings.html` made three.
+The projection is the same bytes every time, so four of those five were pure duplicate work, and
+the panel could render two controls against two different snapshots of the same registry.
+
+`public/module-registry.js` is the shared one-flight memo, loaded on all four pages. Every page now
+makes exactly ONE request. `planner-registry.js` keeps the planner-facing helpers and DELEGATES to
+it rather than keeping a second memo, because two memos on one page is this defect relocated, not
+fixed.
+
+**The issue as filed undercounted, and how it undercounted is the interesting part.** cf#580 says
+six call sites, three un-memoised. The measured population was SEVEN, one memoised. The two extra
+were not hiding; they were invisible to the matcher the previous test used,
+`/fetch\("\/api\/modules"\)/`, which demands a closing paren immediately after the URL string and a
+lowercase `f`:
+
+```js
+readonly-gate.js:33   origFetch("/api/modules")                    // callee is not "fetch"
+settings.js:347       fetch("/api/modules", { headers: ... })      // a second argument
+```
+
+A regex that matches only the shape it already knows can never reveal blindness to a different
+shape of the same call, so its zero was a statement about the regex. The replacement suite derives
+the population by a UNION of three independent matchers over a file list read off the filesystem,
+with a positive control per call shape and an explicit proof that the old matcher is blind to three
+of the five shapes tested. The suite prints its denominators: `1 of 37 public/*.js`, and per page,
+`1 of 33` scripts on planner.html.
+
+Per-page `GET /api/modules`, before and after: planner.html 5 to 1, modules.html 5 to 1, cast.html
+3 to 1, settings.html 3 to 1.
+
+**The memo contract is preserved exactly, including the parts that are load-bearing.** `load()`
+returns a shared promise (N concurrent callers, one request); it NEVER rejects, which is what lets
+six callers drop their own `.catch` and degrade quietly; and `registryUnavailable()` (cf#344) still
+distinguishes "this studio has no modules" from "I could not ask", because those two are
+byte-identical in the cache and they name different parties. `hook-availability.js` reads that flag
+rather than the payload, which is the difference between preserving its behaviour exactly and
+preserving it approximately: without the flag a failed read would have run its document sweep,
+which the old `.catch` never did.
+
+**One addition, to avoid degrading two callers rather than to grow the API.** `app.js` and
+`settings.js` do not degrade quietly; both showed the reader a message carrying the status,
+`/api/modules -> 503`. A boolean flag alone would have forced both to drop the status out of copy a
+person actually reads, so `registryFailureReason()` carries it.
+
+**Kept deliberately, and stated so it reads as a decision: no TTL and no retry, permanently.** The
+projection describes what the operator INSTALLED, which changes on a deploy or a settings edit and
+not while a reader sits on a page, so the page load is the honest refresh boundary and a reload is
+the honest refresh. A TTL would re-open exactly the fan-out this closes, scaled by session length
+instead of by script count, to fix staleness nobody measured. A retry would turn a studio having a
+bad minute into every open panel retrying in step, which is the synchronisation defect cf#515 took
+out of the render poll, rebuilt in a new place. One staleness case was checked rather than assumed:
+`settings.js` saves module config, but against `GET/PATCH /api/modules/:name/config`, a different
+route, and the top-level projection carries the module list and `config_schema`, which a config
+save does not alter.
+
+**Load order is part of the change, not decoration.** `module-registry.js` loads between
+`auth-token.js` and `readonly-gate.js` on every page and binds `window.fetch` at eval, so the
+transport it holds is the auth-token wrapper: the same function `readonly-gate.js` already captured
+as its `origFetch`. That keeps the bearer header, bypasses the read-only shim rather than relying
+on GET sitting on its SAFE list, and avoids gating the request that decides the gate. A test parses
+the script tags out of every `public/*.html` and asserts the ordering.
+
+**It refuses rather than falling back.** Several vitest suites eval panel scripts in plain Node,
+where `window` does not exist but a global `fetch` does. Falling back to that global would run, look
+like it worked, and quietly issue one unauthenticated un-memoised request per caller, which is this
+defect wearing the appearance of success. So the binding is allowed to be null and `load()` throws;
+tests hand in a transport explicitly. `planner-registry.js` throws on the same grounds when the
+shared file is missing, instead of rebuilding its own memo.
+
+Refs #580
+
+### fix(planner): give every client poll loop a visibility pause WITH a resume (cf#581, cf#573)
+
+PR #563 gave the render poll jitter, backoff and a real visibility pause. PR #575 gave jitter and
+backoff to the remaining loops and DELIBERATELY stopped short of the pause, because a pause needs a
+matching RESUME per loop and a pause with no resume is a worse defect than the one it fixes: the user
+backgrounds the tab, the poll never re-arms, and the panel sits on "pending" forever for a LoRA run,
+a music bed or a shot regen that actually completed. This is that follow-up.
+
+**The population, re-derived by union rather than inherited.** The dispatch and PR #575 both said
+five files and seven arm sites. Measured at `21f10a9` across four independent matchers
+(`setTimeout`/`setInterval`; `pollSchedule`/`armPoll`/`nextPollDelayMs`; `function poll*` definitions
+and their re-arm points; other scheduling primitives), the live population is **6 loops in 6 files**,
+6 physical timer arms and 16 scheduler call sites. `cast.js` alone has 6 scheduler call sites, not 1.
+The zero for other scheduling primitives is paired with a positive control on the same invocation
+(`addEventListener`, 162 hits), so it is a real absence and not a dead matcher.
+
+Adoption before this change, with denominators: jitter **6 of 6**, backoff **4 of 6** (two abstain by
+design), `document.hidden` guard **2 of 6**, resume path **2 of 6**. `armPoll`, the only function
+carrying the hidden refusal, had **1 of 6** consumers.
+
+| loop | route | state-advancing | had a pause |
+| --- | --- | --- | --- |
+| `planner-render.js` | `GET /api/storyboard/render/<jobId>` | YES | yes (#563) |
+| `planner-history-list.js` | `GET /api/storyboard/history` | no | yes |
+| `planner-history-row.js` regen | `GET /api/storyboard/render/<jobId>` | **YES** | no |
+| `planner-audio.js` music | `GET /api/job/<id>` | no | no |
+| `cast.js` LoRA | `GET /api/cast/<id>/lora-status` | no | no |
+| `demo-steer.js` | `GET /api/demo/render/<jobId>` | no | no |
+
+**Why the listener had to move into the shared policy rather than into three files.** The ONLY
+`visibilitychange` listener in the tree lives in `planner-init.js`, and `planner-init.js` ships on
+`planner.html` alone. `cast.html` and `modules.html` load `cast.js` and `demo-steer.js` and have no
+visibility handler of any kind, so a pause wired the planner way could never have fired on those
+pages at all. `poll-schedule.js` now exposes `createLoop`, which owns the timer, the error streak and
+the paused flag, and registers each loop with ONE listener attached per document. Pause and resume
+are properties of the mechanism instead of properties of whoever remembered to wire them.
+
+`isActive` is required rather than defaulted. Resume must not restart a loop whose job finished while
+the tab was hidden, and pause must not mark a finished loop as paused; only the caller can answer
+that. A default of "always active" would be the silent-fallback shape that reads as working, the same
+reason `pollPolicy()` throws instead of falling back to a flat interval.
+
+**cf#573, the design question, answered rather than left open.** Should a list view hold a poller on a
+state-advancing route? It is not the LIST that holds it: the regen poll is armed at the regen submit
+and on restore of a submitted regen, never by rendering the history list, so a list at rest polls
+nothing on that path. What was not legitimate is that nothing owned the lifecycle. The `setTimeout`
+handle was DISCARDED, so the poll could not be cancelled by anything; there was no visibility pause,
+so a backgrounded tab drove `advanceFilmJob` forever; and the `.catch` path re-armed with no cap, so
+a dead route was polled indefinitely. The owner is now the loop object, one per regen key, destroyed
+on terminal status; across page loads the persisted entry owns it, and that restore was already
+age-capped. An attempt cap (`REGEN_MAX_ERROR_STREAK`) bounds the TOTAL, which backoff never did:
+backoff bounds only the RATE.
+
+**Base cadences are unchanged, again.** cf#573 says in as many words that it is not a request to
+change the interval, and moving a rate in the same change that moves a distribution would confound
+the two in any measurement taken across it. **This still changes the poll path that drives
+`advanceFilmJob`,** so a load-test result taken after this change has a different driver than one
+taken before it: a backgrounded tab now sheds load and resumes, where before it polled forever.
+
+**How the assertions were proven, not assumed.** cf#581 names the resume as the assertion that
+matters, and it is not hypothetical that a pause-only suite goes green on the stranding bug: measured
+against the pre-change suite, EVERY existing assertion passes on a loop that is paused and never
+resumed, because the only resume coverage anywhere was three `toContain` substring checks on
+`planner-init.js`. So the new suite asserts deltas (the poll body RAN, the loop reports it resumed),
+never absences. Seven mutations were driven red individually and each reddened only its intended
+assertions: resume not running the poll (2 red), the base substituted for the default (2), pause not
+marking paused (1), the cap removed (1), a listener per loop instead of per document (1), resume
+ignoring `isActive` (1), and a migrated loop returned to a bare timer (1). Removing the resume left
+the PAUSE test green, which is the demonstration itself. The jitter probe uses a NON-DEFAULT base
+(4000, the regen base) because on the default base honoured and substituted are byte-identical.
+
+**Deliberately NOT in scope, stated rather than omitted:**
+
+- **`planner-render.js` and `planner-history-list.js` keep their own visibility wiring** and do not
+  register with the shared listener. A loop driven by both would be resumed twice and resume runs the
+  poll body, so that exclusion is a correctness property and a test asserts it. The render poll is
+  also the instrument the cf#512 load run measures with, and it is already correct; moving the one
+  proven loop onto a brand-new primitive in the same change that introduces the primitive is risk
+  taken for no gain, immediately before the run. Collapsing those two is a follow-up.
+- **`cf#515` defect 2 (the `discoverModules` cache default)** is fixed in `vivijure-core` `main` at
+  `11f52aa` (core PR #216), which caches the `MODULE_*` service scan for 30s and re-reads the D1
+  dispatch set on EVERY call, exactly the seam that must not go behind one TTL. It is NOT reachable
+  from this panel: core `1.15.0` is unpublished (npm tops out at `1.14.0`) and this repo pins
+  `^1.14.0` with the lockfile resolving `1.14.0`, so `npm ci` builds the old path. That is a release
+  and pin bump, not a panel change.
+
+Refs #581, #573, #515
+
+### fix(finish): one shared poll-path soft-degrade contract, so a door degrade stops destroying films (cf#594)
+
+The poll-path backend soft-degrade contract existed in 1 of the 4 `finish` modules. A door that could
+not polish a clip but had not crashed returned a structured `{"ok": false, ...}`; `finish-lipsync`
+passed the original clip through, and `finish-upscale`, `finish-rife` and `finish-blender` fell
+through to the artifact parse, found no key, returned module `ok:false`, and had the core's
+`failOrRetry` classify it deterministic and FAIL THE RENDER. The same honest door return was a
+one-shot degrade through one module and a destroyed film through three, and a door author could not
+know which they had without reading the module they sit behind.
+
+`modules/_shared/finish-soft-degrade.ts` is now the one implementation, with four callers. Both door
+shapes are recovered: `{"ok":false,"detail":...}` arrives COMPLETED, and `{"ok":false,"error":...}`
+is lifted by RunPod into a FAILED envelope (cf#565). A genuine crash leaves no structured `output`
+and still fails loud; that discriminator is the safety property and it did not widen.
+
+BEHAVIOUR CHANGE: three modules that previously failed the film on a door soft-degrade now degrade
+one shot, tagged `passthrough:backend-soft-degrade` with the reason in `degraded`.
+
+The recovered FAILED envelope also records `outcome: "completed"` rather than `"failed"`. RunPod's
+FAILED there is an artifact of it lifting a top-level `error` key out of a handler RETURN, not an
+endpoint failure, so `failed` was wrong about the ENDPOINT and inflated the backend failure rate with
+successful degrades. This does not relax cf#279: the row is still the endpoint's outcome, still
+written before the output is parsed for our own use.
+
+`finish-rife` and `finish-blender` now carry the source `clipKey` in their poll tokens, as
+`finish-lipsync` always has and `finish-upscale` has since cf#578, since the passthrough IS the
+original clip. A token minted before this change keeps the pre-change terminal path.
+
+Also fixed in passing: `finish-lipsync`'s `decodePoll` resolves a token with no `clipKey` to the
+empty string, so a degrade on such a token built a passthrough with an EMPTY `clip_key` and returned
+`ok:true`. It now takes the same null-on-no-clip guard its `finish-upscale` sibling already had.
+
+### fix(finish): a COMPLETED job with no artifact key degrades in all 5 finish doors, not 3 (cf#604)
+
+`finish-rife` and `finish-blender` returned module `ok:false` when a COMPLETED RunPod job carried no
+artifact key. `ok:false` is safe at the DOOR layer and fatal at the MODULE layer: the core's
+`failOrRetry` classifies it deterministic and FAILS THE FILM on a render that ran to completion and
+was billed. It also never reaches `applyFinishOutput`, so the class was uncountable by construction
+rather than merely uncounted. `finish-lipsync`, `finish-upscale` and `speech-upscale` have passed the
+source clip through at that site since cf#578; these two were the doors that sweep did not reach.
+
+Both now take the identical branch, with the identical `passthrough:no-output-key` tag so one grep
+across the five doors finds the whole class. Derived from source and classified comment-versus-code:
+3 of 5 before, 5 of 5 after.
+
+BEHAVIOUR CHANGE: two modules that previously failed the film on an artifact-less COMPLETED job now
+degrade one shot, tagged `passthrough:no-output-key` with the reason in `degraded`. A poll token
+carrying no source clip still fails loud, unchanged: there is nothing honest to pass through, and
+returning `ok:true` with an empty `clip_key` would be the silent-degrade shape of #77 wearing a
+success. A genuine crash, which leaves no structured output, is untouched and still fails loud.
+
+NOT DONE, and refused on measurement rather than deferred: cf#604 also asked for the cf#578 read,
+`clip_key ?? output_key`. Neither door can emit that shape. Re-measured 2026-08-15 on trees
+byte-identical to the shas the cf#578 census recorded: `vivijure-blender` at 4fa33fe returns
+`clip_key` on every success (`handler.py:389`, `:397`) and never `output_key` as a response field;
+`vivijure-backend` at f9dc930 has exactly one completed `finish_clip` return (`harness/handler.py`
+`:471-476`) which hardcodes `clip_key`, and `docs/contract.md:249-268` argues the exclusion of
+presigned transport deliberately. Widening the read would be changing code on a hypothesis, which is
+what the cf#578 EXEMPT census declined to do; that census is untouched here and still passes.
+
+The degrade covers the same ground more honestly anyway: if either door ever does emit a key this
+module cannot resolve, the film degrades one countable shot instead of dying, which is asserted as a
+test case rather than promised.
+
 ## v1.27.0 -- 2026-08-15
 
 ### fix(modules): project `studio_release` on `GET /api/modules` (cf#287)
