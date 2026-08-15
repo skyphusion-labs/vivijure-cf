@@ -223,13 +223,36 @@ self-host is where it belongs, so an unconditional hosted strip bolted onto `dep
 a door its operator is entitled to run. Note the inversion that was the original defect: the path
 that PERMITS the door defaulted it off, and the path that FORBIDS it had no switch at all.
 
-**Open, and deliberately not fixed here (reported on cf#560):** `render_core_toml` in
-`deploy/vivijure_deploy.py` strips `[[vpc_services]]`, `tail_consumers`, `[[routes]]` and
-`[[migrations]]` on the stated contract that it removes "every binding whose target a base install
-does not create", and it has zero occurrences of `LOCAL-GPU`, `SATELLITE` or `SELFHOST-SKIP`. So it
-leaves the `MODULE_LOCAL_GPU` service binding in place against its own contract. That is a dangling
-binding on a self-host install, a different defect from the hosted invariant, and it belongs in its
-own change rather than folded into this one.
+**Open, and deliberately not fixed here (reported on cf#560; MECHANISM CORRECTED 2026-08-16):**
+`render_core_toml` in `deploy/vivijure_deploy.py` strips `[[vpc_services]]`, `tail_consumers`,
+`[[routes]]` and `[[migrations]]` on the stated contract that it removes "every binding whose target a
+base install does not create", and it has zero occurrences of `LOCAL-GPU`, `SATELLITE` or
+`SELFHOST-SKIP`, so it keeps the `MODULE_LOCAL_GPU` service binding.
+
+**An earlier revision of this note called that a DANGLING binding. That was wrong, and the correction
+matters because the real failure mode is quieter than the one it named.** Nothing dangles:
+`module_dirs()` enumerates every `modules/*/wrangler.toml` with no exclusion, so the same installer
+also DEPLOYS `modules/local-gpu`, and `LOCAL_BACKEND_URL` / `LOCAL_BACKEND_TOKEN` sit in
+`OPERATOR_STORE_NAMES`, seeded as the marked `REPLACE_ME__` placeholder precisely so the module
+deploy resolves instead of failing CF 10182. Both halves resolve and the install succeeds.
+
+What actually differs is the DEFAULT, between the two self-host installers, for the same opt-in door:
+
+| installer | local-gpu module | core binding | `LOCAL_BACKEND_*` |
+|---|---|---|---|
+| `deploy.sh` | deployed only when `INSTALL_LOCAL_GPU=1` (`:141`) | stripped unless `=1` (`:398`) | seeded only when `=1` (`:239`) |
+| `deploy/vivijure_deploy.py` | **always** (no switch) | **always kept** (no marker handling) | placeholder, always |
+
+`deploy.sh` is coherent: three actions, one switch, off by default. The python installer has no switch,
+so a base install silently opts the operator IN. And unlike the doors that share the placeholder
+pattern deliberately (`image-generate` handles `REPLACE_ME` and degrades honestly; `modules/local-gpu`
+has no such handling, verified by contrast rather than by an unanchored grep), the door comes up bound,
+deployed and advertised in the registry, pointing at a literal placeholder. **A dangling binding would
+have failed loudly at `wrangler deploy`; this fails at render time, after reporting itself available.**
+
+Whether the divergence is a defect or a considered choice is a PRODUCT question about the door opt-in
+intent, and no test asserts either installer default, so today the two cannot disagree noisily. Its own
+issue, not folded in here.
 
 ### 3d-ter. THE RIGHT DENOMINATOR: hosted STUDIOS, not renders of one template (cf#560)
 
