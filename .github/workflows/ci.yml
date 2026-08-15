@@ -23,7 +23,11 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # cf#562: a tag run now PUBLISHES (the studio-release job below) as well as deploys, so
+  # cancelling it mid-flight can abandon a half-published release -- exactly what the old
+  # studio-release.yml cancel-in-progress: false existed to prevent before it was folded in here.
+  # Branch and PR runs keep cancelling, which is what keeps the queue usable; tag runs never do.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   ci:
@@ -721,3 +725,40 @@ jobs:
           if grep -v '^[[:space:]]*#' wrangler.mcp.toml | grep -qF '${'; then echo "::error::unsubstituted placeholder in wrangler.mcp.toml"; grep -nF '${' wrangler.mcp.toml | grep -v ':[[:space:]]*#'; exit 1; fi
           echo "Deploying vivijure-studio-mcp to ${MCP_HOST} (studio ${MCP_STUDIO_URL})..."
           npx wrangler deploy -c wrangler.mcp.toml
+
+  # -----------------------------------------------------------------------------------------------
+  # THE TENANT-PROVISIONABLE RELEASE ARTIFACT, GATED BY CONSTRUCTION (cf#562).
+  #
+  # This was .github/workflows/studio-release.yml carrying its own push: tags: ["v*"] trigger. Same
+  # tag, separate file, and needs: cannot cross workflow files -- so it ran in PARALLEL with the four
+  # gates below and could publish the artifact every hosted tenant provisions from, and advance the
+  # hosted STUDIO_RELEASE pin, while migrations-gate was still deciding. Observed on the v1.27.0 tag:
+  # both workflows in_progress at once. Nothing went wrong on that tag, and nothing had determined
+  # that it would not.
+  #
+  # cf#562 listed three options. Querying the check runs for the tag's sha (option 2) is the smallest
+  # and the one that can fail OPEN -- an unqueryable check result is not a pass, a rule this estate
+  # has now had to restate in three separate files. Copying the gate jobs into the other workflow
+  # (option 1) gives the invariant two definitions, which is how cf#560's local-gpu strip came to sit
+  # on one render path and not the other. This is option 3: ONE workflow owns everything a v* tag
+  # triggers, so needs: works by construction and there is no assertion left to keep true.
+  #
+  # NO DEADLOCK. ci, container-tests and migrations-gate all run unconditionally on this trigger and
+  # assert-on-main carries the same tag-only if: this job does, so every entry in needs: reaches a
+  # conclusion rather than waiting on a job that never starts. That is the check to run before
+  # widening a needs: array, and it is the same argument the deploy job above makes.
+  #
+  # NOT a required status check, and it must not become one: it runs only on refs/tags/v*, so on a PR
+  # it is skipped, and a required check that never runs blocks every merge. The required contexts on
+  # this repo are ci, migrations-gate, coverage and CodeQL.
+  studio-release:
+    needs: [ci, container-tests, migrations-gate, assert-on-main]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write # the called workflow uploads the release asset; nothing else
+    concurrency:
+      # Moved here with the workflow it guards. A half-published release must never be cancelled.
+      group: studio-release-${{ github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/studio-release.yml
+    secrets: inherit
