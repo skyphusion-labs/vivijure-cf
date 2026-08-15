@@ -1,45 +1,54 @@
-// Planner module registry: one fetch of GET /api/modules, shared helpers for every
-// self-assembling control in the planner. No feature names or providers are
-// hardcoded here -- only hook names from the vivijure-module/2 contract.
+// Planner module registry: the planner-facing helpers over GET /api/modules. The fetch itself
+// belongs to module-registry.js since cf#580, which memoises it ONCE PER PAGE across every script
+// rather than once per planner. No feature names or providers are hardcoded here -- only hook names
+// from the vivijure-module/2 contract.
 (function (global) {
+  // cf#580: the memo MOVED to module-registry.js, which every page now loads. This file keeps the
+  // planner-facing helpers and DELEGATES the fetch rather than holding a second independent memo.
+  // Two memos on one page is the same defect relocated, not fixed: planner.html would issue two GET
+  // /api/modules, one for the page chrome and one for the planner controls.
+  //
+  // The public contract of load() and registryUnavailable() is UNCHANGED; only ownership of the
+  // in-flight promise moved. Contract in full (never rejects, one flight, empty shape plus a flag on
+  // failure, no TTL, no retry) is documented in module-registry.js.
   let cache = null;
-  let loadPromise = null;
-  // cf#344: did the projection actually ARRIVE?
-  //
-  // load() resolves on failure with an EMPTY registry rather than rejecting, which keeps every
-  // read-only control degrading quietly. That is right for a label and wrong for a decision: an
-  // empty cache is byte-identical whether the studio installed no modules or the fetch never
-  // landed, so a caller that must NAME a module cannot tell "this studio has no GPU door" from
-  // "I could not ask". Those refusals belong to different parties and read differently to a user.
-  //
-  // Tracked separately rather than by changing load()'s contract, so no existing reader's behaviour
-  // moves: they still see the empty shape and still degrade exactly as before.
-  let loadFailed = false;
 
-  function load() {
-    if (cache) return Promise.resolve(cache);
-    if (!loadPromise) {
-      loadPromise = fetch("/api/modules")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (!d) loadFailed = true;
-          cache = d || { modules: [], hooks: {}, catalog: [] };
-          return cache;
-        })
-        .catch(() => {
-          loadFailed = true;
-          cache = { modules: [], hooks: {}, catalog: [] };
-          return cache;
-        });
+  // Resolved at CALL time, and THROWS when the shared registry is absent rather than falling back to
+  // an own fetch. A silent fallback would rebuild the second memo and read as working, which is
+  // exactly the failure mode this change is about. Same discipline as pollPolicy() in demo-steer.js.
+  // The lookup order covers a browser page, a new Function() harness that passes a window scope, and
+  // a plain-Node eval.
+  function registry() {
+    const mr =
+      (typeof moduleRegistry !== "undefined" && moduleRegistry) ||
+      (global && global.moduleRegistry) ||
+      (typeof globalThis !== "undefined" && globalThis.moduleRegistry);
+    if (!mr) {
+      throw new Error(
+        "module-registry.js is not loaded; refusing to re-open the per-page /api/modules fan-out (cf#580)",
+      );
     }
-    return loadPromise;
+    return mr;
   }
 
-  // True only when a load COMPLETED and could not deliver the projection (non-ok response or a
-  // transport failure). False before any load and false on a successful one, so a caller must
-  // await load() first -- reading it early answers about a question that has not been asked yet.
+  // The local cache mirror is what the SYNCHRONOUS helpers below read, so their pre-load behaviour is
+  // unchanged: they return empty until a load() has resolved.
+  function load() {
+    return registry()
+      .load()
+      .then((d) => {
+        cache = d;
+        return d;
+      });
+  }
+
+  // cf#344: did the projection actually ARRIVE? An empty cache is byte-identical whether the studio
+  // installed no modules or the fetch never landed, so a caller that must NAME a module cannot tell
+  // "this studio has no GPU door" from "I could not ask". Those refusals belong to different parties
+  // and read differently to a user. Answered by the shared memo now, with the same meaning: false
+  // before any load, false on success, true only when a load COMPLETED without the projection.
   function registryUnavailable() {
-    return loadFailed;
+    return registry().registryUnavailable();
   }
 
   function byName(data) {

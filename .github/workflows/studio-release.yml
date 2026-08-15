@@ -18,21 +18,36 @@ name: Studio release artifact
 #
 # vivijure is PUBLIC, so this runs on GitHub-hosted ubuntu-latest (fork-safe), per the runner rule.
 
+# cf#562: THIS WORKFLOW HAS NO TRIGGER OF ITS OWN. It is workflow_call only, invoked by ci.yml's
+# studio-release job, which carries needs: [ci, container-tests, migrations-gate, assert-on-main].
+#
+# It used to fire on push: tags: ["v*"] -- the SAME tag that starts ci.yml -- from a separate file.
+# needs: cannot cross workflow files; there is no mechanism for it. So this workflow ran in PARALLEL
+# with every gate meant to guard it, and observably did: on the v1.27.0 tag the run list showed
+# "Studio release artifact in_progress" beside "CI in_progress". A red migrations-gate could not
+# stop it, and what this publishes is the artifact every hosted tenant is provisioned from plus the
+# STUDIO_RELEASE pin advance that decides which code hosted tenants run. cf#559 closed exactly that
+# door for deploy; this door was never gated, because it is reached through a different one.
+#
+# WHY A REUSABLE WORKFLOW RATHER THAN COPYING THE GATES IN HERE. Copying ci, container-tests and
+# migrations-gate into this file would give the invariant two definitions, which is precisely how
+# cf#560's local-gpu strip came to exist on one render path and not the other. Making the release a
+# JOB of the workflow that owns the gates makes the ordering STRUCTURAL: needs: resolves inside one
+# file or the run does not start. There is then nothing to assert and nothing to keep in sync.
+#
+# THE workflow_dispatch REBUILD PATH IS GONE WITH THE TRIGGER, deliberately. It was an ungated
+# publish door: fc#859 had to bolt an ancestry guard onto this file precisely because that input
+# could publish an arbitrary tag pointing at a commit that never merged. Rebuilding a tag's artifact
+# is now done by re-running that tag's CI run, which re-runs the gates along with it.
+#
+# Concurrency moved to the calling job in ci.yml, where the group can still be per-tag and
+# cancel-in-progress can still be false. A called workflow does not own its own concurrency here.
+
 on:
-  push:
-    tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to build the artifact for (must already exist)"
-        required: true
+  workflow_call:
 
 permissions:
   contents: write # uploads the release asset; nothing else
-
-concurrency:
-  group: studio-release-${{ github.ref }}
-  cancel-in-progress: false # never cancel a half-published release
 
 jobs:
   build:
@@ -41,18 +56,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          # NO ref: (cf#562). workflow_call-only now, so this always checks out the caller's ref --
+          # the v* tag whose four gates have just passed. The old inputs.tag || github.ref existed
+          # for the workflow_dispatch rebuild path, which is gone with the trigger.
           # Full history so the ancestry guard can walk main to the built commit.
           fetch-depth: 0
 
       # SECURITY GATE (fc#859): every run of this workflow PUBLISHES (GitHub release + R2 mirror)
       # the artifact built from a tag -- on push OR on a workflow_dispatch whose `tag` input names
       # an existing tag. A tag can point at any commit, including one that never merged, so today it
-      # can publish an unreviewed commit as the authoritative studio release that every hosted
+      # could publish an unreviewed commit as the authoritative studio release that every hosted
       # tenant provisions. This refuses that. UNCONDITIONAL (there is no dry run; every run
       # publishes) and it asserts the CHECKED-OUT commit -- git rev-parse HEAD = the
       # `inputs.tag || github.ref` ref -- NOT $GITHUB_SHA, which on a dispatch is the launch
       # branch, not the tag being built.
+      # cf#562 NOTE: the workflow_dispatch door this guard was written for is GONE, and ci.yml's
+      # assert-on-main job (now in this job's needs:) asserts the same ancestry. KEPT ANYWAY: it is a
+      # security guard on the step that actually publishes, and removing a working control as a
+      # side effect of a refactor is how controls go missing. Redundant by construction is the
+      # intended state, not a leftover.
       - name: Assert built commit is on main (no release of an unreviewed commit)
         run: |
           set -euo pipefail
@@ -87,7 +109,7 @@ jobs:
       # are not releases, and failing those would make the guard something people route around.
       - name: Tag matches the declared version
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           case "$TAG" in
@@ -123,7 +145,28 @@ jobs:
           R2_S3_ENDPOINT: "https://x.r2.cloudflarestorage.com"
         run: |
           set -euo pipefail
-          envsubst < wrangler.toml.example > wrangler.toml
+          # cf#560: STRIP THE LOCAL-GPU BLOCK BEFORE RENDERING. This is a HOSTED render -- the
+          # artifact every hosted tenant is provisioned from -- and the hosted studio must never bind
+          # local-gpu. It has been ruled three times.
+          #
+          # This path had NO strip and no gate: a bare envsubst, zero occurrences of local-gpu in the
+          # whole file, while ci.yml carried a correct and passing refusing gate. That green gate on
+          # the other path is exactly why this looked fixed. ci.yml's own comment at the site of the
+          # first fix says "The control existed and was on the wrong path"; the fix then reproduced
+          # the same shape one path over, which is why the strip is now ONE script both paths call
+          # rather than a second copy that can drift or be forgotten.
+          #
+          # The blast radius here is narrower than on ci.yml and stating it is part of the fix:
+          # scripts/build-studio-release.ts reads only compatibility_date, compatibility_flags and
+          # the assets block out of this config, and the tenant's real bindings come from the
+          # provisioner's WfP upload, so a bound local-gpu here does not reach a tenant's binding set
+          # today. It does reach `wrangler deploy --dry-run`, which is what builds the published
+          # bundle, and "does not reach a tenant TODAY" is a property of build-studio-release.ts that
+          # nothing pins. The invariant is that no hosted studio config binds this door, not that a
+          # particular consumer happens to ignore it.
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          envsubst < .wrangler.hosted.toml > wrangler.toml
+          rm -f .wrangler.hosted.toml
           sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/00000000-0000-0000-0000-000000000000/g" wrangler.toml
           # The tenant studio gets its bindings from the provisioner's upload, not from this file, and
           # a tail_consumers reference to OUR vivijure-tail worker has no meaning in a tenant's
@@ -140,7 +183,7 @@ jobs:
         id: build
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ github.ref_name }}"
           node scripts/build-studio-release.ts \
             --bundle bundle-out/index.js \
             --assets public \
@@ -255,7 +298,7 @@ jobs:
             " "dist-release/modules/$m/manifest.json" "dist-release/modules/$m/worker.js" "$m"
           done
 
-      - run: tar -czf studio-release-${{ github.event.inputs.tag || github.ref_name }}.tar.gz -C dist-release .
+      - run: tar -czf studio-release-${{ github.ref_name }}.tar.gz -C dist-release .
 
       # PUBLIC source of truth. Immutability is enforced by the pin ({tag, manifest_sha256}), not
       # trusted: that digest covers the STUDIO artifact only (worker + assets + migrations +
@@ -266,7 +309,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ github.ref_name }}"
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "Studio release artifact."
           gh release upload "$TAG" "studio-release-$TAG.tar.gz" "dist-release/manifest.json" --clobber
           echo "::notice title=Studio release pin::$(cat dist-release/PIN.txt)"
@@ -281,7 +324,7 @@ jobs:
           R2_RELEASES_BUCKET: ${{ vars.R2_RELEASES_BUCKET }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ github.ref_name }}"
           BUCKET="${R2_RELEASES_BUCKET:-vivijure-studio-releases}"
           npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/manifest.json" --file dist-release/manifest.json --remote
           npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/worker.js" --file dist-release/worker.js --remote
@@ -317,7 +360,7 @@ jobs:
         id: verify_published
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           case "$TAG" in
@@ -359,4 +402,4 @@ jobs:
         if: ${{ steps.verify_published.outputs.verified == 'true' }}
         env:
           STUDIO_PIN_VARIABLE_TOKEN: ${{ secrets.STUDIO_PIN_VARIABLE_TOKEN }}
-        run: bash scripts/advance-studio-pin.sh "${{ github.event.inputs.tag || github.ref_name }}"
+        run: bash scripts/advance-studio-pin.sh "${{ github.ref_name }}"

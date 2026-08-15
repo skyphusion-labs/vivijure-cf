@@ -45,20 +45,24 @@
   var FORM_SEL = "select, button, input, textarea";
 
   var map = {};
-  var ready = fetch("/api/modules")
-    .then(function (r) {
-      return r.ok ? r.json() : null;
-    })
+  // cf#580: reads the SHARED per-page memo instead of its own request.
+  //
+  // The registryUnavailable() branch is NOT decoration, and it is why cf#344 added that flag. load()
+  // never rejects, so a failed read arrives here as the documented empty shape -- byte-identical to a
+  // studio that genuinely restricts nothing. Without the flag this gate would run apply() over the
+  // document on a failed read, which the pre-cf#580 catch never did. The flag keeps the two apart, so
+  // behaviour is preserved exactly rather than approximately.
+  var ready = window.moduleRegistry.load()
     .then(function (d) {
+      if (window.moduleRegistry.registryUnavailable()) {
+        // A failed registry read means we do not KNOW of any restriction. It must not
+        // black out a studio that is probably fine; the individual routes still fail
+        // honestly on their own if they are not.
+        map = {};
+        return map;
+      }
       map = checks ? checks.unavailableHooks(d) : {};
       apply(document);
-      return map;
-    })
-    .catch(function () {
-      // A failed registry read means we do not KNOW of any restriction. It must not
-      // black out a studio that is probably fine; the individual routes still fail
-      // honestly on their own if they are not.
-      map = {};
       return map;
     });
 

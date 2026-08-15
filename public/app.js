@@ -244,9 +244,17 @@ function setMeta(api, count) {
 async function boot() {
   const status = document.getElementById("status");
   try {
-    const res = await fetch("/api/modules");
-    if (!res.ok) throw new Error("/api/modules -> " + res.status);
-    const data = await res.json();
+    // cf#580: reads the SHARED per-page memo. This page also loads readonly-gate.js, abuse-link.js,
+    // demo-steer.js and hook-availability.js, each of which fetched the same projection separately;
+    // modules.html made five GET /api/modules per load and now makes one.
+    //
+    // load() never rejects, so the throw that drives the offline copy below has to come from the
+    // cf#344 flag rather than from a rejected promise. registryFailureReason() carries the status, so
+    // the message a reader sees is unchanged.
+    const data = await window.moduleRegistry.load();
+    if (window.moduleRegistry.registryUnavailable()) {
+      throw new Error(window.moduleRegistry.registryFailureReason());
+    }
     const modules = data.modules || [];
     renderPipeline(data.catalog || [], data.hooks || {}, modules);
     renderModules(modules);

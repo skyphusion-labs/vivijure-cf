@@ -30,14 +30,20 @@
   // still null awaits the determination (below), so there is no open-window race on load.
   var readonly = null;
   var origFetch = window.fetch.bind(window);
-  var ready = origFetch("/api/modules")
-    .then(function (r) { return r.ok ? r.json() : null; })
+  // cf#580: reads the SHARED per-page memo. module-registry.js loads immediately BEFORE this file
+  // and bound window.fetch at its own eval, so the function behind this read is the very same
+  // auth-token wrapper that origFetch above is -- the transport did not change, only who owns the
+  // request. It still deliberately does not go through the wrapper installed below: this read is
+  // what DECIDES readonly, so gating it would gate the request that decides the gate.
+  //
+  // The catch is gone because load() never rejects: a failed read resolves the documented empty
+  // shape, which has no host, so readonly lands false exactly as the old catch made it.
+  var ready = moduleRegistry.load()
     .then(function (d) {
       readonly = !!(d && d.host && d.host.readonly);
       if (readonly) showBanner();
       return readonly;
-    })
-    .catch(function () { readonly = false; return false; });
+    });
 
   function urlOf(input) {
     if (typeof input === "string") return input;

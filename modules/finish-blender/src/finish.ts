@@ -80,6 +80,15 @@ export function buildRunPodBody(
 export interface PollState {
   jobId: string;
   shotId: string;
+  /** cf#594 THE INPUT CLIP, so a poll-time degrade can pass it through.
+   *
+   *  OPTIONAL, and the optionality is the backward compatibility: a token minted before this change
+   *  carries no clipKey, and a poll-time degrade cannot invent the clip it would be passing through.
+   *  Those tokens keep the pre-cf#594 terminal path, which is exactly the behaviour they had.
+   *  finish-lipsync has carried this field since it shipped and finish-upscale gained it in cf#578;
+   *  this is the last pair catching up, and its absence is the reason this module could not make the
+   *  same decision at its poll site. */
+  clipKey?: string;
   srcFps: number;
   frames: number;
   submittedAt?: number;
@@ -113,6 +122,7 @@ export function decodePoll(token: string): PollState | null {
       return {
         jobId: o.jobId,
         shotId: o.shotId,
+        clipKey: typeof o.clipKey === "string" && o.clipKey ? o.clipKey : undefined,
         srcFps: Number(o.srcFps) || 16,
         frames: Number(o.frames) || 0,
         submittedAt: typeof o.submittedAt === "number" ? o.submittedAt : undefined,
