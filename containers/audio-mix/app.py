@@ -24,6 +24,7 @@ import time
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+from bearer import bearer_middleware
 from mix_core import DEFAULT_TARGET_LUFS, ROLES, mix_tracks
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 
@@ -162,7 +163,10 @@ async def mix(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
-app = web.Application(client_max_size=1024 * 1024)  # JSON bodies are small (URLs only)
+app = web.Application(
+    client_max_size=1024 * 1024,  # JSON bodies are small (URLs only)
+    middlewares=[bearer_middleware],
+)
 app.router.add_get("/health", health)
 app.router.add_post("/mix", mix)
 # The single-bed "master the bed" pass (formerly POST /music-upscale here) was lifted out into its own

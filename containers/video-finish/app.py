@@ -26,6 +26,7 @@ import uuid
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+from bearer import bearer_middleware
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 import photometric_gate
@@ -1333,7 +1334,10 @@ ASYNC_WORKS = {
     "subtitle": _subtitle_work,
 }
 
-app = web.Application(client_max_size=1024 * 1024)  # JSON bodies are small (URLs + a short SRT)
+app = web.Application(
+    client_max_size=1024 * 1024,  # JSON bodies are small (URLs + a short SRT)
+    middlewares=[bearer_middleware],
+)
 app.router.add_get("/health", health)
 app.router.add_post("/finish", finish)
 app.router.add_post("/overlay", overlay)
