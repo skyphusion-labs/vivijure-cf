@@ -25,12 +25,16 @@
 // ARITHMETIC. Independent new-TCP scatter, P(miss) = 2/3:
 //   N=3  -> (2/3)^3  = 8/27        ≈ 29.6%   same defect, longer fuse. Do not use.
 //   N=12 -> (2/3)^12 = 4096/531441 ≈ 0.771%
-// N=12 is the named streak. A caller that cannot persist the count (today's core
-// PollResponse pending shape has no `poll` field, so it will not increment) still
-// has the 90-min submittedAt backstop: assemble/mux is not in POLLABLE_PHASES, so
-// without it a genuine all-replica 404 would hang. Longest film.finish encode is
-// documented below FILM_FINISH_INFLIGHT_WINDOW (20 min), so a 404 at 90 min is
-// not a long-encode peer miss. At 1 poll/min, P(90 misses) = (2/3)^90 ≈ 1.35e-16.
+// N=12 is the named streak IF the caller persists poll. Today's core pending
+// shape is { ok, pending, wait? } -- no poll field -- so every production poll
+// decodes streak 0, nextNotFoundStreak is 1, and N=12 is UNREACHABLE. The suite
+// pins that in "PRODUCTION SHAPE". Effective production N is 1; the thing that
+// actually terminals is the 90-min submittedAt backstop. When core starts
+// forwarding poll, that test goes red and this comment is the first thing to
+// rewrite. assemble/mux is not in POLLABLE_PHASES, so without the backstop a
+// genuine all-replica 404 would hang. Longest film.finish encode is documented
+// below FILM_FINISH_INFLIGHT_WINDOW (20 min), so a 404 at 90 min is not a
+// long-encode peer miss. At 1 poll/min, P(90 misses) = (2/3)^90 ≈ 1.35e-16.
 //
 // This is a poll-policy change in vivijure-cf. It is not a shared registry, not a
 // container change, and not a tunnel retarget.
@@ -46,8 +50,18 @@ export const CONTAINER_NOTFOUND_GRACE_MS = 30_000;
 export const CONTAINER_NOTFOUND_STREAK = 12;
 
 /**
- * Existing vivijure-core PHASE_HARD_DEADLINE_SECONDS (90 min), in ms. Production
- * backstop when the poll token cannot carry an incrementing streak.
+ * THIS MODULE's submittedAt bound, 90 minutes, in ms. Production backstop while
+ * the streak cannot increment (core drops poll).
+ *
+ * It is NOT vivijure-core's PHASE_HARD_DEADLINE. Core's value is a floor:
+ *   required  = FINISH_STEP_MAX_ATTEMPTS(3) * max(declared ceiling of next steps)
+ *   effective = max(PHASE_HARD_DEADLINE_SECONDS, required)
+ * They agree today only because no finish-chain module declares
+ * max_invocation_seconds (required = 0, basis = floor). The first module that
+ * declares a ceiling moves core to 3 * declared and leaves this at 90 min.
+ * Do not delete this thinking it "is" core's deadline; it pins invocation age
+ * on this door. submittedAt is stamped per invoke, so it is not core's
+ * phase-start / retry-inclusive clock (Mackaye F2 / F3).
  */
 export const CONTAINER_NOTFOUND_DEADLINE_MS = 90 * 60 * 1000;
 

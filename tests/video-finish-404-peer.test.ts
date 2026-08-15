@@ -343,6 +343,52 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
     expect(done?.output).toMatchObject({ film_key: "renders/film-x/film_titled.mp4" });
   });
 
+  it("PRODUCTION SHAPE: core drops poll between calls, so the streak stays 1 and only the deadline terminals", async () => {
+    // Mackaye F1: today's core PollResponse pending arm is { ok, pending, wait? } with no
+    // poll field. drivePolls() above is the configuration that does not ship -- it
+    // round-trips json.poll. This test drops poll the way core does. Every 404
+    // decodes the ORIGINAL token (streak 0), nextNotFoundStreak is always 1, N=12
+    // is unreachable. Only submittedAt past CONTAINER_NOTFOUND_DEADLINE_MS fails.
+    const all404 = {
+      async fetch(input: RequestInfo) {
+        const url = typeof input === "string" ? input : input.url;
+        const path = new URL(url).pathname;
+        const j = (b: unknown, status: number) =>
+          new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+        if (path.startsWith("/async/status/")) return j({ error: "not found" }, 404);
+        return j({ ok: false }, 500);
+      },
+    };
+    const env = { VIDEO_FINISH_VPC: all404 };
+    const liveToken = encodeSubtitlePoll({
+      jobId: "job-prod",
+      filmKey: "renders/film-x/film.mp4",
+      outputKey: "renders/film-x/film_subbed.mp4",
+      submittedAt: Date.now() - 60_000,
+      notFoundStreak: 0,
+    });
+    const replies: Array<{ ok: boolean; pending?: boolean; poll?: string; error?: string }> = [];
+    for (let i = 0; i < CONTAINER_NOTFOUND_STREAK; i++) {
+      replies.push((await (await subtitleWorker.fetch(pollReq(liveToken), env)).json()) as (typeof replies)[number]);
+    }
+    expect(replies).toHaveLength(CONTAINER_NOTFOUND_STREAK);
+    expect(replies.every((p) => p.ok && p.pending)).toBe(true);
+    expect(replies.every((p) => decodeSubtitlePoll(p.poll!)?.notFoundStreak === 1)).toBe(true);
+
+    const expiredToken = encodeSubtitlePoll({
+      jobId: "job-prod",
+      filmKey: "renders/film-x/film.mp4",
+      outputKey: "renders/film-x/film_subbed.mp4",
+      submittedAt: Date.now() - CONTAINER_NOTFOUND_DEADLINE_MS,
+      notFoundStreak: 0,
+    });
+    const last = (await (await subtitleWorker.fetch(pollReq(expiredToken), env)).json()) as {
+      ok: boolean; pending?: boolean; error?: string;
+    };
+    expect(last.ok).toBe(false);
+    expect(last.error).toContain("no replica holds it");
+  });
+
   it("subtitle: N=12 consecutive 404s (all peers, job gone) is terminal", async () => {
     const all404 = {
       async fetch(input: RequestInfo) {
