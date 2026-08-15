@@ -123,7 +123,28 @@ jobs:
           R2_S3_ENDPOINT: "https://x.r2.cloudflarestorage.com"
         run: |
           set -euo pipefail
-          envsubst < wrangler.toml.example > wrangler.toml
+          # cf#560: STRIP THE LOCAL-GPU BLOCK BEFORE RENDERING. This is a HOSTED render -- the
+          # artifact every hosted tenant is provisioned from -- and the hosted studio must never bind
+          # local-gpu. It has been ruled three times.
+          #
+          # This path had NO strip and no gate: a bare envsubst, zero occurrences of local-gpu in the
+          # whole file, while ci.yml carried a correct and passing refusing gate. That green gate on
+          # the other path is exactly why this looked fixed. ci.yml's own comment at the site of the
+          # first fix says "The control existed and was on the wrong path"; the fix then reproduced
+          # the same shape one path over, which is why the strip is now ONE script both paths call
+          # rather than a second copy that can drift or be forgotten.
+          #
+          # The blast radius here is narrower than on ci.yml and stating it is part of the fix:
+          # scripts/build-studio-release.ts reads only compatibility_date, compatibility_flags and
+          # the assets block out of this config, and the tenant's real bindings come from the
+          # provisioner's WfP upload, so a bound local-gpu here does not reach a tenant's binding set
+          # today. It does reach `wrangler deploy --dry-run`, which is what builds the published
+          # bundle, and "does not reach a tenant TODAY" is a property of build-studio-release.ts that
+          # nothing pins. The invariant is that no hosted studio config binds this door, not that a
+          # particular consumer happens to ignore it.
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          envsubst < .wrangler.hosted.toml > wrangler.toml
+          rm -f .wrangler.hosted.toml
           sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/00000000-0000-0000-0000-000000000000/g" wrangler.toml
           # The tenant studio gets its bindings from the provisioner's upload, not from this file, and
           # a tail_consumers reference to OUR vivijure-tail worker has no meaning in a tenant's
