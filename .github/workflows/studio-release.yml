@@ -388,18 +388,47 @@ jobs:
           echo "verified=true" >> "$GITHUB_OUTPUT"
 
       # ONE DEFINITION: the logic lives in scripts/advance-studio-pin.sh and is driven by
-      # tests/advance-studio-pin.test.sh, which proves every refusal path against a local server.
+      # tests/advance-studio-pin.test.py, which proves every refusal path against a local server.
       # Inlining a second copy here is what lets the two drift.
       #
-      # WHEN THE SECRET IS ABSENT THIS WARNS AND DOES NOT FAIL, and that trade is worth stating
-      # rather than hiding: a hard failure would break every studio release until the credential
-      # exists, and this step is an ADVANCE MECHANISM, not a gate. The gate lives in the other repo
-      # and does NOT share this step's condition -- vivijure-control-plane's deploy preflight
-      # refuses to deploy a trailing pin, and its studio-pin-drift.yml reads the LIVE Worker binding
-      # daily. A skip here is therefore observable by something the same missing secret cannot
-      # disable (cp#393).
+      # THIS STEP USED TO WARN AND EXIT 0 WHEN THE SECRET WAS ABSENT, and the comment here argued
+      # the trade was worth it because cp#393 backstopped a skip. Both halves failed (cf#372):
+      #
+      #   - The secret was NEVER PROVISIONED, so the skip was not an edge case, it was every run.
+      #     v1.27.0 and v1.28.0 both took this branch, both reported SUCCESS, and neither attempted
+      #     a read or a write.
+      #   - The warning rendered on both run summaries and was seen by nobody. An annotation is not
+      #     a gate: it produces a yellow badge, a zero exit, a green check and no obligation on
+      #     anyone. cp#393 fires at the NEXT control-plane deploy, and its drift report is a report
+      #     someone must read, so neither half of that backstop is a control on THIS release.
+      #
+      # Meanwhile the deployed studio reached v1.28.0 while hosted stayed pinned at v1.26.0, so the
+      # two doors ran different code under one version number, and the gap grew by one every ship.
+      #
+      # The skip now applies only to forks and self-host, where the secret legitimately does not
+      # exist. On this repository an absent credential FAILS the release.
       - name: Advance the hosted studio pin (vivijure-control-plane)
         if: ${{ steps.verify_published.outputs.verified == 'true' }}
         env:
           STUDIO_PIN_VARIABLE_TOKEN: ${{ secrets.STUDIO_PIN_VARIABLE_TOKEN }}
         run: bash scripts/advance-studio-pin.sh "${{ github.ref_name }}"
+
+      # THE ASSERTION THAT RUNS EVEN WHEN NO WRITE HAPPENED (cf#372).
+      #
+      # The defect in one sentence: a skip and a success shared exit 0, so a release that never
+      # touched the pin was indistinguishable from one that advanced it. Failing closed above fixes
+      # the case that bit us; this covers the rest of the class by READING the pin back and judging
+      # it against the tag, whatever the step above decided to do.
+      #
+      # A SEPARATE STEP on purpose. Folded into the advance it would share that exit code, which is
+      # the coupling being removed.
+      #
+      # The invariant is pin NOT BEHIND tag, not pin equals tag: re-running an older tag CI run is
+      # the sanctioned rebuild path, the advance correctly declines a backwards move there, and
+      # demanding equality would paint that red for doing the right thing. Trailing is the defect,
+      # and this is red exactly then.
+      - name: Assert the hosted pin is not behind this release
+        if: ${{ steps.verify_published.outputs.verified == 'true' }}
+        env:
+          STUDIO_PIN_VARIABLE_TOKEN: ${{ secrets.STUDIO_PIN_VARIABLE_TOKEN }}
+        run: bash scripts/advance-studio-pin.sh "${{ github.ref_name }}" --assert

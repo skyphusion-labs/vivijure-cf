@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "advance-studio-pin.sh"
+CANONICAL = "skyphusion-labs/vivijure-cf"
 
 failures = []
 checks = 0
@@ -85,26 +86,55 @@ class Stub:
         self.httpd.shutdown()
 
 
-def run(tag, stub, token="fixture-not-a-real-token"):
+def run(tag, stub, token="fixture-not-a-real-token", repo=CANONICAL, args=()):
     env = dict(os.environ)
     env["STUDIO_PIN_API_BASE"] = stub.base
     env.pop("STUDIO_PIN_VARIABLE_TOKEN", None)
+    env.pop("GITHUB_REPOSITORY", None)
     if token is not None:
         env["STUDIO_PIN_VARIABLE_TOKEN"] = token
-    p = subprocess.run(["bash", str(SCRIPT), tag], capture_output=True, text=True, env=env)
+    if repo is not None:
+        env["GITHUB_REPOSITORY"] = repo
+    p = subprocess.run(["bash", str(SCRIPT), tag, *args], capture_output=True, text=True, env=env)
     return p.returncode, p.stdout + p.stderr
-
 
 def val(v):
     return {"name": "STUDIO_RELEASE", "value": v}
 
 
-# 1. Absent credential: declines, and -- the part that matters -- issues NO request at all.
+# 1. Absent credential ON THE CANONICAL REPO: FAILS, and issues no request at all.
+#
+# This case asserted rc == 0 until cf#372. That was the defect, sanctioned in the script comments:
+# the secret was never provisioned, the step warned and exited 0 on the v1.27.0 and v1.28.0 tags,
+# both runs reported success, and the hosted pin sat at v1.26.0 while the deployed studio reached
+# v1.28.0. An annotation is not a gate. The test encoded the same belief the script did, so the
+# suite could not have caught it either -- which is why the expectation itself had to move.
 s = Stub([val("v1.20.0")])
 rc, out = run("v1.26.0", s, token=None)
-check("absent credential declines rather than failing the release", rc == 0, "rc=%d" % rc)
-check("absent credential names the backstop that does not share its condition", "backstop: cp#393" in out)
-check("absent credential sends ZERO requests", len(s.requests) == 0, str(s.requests))
+check("absent credential on the canonical repo FAILS the release", rc == 1, "rc=%d" % rc)
+check("the failure names the missing secret and how to provision it",
+      "STUDIO_PIN_VARIABLE_TOKEN is unset" in out and "Variables: read and write" in out)
+check("absent credential still sends ZERO requests", len(s.requests) == 0, str(s.requests))
+s.stop()
+
+# 1b. THE CONTROL for 1: the same absent credential on a FORK is a legitimate skip, so the fix
+# fails closed on the release path without breaking every fork and self-host build. Without this
+# case, a script that simply failed on every absent credential would pass case 1 identically.
+s = Stub([val("v1.20.0")])
+rc, out = run("v1.26.0", s, token=None, repo="someone-else/vivijure-cf")
+check("CONTROL: absent credential on a FORK skips green", rc == 0, "rc=%d" % rc)
+check("the fork skip names the repository it compared against",
+      "someone-else/vivijure-cf" in out and CANONICAL in out)
+check("the fork skip sends ZERO requests", len(s.requests) == 0, str(s.requests))
+s.stop()
+
+# 1c. Ambiguity fails CLOSED. An unset GITHUB_REPOSITORY must not read as probably a fork: that is
+# the same reasoning that produced the original defect, an absent thing treated as a benign one.
+s = Stub([val("v1.20.0")])
+rc, out = run("v1.26.0", s, token=None, repo=None)
+check("an unidentified repository fails CLOSED, not open", rc == 1, "rc=%d" % rc)
+check("the ambiguous failure says the repository was unidentified",
+      "an unidentified repository" in out)
 s.stop()
 
 # 2. Malformed tag: refuses before touching anything.
@@ -173,5 +203,54 @@ check("a read-back that disagrees FAILS", rc == 1 and "read-back says STUDIO_REL
 s.stop()
 
 print("")
+
+# ---- --assert mode: the read-back that runs when NO WRITE HAPPENED -------------------------
+#
+# The cf#372 defect in one sentence: a skip and a success shared exit 0, so a release that never
+# touched the pin was indistinguishable from one that advanced it. Failing closed on the absent
+# credential fixes the case that actually bit us. This mode covers the rest of the class: it reads
+# the pin and judges it against the tag REGARDLESS of what the advance step decided to do.
+#
+# The invariant is NOT pin == tag, it is pin NOT BEHIND tag. Re-running an older tag CI run is the
+# sanctioned way to rebuild that artifact, and the advance correctly declines a backwards move on
+# such a run; demanding equality would paint that red for doing the right thing. Trailing is the
+# real defect, and assert is red exactly then.
+
+s = Stub([val("v1.26.0")])
+rc, out = run("v1.28.0", s, args=("--assert",))
+check("assert is RED when the pin TRAILS the release", rc == 1, "rc=%d" % rc)
+check("the trailing failure prints BOTH numbers, not a bare failure",
+      "pin v1.26.0" in out and "release v1.28.0" in out)
+check("assert sends ZERO patches", len(s.patches()) == 0, str(s.requests))
+s.stop()
+
+# CONTROL for the above: identical call shape, pin level. A mode that failed unconditionally would
+# pass the trailing case and prove nothing.
+s = Stub([val("v1.28.0")])
+rc, out = run("v1.28.0", s, args=("--assert",))
+check("CONTROL: assert is GREEN when the pin equals the release", rc == 0, "rc=%d out=%s" % (rc, out[-200:]))
+check("the green assert states what it compared", "not behind release v1.28.0" in out)
+s.stop()
+
+# A pin AHEAD is the old-tag rebuild, and must stay green.
+s = Stub([val("v1.28.0")])
+rc, out = run("v1.27.0", s, args=("--assert",))
+check("assert is GREEN when the pin is AHEAD (an older-tag rebuild)", rc == 0, "rc=%d" % rc)
+s.stop()
+
+# Version order, not lexical -- the same trap the advance path already guards.
+s = Stub([val("v1.9.0")])
+rc, out = run("v1.26.0", s, args=("--assert",))
+check("assert reads v1.9.0 as BEHIND v1.26.0 (version order, not lexical)", rc == 1, "rc=%d" % rc)
+s.stop()
+
+# An unknown argument must not be silently ignored into advance mode.
+s = Stub([val("v1.26.0")])
+rc, out = run("v1.28.0", s, args=("--assrt",))
+check("a MISTYPED mode is refused rather than falling back to advance",
+      rc == 1 and "unknown argument" in out, "rc=%d" % rc)
+check("the mistyped mode sends ZERO requests", len(s.requests) == 0, str(s.requests))
+s.stop()
+
 print("  " + str(checks - len(failures)) + " passed, " + str(len(failures)) + " failed")
 sys.exit(1 if failures else 0)
