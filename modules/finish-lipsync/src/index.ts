@@ -7,8 +7,9 @@
 //   POST /invoke      -> submit to RunPod, return { ok, pending, poll } immediately
 //   POST /poll        -> check job status; return output on completion
 //
-// R2 transport: the endpoint reads `clip_key` + `audio_key` and writes `output_key` in the shared
-// bucket itself (exactly as finish-upscale / vivijure-backend do), so this worker holds no R2 creds.
+// R2 transport (cf#312): prefer credentialless presigned mode when the core hands video_url +
+// audio_url + output_url (no endpoint R2 env; poolable). Fall back to shared-bucket R2 mode
+// (clip_key + audio_key + output_key) when those URLs are absent.
 //
 // Failures are DATA, never an exception across the wire. For a chain hook the soft degrade (pass the
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot
@@ -25,14 +26,17 @@ import {
   type FinishOutput,
 } from "./contract";
 import {
-  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
-  runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput,
-  softDegradeInFailedEnvelope, RUNPOD_COLD_GRACE_MS,
+  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey, passthroughOutput,
+  type PollState,
+  runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
 } from "./lipsync";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
+// cf#594: the poll-path soft-degrade contract, now shared by all four finish modules. This module is
+// where it was written; it is no longer where it lives.
+import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -173,6 +177,34 @@ function passthrough(
   return { ok: true, output };
 }
 
+/** cf#578 POLL-TIME SOFT DEGRADE, the same decision speech-upscale already makes at its poll site.
+ *
+ *  A finish step is POLISH. When the endpoint completes but yields no artifact, the honest answer is
+ *  the input clip passed through with the reason RECORDED, not a chain failure: an `ok:false` here
+ *  routes to the chain failure path and never reaches the degrade accounting, so the whole class is
+ *  invisible in telemetry. Only MALFORMED I/O fails loud.
+ *
+ *  cf#594 CORRECTION to the note that stood here. This module has carried `clipKey` in its poll
+ *  token since it shipped, but `decodePoll` resolves a token WITHOUT one to the empty string
+ *  (lipsync.ts, `clipKey: typeof o.clipKey === "string" ? o.clipKey : ""`), so a degrade on such a
+ *  token built a passthrough with an EMPTY clip_key and returned ok:true. That hands the chain an
+ *  artifact reference that resolves to nothing, which is the silent-degrade shape of #77 wearing a
+ *  success. It therefore takes the same null-on-no-clip guard as its finish-upscale sibling, and
+ *  the four finish modules now answer this identically.
+ */
+function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> | null {
+  if (!st.clipKey) return null;
+  console.warn(`finish-lipsync: poll passthrough (${reason}) shot=${st.shotId}`);
+  return {
+    ok: true,
+    output: passthroughOutput(
+      { shot_id: st.shotId, clip_key: st.clipKey, src_fps: st.srcFps, frames: st.frames },
+      reason,
+      detail ? { detail } : {},
+    ),
+  };
+}
+
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
   if (!input?.shot_id || !input?.clip_key) {
@@ -273,23 +305,33 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     return { ok: true, pending: true };
   }
   if (s.status === "FAILED") {
-    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
-    // #565: RunPod lifts the handler's top-level `error` into a job-level FAILED, so the backend's
-    // structured soft-degrade ({ok:false} kept in output) arrives here, never at the COMPLETED
-    // branch below. Pass the original clip through (recorded, #77) instead of failing the shot; a
-    // genuine crash (raise -> no structured output) still fails loud.
+    // cf#594: RunPod lifts a top-level `error` key out of a handler RETURN into a job-level FAILED
+    // envelope (cf#565), so a door's honest structured soft-degrade ({ok:false} kept in output)
+    // arrives HERE wearing a failure envelope, never at the COMPLETED branch below. Pass the
+    // original clip through (recorded, #77) instead of failing the shot; a genuine crash (a raise
+    // leaves no structured output) still fails loud, and that discriminator is the whole safety
+    // property.
+    //
+    // TELEMETRY ORDERING, decided BEFORE the row is written. THIS DOES NOT CONTRADICT cf#279, whose
+    // rule (record the endpoint outcome before parsing, "because whether WE could use the output is
+    // a different fact") is correct and is still obeyed: the outcome recorded is the ENDPOINT's,
+    // written before anything is parsed for our own use. The narrower point is that RunPod's FAILED
+    // here is an artifact of the lift, not an endpoint failure -- the endpoint ran to completion and
+    // returned a structured result -- so `failed` is wrong ABOUT THE ENDPOINT, independently of
+    // whether we recovered anything. Recording it anyway would over-report backend failures and
+    // under-report degrades, both errors pointing at the door.
+    //
+    // A token with no source clip (pollPassthrough returns null) has nothing honest to pass through,
+    // so it falls through to the pre-cf#594 terminal path below, row and message unchanged.
     const degrade = softDegradeInFailedEnvelope(s);
     if (degrade !== null) {
-      console.warn(`finish-lipsync: poll passthrough (backend-soft-degrade) shot=${st.shotId}`);
-      return {
-        ok: true,
-        output: passthroughOutput(
-          { shot_id: st.shotId, clip_key: st.clipKey, src_fps: st.srcFps, frames: st.frames, width: 0, height: 0 },
-          "backend-soft-degrade",
-          { detail: degrade || undefined },
-        ),
-      };
+      const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, degrade || undefined);
+      if (passed) {
+        await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
+        return passed;
+      }
     }
+    await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "failed", submittedAtMs: st.submittedAt, detail: JSON.stringify(s.error ?? s), errorType: parseRunpodErrorType(s.error), ...timingFromStatus(s) });
     return { ok: false, error: "finish-lipsync job failed: " + JSON.stringify(s.error ?? s).slice(0, 200) };
   }
   // cf#298: CANCELLED and TIMED_OUT are TERMINAL, and the branch below treats every non-COMPLETED
@@ -327,29 +369,41 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // (e.g. no detectable face), ok is false and clip_key is absent -> pass the original clip through.
   // The reason arrives as `detail` since musetalk#25 (a top-level `error` would be lifted by RunPod
   // into a job-level FAILED); `error` is kept as the legacy-handler fallback.
-  const o = (s.output ?? {}) as { ok?: unknown; error?: unknown; detail?: unknown };
-  if (o.ok === false) {
-    const reason = typeof o.detail === "string" && o.detail.length > 0 ? o.detail
-      : typeof o.error === "string" && o.error.length > 0 ? o.error : undefined;
-    return {
-      ok: true,
-      output: passthroughOutput(
-        { shot_id: st.shotId, clip_key: st.clipKey, src_fps: st.srcFps, frames: st.frames, width: 0, height: 0 },
-        "backend-soft-degrade",
-        { detail: reason?.slice(0, 120) },
-      ),
-    };
+  // cf#594: a door that soft-degraded using the CURRENT `detail` key is NOT lifted by RunPod, so it
+  // arrives COMPLETED with `{ok:false}` intact. Recovered here, before the output is parsed for an
+  // artifact key -- which would otherwise find none, return module ok:false, and have the core's
+  // failOrRetry classify it deterministic and FAIL THE FILM. Same shared decision as the FAILED
+  // route above, so the two door shapes cannot get different answers. A token with no source clip
+  // falls through to the pre-cf#594 terminal path below.
+  const softDegrade = softDegradeInCompletedOutput(s.output);
+  if (softDegrade !== null) {
+    const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, softDegrade || undefined);
+    if (passed) return passed;
   }
+
   const out = parseBackendOutput(s.output);
-  if (!out?.clip_key) return { ok: false, error: "finish-lipsync: backend returned no clip_key" };
+  // cf#578: WHICH FIELD carries the written key depends on a branch on the SATELLITE, not on
+  // anything visible here -- R2 mode echoes it as `clip_key` (musetalk handler.py:671), presigned
+  // mode returns it as `output_key` (:717). Reading only `clip_key` turned a finished, uploaded,
+  // paid-for artifact into a parse failure on the exact path cf#449 makes preferred.
+  const key = finishedKey(out);
+  if (!key) {
+    // A REAL absence: COMPLETED with no artifact. Polish never fails the chain (#77/#249), and an
+    // `ok:false` here would also skip the degrade accounting entirely, so the class would be
+    // invisible in telemetry while the render died. Same decision as speech-upscale and
+    // finish-upscale, at the same site.
+    const passed = pollPassthrough(st, "no-output-key");
+    if (passed) return passed;
+    return { ok: false, error: "finish-lipsync: backend returned no clip_key or output_key, and this poll token carries no clip to pass through" };
+  }
   return {
     ok: true,
     output: {
       shot_id: st.shotId,
-      clip_key: out.clip_key,
+      clip_key: key,
       out_fps: st.srcFps,    // lip-sync preserves fps + frame count
       frames: st.frames,
-      applied: out.applied ?? [],
+      applied: out?.applied ?? [],
     },
   };
 }

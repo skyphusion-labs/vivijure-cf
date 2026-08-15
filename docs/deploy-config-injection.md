@@ -189,6 +189,130 @@ Things worth understanding:
   per `modules/*/wrangler.toml`, plus a `REPLACE_WITH_VPC_*_ID` fill for the media modules (#520),
   before each `wrangler deploy` -- the same free-self-host-safe placeholder discipline as the core.
 
+### 3d-bis. HOW MANY PATHS RENDER THIS TEMPLATE (cf#560)
+
+> **Superseded in part by 3d-ter below.** This section is accurate about renders of
+> `wrangler.toml.example` and that is the WRONG POPULATION for the invariant. Read 3d-ter first.
+
+Section 3d calls `ci.yml` "the authoritative step". That is true of the PROD STUDIO DEPLOY and it is
+not true of the template, and the difference cost cf#560 twice. `wrangler.toml.example` is rendered
+by more than one thing, the hosted invariant that local-gpu is never bound applies to more than one
+of them, and until cf#560 was reopened nobody knew the count. **A gate that passes because it was
+never asked is not evidence.**
+
+**The rule, not a frozen list** (a hand-maintained list of paths is the artifact whose drift caused
+this issue twice): a path is a HOSTED render if it produces a `wrangler.toml` from
+`wrangler.toml.example` for a deploy that runs on OUR account or ships to a hosted tenant. Derive
+the current members rather than trusting this table; `tests/local-gpu-strip-cf560.test.ts` derives
+the workflow half automatically and refuses if a member does not call the shared strip.
+
+| Path | Kind | local-gpu | Mechanism |
+|---|---|---|---|
+| `.github/workflows/ci.yml` | HOSTED, prod studio deploy | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
+| `.github/workflows/studio-release.yml` | HOSTED, the tenant release artifact | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
+| `deploy.sh` | SELF-HOST installer | **allowed** | its own strip, kept unless `INSTALL_LOCAL_GPU=1` |
+| `deploy/vivijure_deploy.py` (`render_core_toml`) | SELF-HOST installer (python) | allowed | no marker handling at all; see the note below |
+| `.dev-modbound/dev-modbound.sh` | LOCAL dev only | n/a | `wrangler dev --local`, never deploys |
+
+Two configs are NOT renders of this template and must not be reasoned about as though they were:
+`wrangler.demo.toml.example` builds the separate `vivijure-demo` Worker, and `tail/wrangler.toml.example`
+builds `vivijure-tail`.
+
+**The self-host paths are a considered exclusion, not an omission.** The door's own manifest says
+self-host is where it belongs, so an unconditional hosted strip bolted onto `deploy.sh` would remove
+a door its operator is entitled to run. Note the inversion that was the original defect: the path
+that PERMITS the door defaulted it off, and the path that FORBIDS it had no switch at all.
+
+**Open, and deliberately not fixed here (reported on cf#560; MECHANISM CORRECTED 2026-08-16):**
+`render_core_toml` in `deploy/vivijure_deploy.py` strips `[[vpc_services]]`, `tail_consumers`,
+`[[routes]]` and `[[migrations]]` on the stated contract that it removes "every binding whose target a
+base install does not create", and it has zero occurrences of `LOCAL-GPU`, `SATELLITE` or
+`SELFHOST-SKIP`, so it keeps the `MODULE_LOCAL_GPU` service binding.
+
+**An earlier revision of this note called that a DANGLING binding. That was wrong, and the correction
+matters because the real failure mode is quieter than the one it named.** Nothing dangles:
+`module_dirs()` enumerates every `modules/*/wrangler.toml` with no exclusion, so the same installer
+also DEPLOYS `modules/local-gpu`, and `LOCAL_BACKEND_URL` / `LOCAL_BACKEND_TOKEN` sit in
+`OPERATOR_STORE_NAMES`, seeded as the marked `REPLACE_ME__` placeholder precisely so the module
+deploy resolves instead of failing CF 10182. Both halves resolve and the install succeeds.
+
+What actually differs is the DEFAULT, between the two self-host installers, for the same opt-in door:
+
+| installer | local-gpu module | core binding | `LOCAL_BACKEND_*` |
+|---|---|---|---|
+| `deploy.sh` | deployed only when `INSTALL_LOCAL_GPU=1` (`:141`) | stripped unless `=1` (`:398`) | seeded only when `=1` (`:239`) |
+| `deploy/vivijure_deploy.py` | **always** (no switch) | **always kept** (no marker handling) | placeholder, always |
+
+`deploy.sh` is coherent: three actions, one switch, off by default. The python installer has no switch,
+so a base install silently opts the operator IN. And unlike the doors that share the placeholder
+pattern deliberately (`image-generate` handles `REPLACE_ME` and degrades honestly; `modules/local-gpu`
+has no such handling, verified by contrast rather than by an unanchored grep), the door comes up bound,
+deployed and advertised in the registry, pointing at a literal placeholder. **A dangling binding would
+have failed loudly at `wrangler deploy`; this fails at render time, after reporting itself available.**
+
+Whether the divergence is a defect or a considered choice is a PRODUCT question about the door opt-in
+intent, and no test asserts either installer default, so today the two cannot disagree noisily. Its own
+issue, not folded in here.
+
+### 3d-ter. THE RIGHT DENOMINATOR: hosted STUDIOS, not renders of one template (cf#560)
+
+**Section 3d-bis counts the wrong population, and its heading says so.** It asks how many paths render
+`wrangler.toml.example`. The invariant does not mention that file: `scripts/strip-local-gpu.sh` states
+it as **the HOSTED studio never binds local-gpu**, which is a claim about STUDIOS. Deriving the
+population from one template answers a narrower question and then reads as coverage of the wider one.
+That is the cf#560 shape itself, applied to the fix for cf#560.
+
+**The inclusion rule** (derive the members, never trust the table). An artifact is in the population
+if it does any of: (a) writes any `wrangler*.toml`; (b) invokes a wrangler publish verb against a
+config it or its direct caller produced; (c) builds or publishes a studio, tenant, or module release
+artifact or manifest; (d) provisions a live studio surface (installs a module, advances the tenant
+release pin). Docs and tests are excluded: they describe, they do not execute. HOSTED = produces or
+provisions a studio we or a tenant operate. SELF-HOST = the operator own account (self-host), where this door is
+legitimately allowed.
+
+**By UNION across independent axes, never by grepping `local-gpu`.** Grepping the door name selects
+only the paths that already handle it, so the broken path drops out of its own population and the
+assertion vanishes rather than fails. Axis denominators as measured: tracked `*.toml.example` **5**;
+files naming `toml.example` **35**; files containing `envsubst` **9**; workflow files **8 of 8
+enumerated and classified, none skipped**.
+
+**The count: 11 HOSTED of 19 render-or-provision sites. 2 of the 11 invoke the shared strip.**
+
+That is not nine gaps. It is nine paths whose control is something other than the strip, and the
+point of writing it down is that six of them had never been counted at all:
+
+| Hosted path | What keeps local-gpu out |
+|---|---|
+| `ci.yml` core render | `scripts/strip-local-gpu.sh`, unconditional |
+| `studio-release.yml` core render (and the `--dry-run` bundle it feeds) | the same script, unconditional |
+| `scripts/deploy-module-workers.sh` (module workers to our account) | `export EXCLUDE="... local-gpu"` in `ci.yml`, honoured at `deploy-module-workers.sh:57` |
+| `scripts/fill-module-placeholders.sh` | runs inside the loop above; inherits its exclusion |
+| tenant module bundles in `studio-release.yml` | `scripts/tenant-release-modules.txt`, which does not list the door |
+| `ci.yml` MCP render (`wrangler.mcp.toml.example`) | structural: that template carries **0** `MODULE_` lines, so the strip would refuse it at its own floor |
+| `scripts/advance-studio-pin.sh` | renders no config; advances a pin |
+| `scripts/install-module.ts` | renders no config; installs into a live studio over the dispatch namespace |
+| `wrangler.demo.toml.example` + `modules/local-gpu/wrangler.demo.toml.example` | **a named carve-out, see below** |
+
+Until this revision, only the first two were asserted anywhere. The third and fifth now are
+(`tests/local-gpu-strip-cf560.test.ts`), including that the deployer actually READS `EXCLUDE` rather
+than the caller merely setting it.
+
+**The demo studio is a deliberate carve-out, not a violation, and it is OUT OF SCOPE by ruling.**
+`vivijure-demo` is a studio we operate and its template does describe a `MODULE_LOCAL_GPU` binding.
+It is the #631 Phase B click-to-render design: in the committed template the binding is COMMENTED OUT
+and `DEMO_RENDER_ENABLED = "false"`. It is invisible to every cf#560 control by construction (different
+template, no workflow renders it, hand-deployed). Conrad ruled 2026-08-15 that the demo surface is not
+a priority and will be rebuilt, so **do not strip it and do not probe it**. It is recorded here so the
+next reader finds a decision rather than a hole. What is genuinely undetermined is whether the LIVE
+`vivijure-demo` Worker binds it today; `wrangler.demo.toml` is gitignored, so that needs a live
+binding read, not a repo read, and nobody should take one on this ruling.
+
+**Two limits of the automated derivation, stated because a named limit is cheaper than a rediscovery:**
+`tests/local-gpu-strip-cf560.test.ts` reads only `.github/workflows/*.yml`, non-recursively, so a
+hosted render moved into a shell script or a composite action leaves its population; and it selects on
+`wrangler.toml.example`, so a second template (the MCP and demo ones) is structurally unreachable to
+it. Both classes are live in this repo today. The rule above, not that matcher, is the contract.
+
 ### 3e. The deploy gate
 The `deploy` job only runs for a pushed version tag:
 ```yaml

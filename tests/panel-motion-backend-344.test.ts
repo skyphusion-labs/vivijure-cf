@@ -21,6 +21,19 @@ function motionModule(name: string, locality: string, order: number) {
   return { name, hooks: ["motion.backend"], ui: { locality, order } };
 }
 
+// cf#580: the memo moved to public/module-registry.js, so this harness mirrors what the PAGE does:
+// construct the shared registry with the transport, then eval planner-registry.js against a scope
+// that carries it. planner-registry.js deliberately THROWS when the shared file is absent rather
+// than falling back to its own fetch, so a harness that skipped this step fails loudly instead of
+// quietly re-testing a second memo that no longer ships.
+function sharedRegistry(fetchImpl: () => Promise<unknown>) {
+  const src = readFileSync(process.cwd() + "/public/module-registry.js", "utf8");
+  const scope: { moduleRegistry?: Record<string, (...a: unknown[]) => unknown> } = {};
+  new Function("window", src)(scope);
+  (scope.moduleRegistry!.setTransport as (f: unknown) => void)(fetchImpl);
+  return scope.moduleRegistry!;
+}
+
 function registryWith(modules: { name: string; ui?: { locality?: string } }[]) {
   const src = readFileSync(`${process.cwd()}/public/planner-registry.js`, "utf8");
   const payload = {
@@ -28,10 +41,14 @@ function registryWith(modules: { name: string; ui?: { locality?: string } }[]) {
     hooks: { "motion.backend": modules.map((m) => m.name) },
     catalog: [],
   };
-  const scope: { plannerRegistry?: Record<string, (...a: unknown[]) => unknown> } = {};
-  new Function("window", "fetch", src)(scope, () =>
+  const scope: {
+    plannerRegistry?: Record<string, (...a: unknown[]) => unknown>;
+    moduleRegistry?: unknown;
+  } = {};
+  scope.moduleRegistry = sharedRegistry(() =>
     Promise.resolve({ ok: true, json: () => Promise.resolve(payload) }),
   );
+  new Function("window", src)(scope);
   const reg = scope.plannerRegistry!;
   // load() is typed unknown through the Function() boundary; narrow it explicitly rather than
   // casting the whole chain, so a load() that stops returning a thenable fails here.
