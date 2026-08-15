@@ -300,6 +300,10 @@
           auto-run on edit
         </label>
         <span id="planner-preflight-counts" class="planner-status"></span>
+        <!-- cf#579: the finish-cost coverage census, refreshed each preflight pass. Structured
+             attributes so a check can assert on it; the sentence so a person does not have to
+             grep renders to learn that nothing declares a cost. -->
+        <span id="planner-finish-cost-coverage" class="planner-status" hidden></span>
       </div>
       <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>
     </section>

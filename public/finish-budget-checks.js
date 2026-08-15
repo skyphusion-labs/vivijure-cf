@@ -178,6 +178,104 @@
     };
   }
 
+  // ------------------------------------------------------------------------------------------
+  // cf#579: THE COUNTABLE DENOMINATOR.
+  //
+  // The guard above admits when nothing is declared, and that stays the right call for the reason
+  // argued at the top of this file. The defect it leaves is that NOTHING EVER FORCES THE UNKNOWN TO
+  // BECOME KNOWN. One info line per render is a log entry, and log entries are what nobody reads;
+  // six months on, every module declares nothing, the guard has never once refused, and it reads as
+  // shipped and working. That is a gate that passes because it matched nothing, rebuilt inside a
+  // decision taken deliberately and for good reasons.
+  //
+  // So the silence is COUNTED, not merely logged: `declared by N of M installed finish modules`.
+  // A count with a denominator is an argument; "no module declares this" is an opinion. The first
+  // one is what makes the manifest field land.
+  //
+  // AND THE AGGREGATE CARRIES THE SAME THREE-WAY SPLIT AS THE PER-RENDER PATH. We separated
+  // unavailable from undeclared per render precisely because they are different facts owned by
+  // different parties; reporting "could not read the registry" as a low N would be that identical
+  // collapse one level up. A failed read reports that it could not ask. It never reports 0 of 0,
+  // and it never reports 0 of M against a stale list that survived the failed refetch.
+  var MEASURED = "measured";
+
+  // Census over what is INSTALLED, not over what this render selects. The coverage number is a
+  // property of the STUDIO: an opt_in module that declares nothing is still a hole in the estate,
+  // and excluding it would let the number read complete while a selectable module stays silent.
+  //
+  // `installed` is the registry projection for the finish hook (GET /api/modules), never a
+  // hardcoded list, so M cannot drift from what is actually installed. A hardcoded M loses exactly
+  // the member that was added last, which is the one most likely to be silent.
+  function finishCostCoverage(installed, registryUnavailable) {
+    if (registryUnavailable) {
+      // NULL, not zero. A number here would be a measurement we did not take.
+      return { state: UNAVAILABLE, declared: null, installed: null, declaredModules: [], undeclared: [] };
+    }
+    var mods = (installed || []).filter(isModule);
+    var declaredModules = [];
+    var undeclared = [];
+    for (var i = 0; i < mods.length; i++) {
+      // Same validator the ceiling uses, so a declaration that counts here is one the ceiling
+      // could actually divide by. A partial declaration counts as nothing in both places or the
+      // number would advertise coverage the guard cannot use.
+      if (costOf(mods[i])) declaredModules.push(mods[i]);
+      else undeclared.push(mods[i]);
+    }
+    return {
+      state: MEASURED,
+      declared: declaredModules.length,
+      installed: mods.length,
+      declaredModules: declaredModules,
+      undeclared: undeclared,
+    };
+  }
+
+  // The machine-readable triple. Structured rather than prose so a check can assert on it, a
+  // dashboard can trend it, and the flip to enforcement can be gated on it, none of which a
+  // sentence in a log supports. Empty strings on unavailable: an attribute carrying "0" would be
+  // the collapse this whole block exists to prevent.
+  function coverageAttrs(cov) {
+    if (!cov || cov.state !== MEASURED) {
+      return {
+        "data-finish-cost-state": (cov && cov.state) || UNAVAILABLE,
+        "data-finish-cost-declared": "",
+        "data-finish-cost-installed": "",
+      };
+    }
+    return {
+      "data-finish-cost-state": MEASURED,
+      "data-finish-cost-declared": String(cov.declared),
+      "data-finish-cost-installed": String(cov.installed),
+    };
+  }
+
+  function coverageCount(cov) {
+    return cov.declared + " of " + cov.installed + " installed finish modules";
+  }
+
+  // The human line. It states the count and what the count MEANS, and it never says anything about
+  // whether a render will succeed -- coverage is a fact about manifests, and a reader who hears it
+  // as a safety statement has been misled by us.
+  function coverageText(cov) {
+    if (!cov || cov.state !== MEASURED) {
+      return "The module registry could not be read, so finish-cost coverage could not be counted. "
+        + "That is a failure to ask, not a count of none.";
+    }
+    if (cov.installed === 0) {
+      return "Finish cost is declared by " + coverageCount(cov)
+        + ", because this studio installs none. Nothing constrains shot length at the finish hook.";
+    }
+    if (cov.declared === cov.installed) {
+      return "Finish cost is declared by " + coverageCount(cov)
+        + ". Every installed finish module states its own cost, so a chain ceiling can be derived "
+        + "for any selection of them.";
+    }
+    return "Finish cost is declared by " + coverageCount(cov)
+      + ". The rest declare nothing (" + chainNames(cov.undeclared)
+      + "), so no ceiling can be derived for a chain that includes them and a long shot may still "
+      + "fail at the finish door.";
+  }
+
   function chainNames(mods) {
     return (mods || []).map(label).join(", ");
   }
@@ -206,7 +304,17 @@
   // Issues in the SAME shape the server preflight emits ({ level, scope, message }), so they merge
   // into the existing issue list and the existing error-gates-the-bundle rule with no new
   // rendering path and no parallel surface.
-  function finishBudgetIssues(storyboard, budget) {
+  // The count, for the per-render notice. Omitted entirely when the caller supplies no installed
+  // list: a caller that cannot supply one gets no denominator rather than a wrong one derived from
+  // the selected chain, which is a different and smaller number wearing the same words.
+  function countClause(installed) {
+    if (!installed) return "";
+    var cov = finishCostCoverage(installed, false);
+    if (cov.state !== MEASURED) return "";
+    return "Finish cost is declared by " + coverageCount(cov) + ". ";
+  }
+
+  function finishBudgetIssues(storyboard, budget, installed) {
     var issues = [];
     if (!budget) return issues;
 
@@ -230,6 +338,7 @@
           "The permitted shot length cannot be derived for this render. The selected finish chain ("
           + chainNames(budget.chain) + ") includes " + chainNames(budget.undeclared)
           + ", which declares no finish cost, so there is no rate to divide the door budget by. "
+          + countClause(installed)
           + "Shots are admitted at the planner cap and a long shot may still fail at the finish door.",
       });
       return issues;
@@ -266,10 +375,14 @@
     DERIVED: DERIVED,
     UNDECLARED: UNDECLARED,
     UNAVAILABLE: UNAVAILABLE,
+    MEASURED: MEASURED,
     label: label,
     selectedFinishModules: selectedFinishModules,
     costOf: costOf,
     finishBudget: finishBudget,
     finishBudgetIssues: finishBudgetIssues,
+    finishCostCoverage: finishCostCoverage,
+    coverageAttrs: coverageAttrs,
+    coverageText: coverageText,
   };
 });

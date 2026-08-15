@@ -121,6 +121,30 @@ function schedulePreflight() {
 // top of finish-budget-checks.js -- the short form is that no manifest declares a finish cost yet,
 // so refusing on unknown would refuse every render on day one, and a guard that fires on correct
 // work is the guard people switch off.
+// cf#579 -- make the silence COUNTABLE rather than merely logged.
+//
+// The finish-budget guard admits when no module declares a cost, which is right and stays right.
+// What it lacked was any forcing function: an info line inside one render's issue list is a log
+// entry, and in six months of them the guard would still never have refused once while reading as
+// shipped and working. So the count gets its own surface, refreshed on every preflight pass:
+//
+//   data-finish-cost-state / -declared / -installed   -- for a check, a trend, or the eventual flip
+//   the sentence                                      -- for a person, without grepping renders
+//
+// It is stamped OUTSIDE the issue list on purpose. Coverage is a property of the STUDIO, not of
+// this render, and issues are per-render; putting a standing fact in a per-render list is how it
+// becomes noise that trains a reader to skip the panel.
+function renderFinishCostCoverage(cov) {
+  var el = document.getElementById("planner-finish-cost-coverage");
+  if (!el || !window.finishBudgetChecks) return;
+  var attrs = window.finishBudgetChecks.coverageAttrs(cov);
+  for (var k in attrs) {
+    if (Object.prototype.hasOwnProperty.call(attrs, k)) el.setAttribute(k, attrs[k]);
+  }
+  el.textContent = window.finishBudgetChecks.coverageText(cov);
+  el.hidden = false;
+}
+
 function mergeFinishBudgetIssues(data) {
   if (!data || !window.finishBudgetChecks || !window.plannerRegistry) return;
   var registry = window.plannerRegistry;
@@ -135,7 +159,10 @@ function mergeFinishBudgetIssues(data) {
   // differently to a user, which is why cf#344 tracked it separately in the first place.
   var unavailable = !!(registry.registryUnavailable && registry.registryUnavailable());
   var budget = window.finishBudgetChecks.finishBudget(serving, undefined, unavailable);
-  var extra = window.finishBudgetChecks.finishBudgetIssues(planState.storyboard, budget);
+  // cf#579: the same `serving` list is the coverage DENOMINATOR. It is the registry projection for
+  // the finish hook, so M is what this studio actually installs and cannot drift from it.
+  renderFinishCostCoverage(window.finishBudgetChecks.finishCostCoverage(serving, unavailable));
+  var extra = window.finishBudgetChecks.finishBudgetIssues(planState.storyboard, budget, serving);
   if (!extra.length) return;
   data.issues = (data.issues || []).concat(extra);
   data.counts = data.counts || { error: 0, warning: 0, info: 0 };
