@@ -281,10 +281,23 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
     }
     // cf#307: map RunPod queue vs running onto the backend-neutral wait field. Host core 1.8+
     // stores this as keyframe_wait and surfaces IN_QUEUE when accepted.
+    //
+    // cf#538: the vocabulary tested here is RunPod's, because `s` is the raw /status envelope.
+    // RunPod documents exactly seven request job states -- IN_QUEUE, IN_PROGRESS, RUNNING,
+    // COMPLETED, FAILED, CANCELLED, TIMED_OUT -- and SUBMITTED is NOT one of them. SUBMITTED is
+    // OUR OWN render-row status (vivijure-core writes it in render-adopt for the pre-confirmation
+    // window, and the planner history buckets it as in-flight), so matching it against a RunPod
+    // envelope was a branch that could never fire. Dropped here rather than repo-wide: the
+    // frontend uses of SUBMITTED read render rows and are correct.
+    //
+    // RUNNING is documented and was unmodelled, which left a real state with no phase. It means
+    // the same thing IN_PROGRESS does ("a worker has picked up the job and is actively processing
+    // it"), so it maps to running. Anything still outside the set reports NO phase rather than
+    // the most flattering of the two we know.
     const wait =
-      s.status === "IN_QUEUE" || s.status === "SUBMITTED"
+      s.status === "IN_QUEUE"
         ? ("accepted" as const)
-        : s.status === "IN_PROGRESS"
+        : s.status === "IN_PROGRESS" || s.status === "RUNNING"
           ? ("running" as const)
           : undefined;
     return wait ? { ok: true, pending: true, wait } : { ok: true, pending: true };

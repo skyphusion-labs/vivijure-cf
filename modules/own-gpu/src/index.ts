@@ -280,10 +280,15 @@ async function poll(env: Env, body: PollRequest, ctx?: ExecutionContext): Promis
       return { ok: false, error: "own-gpu backend error (job " + st.jobId + ", status stuck " + String(s.status ?? "unknown") + ", cancel issued): " + backendErr };
     }
     // cf#307: map RunPod queue vs running onto the backend-neutral wait field.
+    //
+    // cf#538: SUBMITTED was dropped here. It is not RunPod vocabulary at all -- it is OUR render-row
+    // status for the pre-confirmation window -- and `s` is the raw RunPod /status envelope, so the
+    // branch could never fire. RUNNING is documented, was unmodelled, and means what IN_PROGRESS
+    // means. Same edit as keyframe; see the longer note there.
     const wait =
-      s.status === "IN_QUEUE" || s.status === "SUBMITTED"
+      s.status === "IN_QUEUE"
         ? ("accepted" as const)
-        : s.status === "IN_PROGRESS"
+        : s.status === "IN_PROGRESS" || s.status === "RUNNING"
           ? ("running" as const)
           : undefined;
     return wait ? { ok: true, pending: true, wait } : { ok: true, pending: true };
