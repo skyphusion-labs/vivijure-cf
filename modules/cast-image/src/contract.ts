@@ -37,7 +37,10 @@ export type InvokeResponse<O = unknown> =
   | { ok: false; error: string };
 export interface PollRequest { poll: string; }
 export type PollResponse<O = unknown> =
-  | { ok: true; pending: true }
+  // progress + images are ADDITIVE (cf#386): optional so a legacy poll shape still parses.
+  // When set, done/total/images report generation progress so the host can advance `registered`
+  // while the job runs instead of only at the terminal batch.
+  | { ok: true; pending: true; progress?: { done: number; total: number }; images?: { key: string; mime: string }[] }
   | { ok: true; output: O }
   | { ok: false; error: string };
 
