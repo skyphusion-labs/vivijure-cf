@@ -147,10 +147,20 @@ async function runGate(hooksUnavailable: Record<string, string> | null) {
     addEventListener: () => {},
     createElement: (tag: string) => new El(tag),
   });
-  const window: Record<string, unknown> = { hookAvailabilityChecks: checks };
   const payload = hooksUnavailable ? { host: { hooks_unavailable: hooksUnavailable } } : { host: {} };
   const fetchStub = async () => ({ ok: true, json: async () => payload });
-  new Function("window", "document", "fetch", SRC)(window, document, fetchStub);
+  // cf#580: the gate reads the SHARED per-page memo now, so the harness mirrors the page: build
+  // module-registry.js with the transport, put it on the window, then evaluate the gate. It no
+  // longer stubs a bare fetch, because that would exercise a path the gate does not take.
+  const regSrc = readFileSync("public/module-registry.js", "utf8");
+  const regScope: { moduleRegistry?: Record<string, (...a: unknown[]) => unknown> } = {};
+  new Function("window", regSrc)(regScope);
+  (regScope.moduleRegistry!.setTransport as (f: unknown) => void)(fetchStub);
+  const window: Record<string, unknown> = {
+    hookAvailabilityChecks: checks,
+    moduleRegistry: regScope.moduleRegistry,
+  };
+  new Function("window", "document", SRC)(window, document);
   await (window.hookAvailability as { ready: Promise<unknown> }).ready;
   return { get, doc };
 }

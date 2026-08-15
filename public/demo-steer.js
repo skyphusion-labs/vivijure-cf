@@ -25,14 +25,14 @@
     return ps;
   }
 
-  fetch("/api/modules")
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (d) {
-      var host = (d && d.host) || {};
-      if (!host.readonly) return;
-      domReady(function () { init(host); });
-    })
-    .catch(function () { /* modules unreachable: leave the studio as-is */ });
+  // cf#580: reads the SHARED per-page memo. The catch is gone because load() never rejects: an
+  // unreachable registry resolves the documented empty shape, which carries no host, so host.readonly
+  // is falsy and the studio is left as-is -- what the old catch did.
+  moduleRegistry.load().then(function (d) {
+    var host = (d && d.host) || {};
+    if (!host.readonly) return;
+    domReady(function () { init(host); });
+  });
 
   function domReady(fn) {
     if (document.body) fn();
