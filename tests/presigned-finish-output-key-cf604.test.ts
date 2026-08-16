@@ -1,40 +1,28 @@
-// cf#604 -- A COMPLETED FINISH JOB THAT PRODUCED NO ARTIFACT KEY MUST DEGRADE, NOT DESTROY THE FILM.
+// cf#604 -- KEEP THE ARTIFACT THE SATELLITE WROTE, AND DEGRADE ONLY A REAL ABSENCE.
 //
-// cf#604 filed two halves against finish-rife and finish-blender. They are NOT the same claim and
-// this file ships only one of them, on purpose:
+// cf#604 filed two halves against finish-rife and finish-blender:
 //
-//   PART 2, SHIPPED HERE. Both modules returned `{ ok: false }` from the MODULE routes when a
-//   COMPLETED job carried no artifact key. `ok:false` is safe at the DOOR layer and fatal at the
-//   MODULE layer: vivijure-core failOrRetry classifies it deterministic and FAILS THE FILM on a
-//   render that ran to completion and was billed. It also never reaches applyFinishOutput, so the
-//   class was uncountable by construction rather than merely uncounted. finish-lipsync,
-//   finish-upscale and speech-upscale pass the input clip through first; these two did not.
+//   PART 2, already shipped. Both modules used to return `{ ok: false }` from the MODULE routes
+//   when a COMPLETED job carried no artifact key. `ok:false` is safe at the DOOR layer and fatal
+//   at the MODULE layer. They now pass the input clip through first, same as finish-lipsync,
+//   finish-upscale and speech-upscale.
 //
-//   PART 1, REFUSED. cf#604 also asked for the cf#578 read, `finishedKey(out)` =
-//   `clip_key ?? output_key`. NEITHER DOOR CAN EMIT THAT SHAPE, re-measured 2026-08-15 at the same
-//   shas the cf#578 census recorded, on byte-identical trees:
-//     vivijure-blender  4fa33fe  handler.py:389 `result_key = output_key or "presigned"`, :397
-//                                `"clip_key": result_key`. `output_key` is never a response field.
-//     vivijure-backend  f9dc930  harness/handler.py:471-476 is the ONE completed finish_clip return
-//                                and hardcodes `clip_key`. docs/contract.md:249-268 argues the
-//                                exclusion of presigned transport deliberately.
-//   Widening the read would be changing code on a hypothesis, which is exactly what the EXEMPT
-//   census in presigned-finish-output-key-cf578.test.ts says it declined to do. The cf#578 census is
-//   therefore left untouched and still passes: this change adds no `output_key` parse anywhere.
+//   PART 1, shipped HERE. Both modules still read `out?.clip_key` only, so a COMPLETED presigned
+//   return (`output_key`, no `clip_key`) looked like a real absence and the billed artifact was
+//   thrown away (degraded as `passthrough:no-output-key`). finish-lipsync and finish-upscale already
+//   resolve `finishedKey = clip_key ?? output_key`. This file now requires rife and blender to
+//   honour the same field the satellite actually wrote.
 //
 // WHY THIS FILE IMPORTS NOTHING FROM THE FIX. Every assertion drives a SHIPPED worker over its real
-// POST /invoke and POST /poll and reads the response body, so the file COMPILES AND RUNS UNCHANGED
-// AT origin/main. That is what makes the fail-first evidence mean something: measured at 8638f5c
-// before the fix, 4 of 12 cases RED (finish-rife and finish-blender, the two behaviour cases each),
-// 8 GREEN, and the finish-upscale control GREEN in all 4 of its own.
+// POST /invoke and POST /poll and reads the response body.
 //
 // ASSERT THE DELTA, NOT THE ABSENCE. "no longer returns ok:false" is one-sided and passes when the
 // output was eaten along with everything else. Every case below asserts the artifact reference the
 // chain actually reads downstream, and the exact tag the degrade counter counts.
 //
-// POSITIVE CONTROL. finish-upscale is the in-tree reference cf#578 already fixed, and its door CAN
-// emit the presigned shape. It is included unchanged and must be GREEN in every case BOTH before and
-// after. A run where the reference also reddens is measuring the harness, not the modules.
+// POSITIVE CONTROL. finish-upscale is the in-tree reference cf#578 already fixed. It is included
+// unchanged and must be GREEN in every case BOTH before and after. A run where the reference also
+// reddens is measuring the harness, not the modules.
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 import finishRifeWorker from "../modules/finish-rife/src/index";
@@ -61,10 +49,6 @@ interface Case {
   name: string;
   worker: Worker;
   input: Record<string, unknown>;
-  /** Can this door actually return the artifact key in `output_key` with no `clip_key`?
-   *  MEASURED per door, cited in the header. This is a fact about ANOTHER REPO AT A SHA, which is
-   *  why it is a per-case datum here rather than a universal assertion. */
-  presignedShape: "reachable" | "unreachable";
   /** The key the door says it WROTE. */
   written: string;
   /** The key the module was HANDED, i.e. what an honest degrade must pass through. */
@@ -80,7 +64,6 @@ const CASES: Case[] = [
     name: "finish-rife",
     worker: finishRifeWorker as unknown as Worker,
     input: { shot_id: "shot_01", clip_key: CLIP_IN, src_fps: 16, frames: 80 },
-    presignedShape: "unreachable",
     written: WRITTEN,
     passedThrough: CLIP_IN,
     r2: { ok: true, shot_id: "shot_01", clip_key: WRITTEN, out_fps: 32, frames: 160, applied: ["rife:2x"] },
@@ -90,19 +73,16 @@ const CASES: Case[] = [
     name: "finish-blender",
     worker: finishBlenderWorker as unknown as Worker,
     input: { shot_id: "shot_01", clip_key: CLIP_IN, src_fps: 24, frames: 48 },
-    presignedShape: "unreachable",
     written: WRITTEN,
     passedThrough: CLIP_IN,
     r2: { ok: true, shot_id: "shot_01", clip_key: WRITTEN, out_fps: 24, frames: 48, applied: ["blender:grade"] },
     presigned: { ok: true, shot_id: "shot_01", output_key: WRITTEN, out_fps: 24, frames: 48, applied: ["blender:grade"] },
   },
   {
-    // THE IN-TREE REFERENCE, and the one door that CAN emit the presigned shape. Green before and
-    // after; see POSITIVE CONTROL above.
+    // THE IN-TREE REFERENCE. Green before and after; see POSITIVE CONTROL above.
     name: "finish-upscale",
     worker: finishUpscaleWorker as unknown as Worker,
     input: { shot_id: "shot_01", clip_key: CLIP_IN, src_fps: 16, frames: 80 },
-    presignedShape: "reachable",
     written: WRITTEN,
     passedThrough: CLIP_IN,
     r2: { ok: true, shot_id: "shot_01", clip_key: WRITTEN, out_fps: 16, frames: 80, scale: 2, applied: ["upscale:2x"] },
@@ -208,45 +188,23 @@ describe.each(CASES)("$name: a COMPLETED job with no artifact key (cf#604)", (c)
     expect(out.applied, c.name + " did not record a countable degrade").toEqual(DEGRADE_TAG);
   });
 
-  it("PRESIGNED SHAPE (" + c.presignedShape + "): the film survives whichever field carries the key", async () => {
-    // The two answers are DIFFERENT and both are asserted, because a single universal assertion here
-    // would be a claim about another repo that this file cannot make.
-    //
-    // reachable (finish-upscale): the door really does return `output_key` and no `clip_key`, so the
-    // module must resolve it and produce the SAME downstream artifact reference as the credentialed
-    // path. Equality against the control, never "did not fail".
-    //
-    // unreachable (finish-rife, finish-blender): the door cannot emit this today, measured at the
-    // shas in the header, so the module is NOT taught to read `output_key`. What IS asserted is the
-    // consequence of part 2: if that ever changes -- a door version skew, a self-hosted door under
-    // AGPL, a new transport -- the film DEGRADES ONE SHOT instead of dying. Before this change the
-    // same input returned module ok:false and failOrRetry killed the render. That is the whole value
-    // of the fix stated as a falsifiable property rather than as a promise in a PR body.
+  it("PRESIGNED SHAPE: the written key is kept, whichever field carries it", async () => {
+    // THE ASSERTION THAT GOES RED AT origin/main for finish-rife and finish-blender.
+    // Equality against the control, never "did not fail": a degrade of billed work would keep
+    // the film alive and still lose the artifact, which is the remaining prize.
     const controlBody = await (await submitThenPoll(c, c.r2)).poll();
     vi.unstubAllGlobals();
     const presignedBody = await (await submitThenPoll(c, c.presigned)).poll();
     const presignedOut = outputOf(presignedBody);
     const controlOut = outputOf(controlBody);
 
-    // Common to both answers, and the only thing cf#604 is really about: the render is not failed.
     expect(presignedBody.ok, c.name + " failed the film on a COMPLETED, billed render").toBe(true);
     expect(presignedBody.pending).toBeUndefined();
-
-    if (c.presignedShape === "reachable") {
-      expect(presignedOut.clip_key, c.name + " lost the artifact the door wrote").toBe(c.written);
-      expect(presignedOut.clip_key, c.name + " presigned and credentialed disagree on the artifact").toBe(controlOut.clip_key);
-      expect(presignedOut.degraded, c.name + " recorded a successful presigned finish as degraded").toBeUndefined();
-      expect(presignedOut.clip_key, c.name + " silently passed the input through").not.toBe(c.passedThrough);
-      expect(presignedOut.applied, c.name + " lost its provenance tag on the presigned branch").toEqual(controlOut.applied);
-    } else {
-      // An honest degrade, NOT a silent success: the grade or the interpolation really was lost, and
-      // the tag is what makes that countable. Fabricating the written key from `output_key` here is
-      // precisely the code-on-a-hypothesis this change refused to write.
-      expect(presignedOut.clip_key, c.name + " did not pass the input through").toBe(c.passedThrough);
-      expect(presignedOut.degraded, c.name + " degraded silently (#77/#249)").toBeTruthy();
-      expect(presignedOut.applied, c.name + " did not record a countable degrade").toEqual(DEGRADE_TAG);
-      expect(presignedOut.clip_key, c.name + " invented an artifact reference the door never wrote").not.toBe(c.written);
-    }
+    expect(presignedOut.clip_key, c.name + " lost the artifact the door wrote").toBe(c.written);
+    expect(presignedOut.clip_key, c.name + " presigned and credentialed disagree on the artifact").toBe(controlOut.clip_key);
+    expect(presignedOut.degraded, c.name + " recorded a successful presigned finish as degraded").toBeUndefined();
+    expect(presignedOut.clip_key, c.name + " silently passed the input through").not.toBe(c.passedThrough);
+    expect(presignedOut.applied, c.name + " lost its provenance tag on the presigned branch").toEqual(controlOut.applied);
   });
 });
 

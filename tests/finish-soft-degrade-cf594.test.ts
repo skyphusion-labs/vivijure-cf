@@ -49,10 +49,10 @@
 // nothing when the branch is unreachable and saves the film when it is not, so all four now degrade.
 //
 // `completedNoKey` is kept rather than deleted so the parameter still has to be stated per module and
-// a future divergence has somewhere to be recorded instead of being silent. cf#604 did NOT widen the
-// read to `clip_key ?? output_key` in those two: that half of cf#578 is genuinely satellite-shaped and
-// neither door can emit it. That case is NOT the soft-degrade contract either: a soft degrade is
-// `ok === false`, which is uniform in all four.
+// a future divergence has somewhere to be recorded instead of being silent. cf#604 now widens the
+// read to `clip_key ?? output_key` in rife and blender (that half lives in
+// tests/presigned-finish-output-key-cf604.test.ts). That case is NOT the soft-degrade contract
+// either: a soft degrade is `ok === false`, which is uniform in all four.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readdirSync } from "node:fs";

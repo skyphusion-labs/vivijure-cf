@@ -223,4 +223,16 @@ describe("honest credential text: endpoint present + key absent reads as propaga
       { shot_id: "s1", audio_key: "a.wav" }, undefined, undefined, { enable: true });
     expect(absent.output?.degraded).toBe("no-runpod-secrets");
   });
+
+  it("finish-rife degrades with the same distinction (cf#605)", async () => {
+    const notVisible = await invoke(finishRifeWorker as unknown as Worker, "finish",
+      { shot_id: "s1", clip_key: "c.mp4" }, undefined, ENDPOINT);
+    expect(notVisible.ok).toBe(true);
+    expect(notVisible.output?.degraded).toBe("runpod-key-not-yet-visible");
+
+    const absent = await invoke(finishRifeWorker as unknown as Worker, "finish",
+      { shot_id: "s1", clip_key: "c.mp4" }, undefined, undefined);
+    expect(absent.ok).toBe(true);
+    expect(absent.output?.degraded).toBe("no-runpod-secrets");
+  });
 });

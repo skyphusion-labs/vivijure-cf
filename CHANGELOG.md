@@ -5,6 +5,28 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(finish): keep billed artifacts when the satellite returns output_key (cf#604)
+
+`finish-rife` and `finish-blender` used to read `clip_key` only. A COMPLETED
+presigned return (`output_key`, no `clip_key`) looked like a real absence, so
+the billed clip was thrown away and the shot degraded. They now resolve
+`finishedKey = clip_key ?? output_key`, the same one-liner `finish-lipsync` and
+`finish-upscale` already use. A genuine empty COMPLETED result still degrades
+as `passthrough:no-output-key`.
+
+### fix(finish): finish-rife names a missing credential honestly (cf#605)
+
+`finish-rife` already imported `runpodCredentialProblem` and then ignored it.
+Endpoint-present + key-absent now degrades as `runpod-key-not-yet-visible`
+(propagation), not `no-runpod-secrets`. Poll uses the same helper instead of
+`"not configured"`. The unused workersMax comment is gone.
+
+### fix(finish): finish-blender GET /ready reports a bound door (cf#612)
+
+A door-backed blender with no RunPod credentials used to report `ok: false`.
+`/ready` now spreads the same `door` object `finish-upscale` and
+`speech-upscale` emit, so a correctly configured on-iron module is ready.
+
 ### feat(render): parallelism is a knob, default is the worker pool, not 2
 
 `shardCount` / `shard_count` on the panel render, film, and scatter doors.

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
+  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
+  passthroughOutput,
   runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS,
 } from "../modules/finish-rife/src/finish";
 // cf#537: conformance runs against the SHIPPED manifest, not a transcribed copy. The copy
@@ -126,6 +127,22 @@ describe("finish-rife: parseBackendOutput", () => {
     const o = parseBackendOutput({ shot_id: "s", clip_key: "k" });
     expect(o?.applied).toEqual([]);
   });
+
+  it("parses output_key so a presigned satellite return is not dropped (cf#604)", () => {
+    const o = parseBackendOutput({ shot_id: "s", output_key: "renders/p/clips/written.mp4" });
+    expect(o?.output_key).toBe("renders/p/clips/written.mp4");
+    expect(o?.clip_key).toBeUndefined();
+  });
+});
+
+describe("finish-rife: finishedKey (cf#604)", () => {
+  it("prefers clip_key, falls back to output_key, undefined when neither", () => {
+    expect(finishedKey({ clip_key: "a", output_key: "b" })).toBe("a");
+    expect(finishedKey({ output_key: "b" })).toBe("b");
+    expect(finishedKey({ clip_key: "a" })).toBe("a");
+    expect(finishedKey({})).toBeUndefined();
+    expect(finishedKey(null)).toBeUndefined();
+  });
 });
 
 describe("finish-rife: manifest conformance", () => {
@@ -182,7 +199,7 @@ describe("finish-rife: passthroughOutput (degrade observability #77)", () => {
   });
 
   it("covers every degrade reason the worker emits", () => {
-    for (const reason of ["no-runpod-secrets", "runpod-run-failed", "no-jobid", "exception"]) {
+    for (const reason of ["no-runpod-secrets", "runpod-key-not-yet-visible", "runpod-run-failed", "no-jobid", "exception"]) {
       const o = passthroughOutput(SAMPLE_INPUT, reason);
       expect(o.applied[0]).toBe(`passthrough:${reason}`);
       expect(o.degraded).toBeTruthy();

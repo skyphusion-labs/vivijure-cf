@@ -24,7 +24,8 @@ import {
   type FinishOutput,
 } from "./contract";
 import {
-  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
+  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
+  passthroughOutput,
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
   type PollState,
 } from "./finish";
@@ -521,38 +522,35 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   }
 
   const out = parseBackendOutput(s.output);
-  if (!out?.clip_key) {
-    // cf#604: A REAL absence -- the job reached COMPLETED and produced no artifact key. Polish never
+  // cf#604 / cf#578: WHICH FIELD carries the written key depends on a branch on the SATELLITE,
+  // not on anything visible here -- R2 mode echoes it as `clip_key`, presigned mode returns it
+  // as `output_key`. Reading only `clip_key` threw away a finished, uploaded, paid-for artifact
+  // (the film then degraded one shot via no-output-key, which is still a loss of billed work).
+  const key = finishedKey(out);
+  if (!key) {
+    // A REAL absence -- the job reached COMPLETED and produced no artifact key. Polish never
     // fails the chain (#77/#249), and an `ok:false` HERE is not the safe shape it looks like: it is
     // the MODULE layer, so vivijure-core failOrRetry classifies it deterministic and FAILS THE FILM
     // on a render that ran to completion and was paid for. It also skips the degrade accounting
     // entirely -- applyFinishOutput never sees an ok:false -- so the class was uncountable by
     // construction rather than merely uncounted. Same decision as speech-upscale, finish-lipsync and
-    // finish-upscale, at the same site; this module and finish-rife were the two the cf#578 sweep
-    // did not reach.
+    // finish-upscale, at the same site.
     //
     // The reason string is `no-output-key` verbatim, not a blender-specific one, because
     // summarizeFinish (vivijure-core src/film-model.ts:421-423) counts a degraded shot by its
     // `passthrough:`-prefixed tag and one grep across the five doors has to find the whole class.
-    //
-    // DELIBERATELY NOT the other half of cf#578, the `clip_key ?? output_key` read: vivijure-blender
-    // at 4fa33fe emits `clip_key` on EVERY success and never `output_key` as a response field
-    // (handler.py:389 `result_key = output_key or "presigned"`, :397 `"clip_key": result_key`), so
-    // this door cannot produce the shape that fix exists for, and widening the read here would be
-    // changing code on a hypothesis. See the EXEMPT census in
-    // tests/presigned-finish-output-key-cf578.test.ts, which measured that and said so.
     const passed = pollPassthrough(st, "no-output-key");
     if (passed) return passed;
-    return { ok: false, error: "finish-blender: backend returned no clip_key, and this poll token carries no clip to pass through" };
+    return { ok: false, error: "finish-blender: backend returned no clip_key or output_key, and this poll token carries no clip to pass through" };
   }
   return {
     ok: true,
     output: {
-      shot_id: out.shot_id ?? st.shotId,
-      clip_key: out.clip_key,
-      out_fps: out.out_fps ?? st.srcFps,
-      frames: out.frames ?? st.frames,
-      applied: out.applied ?? [],
+      shot_id: out?.shot_id ?? st.shotId,
+      clip_key: key,
+      out_fps: out?.out_fps ?? st.srcFps,
+      frames: out?.frames ?? st.frames,
+      applied: out?.applied ?? [],
     },
   };
 }
@@ -572,8 +570,13 @@ export default {
     // with. Gating it would make it unusable for its one purpose while protecting nothing.
     if (request.method === "GET" && url.pathname === "/ready") {
       const { route, endpointId } = await runpodCreds(env);
+      const pool = await doorsFor(env);
+      const onDoor = pool.length > 0;
       return json({
-        ok: Boolean(route.credential && endpointId),
+        // cf#612 / cf#480: on the door route RunPod credentials are irrelevant -- requiring them
+        // would make a correctly-configured on-iron module report NOT READY, which is the readiness
+        // probe reporting the opposite of the truth. On the door arm `ok` is the door's own readiness.
+        ok: onDoor ? usableDoors(pool).length > 0 : Boolean(route.credential && endpointId),
         // Echoed so a prober can prove it reached the script it MEANT to reach (a tenant-prefixed
         // script name is easy to get wrong); already public in /module.json, so it leaks nothing.
         module: MANIFEST.name,
@@ -581,6 +584,18 @@ export default {
         // cf#394: which route answered. Additive -- the plane parses runpod_api_key and
         // refuses a module whose /ready omits it, so that field keeps its name.
         runpod_proxied: route.proxied,
+        // cf#612: PRESENT ONLY WHEN A DOOR IS BOUND, matching finish-upscale / speech-upscale, so
+        // an unbound module's /ready is byte-identical to what it served before this change.
+        ...(onDoor
+          ? {
+              door: {
+                bound: true,
+                token: usableDoors(pool).length > 0,
+                route: (pool.find((d) => d.legacy) ?? pool[0]).name,
+                routes: pool.map((d) => ({ name: d.name, token: !doorProblem(d) })),
+              },
+            }
+          : {}),
         // cf#279: is this worker able to RECORD a job outcome at all? Reported here because
         // otherwise an empty job log is indistinguishable from a clean run, which is the exact
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
