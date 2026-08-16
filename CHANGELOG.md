@@ -5,12 +5,16 @@ for new features). Newest first.
 
 ## Unreleased
 
-### fix(finish-upscale): send target_height once serve is 1.1.3
+## v1.32.3 -- 2026-08-16
 
-vivijure-upscale v1.1.3 honours the studio height contract. A film with a
-delivery height and no explicit scale now sends `target_height` and omits
-`scale`, so the door is not also given a 2|4 that must agree. Explicit
-2x/4x still goes out as `scale` only.
+Planner first sitting so a stranger can finish a film, plus finish-chain honesty.
+
+- **feat(planner):** land like a studio (#651). One brief, shot cards, no forced Audio step, 7003/3030 recipes, phone nav, History is Your films.
+- **feat(planner):** cast is people; render is stills/motion + Preview/Share/Best; Modules/Settings move to the account menu (#654).
+- **fix(finish):** omit `finish_config` skips polish; named missing module is 400 (#650).
+- **fix(finish):** project the degrade reason, not one `passthrough:` literal (#652).
+- **fix(finish-upscale):** send `target_height` once serve is 1.1.3. Delivery
+  height with no explicit scale omits `scale` so the two knobs cannot disagree.
 
 ## v1.32.2 -- 2026-08-16
 
