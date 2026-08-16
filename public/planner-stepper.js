@@ -139,6 +139,14 @@ function showStep(id) {
     showCastSection();
   }
   if (id === "render") {
+    const stage = $("#planner-render");
+    if (stage) stage.hidden = false;
+    if (typeof showRenderStage === "function") showRenderStage();
+    if (window.plannerRenderConfig && typeof window.plannerRenderConfig.renderPanel === "function") {
+      Promise.resolve(window.plannerRenderConfig.renderPanel()).then(() => {
+        if (typeof syncRenderModeUi === "function") syncRenderModeUi();
+      });
+    }
     showAudioSection();
   }
   paintStepper();
