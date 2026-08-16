@@ -94,26 +94,12 @@ export function resolveUpscaleScale(
   return chooseUpscaleScale(src, target);
 }
 
-/** The only factors the LIVE serve pin will honour.
+/** Factors used when the caller set `scale` explicitly, or when no delivery height is known.
  *
- *  MEASURED 2026-08-16:
- *    fleet compose default `ghcr.io/skyphusion-labs/vivijure-upscale:1.1.1-serve`
- *    (propagandhi + fatmike). Tagged `v1.1.2` is the same handler train.
- *    Both still do:
- *
- *      final_scale = 4 if int(inp.get("scale", 2) or 2) >= 4 else 2
- *
- *    so they hard-clamp to 2 or 4 AND `int()` truncates. A fractional request is silently
- *    rounded DOWN rather than refused -- asking for 2.18 yields 2 with no error.
- *
- *  vivijure-upscale origin/main #109 (`21b0f98`) honours `target_height` and refuses a
- *  collapsed scale. That commit is untagged and not pinned. Sending `target_height` or
- *  exposing a height knob against the live pin would be a lying UI: the door would ignore
- *  the height and still emit 2x/4x. Do not add the knob until a serve pin includes #109.
- *
- *  That is why this module chooses deliberately from a closed set instead of computing the
- *  exact ratio: a float would be a plausible wrong value, which is the same failure shape
- *  as the `?? 1920` default this work exists to fix. */
+ *  After vivijure-upscale v1.1.3 (#109) the door honours `target_height` and refuses a
+ *  collapsed scale. A delivery height with no explicit scale goes out as `target_height`
+ *  (no `scale` key): both knobs together must agree, and inventing a 2|4 next to a height
+ *  is how the two would disagree on every non-even-multiple source. */
 export const UPSCALE_FACTORS = [2, 4] as const;
 export type UpscaleFactor = (typeof UPSCALE_FACTORS)[number];
 
@@ -201,10 +187,16 @@ export function buildRunPodBody(input: FinishInput, cfg: UpscaleConfig, project:
   // no test that drives one transport at a time can see that: `cfg.scale` and `chosen.scale` are
   // equal whenever the caller set `scale` explicitly, which is exactly what a fixture does.
   const output_key = input.output_key ?? upscaledKey(input.clip_key);
+  // v1.1.3+ (#109): height-only request when the film named a delivery and the caller
+  // did not set scale. Omit scale so the door does not also invent a 2x that disagrees.
+  const th = usableDim(input.delivery_height);
+  const size = !cfg.scaleExplicit && th > 0
+    ? { target_height: th - (th % 2) }
+    : { scale: chosen.scale };
   const common = {
     project,
     output_key,
-    scale: chosen.scale,
+    ...size,
     model: cfg.model,
     ...(input.output_hash ? { output_hash: input.output_hash } : {}), // #583: forward verbatim for the sidecar stamp
   };

@@ -19,25 +19,27 @@ const body = (input: Partial<FinishInput>, cfg: Record<string, unknown> = {}) =>
   buildRunPodBody({ ...base, ...input } as FinishInput, coerceConfig(cfg), "p1").input;
 
 describe("cf507b on the wire: the target decides the factor the GPU is asked for", () => {
-  it("THE DRAFT CASE: a source that 2x would leave BELOW target goes out as 4", async () => {
-    // 864x496 is the real draft geometry. 2x = 1728x992, under 1080 -- the exact job that today
-    // gets a learned upscale and then a naive ffmpeg stretch back up.
+  it("THE DRAFT CASE: a delivery height goes out as target_height, not a 2|4 guess", async () => {
+    // 864x496 is the real draft geometry. Sending scale 4 would work as supersample, but
+    // v1.1.3 honours the studio contract: exact even height. Both knobs together must
+    // agree, so we omit scale.
     const b = body({ width: 864, height: 496, delivery_width: 1920, delivery_height: 1080 });
-    expect(b.scale).toBe(4);
+    expect(b.target_height).toBe(1080);
+    expect(b.scale).toBeUndefined();
   });
 
-  it("a source that 2x already clears goes out as 2, not a reflexive 4", async () => {
-    // 1280x720 * 2 = 2560x1440, past a 1080p delivery. Overshooting further buys nothing.
+  it("a 720p source to 1080p is still a height request, not a reflexive 2x", async () => {
     const b = body({ width: 1280, height: 720, delivery_width: 1920, delivery_height: 1080 });
-    expect(b.scale).toBe(2);
+    expect(b.target_height).toBe(1080);
+    expect(b.scale).toBeUndefined();
   });
 
-  it("CONTROL: the same call DOES emit a different factor, so the two above discriminate", async () => {
-    // Without this pair being produced by one code path, `scale: 4` and `scale: 2` could each be a
-    // constant reached by different branches that never compare anything.
-    const small = body({ width: 400, height: 200, delivery_width: 1280, delivery_height: 536 });
-    const large = body({ width: 1280, height: 536, delivery_width: 1280, delivery_height: 536 });
-    expect(small.scale).not.toBe(large.scale);
+  it("CONTROL: two deliveries emit two different heights, so this is not a constant", async () => {
+    const a = body({ width: 400, height: 200, delivery_width: 1280, delivery_height: 536 });
+    const b = body({ width: 1280, height: 536, delivery_width: 1920, delivery_height: 1080 });
+    expect(a.target_height).toBe(536);
+    expect(b.target_height).toBe(1080);
+    expect(a.target_height).not.toBe(b.target_height);
   });
 
   it("NO target on the wire -> today's behaviour, byte for byte", async () => {
@@ -47,11 +49,12 @@ describe("cf507b on the wire: the target decides the factor the GPU is asked for
     expect(b.scale).toBe(2);
   });
 
-  it("NO measured source -> today's behaviour, even with a target present", async () => {
-    // The lookup-miss case from core's side. A target with nothing to compare it against cannot
-    // derive anything, and inventing a source would be the guess this whole change removes.
+  it("a delivery height is enough even without a measured source", async () => {
+    // The handler probes the file. We do not invent a 2|4 factor just because the panel
+    // never measured the clip; that is how a height request used to become a 2x charge.
     const b = body({ delivery_width: 1920, delivery_height: 1080 });
-    expect(b.scale).toBe(2);
+    expect(b.target_height).toBe(1080);
+    expect(b.scale).toBeUndefined();
   });
 
   it("AN EXPLICIT SCALE REACHES THE WIRE UNCHANGED, even when derivation disagrees", async () => {
@@ -59,12 +62,14 @@ describe("cf507b on the wire: the target decides the factor the GPU is asked for
     // 864x496 to 1080p derives 4; the user asked for 2 and gets 2.
     const b = body({ width: 864, height: 496, delivery_width: 1920, delivery_height: 1080 }, { scale: 2 });
     expect(b.scale).toBe(2);
+    expect(b.target_height).toBeUndefined();
   });
 
   it("and an explicit 4 survives a target that would only need 2", async () => {
     // The mirror, so "explicit wins" is not accidentally "the larger value wins".
     const b = body({ width: 1280, height: 720, delivery_width: 1920, delivery_height: 1080 }, { scale: 4 });
     expect(b.scale).toBe(4);
+    expect(b.target_height).toBeUndefined();
   });
 
   it("the rest of the RunPod body is untouched by any of this", async () => {
@@ -75,10 +80,9 @@ describe("cf507b on the wire: the target decides the factor the GPU is asked for
     expect(b.clip_key).toBe("renders/p/shot_01.mp4");
     expect(b.output_key).toBe("renders/p/shot_01_up.mp4");
     expect(b.model).toBe("realesr-animevideov3");
-    // and no delivery_* leaks onto the wire: the live pin takes a factor, not a target.
-    // origin/main #109 honours target_height; 1.1.1-serve ignores it. Do not send the key.
     expect(b.delivery_width).toBeUndefined();
     expect(b.delivery_height).toBeUndefined();
-    expect(b.target_height).toBeUndefined();
+    expect(b.target_height).toBe(1080);
+    expect(b.scale).toBeUndefined();
   });
 });
