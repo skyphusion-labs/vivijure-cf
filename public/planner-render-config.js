@@ -184,6 +184,35 @@
     return details;
   }
 
+  // Filmmaker labels for the core-owned tier VALUES. Wire values stay
+  // draft/standard/final (cf#62); only the visible name changes (cf#646).
+  const TIER_HUMAN = { draft: "Preview", standard: "Share", final: "Best" };
+
+  function tierDisplayLabel(t) {
+    if (!t) return "";
+    const human = TIER_HUMAN[t.value] || t.label || t.value;
+    return t.blurb ? human + " -- " + t.blurb : human;
+  }
+
+  // Never show "CF Unified Billing" as the user sentence. Prefer a door's
+  // ui.cost when it is a filmmaker line; otherwise a short billed-per-render.
+  function filmmakerCostLine(raw) {
+    if (typeof raw !== "string") return "Billed per render.";
+    const stripped = raw.replace(/\s*\(?\s*CF\s+Unified Billing\s*\)?/gi, "").trim();
+    if (!stripped || /unified billing/i.test(stripped)) return "Billed per render.";
+    return /[.!?]$/.test(stripped) ? stripped : stripped + ".";
+  }
+
+  function spendSentence(opts) {
+    const o = opts || {};
+    const cost = filmmakerCostLine(o.cost);
+    if (o.stills) {
+      return "Stills preview. " + cost + " Usually a few minutes.";
+    }
+    const time = o.tier === "final" ? " Best can take 30 minutes or more." : "";
+    return "Motion render. " + cost + time;
+  }
+
   // Populate the quality-tier <select> from the core-owned render projection
   // (GET /api/modules `render`), so the options + blurbs are not hand-authored in
   // markup. Preserves the current selection across re-renders; falls back to the
@@ -226,11 +255,13 @@
     for (const t of render.quality_tiers) {
       const opt = document.createElement("option");
       opt.value = t.value;
-      opt.textContent = t.blurb ? t.label + " (" + t.blurb + ")" : t.label;
+      opt.textContent = tierDisplayLabel(t);
       sel.appendChild(opt);
     }
     const has = (v) => v && render.quality_tiers.some((t) => t.value === v);
-    const want = has(pending) ? pending : has(prev) ? prev : render.default_tier;
+    // cf#646: first film defaults to Preview (draft) when that tier exists.
+    // Restore / current selection still win. Missing projection still invents nothing.
+    const want = has(pending) ? pending : has(prev) ? prev : (has("draft") ? "draft" : render.default_tier);
     if (has(want)) sel.value = want;
     delete sel.dataset.pendingValue;
   }
@@ -738,5 +769,8 @@
     renderTierPicker,
     selectTier,
     backendChoicePending,
+    tierDisplayLabel,
+    filmmakerCostLine,
+    spendSentence,
   };
 })(window);

@@ -287,44 +287,43 @@
       </details>
     </section>
 
-    <!-- v0.54.0: pre-render preflight. Pure storyboard checks +
-         optional R2 HEAD for the bundle / audio. The bundle and
-         render submit buttons gate on no preflight errors when the
-         panel is open; warnings are advisory and pass through. -->
-    <section id="planner-preflight" class="planner-stage" data-step="cast" hidden>
+    <!-- cf#648: who is in the movie. Cast is a person picker, not a training form. -->
+    <section id="planner-faces" class="planner-stage" data-step="cast" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">preflight</h2>
-        <span id="planner-preflight-status" class="planner-status"></span>
+        <h2 class="planner-stage-title">Who is in this movie</h2>
+        <span id="planner-faces-status" class="planner-status"></span>
       </header>
-      <p class="planner-stage-hint">runs validator + scene shape checks + cast readiness + bundle / audio existence. errors gate the bundle button; warnings pass through.</p>
-      <div class="planner-preflight-toolbar">
-        <button id="planner-preflight-run" type="button" class="planner-secondary">run preflight</button>
-        <label class="planner-preflight-auto-label">
-          <input id="planner-preflight-auto" type="checkbox" checked />
-          auto-run on edit
-        </label>
-        <span id="planner-preflight-counts" class="planner-status"></span>
-        <!-- cf#579: the finish-cost coverage census, refreshed each preflight pass. Structured
-             attributes so a check can assert on it; the sentence so a person does not have to
-             grep renders to learn that nothing declares a cost. -->
-        <span id="planner-finish-cost-coverage" class="planner-status" hidden></span>
+      <p class="planner-stage-hint">Pick the people in this film. A face photo is enough to preview. Training is optional.</p>
+      <div id="planner-faces-empty" class="planner-faces-empty" hidden>
+        <p>No characters yet.</p>
+        <a id="planner-faces-create" class="planner-primary planner-faces-create" href="cast#new">Create a character</a>
       </div>
-      <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>
+      <div id="planner-faces-list" class="planner-faces-list"></div>
+      <p id="planner-faces-more" class="planner-faces-more" hidden>
+        <a href="cast#new">Create another character</a>
+      </p>
+      <div id="planner-cast-lora-warning" class="planner-lora-preflight-warning" role="status" hidden></div>
     </section>
 
     <!-- v0.33.0: bundle stage. Revealed after a successful plan. -->
     <section id="planner-bundle" class="planner-stage" data-step="cast" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">assemble bundle</h2>
+        <h2 class="planner-stage-title">Assemble</h2>
         <span id="planner-bundle-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">
-        upload training images for each character slot that the validated
-        storyboard locked in (usually 8 or more per slot for LoRA training).
-        each file is staged to R2 immediately. when every slot has staged
-        images, click "bundle" to assemble the .tar.gz the GPU worker pulls.
+        Confirm who is in the film, then assemble. A face photo per person is enough to preview.
+        You do not need a training set to make a first film.
       </p>
       <div id="planner-bundle-cast" class="planner-bundle-cast"></div>
+      <details id="planner-bundle-consistent" class="planner-bundle-consistent">
+        <summary>Make them consistent across shots</summary>
+        <p class="planner-stage-hint">
+          Optional. Extra photos and LoRA training help the same face hold from shot to shot.
+          Skip this for a first preview. Train on the Cast page when you want consistency.
+        </p>
+        <p><a href="cast">Open Cast to train</a></p>
+      </details>
       <!-- v0.149.0 (Phase 4b): optional per-scene start keyframes. Attaching an
            image here ships it as clips/<id>_keyframe.png in the bundle, which the
            GPU pod uses as that scene's i2v motion start frame. -->
@@ -340,6 +339,31 @@
       <div id="planner-bundle-result" class="planner-bundle-result" hidden></div>
     </section>
 
+    <!-- v0.54.0: pre-render preflight. Operator surface; filmmakers can skip it. -->
+    <details class="planner-advanced" data-step="cast">
+      <summary>Preflight (operator)</summary>
+      <section id="planner-preflight" class="planner-stage planner-preflight-inner" hidden>
+        <header class="planner-stage-header">
+          <h2 class="planner-stage-title">preflight</h2>
+          <span id="planner-preflight-status" class="planner-status"></span>
+        </header>
+        <p class="planner-stage-hint">runs validator + scene shape checks + cast readiness + bundle / audio existence. errors gate the bundle button; warnings pass through.</p>
+        <div class="planner-preflight-toolbar">
+          <button id="planner-preflight-run" type="button" class="planner-secondary">run preflight</button>
+          <label class="planner-preflight-auto-label">
+            <input id="planner-preflight-auto" type="checkbox" checked />
+            auto-run on edit
+          </label>
+          <span id="planner-preflight-counts" class="planner-status"></span>
+          <!-- cf#579: the finish-cost coverage census, refreshed each preflight pass. Structured
+               attributes so a check can assert on it; the sentence so a person does not have to
+               grep renders to learn that nothing declares a cost. -->
+          <span id="planner-finish-cost-coverage" class="planner-status" hidden></span>
+        </div>
+        <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>
+      </section>
+    </details>
+
     <!-- v0.33.0: render stage. Revealed after a successful bundle. -->
     <section id="planner-render" class="planner-stage" data-step="render" hidden>
       <header class="planner-stage-header">
@@ -348,53 +372,45 @@
         <span id="planner-render-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">
-        Preview stills, or animate the film. Audio is optional and lives in the fold below.
+        Three choices: stills or motion, a quality, then spend. Audio is optional and lives in the fold below.
       </p>
+      <fieldset class="planner-render-mode">
+        <legend>What to make</legend>
+        <label class="planner-render-mode-choice">
+          <input type="radio" name="planner-render-mode" id="planner-mode-stills" value="stills" checked />
+          <span>Stills</span>
+        </label>
+        <label class="planner-render-mode-choice">
+          <input type="radio" name="planner-render-mode" id="planner-mode-motion" value="motion" />
+          <span>Motion</span>
+        </label>
+      </fieldset>
+      <!-- v0.40.0: keyframes-only preview pass. Hidden; the stills/motion radios own it.
+           Default checked so a first film is a stills preview, not a 30+ minute final. -->
+      <input id="planner-keyframes-only" type="checkbox" checked hidden />
       <div class="planner-render-options">
       <label class="planner-field">
-        <span>quality tier</span>
+        <span>quality</span>
         <!-- Options are projected from GET /api/modules `render.quality_tiers` (core-owned render
-             config), not hand-authored here. planner-render-config.js fills this on renderPanel(). -->
+             config), not hand-authored here. planner-render-config.js fills this on renderPanel().
+             Wire values stay draft/standard/final; labels are Preview / Share / Best (cf#646). -->
         <select id="planner-quality-tier"></select>
       </label>
-      <!-- v0.40.0: keyframes-only preview pass. Renders keyframes
-           only, skips Wan I2V + silent-MP4 assembly. Lets the user
-           preview shots before committing to a full render (which on
-           the "final" tier can take 30+ minutes). -->
-      <label class="planner-field-check">
-        <input id="planner-keyframes-only" type="checkbox" />
-        <span>preview stills only (no motion yet)</span>
-      </label>
-      <!-- v0.162.0: scatter/gather distributed render. Enabled only when
-           the storyboard has >= 2 shots AND at least one character slot is
-           bound (scatter requires castLoras to be non-empty -- the server
-           hard-400s otherwise). updateScatterGate() enforces this dynamically
-           and shows a short reason when disabled. Parallelism is an
-           orchestrator-level knob (like quality tier), always visible on
-           the render stage; plannerShardCount() supplies the default. -->
-      <label class="planner-field-check" id="planner-scatter-wrap">
-        <input id="planner-scatter" type="checkbox" />
-        <span>distributed render (scatter/gather)</span>
-      </label>
-      <span id="planner-scatter-reason" class="planner-status planner-scatter-reason" hidden></span>
-      <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap">
-        <label class="planner-field-check" for="planner-scatter-shards">parallelism (shards)</label>
-        <input id="planner-scatter-shards" type="number" min="1" inputmode="numeric" />
-      </div>
       </div>
       <!-- Module render config: projected from GET /api/modules. The hook set comes from the live
            `catalog` (keyframe, motion.backend, speech, finish, master, film.finish render here;
            plan.enhance / score / dialogue / cast.image / notify project on their own surfaces),
            and each module renders its own config_schema. Nothing per-hook is hardcoded. -->
       <div id="planner-motion-backend-wrap" class="planner-overrides-common"></div>
-      <details class="planner-overrides-details" open>
-        <summary class="planner-overrides-summary">module settings (optional)</summary>
-        <p class="planner-overrides-hint">
-          Controls are rendered from installed modules' config_schema. Empty fields use each module's default.
-          Quality tier above is injected into keyframe and motion modules automatically.
-        </p>
-        <div id="planner-module-config" class="planner-module-config"></div>
-      </details>
+      <p id="planner-render-spend" class="planner-render-spend" role="status"></p>
+      <div class="planner-actions">
+        <button id="planner-render-btn" type="button" class="planner-primary">render</button>
+        <span id="planner-render-reason" class="planner-status planner-render-reason" hidden></span>
+        <span id="planner-render-meta" class="planner-status"></span>
+      </div>
+      <!-- v0.221.0: LoRA training preflight warning. Also painted on the Cast step
+           (cf#648) before bundle. This mount is the last-chance render click. -->
+      <div id="planner-lora-preflight-warning" class="planner-lora-preflight-warning" role="alert" hidden></div>
       <!-- Film title + credit cards: the film-level TEXT a film.finish title-card module
            (film-titles) cannot derive. Its presentation knobs (font / color / durations) project
            into the module panel above from config_schema; this carries FilmTitleSpec{text,subtitle}
@@ -427,28 +443,43 @@
           </label>
         </div>
       </details>
-      <details class="planner-overrides-details planner-overrides-expert">
-        <summary class="planner-overrides-summary">expert: raw JSON</summary>
-        <div class="planner-overrides-expert-block">
-          <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
-          <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"own-gpu","config":{"keyframe":{"steps":30},"own-gpu":{"fps":16}}}' spellcheck="false"></textarea>
-          <p class="planner-overrides-hint">
-            optional JSON in the module wire shape:
-            <code>{ "motion_backend": "own-gpu", "config": { "keyframe": {…}, "own-gpu": {…} } }</code>.
-            wins over the structured fields above on conflict.
-          </p>
+      <details class="planner-advanced" id="planner-render-advanced">
+        <summary>Advanced</summary>
+        <!-- v0.162.0: scatter/gather distributed render. Enabled only when
+             the storyboard has >= 2 shots AND at least one character slot is
+             bound (scatter requires castLoras to be non-empty -- the server
+             hard-400s otherwise). updateScatterGate() enforces this dynamically
+             and shows a short reason when disabled. -->
+        <label class="planner-field-check" id="planner-scatter-wrap">
+          <input id="planner-scatter" type="checkbox" />
+          <span>distributed render (scatter/gather)</span>
+        </label>
+        <span id="planner-scatter-reason" class="planner-status planner-scatter-reason" hidden></span>
+        <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap">
+          <label class="planner-field-check" for="planner-scatter-shards">parallelism (shards)</label>
+          <input id="planner-scatter-shards" type="number" min="1" inputmode="numeric" />
         </div>
+        <details class="planner-overrides-details">
+          <summary class="planner-overrides-summary">module settings (optional)</summary>
+          <p class="planner-overrides-hint">
+            Controls are rendered from installed modules' config_schema. Empty fields use each module's default.
+            Quality tier above is injected into keyframe and motion modules automatically.
+          </p>
+          <div id="planner-module-config" class="planner-module-config"></div>
+        </details>
+        <details class="planner-overrides-details planner-overrides-expert">
+          <summary class="planner-overrides-summary">expert: raw JSON</summary>
+          <div class="planner-overrides-expert-block">
+            <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
+            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"own-gpu","config":{"keyframe":{"steps":30},"own-gpu":{"fps":16}}}' spellcheck="false"></textarea>
+            <p class="planner-overrides-hint">
+              optional JSON in the module wire shape:
+              <code>{ "motion_backend": "own-gpu", "config": { "keyframe": {…}, "own-gpu": {…} } }</code>.
+              wins over the structured fields above on conflict.
+            </p>
+          </div>
+        </details>
       </details>
-      <!-- v0.221.0: LoRA training preflight warning. Hidden until a render
-           click finds a bound character whose LoRA is not trained-and-ready;
-           such a slot would be retrained inline (~15-25 min) by the server
-           fail-safe. Populated by showLoraPreflightWarning() in planner.js. -->
-      <div id="planner-lora-preflight-warning" class="planner-lora-preflight-warning" role="alert" hidden></div>
-      <div class="planner-actions">
-        <button id="planner-render-btn" type="button" class="planner-primary">render</button>
-        <span id="planner-render-reason" class="planner-status planner-render-reason" hidden></span>
-        <span id="planner-render-meta" class="planner-status"></span>
-      </div>
       <div id="planner-render-result" class="planner-render-result" hidden>
         <div class="planner-render-meta">
           <div><span class="planner-render-label">job:</span> <code id="planner-render-job-id"></code></div>

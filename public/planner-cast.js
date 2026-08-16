@@ -244,3 +244,125 @@ function collectCast() {
   return characters;
 }
 
+// cf#648: Cast step is "who is in the movie", not slot A-D training.
+// Bindings still use slots A-D on the wire; the filmmaker sees names.
+function nextFreeSlot() {
+  const used = new Set(Object.keys(planState.castBindings || {}));
+  for (const slot of SLOT_IDS) {
+    if (!used.has(slot)) return slot;
+  }
+  return null;
+}
+
+function syncCastFromBindings() {
+  const chars = collectCast();
+  for (const [slot, id] of Object.entries(planState.castBindings || {})) {
+    if (chars.some((c) => c.slot === slot)) continue;
+    const cast = findCastById(id);
+    if (cast) chars.push({ slot, name: cast.name, bible: cast.bible || "" });
+  }
+  planState.cast = chars;
+}
+
+function renderFacesPanel() {
+  const empty = $("#planner-faces-empty");
+  const list = $("#planner-faces-list");
+  const more = $("#planner-faces-more");
+  if (!empty || !list) return;
+  list.innerHTML = "";
+  const catalog = planState.castCatalog || [];
+  empty.hidden = catalog.length > 0;
+  if (more) more.hidden = catalog.length === 0;
+  if (catalog.length === 0) return;
+
+  const boundIds = new Set(Object.values(planState.castBindings || {}));
+  for (const c of catalog) {
+    const row = document.createElement("label");
+    row.className = "planner-faces-row";
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = boundIds.has(c.id);
+    check.dataset.castId = c.id;
+    const name = document.createElement("span");
+    name.className = "planner-faces-name";
+    name.textContent = c.name || "Untitled";
+    const note = document.createElement("span");
+    note.className = "planner-faces-note";
+    const hasFace = !!(c.portrait_key || (c.ref_keys && c.ref_keys.length));
+    note.textContent = hasFace ? "has a face" : "add a face photo on Cast";
+    check.addEventListener("change", () => {
+      if (check.checked) {
+        let slot = null;
+        for (const [s, id] of Object.entries(planState.castBindings || {})) {
+          if (id === c.id) { slot = s; break; }
+        }
+        if (!slot) slot = nextFreeSlot();
+        if (!slot) {
+          check.checked = false;
+          const status = $("#planner-faces-status");
+          if (status) status.textContent = "this film already has four people";
+          return;
+        }
+        bindSlotToCast(slot, c.id);
+        const pick = document.querySelector('.planner-cast-row[data-slot="' + slot + '"] .planner-cast-pick');
+        if (pick) pick.value = String(c.id);
+      } else {
+        for (const [s, id] of Object.entries(planState.castBindings || {})) {
+          if (id === c.id) {
+            unbindSlot(s);
+            const row = document.querySelector('.planner-cast-row[data-slot="' + s + '"]');
+            if (row) {
+              const inc = row.querySelector("[data-cast-include]");
+              if (inc) inc.checked = false;
+            }
+            const pick = document.querySelector('.planner-cast-row[data-slot="' + s + '"] .planner-cast-pick');
+            if (pick) pick.value = "";
+            if (planState.storyboard && Array.isArray(planState.storyboard.use_characters)) {
+              planState.storyboard.use_characters = planState.storyboard.use_characters.filter((x) => x !== s);
+            }
+          }
+        }
+      }
+      syncCastFromBindings();
+      if (planState.storyboard) {
+        const planned = Array.isArray(planState.storyboard.use_characters)
+          ? planState.storyboard.use_characters.slice()
+          : [];
+        for (const s of Object.keys(planState.castBindings || {})) {
+          if (planned.indexOf(s) === -1) planned.push(s);
+        }
+        planState.storyboard.use_characters = planned;
+        if (typeof refreshBundleCastRows === "function") {
+          refreshBundleCastRows(planState.storyboard, planState.cast);
+        }
+      }
+      persistSoon();
+      refreshCastLoraWarning();
+    });
+    row.appendChild(check);
+    row.appendChild(name);
+    row.appendChild(note);
+    list.appendChild(row);
+  }
+}
+
+function refreshCastLoraWarning() {
+  const el = $("#planner-cast-lora-warning");
+  if (!el || !window.loraPreflight) return;
+  const bindings = planState.castBindings || {};
+  if (Object.keys(bindings).length === 0) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  const unready = window.loraPreflight.unreadyBoundLoraSlots(bindings, planState.castCatalog, {
+    motionBackend: "",
+  });
+  if (unready.length === 0) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  paintLoraWarning(el, unready, "Continue without consistency, or train them on Cast first.");
+}
+

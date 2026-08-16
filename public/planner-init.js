@@ -295,8 +295,17 @@ document.addEventListener("DOMContentLoaded", () => {
   if (kfOnlyEl) kfOnlyEl.addEventListener("change", persistSoon);
   // vivijure#546: keyframes-only exempts the motion-backend pick, so re-gate the render
   // button whenever it toggles; and re-gate when the backend door choice changes.
-  if (kfOnlyEl) kfOnlyEl.addEventListener("change", updateRenderGate);
-  document.addEventListener("planner:backend-change", updateRenderGate);
+  if (kfOnlyEl) kfOnlyEl.addEventListener("change", syncRenderModeUi);
+  document.addEventListener("planner:backend-change", () => {
+    paintRenderSpend();
+    updateRenderGate();
+  });
+  const stillsRadio = $("#planner-mode-stills");
+  const motionRadio = $("#planner-mode-motion");
+  if (stillsRadio) stillsRadio.addEventListener("change", () => { if (stillsRadio.checked) setStillsMode(true); });
+  if (motionRadio) motionRadio.addEventListener("change", () => { if (motionRadio.checked) setStillsMode(false); });
+  const tierEl = $("#planner-quality-tier");
+  if (tierEl) tierEl.addEventListener("change", paintRenderSpend);
   // v0.43.0: persist the structured render-settings fields. Each
   // listens for the appropriate event (input on text + number,
   // change on selects).
@@ -427,6 +436,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.162.0: gate the scatter checkbox on page load (no storyboard yet,
   // so it starts disabled with a reason).
   updateScatterGate();
+  if (typeof syncRenderModeUi === "function") syncRenderModeUi();
 });
 
 // ---------- Screenwriter's Assistant dock (v0.164.0) ----------
@@ -477,7 +487,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (window.plannerRegistry) {
     window.plannerRegistry.load().then(() => {
       revealAutoDirect();
-      if (window.plannerRenderConfig) window.plannerRenderConfig.renderPanel();
+      if (window.plannerRenderConfig) {
+        Promise.resolve(window.plannerRenderConfig.renderPanel()).then(() => {
+          if (typeof syncRenderModeUi === "function") syncRenderModeUi();
+        });
+      }
     }).catch(() => {});
   }
 

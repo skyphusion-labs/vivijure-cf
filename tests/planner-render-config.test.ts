@@ -126,6 +126,9 @@ let mod: {
   collect: () => { motion_backend?: string };
   restore: (o: unknown) => void;
   selectTier: (tier: string) => void;
+  tierDisplayLabel: (t: { value: string; label?: string; blurb?: string }) => string;
+  filmmakerCostLine: (raw: unknown) => string;
+  spendSentence: (opts: { stills?: boolean; tier?: string; cost?: string }) => string;
 };
 
 beforeAll(() => {
@@ -280,7 +283,9 @@ describe("renderTierPicker (cf#62: tiers are core-owned, never invented in the p
     mod.renderTierPicker(PROJECTION);
     expect(sel.options.map((o) => String(o.value))).toEqual(["draft", "final"]);
     expect(sel.disabled).toBe(false);
-    expect(sel.value).toBe("final"); // the SERVER-declared default, not a panel constant
+    expect(sel.value).toBe("draft"); // cf#646: first film prefers Preview (draft) when offered
+    expect(sel.options.map((o) => o.textContent).join(" ")).toMatch(/Preview/);
+    expect(sel.options.map((o) => o.textContent).join(" ")).toMatch(/Best/);
   });
 
   it("a MISSING projection yields an honest empty picker, not invented tiers", () => {
@@ -328,6 +333,44 @@ describe("renderTierPicker (cf#62: tiers are core-owned, never invented in the p
     sel.value = "draft";
     mod.renderTierPicker(PROJECTION);
     expect(sel.value).toBe("draft");
+  });
+
+  it("falls back to the server default when draft is not in the projection", () => {
+    const sel = tierDoc();
+    mod.renderTierPicker({
+      quality_tiers: [{ value: "final", label: "final", blurb: "production" }],
+      default_tier: "final",
+    });
+    expect(sel.value).toBe("final");
+  });
+});
+
+describe("filmmaker spend copy (cf#646)", () => {
+  it("labels draft/standard/final as Preview / Share / Best and keeps the blurb secondary", () => {
+    expect(mod.tierDisplayLabel({ value: "draft", label: "draft", blurb: "fast" })).toBe("Preview -- fast");
+    expect(mod.tierDisplayLabel({ value: "standard", label: "standard", blurb: "balanced" })).toBe("Share -- balanced");
+    expect(mod.tierDisplayLabel({ value: "final", label: "final", blurb: "production" })).toBe("Best -- production");
+  });
+
+  it("never puts Unified Billing in the user sentence", () => {
+    expect(mod.filmmakerCostLine("Pay per render (CF Unified Billing)")).toBe("Pay per render.");
+    expect(mod.filmmakerCostLine("CF Unified Billing")).toBe("Billed per render.");
+    expect(mod.filmmakerCostLine("")).toBe("Billed per render.");
+    expect(mod.filmmakerCostLine(undefined)).toBe("Billed per render.");
+  });
+
+  it("stills spend is a short billed-per-render line", () => {
+    const s = mod.spendSentence({ stills: true, cost: "Pay per render (CF Unified Billing)" });
+    expect(s).toMatch(/Stills preview/i);
+    expect(s).not.toMatch(/Unified Billing/i);
+    expect(s).toMatch(/billed per render|Pay per render/i);
+  });
+
+  it("motion + Best names the long wait", () => {
+    const s = mod.spendSentence({ stills: false, tier: "final", cost: "" });
+    expect(s).toMatch(/Motion/i);
+    expect(s).toMatch(/30 minutes/i);
+    expect(s).not.toMatch(/Unified Billing/i);
   });
 });
 

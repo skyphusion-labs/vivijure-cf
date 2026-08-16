@@ -7,9 +7,13 @@
 // as a static asset if the rewrite is not deployed yet.
 
 (function () {
+  // cf#647: primary nav is filmmaker surfaces. Modules and Settings stay
+  // reachable from the account menu (operators still use them daily).
   const DEFAULT_NAV = [
     { id: "planner", label: "Planner", href: "planner" },
     { id: "cast", label: "Cast", href: "cast" },
+  ];
+  const OPERATOR_NAV = [
     { id: "pipeline", label: "Modules", href: "modules" },
     { id: "settings", label: "Settings", href: "settings" },
   ];
@@ -57,4 +61,30 @@
   document.querySelectorAll('.brand-vivijure[href="planner"]').forEach((el) => {
     el.href = pageHref("planner");
   });
+
+  const menu = document.getElementById("account-menu");
+  if (menu) {
+    const primaryIds = new Set(nav.map((item) => item && item.id).filter(Boolean));
+    let host = menu.querySelector("[data-studio-account-ops]");
+    if (!host) {
+      host = document.createElement("div");
+      host.setAttribute("data-studio-account-ops", "");
+      host.className = "account-ops";
+      const prefs = menu.querySelector(".account-prefs");
+      if (prefs) menu.insertBefore(host, prefs);
+      else menu.appendChild(host);
+    }
+    host.replaceChildren();
+    for (const item of OPERATOR_NAV) {
+      if (!item || !item.href || primaryIds.has(item.id)) continue;
+      const a = document.createElement("a");
+      a.className = "account-row";
+      a.setAttribute("role", "menuitem");
+      a.href = pageHref(item.href);
+      a.textContent = item.label || item.id || item.href;
+      if (item.id && item.id === page) a.setAttribute("aria-current", "page");
+      host.appendChild(a);
+    }
+    if (!host.childNodes.length) host.remove();
+  }
 })();

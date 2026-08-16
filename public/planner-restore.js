@@ -249,17 +249,24 @@ function restoreRenderStagePanel(saved) {
   if (typeof saved.renderOverridesText === "string") {
     $("#planner-render-overrides").value = saved.renderOverridesText;
     if (saved.renderOverridesText.trim().length > 0) {
+      const adv = $("#planner-render-advanced");
+      if (adv) adv.open = true;
       const expert = $(".planner-overrides-expert");
       if (expert) expert.open = true;
     }
   }
   if (saved.moduleOverrides && window.plannerRenderConfig) {
     window.plannerRenderConfig.restore(saved.moduleOverrides);
-    const details = $(".planner-overrides-details");
+    const adv = $("#planner-render-advanced");
+    if (adv) adv.open = true;
+    const details = $("#planner-module-config") && $("#planner-module-config").closest("details");
     if (details) details.open = true;
   }
   const kfOnlyEl = $("#planner-keyframes-only");
-  if (kfOnlyEl) kfOnlyEl.checked = !!saved.keyframesOnly;
+  if (kfOnlyEl && Object.prototype.hasOwnProperty.call(saved, "keyframesOnly")) {
+    kfOnlyEl.checked = !!saved.keyframesOnly;
+  }
+  if (typeof syncRenderModeUi === "function") syncRenderModeUi();
   // Restore the title / credit-card text, and open the section if any was set so the
   // restored values are visible rather than hidden behind a collapsed <details>.
   const setFilmField = (sel, v) => {
