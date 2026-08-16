@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.32.2 -- 2026-08-16
+
+### fix(cf-flux-3-video): keyframes is a URL string (CF i2v schema)
+
+Dashboard `black-forest-labs/flux-3-video` Image-to-Video: `keyframes` is
+`string | array | string[] | array[]`. BFL "animate a still" is one URL
+string. `{ url }` objects and a top-level `image` field 7003. Module 0.1.2.
+
 ### fix(ui): leftover fleet VPC copy; upscale stays 2x/4x on the live pin
 
 beat-sync, the planner, and the demo catalog still said "fleet VPC" after
