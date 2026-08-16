@@ -317,7 +317,7 @@ jobs:
       # R2 is a CACHE/MIRROR only, never the source of truth. Skipped entirely when the account
       # secrets are absent, so a fork's build still succeeds and still produces the same artifact.
       - name: Mirror to R2 (cache only; skipped on forks)
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
