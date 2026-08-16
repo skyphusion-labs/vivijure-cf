@@ -5,6 +5,11 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(cf-flux-3-video): send keyframes[], not image
+
+AI Gateway 7003: "Unsupported field passed: image. Invalid value at keyframes."
+The model wants ordered keyframes as `{ url }`, not a top-level image URL.
+
 ## v1.32.0 -- 2026-08-16
 
 ### feat(render): Traefik URL doors, pool-sized shards, CF i2v catalog

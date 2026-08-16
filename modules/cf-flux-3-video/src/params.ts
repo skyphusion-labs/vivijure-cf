@@ -1,6 +1,7 @@
 // Pure helpers for cf-flux-3-video: Black Forest Labs FLUX 3 Video via CF AI Gateway.
 // Model: black-forest-labs/flux-3-video
-// Modes: t2v | i2v | v2v. We always use mode=i2v with the shot keyframe as the start image.
+// Modes: t2v | i2v | v2v. i2v uses keyframes[], not image (CF 7003:
+// "Unsupported field passed: image. Invalid value at keyframes").
 // Duration 5-20s; resolution hd (and fhd per catalog). generate_audio default off (core score/mux owns audio).
 
 import type { MotionBackendInput } from "./contract";
@@ -54,8 +55,8 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
   return {
     mode: "i2v",
     prompt: input.prompt,
-    // Start-frame image for i2v (catalog: "animates one or more reference images").
-    image: input.keyframe_url,
+    // Ordered start frames. Do NOT send `image` -- the model rejects it.
+    keyframes: [{ url: input.keyframe_url }],
     duration: clampDuration(input.seconds),
     resolution: config.resolution,
     generate_audio: config.generate_audio,
