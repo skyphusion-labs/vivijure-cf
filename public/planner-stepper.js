@@ -51,27 +51,25 @@ const $ = (sel) => document.querySelector(sel);
 // exists. The state lives in module scope alongside the pipeline state below.
 
 const PLANNER_STEPS = [
+  { id: "cast", label: "Cast" },
   { id: "plan", label: "Plan" },
-  { id: "cast", label: "Cast & Bundle" },
   { id: "render", label: "Render" },
   { id: "history", label: "Your films" },
 ];
 const PLANNER_STEP_ORDER = PLANNER_STEPS.map((s) => s.id);
 
 const stepState = {
-  current: "plan",
-  unlocked: { plan: true, cast: false, render: false, history: true },
+  current: "cast",
+  unlocked: { cast: true, plan: true, render: false, history: true },
 };
 
-// Recompute which steps are reachable from the live pipeline state. Plan +
-// Your films are always open; Cast opens once a storyboard exists; Render
-// opens once a bundle is staged (or a render is already in flight / loaded
-// from history). Audio is a fold on Render, not a rail step (cf#645).
+// Cast + Plan + Your films are always open. You pick people first so the
+// planner can put them in shots. Render still needs a staged bundle (or a
+// film already in flight / loaded from history).
 function computeStepUnlocked() {
-  const hasPlan = !!(planState && planState.storyboard);
   const hasBundle =
     !!(bundleState && bundleState.bundleKey) || !!(renderState && renderState.jobId);
-  return { plan: true, cast: hasPlan, render: hasBundle, history: true };
+  return { cast: true, plan: true, render: hasBundle, history: true };
 }
 
 function buildStepper() {
@@ -163,8 +161,8 @@ function paintStepper() {
   if (next) {
     const nextId = PLANNER_STEP_ORDER[curIdx + 1];
     next.disabled = !nextId || !stepState.unlocked[nextId];
-    if (stepState.current === "cast" && nextId === "render" && !stepState.unlocked.render) {
-      next.title = "Bundle on Cast & Bundle first";
+    if (stepState.current === "plan" && nextId === "render" && !stepState.unlocked.render) {
+      next.title = "Bundle the cast for this storyboard first";
     } else {
       next.title = "";
     }

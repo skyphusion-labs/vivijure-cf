@@ -223,9 +223,10 @@ function renderPlanResult(httpStatus, data, model, characters) {
     showPreflightSection();
     runPreflight();
     showBundleStage(data.storyboard, characters);
-    // v0.120.0: a fresh plan unlocks Cast & Bundle. Stay on the Plan
-    // step so the user can review the shots; the rail lights up.
+    // Shots exist. Take them back to Cast to attach faces / bundle for
+    // this storyboard. Cast was first so the brief already knew the names.
     refreshSteps();
+    showStep("cast");
     savePersistedState();
     return;
   }

@@ -159,7 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   buildStepper();
   stepState.unlocked = computeStepUnlocked();
-  showStep("plan");
+  showStep("cast");
   attachFieldHelp();
 
   if (appliedStash) {

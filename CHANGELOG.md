@@ -5,6 +5,12 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(planner): pick cast before you write the shots
+
+The rail locked Cast until a storyboard existed, so the planner wrote
+shots with nobody chosen. Cast is first and always open. Plan still
+sends those people in the brief.
+
 ## v1.32.3 -- 2026-08-16
 
 Planner first sitting so a stranger can finish a film, plus finish-chain honesty.

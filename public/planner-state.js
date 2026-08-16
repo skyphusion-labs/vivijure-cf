@@ -265,7 +265,7 @@ function startNewSession(opts) {
   showAudioSection();
   refreshProjectButtonGates();
   refreshSteps();
-  showStep("plan");
+  showStep("cast");
   savePersistedState();
   if (focusBrief && briefEl) briefEl.focus();
 }
