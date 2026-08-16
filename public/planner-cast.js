@@ -16,6 +16,7 @@ async function loadCast() {
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
     planState.castCatalog = Array.isArray(data.cast) ? data.cast : [];
+    if (typeof renderFacesPanel === "function") renderFacesPanel();
   } catch (err) {
     console.warn("loadCast failed; planner cast picker will show inline-only:", err);
     planState.castCatalog = [];

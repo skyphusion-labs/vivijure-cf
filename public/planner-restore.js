@@ -55,6 +55,7 @@ function afterPersistedStashApplied(stash) {
   loadCast().then(() => {
     renderCastPickerOptions();
     applyRestoredCastBindings();
+    if (typeof renderFacesPanel === "function") renderFacesPanel();
   });
   loadProjects().then(() => {
     if (planState.activeProjectId) {

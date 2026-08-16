@@ -169,6 +169,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadCast().then(() => {
       renderCastPickerOptions();
       applyRestoredCastBindings();
+      if (typeof renderFacesPanel === "function") renderFacesPanel();
     });
     loadProjects();
   }
