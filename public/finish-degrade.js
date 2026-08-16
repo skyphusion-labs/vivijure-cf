@@ -4,7 +4,7 @@
 // cast-select.js / model-catalog.js. No framework, no build step.
 //
 // THE PROBLEM THIS EXISTS FOR (cf#118):
-// When the video-finish tier is unavailable (VIDEO_FINISH_VPC unbound, the hosted-tenant
+// When the video-finish tier is unavailable (VIDEO_FINISH_URL unbound, the hosted-tenant
 // case), the orchestrator degrades HONESTLY rather than failing: it ships the per-shot
 // clips at assemble, or the silent film at mux, and says so. The poll payload has carried
 // that fact all along, `output.finish_unavailable {at, reason, delivered}` plus

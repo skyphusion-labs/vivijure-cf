@@ -5,6 +5,18 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(ui): leftover fleet VPC copy; upscale stays 2x/4x on the live pin
+
+beat-sync, the planner, and the demo catalog still said "fleet VPC" after
+doors became Traefik public HTTPS URLs. Labels, applied tag, and comments
+now match the door language. `vpc.call` / `vpc:elapsed_ms=` stay as
+historical event names so Loki and in-flight tags keep matching.
+
+finish-upscale still only exposes and sends scale 2|4. vivijure-upscale
+#109 honours `target_height` on origin/main, but the live serve pin is
+`1.1.1-serve` (tagged `v1.1.2` also predates #109), so a height knob
+would lie. Re-open that knob only after a serve pin includes #109.
+
 ## v1.32.1 -- 2026-08-16
 
 ### fix(cf-seedance): use_virtual_avatar so synthetic faces are not 7003'd

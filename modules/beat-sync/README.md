@@ -1,9 +1,10 @@
 # beat-sync
 
 A `score`-hook module (vivijure-module/2). It runs [librosa](https://librosa.org/) beat analysis on
-an always-on container over Workers VPC (Hetzner fleet) and returns **shot timing aligned to the
-music bed**, so cuts land on the beat. Every VPC hop records wall-clock start + duration (`vpc.call`
-structured log + optional `vpc:elapsed_ms=N` applied tag; cf#396).
+an always-on container over a Traefik public HTTPS door (`AUDIO_BEAT_SYNC_URL`) and returns
+**shot timing aligned to the music bed**, so cuts land on the beat. Every door hop records
+wall-clock start + duration (`vpc.call` structured log + optional `vpc:elapsed_ms=N` applied tag;
+the event name is historical, cf#396).
 
 ## Where it fits
 
@@ -21,7 +22,7 @@ flowchart LR
   subgraph score["score chain (film audio · ui.order)"]
     mg["music-gen · 10"]
     ng["narration-gen · 20"]
-    bs["beat-sync<br/>(librosa, fleet VPC) · 30"]
+    bs["beat-sync<br/>(librosa, Traefik HTTPS door) · 30"]
   end
   score -. "beat-aligned timing" .-> asm
   style bs fill:#dff,stroke:#0aa,stroke-width:2px
@@ -47,13 +48,13 @@ The `audio_url` + `audio_key` are runtime fields the core presigns and passes in
 time, not part of the schema.
 
 **Self-host**: service `vivijure-module-beat-sync`, bound into the core as `MODULE_BEAT_SYNC`.
-Binding: `AUDIO_BEAT_SYNC_VPC` (the audio-beat-sync container over Workers VPC; Hetzner fleet, issue
-#83). No secrets. See `wrangler.toml`.
+Door: `AUDIO_BEAT_SYNC_URL` (the audio-beat-sync container behind a Traefik public HTTPS door;
+issue #83). No secrets. See `wrangler.toml`.
 
 ## Contract
 
 - **Hook**: `score` (cardinality `chain`). **Provides**: `librosa-beat-sync`,
-  "Beat sync (librosa, fleet VPC)". `ui { section: "score", order: 30 }`.
+  "Beat sync (librosa)". `ui { section: "score", order: 30 }`.
 - **Sync**: analysis completes in one `POST /invoke` (no `/poll`).
 
 ## License

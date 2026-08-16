@@ -176,7 +176,7 @@ describe("subtitle module invoke (#602 async + honest degrade)", () => {
     expect(json.ok).toBe(true);
     expect(json.output.film_key).toBe("renders/film-x/film_subbed.mp4"); // the captioned film, not the original
     expect(json.output.applied).toContain("subtitle");
-    // cf#396: wall-clock fleet VPC attribution on success (job elapsed from submit -> terminal)
+    // cf#396: wall-clock fleet door attribution on success (job elapsed from submit -> terminal)
     expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
     expect(json.output.degraded).toBeUndefined();
     expect(checkHookOutput("film.finish", json.output).pass).toBe(true);

@@ -851,7 +851,7 @@ function finalizeRenderPoll(data) {
 
   if (data.status === "COMPLETED") {
     const out = data.output;
-    // cf#118: the video-finish tier can be unavailable (VIDEO_FINISH_VPC unbound on a
+    // cf#118: the video-finish tier can be unavailable (VIDEO_FINISH_URL unbound on a
     // hosted tenant). The orchestrator then degrades honestly and SAYS SO in the payload;
     // the panel used to drop that on the floor and paint a plain green "completed".
     const degrade = window.finishDegrade ? window.finishDegrade.degradeFrom(out) : null;

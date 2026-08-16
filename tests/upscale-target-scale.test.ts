@@ -1,15 +1,19 @@
 /// <reference types="node" />
 // The upscale must TARGET the delivery resolution instead of applying a blind 2x.
 //
-// MEASURED, from the shipped vivijure-upscale handler at origin/main, because the whole design
-// turns on it and the module's own comment does not say it:
+// MEASURED 2026-08-16 against the LIVE serve pin, not origin/main:
+//   `ghcr.io/skyphusion-labs/vivijure-upscale:1.1.1-serve` (fleet compose default).
+//   Tagged v1.1.2 is the same handler train. Both still do:
 //
-//   handler.py:446, :623, :714 -- `final_scale = 4 if int(inp.get("scale", 2) or 2) >= 4 else 2`
+//     final_scale = 4 if int(inp.get("scale", 2) or 2) >= 4 else 2
 //
-// Three call sites, identical. The handler HARD-CLAMPS to exactly 2 or 4, and `int()` TRUNCATES,
-// so a fractional request is silently rounded DOWN rather than refused. Asking for 2.18 gets you
-// 2 and no error -- a plausible wrong value, which is the failure mode this whole defect is made
-// of. So the panel must choose deliberately from {2, 4}; it must never compute a float.
+// The handler HARD-CLAMPS to exactly 2 or 4, and `int()` TRUNCATES, so a fractional request
+// is silently rounded DOWN rather than refused. Asking for 2.18 gets you 2 and no error -- a
+// plausible wrong value, which is the failure mode this whole defect is made of. So the panel
+// must choose deliberately from {2, 4}; it must never compute a float.
+//
+// origin/main #109 honours `target_height`. That commit is untagged and not on this pin, so
+// this suite still asserts the 2|4 contract. A height knob against the live pin would lie.
 //
 //   handler.py:281 -- `out_w, out_h = _capped(sw * final_scale, sh * final_scale, MAX_LONG_EDGE)`
 //

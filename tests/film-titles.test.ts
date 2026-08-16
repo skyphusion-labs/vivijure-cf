@@ -140,7 +140,7 @@ describe("film-titles module invoke (#602 async + #207 regression)", () => {
     expect(json.ok).toBe(true);
     expect(json.output.film_key).toBe("renders/film-x/film_titled.mp4"); // the carded film, not the original
     expect(json.output.applied).toContain("film-titles");
-    // cf#396: wall-clock fleet VPC attribution on success (job elapsed from submit -> terminal)
+    // cf#396: wall-clock fleet door attribution on success (job elapsed from submit -> terminal)
     expect(json.output.applied.find((t) => t.startsWith("vpc:elapsed_ms="))).toMatch(/^vpc:elapsed_ms=\d+$/);
     expect(json.output.degraded).toBeUndefined();
   });

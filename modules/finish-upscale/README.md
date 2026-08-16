@@ -39,7 +39,7 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `scale` | int (2..4) | `2` | upscale factor (`2` = 2x, `4` = 4x) |
+| `scale` | int (`2` or `4`) | `2` | upscale factor. The live serve pin (`vivijure-upscale:1.1.1-serve`) only honours 2x or 4x. `target_height` exists on upscale origin/main (#109) but that commit is untagged and unpinned, so this module does not send it and the planner does not expose a height knob. |
 | `model` | enum `realesr-animevideov3` / `RealESRGAN_x4plus` | `realesr-animevideov3` | Real-ESRGAN model. `RealESRGAN_x4plus` (photoreal texture, #585) is an explicit opt-in and currently CUDA-OOMs on long/high-fps clips until the handler gains tiled inference (upscale v0.2.9) |
 
 To self-host (service `vivijure-module-finish-upscale`, bound into the core as `MODULE_UPSCALE`):

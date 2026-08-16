@@ -465,7 +465,7 @@ function buildHistoryRow(r, childrenByParent) {
       narrate.textContent = "narrate";
       narrate.title = "synthesize narration with the installed score module and mux it onto this video";
       // cf#118/#229: narration GENERATES a bed (score) and then muxes it. The generate leg works
-      // on a VPC-less studio; the mux leg cannot, and a compound action is dead if any leg is.
+      // on a studio with no video-finish door; the mux leg cannot, and a compound action is dead if any leg is.
       // So it declares the mux capability, same as add-audio -- the hook it also drives is fine.
       narrate.dataset.hook = "capability:video-finish";
       narrate.addEventListener("click", () => addNarrationToRender(r, narrate));

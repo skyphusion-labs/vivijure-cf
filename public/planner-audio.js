@@ -547,7 +547,7 @@ if (typeof window !== "undefined") window.__plannerHelpers = { snapToBeats };
 // ---------- Beat-sync (v0.106.0) ----------
 //
 // Server-side beat analysis: POST /api/audio/analyze invokes the beat-sync score module
-// (librosa on the fleet audio-beat-sync container over Workers VPC) and returns the beat plan
+// (librosa on the fleet audio-beat-sync container over its Traefik HTTPS door) and returns the beat plan
 // inline (one synchronous request, no jobId/poll), then we apply its per-scene beat-aligned
 // target_seconds.
 const PLANNER_MAX_SCENES = 50; // mirrors STORYBOARD_MAX_SCENES in src/storyboard-validate.ts

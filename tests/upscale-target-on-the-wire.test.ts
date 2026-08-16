@@ -75,8 +75,10 @@ describe("cf507b on the wire: the target decides the factor the GPU is asked for
     expect(b.clip_key).toBe("renders/p/shot_01.mp4");
     expect(b.output_key).toBe("renders/p/shot_01_up.mp4");
     expect(b.model).toBe("realesr-animevideov3");
-    // and no delivery_* leaks onto the wire: the handler takes a factor, not a target
+    // and no delivery_* leaks onto the wire: the live pin takes a factor, not a target.
+    // origin/main #109 honours target_height; 1.1.1-serve ignores it. Do not send the key.
     expect(b.delivery_width).toBeUndefined();
     expect(b.delivery_height).toBeUndefined();
+    expect(b.target_height).toBeUndefined();
   });
 });
