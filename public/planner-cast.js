@@ -266,12 +266,21 @@ function syncCastFromBindings() {
 }
 
 async function addCastFromPlanner() {
-  const input = $("#planner-faces-new-name");
+  const input = $("#planner-faces-find") || $("#planner-faces-new-name");
   const status = $("#planner-faces-status");
   const name = input ? input.value.trim() : "";
   if (!name) {
     if (status) status.textContent = "Type a name first.";
     if (input) input.focus();
+    return;
+  }
+  const existing = (planState.castCatalog || []).find(
+    (c) => (c.name || "").toLowerCase() === name.toLowerCase()
+  );
+  if (existing) {
+    setCastInFilm(existing.id, true);
+    if (input) input.value = "";
+    if (status) status.textContent = existing.name + " is in this film";
     return;
   }
   const btn = $("#planner-faces-add");
@@ -303,85 +312,129 @@ async function addCastFromPlanner() {
   }
 }
 
+function afterFacesBindingChange() {
+  syncCastFromBindings();
+  if (planState.storyboard) {
+    const planned = Array.isArray(planState.storyboard.use_characters)
+      ? planState.storyboard.use_characters.slice()
+      : [];
+    for (const s of Object.keys(planState.castBindings || {})) {
+      if (planned.indexOf(s) === -1) planned.push(s);
+    }
+    planState.storyboard.use_characters = planned;
+    if (typeof refreshBundleCastRows === "function") {
+      refreshBundleCastRows(planState.storyboard, planState.cast);
+    }
+  }
+  persistSoon();
+  if (typeof refreshCastLoraWarning === "function") refreshCastLoraWarning();
+  renderFacesPanel();
+}
+
+function setCastInFilm(castId, on) {
+  const status = $("#planner-faces-status");
+  if (on) {
+    let slot = null;
+    for (const [s, id] of Object.entries(planState.castBindings || {})) {
+      if (id === castId) { slot = s; break; }
+    }
+    if (!slot) slot = nextFreeSlot();
+    if (!slot) {
+      if (status) status.textContent = "this film already has four people";
+      return false;
+    }
+    bindSlotToCast(slot, castId);
+    const pick = document.querySelector('.planner-cast-row[data-slot="' + slot + '"] .planner-cast-pick');
+    if (pick) pick.value = String(castId);
+  } else {
+    for (const [s, id] of Object.entries(planState.castBindings || {})) {
+      if (id === castId) {
+        unbindSlot(s);
+        const row = document.querySelector('.planner-cast-row[data-slot="' + s + '"]');
+        if (row) {
+          const inc = row.querySelector("[data-cast-include]");
+          if (inc) inc.checked = false;
+        }
+        const pick = document.querySelector('.planner-cast-row[data-slot="' + s + '"] .planner-cast-pick');
+        if (pick) pick.value = "";
+        if (planState.storyboard && Array.isArray(planState.storyboard.use_characters)) {
+          planState.storyboard.use_characters = planState.storyboard.use_characters.filter((x) => x !== s);
+        }
+      }
+    }
+  }
+  afterFacesBindingChange();
+  return true;
+}
+
+function facesFindQuery() {
+  const el = $("#planner-faces-find");
+  return el ? el.value.trim().toLowerCase() : "";
+}
+
 function renderFacesPanel() {
   const empty = $("#planner-faces-empty");
   const list = $("#planner-faces-list");
-  const more = $("#planner-faces-more");
-  if (!empty || !list) return;
+  const inBox = $("#planner-faces-in");
+  const chips = $("#planner-faces-chips");
+  const countEl = $("#planner-faces-in-count");
+  if (!list) return;
   list.innerHTML = "";
+  if (chips) chips.innerHTML = "";
   const catalog = planState.castCatalog || [];
-  empty.hidden = catalog.length > 0;
-  if (more) more.hidden = catalog.length === 0;
-  if (catalog.length === 0) return;
-
+  if (empty) empty.hidden = catalog.length > 0;
   const boundIds = new Set(Object.values(planState.castBindings || {}));
-  for (const c of catalog) {
-    const row = document.createElement("label");
-    row.className = "planner-faces-row";
-    const check = document.createElement("input");
-    check.type = "checkbox";
-    check.checked = boundIds.has(c.id);
-    check.dataset.castId = c.id;
+  const bound = catalog.filter((c) => boundIds.has(c.id));
+  if (inBox) inBox.hidden = bound.length === 0;
+  if (countEl) countEl.textContent = bound.length ? bound.length + " / 4" : "";
+  if (chips) {
+    for (const c of bound) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "planner-faces-chip";
+      chip.textContent = (c.name || "Untitled") + " ×";
+      chip.title = "Remove from this film";
+      chip.addEventListener("click", () => setCastInFilm(c.id, false));
+      chips.appendChild(chip);
+    }
+  }
+  const q = facesFindQuery();
+  const pool = catalog.filter((c) => !boundIds.has(c.id));
+  const shown = q
+    ? pool.filter((c) => (c.name || "").toLowerCase().includes(q))
+    : pool;
+  if (catalog.length === 0) return;
+  if (shown.length === 0) {
+    const miss = document.createElement("p");
+    miss.className = "planner-faces-none";
+    miss.textContent = q
+      ? "No match. Hit Add to create “" + ($("#planner-faces-find") || {}).value + "”."
+      : (bound.length >= 4 ? "This film is full (4)." : "Everyone else is already in this film.");
+    list.appendChild(miss);
+    return;
+  }
+  const cap = q ? 20 : 8;
+  shown.slice(0, cap).forEach((c) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "planner-faces-pick";
     const name = document.createElement("span");
     name.className = "planner-faces-name";
     name.textContent = c.name || "Untitled";
     const note = document.createElement("span");
     note.className = "planner-faces-note";
     const hasFace = !!(c.portrait_key || (c.ref_keys && c.ref_keys.length));
-    note.textContent = hasFace ? "has a face" : "add a face photo on Cast";
-    check.addEventListener("change", () => {
-      if (check.checked) {
-        let slot = null;
-        for (const [s, id] of Object.entries(planState.castBindings || {})) {
-          if (id === c.id) { slot = s; break; }
-        }
-        if (!slot) slot = nextFreeSlot();
-        if (!slot) {
-          check.checked = false;
-          const status = $("#planner-faces-status");
-          if (status) status.textContent = "this film already has four people";
-          return;
-        }
-        bindSlotToCast(slot, c.id);
-        const pick = document.querySelector('.planner-cast-row[data-slot="' + slot + '"] .planner-cast-pick');
-        if (pick) pick.value = String(c.id);
-      } else {
-        for (const [s, id] of Object.entries(planState.castBindings || {})) {
-          if (id === c.id) {
-            unbindSlot(s);
-            const row = document.querySelector('.planner-cast-row[data-slot="' + s + '"]');
-            if (row) {
-              const inc = row.querySelector("[data-cast-include]");
-              if (inc) inc.checked = false;
-            }
-            const pick = document.querySelector('.planner-cast-row[data-slot="' + s + '"] .planner-cast-pick');
-            if (pick) pick.value = "";
-            if (planState.storyboard && Array.isArray(planState.storyboard.use_characters)) {
-              planState.storyboard.use_characters = planState.storyboard.use_characters.filter((x) => x !== s);
-            }
-          }
-        }
-      }
-      syncCastFromBindings();
-      if (planState.storyboard) {
-        const planned = Array.isArray(planState.storyboard.use_characters)
-          ? planState.storyboard.use_characters.slice()
-          : [];
-        for (const s of Object.keys(planState.castBindings || {})) {
-          if (planned.indexOf(s) === -1) planned.push(s);
-        }
-        planState.storyboard.use_characters = planned;
-        if (typeof refreshBundleCastRows === "function") {
-          refreshBundleCastRows(planState.storyboard, planState.cast);
-        }
-      }
-      persistSoon();
-      refreshCastLoraWarning();
-    });
-    row.appendChild(check);
+    note.textContent = hasFace ? "has a face" : "no face yet";
+    row.addEventListener("click", () => setCastInFilm(c.id, true));
     row.appendChild(name);
     row.appendChild(note);
     list.appendChild(row);
+  });
+  if (shown.length > cap) {
+    const more = document.createElement("p");
+    more.className = "planner-faces-none";
+    more.textContent = (shown.length - cap) + " more. Type to find them.";
+    list.appendChild(more);
   }
 }
 
