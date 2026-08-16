@@ -311,10 +311,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // listens for the appropriate event (input on text + number,
   // change on selects).
   const facesAdd = $("#planner-faces-add");
-  const facesName = $("#planner-faces-new-name");
+  const facesFind = $("#planner-faces-find");
   if (facesAdd) facesAdd.addEventListener("click", addCastFromPlanner);
-  if (facesName) {
-    facesName.addEventListener("keydown", (e) => {
+  if (facesFind) {
+    facesFind.addEventListener("input", () => {
+      if (typeof renderFacesPanel === "function") renderFacesPanel();
+    });
+    facesFind.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
         addCastFromPlanner();

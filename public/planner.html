@@ -293,18 +293,19 @@
         <h2 class="planner-stage-title">Who is in this movie</h2>
         <span id="planner-faces-status" class="planner-status"></span>
       </header>
-      <p class="planner-stage-hint">Add who is in this film, then write the shots. A face photo is enough to preview. Training is optional.</p>
+      <p class="planner-stage-hint">This film can have up to four people. Pick from the ones you already have, or type a new name.</p>
+      <div id="planner-faces-in" class="planner-faces-in" hidden>
+        <p class="planner-faces-in-label">In this film <span id="planner-faces-in-count"></span></p>
+        <div id="planner-faces-chips" class="planner-faces-chips"></div>
+      </div>
       <div class="planner-faces-add">
-        <input id="planner-faces-new-name" class="planner-input" type="text" maxlength="80" placeholder="Name (e.g. Mira)" autocomplete="off" />
+        <input id="planner-faces-find" class="planner-input" type="search" maxlength="80" placeholder="Find or add a name" autocomplete="off" />
         <button id="planner-faces-add" type="button" class="planner-primary">Add</button>
       </div>
       <div id="planner-faces-empty" class="planner-faces-empty" hidden>
-        <p>No saved characters yet. Type a name and hit Add, or create them on the Cast page (top nav).</p>
+        <p>No saved characters yet. Type a name and hit Add.</p>
       </div>
       <div id="planner-faces-list" class="planner-faces-list"></div>
-      <p id="planner-faces-more" class="planner-faces-more" hidden>
-        <a href="cast#new">Create another character</a>
-      </p>
       <div id="planner-cast-lora-warning" class="planner-lora-preflight-warning" role="status" hidden></div>
     </section>
 

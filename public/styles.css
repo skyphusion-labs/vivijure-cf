@@ -730,6 +730,14 @@ details.planner-bundle-consistent {
 .planner-lora-preflight-link:hover { text-decoration: underline; }
 .planner-history-mode-lora-failsafe { color: #e8b84a; border-color: #5b4a20; }
 
+.planner-faces-in { margin: 8px 0 12px; }
+.planner-faces-in-label { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.planner-faces-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.planner-faces-chip {
+  border: 1px solid var(--line); background: var(--panel-2); color: inherit;
+  border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+}
+.planner-faces-chip:hover { border-color: var(--accent); }
 .planner-faces-add {
   display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
   margin: 8px 0 12px;
@@ -740,16 +748,16 @@ details.planner-bundle-consistent {
   padding: 16px; border: 1px dashed var(--line); border-radius: 12px; background: var(--panel-2);
 }
 .planner-faces-empty p { margin: 0; font-size: 15px; }
-.planner-faces-create { text-decoration: none; }
-.planner-faces-list { display: grid; gap: 8px; }
-.planner-faces-row {
-  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
-  padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-2);
-  cursor: pointer;
+.planner-faces-list { display: grid; gap: 4px; max-height: 240px; overflow: auto; }
+.planner-faces-pick {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  width: 100%; text-align: left; border: 1px solid transparent; background: transparent;
+  color: inherit; border-radius: 8px; padding: 6px 8px; cursor: pointer; font: inherit;
 }
+.planner-faces-pick:hover { background: var(--panel-2); border-color: var(--line); }
 .planner-faces-name { font-weight: 600; }
 .planner-faces-note { color: var(--muted); font-size: 12px; }
-.planner-faces-more { margin: 4px 0 0; font-size: 13px; }
+.planner-faces-none { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
 .planner-bundle-consistent { margin-top: 8px; }
 
 .planner-render-mode {
