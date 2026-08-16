@@ -176,10 +176,11 @@ async function submit(
     }
   }
   try {
+    const preview = buildPreviewBody(input, req.config);
     const r = await fetch(endpoint(route, endpointId) + "/run", {
       method: "POST",
       headers: { ...auth(route), "content-type": "application/json" },
-      body: JSON.stringify(withTenantR2Body(buildPreviewBody(input, req.config), tenantR2)),
+      body: JSON.stringify(withTenantR2Body(preview, tenantR2)),
     });
     if (!r.ok) return { ok: false, error: "keyframe /run -> " + r.status };
     const jobId = ((await r.json()) as { id?: string }).id;
@@ -188,7 +189,8 @@ async function submit(
     // permanently -- and a failure RATE needs this denominator, not only the failures.
     const submittedAt = Date.now();
     await recordRunpodJob(env.TELEMETRY_DB, { jobId, module: MANIFEST.name, outcome: "submitted", submittedAtMs: submittedAt });
-    return { ok: true, pending: true, poll: encodePoll({ jobId, project: input.project, submittedAt }), jobId };  // jobId (#318): lets the core read this RunPod job's keyframe_done snapshot
+    const project = typeof preview.input.project === "string" ? preview.input.project : input.project;
+    return { ok: true, pending: true, poll: encodePoll({ jobId, project, submittedAt }), jobId };  // jobId (#318): lets the core read this RunPod job's keyframe_done snapshot
   } catch (e) {
     return { ok: false, error: "keyframe submit failed: " + (e as Error).message };
   }

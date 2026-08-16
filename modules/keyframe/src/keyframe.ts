@@ -3,6 +3,7 @@
 // token. No I/O here, so it unit-tests without the runtime, the GPU, or spend.
 
 import type { KeyframeInput, KeyframeShot } from "./contract";
+import { resolveProjectForBundle } from "../../_shared/bundle-project";
 
 const TIERS = ["draft", "standard", "final"] as const;
 type Tier = (typeof TIERS)[number];
@@ -39,7 +40,7 @@ export function buildPreviewBody(input: KeyframeInput, cfg: Record<string, unkno
 } {
   const body: Record<string, unknown> = {
     action: "preview", // keyframes only: train/reuse LoRA -> SDXL keyframes, NO i2v, NO mp4
-    project: input.project,
+    project: resolveProjectForBundle(input.bundle_key, input.project),
     bundle_key: input.bundle_key,
     quality_tier: clampTier(cfg.quality_tier),
   };
