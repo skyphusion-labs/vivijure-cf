@@ -97,7 +97,7 @@ describe("cf-flux-3-video params", () => {
     expect(p).toMatchObject({
       mode: "i2v",
       prompt: "slow camera push-in",
-      keyframes: [{ url: "https://r2.example/k.png" }],
+      keyframes: ["https://r2.example/k.png"],
       resolution: "fhd",
       generate_audio: false,
     });

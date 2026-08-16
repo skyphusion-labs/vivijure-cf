@@ -55,8 +55,8 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
   return {
     mode: "i2v",
     prompt: input.prompt,
-    // Ordered start frames. Do NOT send `image` -- the model rejects it.
-    keyframes: [{ url: input.keyframe_url }],
+    // Ordered start frames. { url } still 7003'd. Catalog wants image URIs in keyframes[].
+    keyframes: [input.keyframe_url],
     duration: clampDuration(input.seconds),
     resolution: config.resolution,
     generate_audio: config.generate_audio,
