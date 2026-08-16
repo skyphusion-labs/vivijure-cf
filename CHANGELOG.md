@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.32.0 -- 2026-08-16
+
+### feat(render): Traefik URL doors, pool-sized shards, CF i2v catalog
+
+Finish/media doors are config URL vars, not VPC. Scatter default is
+min(shots, RENDER_SHARD_MAX or 20). Tenant catalog publishes
+cf-grok-video / cf-seedance / cf-flux-3-video / cf-hh1-r2v.
+
 ### fix(finish): keep billed artifacts when the satellite returns output_key (cf#604)
 
 `finish-rife` and `finish-blender` used to read `clip_key` only. A COMPLETED
