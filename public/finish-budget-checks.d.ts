@@ -51,13 +51,16 @@ export interface BindingCost {
 
 export interface FinishBudget {
   /** "derived" carries a number (or null for an empty chain, which constrains nothing).
-   *  "undeclared" and "unavailable" are absences with DIFFERENT owners and must not be merged. */
-  state: "derived" | "undeclared" | "unavailable";
+   *  "undeclared" and "unavailable" are absences with DIFFERENT owners and must not be merged.
+   *  "unresolved" (cf#593) is a named selection the studio does not serve -- not an empty chain. */
+  state: "derived" | "undeclared" | "unavailable" | "unresolved";
   maxSeconds: number | null;
   binding?: BindingCost;
   chain: FinishModuleLike[];
   declared: Array<{ module: FinishModuleLike; cost: NormalizedCost }>;
   undeclared: FinishModuleLike[];
+  /** Named-but-not-serving module ids. Empty except when state is "unresolved". */
+  missing: string[];
 }
 
 /** Same shape the server preflight emits, so these merge into the existing issue list. */
@@ -82,11 +85,17 @@ export interface StoryboardLike {
 export const DERIVED: string;
 export const UNDECLARED: string;
 export const UNAVAILABLE: string;
+export const UNRESOLVED: string;
 export function label(mod: FinishModuleLike | null | undefined): string;
 export function selectedFinishModules(
   serving: FinishModuleLike[] | null | undefined,
   selection?: FinishSelection | null,
 ): FinishModuleLike[];
+/** Mirrors core's ChainSelection: serving intersection plus named-but-not-serving ids (cf#593). */
+export function selectedFinishChain(
+  serving: FinishModuleLike[] | null | undefined,
+  selection?: FinishSelection | null,
+): { modules: FinishModuleLike[]; missing: string[] };
 export function costOf(mod: FinishModuleLike | null | undefined): NormalizedCost | null;
 export function finishBudget(
   serving: FinishModuleLike[] | null | undefined,

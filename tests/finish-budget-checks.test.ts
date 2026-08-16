@@ -63,6 +63,20 @@ describe("cf#540 selection mirrors the core's selectForChain for the finish hook
     const picked = checks.selectedFinishModules([UPSCALE, BLENDER], sel);
     expect(picked.map((m) => m.name)).not.toContain("finish-upscale");
   });
+
+  it("cf#593: a named module the registry does not serve is MISSING, not silently dropped", () => {
+    const sel: FinishSelection = { mode: "named", modules: ["ghost"] };
+    const picked = checks.selectedFinishChain([UPSCALE, BLENDER], sel);
+    expect(picked.modules).toEqual([]);
+    expect(picked.missing).toEqual(["ghost"]);
+  });
+
+  it("cf#593: a mix of serving + ghost keeps the serving module AND reports the ghost", () => {
+    const sel: FinishSelection = { mode: "named", modules: ["finish-upscale", "ghost"] };
+    const picked = checks.selectedFinishChain([UPSCALE, BLENDER], sel);
+    expect(picked.modules.map((m) => m.name)).toEqual(["finish-upscale"]);
+    expect(picked.missing).toEqual(["ghost"]);
+  });
 });
 
 describe("cf#540 a partial finish_cost declaration counts as NO declaration", () => {
@@ -111,6 +125,31 @@ describe("cf#540 the ceiling is DERIVED from the manifest and carries no constan
     expect(b.state).toBe("derived");
     expect(b.maxSeconds).toBeNull();
     expect(checks.finishBudgetIssues(sb([{ id: "s1", target_seconds: 60 }]), b)).toEqual([]);
+  });
+
+  it("cf#593: naming a ghost is UNRESOLVED, not derived-empty (those two states must not collapse)", () => {
+    const sel: FinishSelection = { mode: "named", modules: ["ghost"] };
+    const b = checks.finishBudget([UPSCALE, BLENDER], sel, false);
+    expect(b.state).toBe("unresolved");
+    expect(b.missing).toEqual(["ghost"]);
+    expect(b.chain).toEqual([]);
+    expect(b.maxSeconds).toBeNull();
+    // CONTROL: the same serving list with no selection is still the default chain, not unresolved.
+    const def = checks.finishBudget([UPSCALE, BLENDER], undefined, false);
+    expect(def.state).not.toBe("unresolved");
+    expect(def.chain.map((m) => m.name)).toEqual(["finish-upscale"]);
+  });
+
+  it("cf#593: unresolved is an ERROR that names the missing module (fail closed, not a silent admit)", () => {
+    const sel: FinishSelection = { mode: "named", modules: ["ghost"] };
+    const b = checks.finishBudget([UPSCALE], sel, false);
+    const issues = checks.finishBudgetIssues(sb([{ id: "s1", target_seconds: 4 }]), b);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].level).toBe("error");
+    expect(issues[0].scope).toBe("finish");
+    expect(issues[0].message).toContain("ghost");
+    expect(issues[0].message).toContain("not an empty chain");
+    expect(issues[0].message).not.toMatch(/\bis fine\b|\bno problem\b|\bsafe\b/i);
   });
 });
 

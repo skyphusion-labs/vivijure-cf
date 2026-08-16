@@ -233,7 +233,9 @@ describe("cf#537 door sweep: every site that hands a finish_config to a mint als
     // agent door has no bag, so if it forwarded `a.finish_select` raw, an untrusted body would reach
     // the job doc unvalidated. Pin that it goes through the shared parser.
     const idx = readFileSync(resolve(SRC, "index.ts"), "utf8");
-    expect(idx.includes("parseHookSelection({ finish: a.finish_select })")).toBe(true);
+    expect(idx.includes("resolveAgentFinishSelect(a.finish_select, a.finish_config)")).toBe(true);
     expect(idx, "the raw body field must never be forwarded directly").not.toMatch(/finish_select: a\.finish_select\b/);
+    // cf#386: the resolved selection is what is minted, never the raw body and never a silent default.
+    expect(idx).toMatch(/finish_select:\s*filmFinishSelect/);
   });
 });

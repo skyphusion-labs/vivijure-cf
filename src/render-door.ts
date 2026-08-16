@@ -25,15 +25,20 @@
 //
 // REFUSALS ARE RETURNED, NOT THROWN. The caller owns HTTP: it decides whether a refusal becomes a
 // thrown 400 or a `json(..., 503)` body. It also keeps this module importable by index.ts with no cycle.
-import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
+import type { HookSelection, RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import {
   servingForHook,
   motionBackendPreflightError,
   motionConfigPreflightError,
   localGpuKeyframePreflightError,
 } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { selectForChain } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
+import { parseHookSelection } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { isSafeBundleKey } from "./shared";
+
+/** Keys in `finish_config` that are orchestrator modifiers, not finish modules. */
+const FINISH_CONFIG_NON_MODULE_KEYS = new Set(["finish-order"]);
 
 /** What a door refuses with. `status` is the host status the caller should produce. */
 export interface RenderRefusal {
@@ -170,6 +175,13 @@ export interface RenderModulePreflight {
   motionConfig?: Record<string, unknown>;
   /** { slot: castPublicId } bindings, or undefined when this door sends none. */
   castLoras?: Record<string, unknown>;
+  /**
+   * cf#593: the finish participation this render will persist. Named-but-not-serving must 400
+   * here, before keyframe spend; core still fails the job at enterFinishPhase as a backstop.
+   * Omitted / `{ mode: "default" }` has no missing set (default participation just skips what
+   * is not installed).
+   */
+  finishSelect?: HookSelection;
 }
 
 /** A door that has both halves. */
@@ -210,6 +222,48 @@ export function configMapShapeError(label: string, value: unknown): string | nul
     return `${label} must be a JSON object (a { key: value } map), not ${/^[aeiou]/.test(actual) ? "an" : "a"} ${actual}`;
   }
   return null;
+}
+
+/**
+ * cf#386: agent / MCP / Slate `POST /api/render/film` omit rule for the per-shot finish hook.
+ *
+ * `finish_select` is the explicit module list. `finish_config` is knobs. The Record shape of
+ * `finish_config` cannot survive a JSON round trip as "absent vs empty", so this door resolves
+ * the participation statement BEFORE the job is minted:
+ *
+ *   - `finish_select` present and well-formed -> that selection (named list or default)
+ *   - both omitted -> `{ mode: "named", modules: [] }` (no finish; do not bill default rife+upscale)
+ *   - `finish_config` present, `finish_select` absent -> named list = config keys minus
+ *     orchestrator modifiers (`finish-order`)
+ *
+ * Explicit empty (`finish_select: { mode: "named", modules: [] }` or `finish_config: {}`) is
+ * also no finish. `{ mode: "default" }` is how a caller who wants the participation set still
+ * asks for it. The panel door does not use this helper: it keeps sending no selection, which
+ * core still treats as default participation (no planner UX change).
+ */
+export function resolveAgentFinishSelect(
+  finishSelectRaw: unknown,
+  finishConfig: Record<string, Record<string, unknown>> | undefined,
+): HookSelection {
+  const parsed = parseHookSelection({ finish: finishSelectRaw })?.finish;
+  if (parsed) return parsed;
+  if (finishConfig == null) return { mode: "named", modules: [] };
+  const modules = Object.keys(finishConfig).filter(
+    (k) => k.trim() !== "" && !FINISH_CONFIG_NON_MODULE_KEYS.has(k),
+  );
+  return { mode: "named", modules };
+}
+
+/** cf#593: a named finish module this studio does not serve is a hard error, not a silent drop. */
+export function finishSelectPreflightError(
+  modules: RegisteredModule[],
+  selection: HookSelection | undefined,
+): string | null {
+  if (!selection || selection.mode !== "named") return null;
+  const serving = servingForHook(modules, "finish");
+  const picked = selectForChain(serving, "finish", selection);
+  if (!picked.missing.length) return null;
+  return `finish module(s) requested but not serving: ${picked.missing.join(", ")}`;
 }
 
 /**
@@ -292,6 +346,11 @@ export async function preflightRenderModules(
       if (pairErr) return bad(pairErr);
     }
   }
+
+  // cf#593: named finish that is not serving fails here, before any keyframe spend. Core still
+  // fails the job at enterFinishPhase if a caller bypasses this door.
+  const finishErr = finishSelectPreflightError(input.modules, input.finishSelect);
+  if (finishErr) return bad(finishErr);
 
   // Cast LoRAs. A bound-but-not-ready binding FAILS HARD (#738/#739): never a silent drop to a generic
   // render, which is the honest-failures rule (#245/#249). A door that sends no bindings resolves to

@@ -5,9 +5,6 @@ import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifes
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
-// cf#537: the agent door validates its own untrusted `finish_select` with the SAME parser the panel
-// door's overrides bag goes through, so the two doors cannot drift on what a valid selection is.
-import { parseHookSelection } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
@@ -70,6 +67,7 @@ import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
+  resolveAgentFinishSelect,
   type RenderDoorProfile,
 } from "./render-door";
 import {
@@ -861,6 +859,7 @@ const hSubmitRender: Handler = async (req, env) => {
     keyframeBackend: mapped.keyframe_backend,
     motionConfig: parsedOverrides.config?.[(explicitMotionBackend ?? "").trim()],
     castLoras: b.castLoras,
+    finishSelect: mapped.finish_select,
   }, panelProfile);
   if (!panelPre.ok) {
     if (panelPre.refusal.status === 503) return json({ error: panelPre.refusal.message }, 503);
@@ -1038,6 +1037,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     // out-of-range key is stripped before the guard ever sees it, so the guard cannot fire. Doors 1,
     // 2 and 6 pass the raw bag for the same reason.
     motionConfig: parseModuleRenderOverrides(b.renderOverrides).config?.[(motionBackend ?? "").trim()],
+    finishSelect: mapped.finish_select,
   }, fromKfProfile);
   if (!fromKfPre.ok) {
     if (fromKfPre.refusal.status === 503) return json({ error: fromKfPre.refusal.message }, 503);
@@ -1133,6 +1133,7 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
   const regenPre = await preflightRenderModules(productionRenderDoorDeps, env, {
     modules,
     keyframeBackend: mapped.keyframe_backend,
+    finishSelect: mapped.finish_select,
   }, regenProfile);
   if (!regenPre.ok) {
     // This door answers its 503 in an { ok: false } envelope rather than a bare { error }, which is
@@ -1277,6 +1278,7 @@ const hScatterRender: Handler = async (req, env) => {
     keyframeBackend: scatterMapped.keyframe_backend,
     motionConfig: scatterOverrides.config?.[(scatterBackend ?? "").trim()],
     castLoras: b.castLoras ?? {},
+    finishSelect: scatterMapped.finish_select,
   }, scatterProfile);
   if (!scatterPre.ok) {
     if (scatterPre.refusal.status === 503) return json({ error: scatterPre.refusal.message }, 503);
@@ -1628,6 +1630,9 @@ const hStartFilm: Handler = async (req, env) => {
   // unconditional. The explicit choice is the top-level motion_backend (this endpoint carries no
   // render_overrides bag); NEVER the serving[0] default. Bounces BEFORE any keyframe dispatch.
   const filmModules = await discoverModules(env as unknown as Record<string, unknown>);
+  // cf#386: omit finish_config (and finish_select) = no finish. Do this BEFORE preflight so a
+  // named-but-not-serving key 400s here (cf#593) instead of after keyframe spend.
+  const filmFinishSelect = resolveAgentFinishSelect(a.finish_select, a.finish_config);
 
   // Bundle-only voicing (#313): when the caller passed NO explicit dialogue_lines, derive them from the
   // bundle storyboard's per-shot dialogue (round-tripped by #307), resolving each speaking slot's voice
@@ -1646,6 +1651,7 @@ const hStartFilm: Handler = async (req, env) => {
     keyframeBackend: a.keyframe_backend,
     motionConfig: a.motion_config,
     castLoras: a.cast_loras,
+    finishSelect: filmFinishSelect,
   }, filmProfile);
   if (!filmPre.ok) {
     if (filmPre.refusal.status === 503) return json({ error: filmPre.refusal.message }, 503);
@@ -1717,7 +1723,7 @@ const hStartFilm: Handler = async (req, env) => {
         motion_backend: a.motion_backend,
         keyframe_backend: a.keyframe_backend,
         config: bagConfig,
-        select: a.finish_select != null ? { finish: a.finish_select } : undefined,
+        select: { finish: filmFinishSelect },
       },
       motion_backend: a.motion_backend,
       audio_key: a.audio_key,
@@ -1733,12 +1739,11 @@ const hStartFilm: Handler = async (req, env) => {
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
     // silent even when the caller supplied a bed (the scored/narrated render path).
     finish_config: a.finish_config,
-    // cf#537: this door takes PRE-RESOLVED config maps and carries no renderOverrides bag (0
-    // mentions in its body type, against 3 for finish_config), so the selection is its own
-    // top-level field rather than a key inside a bag that does not exist here. The panel door and
-    // this one are two different pipelines; a selection wired only into the panel would leave the
-    // agent / MCP / Slate path on run-everything.
-    finish_select: parseHookSelection({ finish: a.finish_select })?.finish,
+    // cf#537 + cf#386: this door takes PRE-RESOLVED config maps and carries no renderOverrides bag,
+    // so participation is its own top-level field. resolveAgentFinishSelect validates the body
+    // (same parser as the panel bag) and treats an omitted finish_config as named-empty: an MCP
+    // caller who does not mention finish does not get billed for default rife+upscale.
+    finish_select: filmFinishSelect,
     speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
     // TTS+lip-sync stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of

@@ -61,6 +61,9 @@
   var DERIVED = "derived";
   var UNDECLARED = "undeclared";
   var UNAVAILABLE = "unavailable";
+  // cf#593: named modules the registry does not serve. Distinct from DERIVED-with-an-empty-chain
+  // (caller selected nothing) and from UNDECLARED (module is installed, declared no cost).
+  var UNRESOLVED = "unresolved";
 
   function isModule(m) {
     return !!m && typeof m === "object" && typeof m.name === "string" && m.name !== "";
@@ -97,13 +100,33 @@
   // plannerRenderConfig.collect() -- so `selection` is undefined for every panel render and the
   // default arm is the live one. The named arm is written now so that a future selection control
   // needs no change here.
-  function selectedFinishModules(serving, selection) {
+  // Same shape as the core's ChainSelection: modules that will run, plus named-but-not-serving.
+  // selectedFinishModules stays the modules array so existing callers do not change.
+  function selectedFinishChain(serving, selection) {
     var mods = (serving || []).filter(isModule);
     if (selection && selection.mode === "named") {
       var wanted = Array.isArray(selection.modules) ? selection.modules : [];
-      return mods.filter(function (m) { return wanted.indexOf(m.name) !== -1; });
+      var installed = {};
+      for (var i = 0; i < mods.length; i++) installed[mods[i].name] = true;
+      var modules = mods.filter(function (m) { return wanted.indexOf(m.name) !== -1; });
+      var missing = [];
+      var seen = {};
+      for (var j = 0; j < wanted.length; j++) {
+        var n = wanted[j];
+        if (typeof n !== "string" || !n || seen[n]) continue;
+        seen[n] = true;
+        if (!installed[n]) missing.push(n);
+      }
+      return { modules: modules, missing: missing };
     }
-    return mods.filter(function (m) { return m.participation !== "opt_in"; });
+    return {
+      modules: mods.filter(function (m) { return m.participation !== "opt_in"; }),
+      missing: [],
+    };
+  }
+
+  function selectedFinishModules(serving, selection) {
+    return selectedFinishChain(serving, selection).modules;
   }
 
   // A finish_cost declaration, validated. Every field must be present and sane or the module
@@ -138,9 +161,22 @@
   //
   // registryUnavailable is passed in rather than read, so this stays DOM-free and testable.
   function finishBudget(serving, selection, registryUnavailable) {
-    var chain = selectedFinishModules(serving, selection);
+    var picked = selectedFinishChain(serving, selection);
+    var chain = picked.modules;
     if (registryUnavailable) {
-      return { state: UNAVAILABLE, maxSeconds: null, chain: chain, declared: [], undeclared: [] };
+      return { state: UNAVAILABLE, maxSeconds: null, chain: chain, declared: [], undeclared: [], missing: picked.missing };
+    }
+    // Named-but-not-serving is not "nothing to do". Fail closed: the planner must not admit a
+    // render that asked for a finish module this studio does not have (cf#593).
+    if (picked.missing.length) {
+      return {
+        state: UNRESOLVED,
+        maxSeconds: null,
+        chain: chain,
+        declared: [],
+        undeclared: [],
+        missing: picked.missing,
+      };
     }
     var declared = [];
     var undeclared = [];
@@ -152,13 +188,13 @@
     // An empty chain has nothing to constrain the shot, which is a real DERIVED answer of "this
     // render selects no finish work", not an absence. Its ceiling is null and it emits nothing.
     if (chain.length === 0) {
-      return { state: DERIVED, maxSeconds: null, chain: chain, declared: [], undeclared: [] };
+      return { state: DERIVED, maxSeconds: null, chain: chain, declared: [], undeclared: [], missing: [] };
     }
     // One undeclared module makes the whole chain underivable. A ceiling computed from the
     // modules that DID declare would be an over-estimate presented as a limit, which is worse
     // than no number: it would admit shots the silent module cannot finish, with authority.
     if (undeclared.length > 0) {
-      return { state: UNDECLARED, maxSeconds: null, chain: chain, declared: declared, undeclared: undeclared };
+      return { state: UNDECLARED, maxSeconds: null, chain: chain, declared: declared, undeclared: undeclared, missing: [] };
     }
     var tightest = null;
     for (var j = 0; j < declared.length; j++) {
@@ -175,6 +211,7 @@
       chain: chain,
       declared: declared,
       undeclared: [],
+      missing: [],
     };
   }
 
@@ -330,6 +367,20 @@
       return issues;
     }
 
+    if (budget.state === UNRESOLVED) {
+      issues.push({
+        level: "error",
+        scope: "finish",
+        message:
+          "This render names finish module(s) this studio does not serve: "
+          + (budget.missing || []).join(", ")
+          + ". That is not an empty chain. Install the module, or remove it from the "
+          + "selection, before rendering. Submitting as planned would book the GPU and then "
+          + "ship a film without the finish work that was asked for.",
+      });
+      return issues;
+    }
+
     if (budget.state === UNDECLARED) {
       issues.push({
         level: "info",
@@ -375,9 +426,11 @@
     DERIVED: DERIVED,
     UNDECLARED: UNDECLARED,
     UNAVAILABLE: UNAVAILABLE,
+    UNRESOLVED: UNRESOLVED,
     MEASURED: MEASURED,
     label: label,
     selectedFinishModules: selectedFinishModules,
+    selectedFinishChain: selectedFinishChain,
     costOf: costOf,
     finishBudget: finishBudget,
     finishBudgetIssues: finishBudgetIssues,
