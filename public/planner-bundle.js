@@ -518,14 +518,10 @@ async function bundleNow() {
     setBundleStatus("staged", "success");
     showBundleResult(data);
     showRenderStage();
-    // v0.137.6: a staged bundle unlocks BOTH Audio and Render. Advance to Audio
-    // (the next step in order), NOT straight to Render. Jumping to Render skipped
-    // the Audio step entirely, and because bundle assembly is async that late
-    // showStep("render") yanked the user off Audio if they had already navigated
-    // there ("bundle, go to audio, it skips to render"). Render stays unlocked,
-    // so the user can still jump ahead when they are ready.
+    // cf#645: a staged bundle unlocks Render. Audio is optional and lives as
+    // a fold on that step; skipping it is correct (silent film).
     refreshSteps();
-    showStep("audio");
+    showStep("render");
     savePersistedState();
     return;
   }

@@ -53,26 +53,25 @@ const $ = (sel) => document.querySelector(sel);
 const PLANNER_STEPS = [
   { id: "plan", label: "Plan" },
   { id: "cast", label: "Cast & Bundle" },
-  { id: "audio", label: "Audio" },
   { id: "render", label: "Render" },
-  { id: "history", label: "History" },
+  { id: "history", label: "Your films" },
 ];
 const PLANNER_STEP_ORDER = PLANNER_STEPS.map((s) => s.id);
 
 const stepState = {
   current: "plan",
-  unlocked: { plan: true, cast: false, audio: false, render: false, history: true },
+  unlocked: { plan: true, cast: false, render: false, history: true },
 };
 
 // Recompute which steps are reachable from the live pipeline state. Plan +
-// History are always open; Cast/Audio open once a storyboard exists; Render
+// Your films are always open; Cast opens once a storyboard exists; Render
 // opens once a bundle is staged (or a render is already in flight / loaded
-// from history).
+// from history). Audio is a fold on Render, not a rail step (cf#645).
 function computeStepUnlocked() {
   const hasPlan = !!(planState && planState.storyboard);
   const hasBundle =
     !!(bundleState && bundleState.bundleKey) || !!(renderState && renderState.jobId);
-  return { plan: true, cast: hasPlan, audio: hasPlan, render: hasBundle, history: true };
+  return { plan: true, cast: hasPlan, render: hasBundle, history: true };
 }
 
 function buildStepper() {
@@ -124,6 +123,9 @@ function refreshSteps() {
 // Switch the active step: collapse non-active sections, repaint the rail +
 // the back/next buttons, scroll to the top of the column.
 function showStep(id) {
+  // cf#645: Audio is no longer a rail step. Old stash / callers that still
+  // ask for it land on Render, where the audio fold lives.
+  if (id === "audio") id = "render";
   if (!stepState.unlocked[id]) return;
   stepState.current = id;
   document.querySelectorAll("[data-step]").forEach((el) => {
@@ -132,27 +134,14 @@ function showStep(id) {
     if (el.closest("#sw-dock")) return;
     el.classList.toggle("step-hidden", el.dataset.step !== id);
   });
-  // v0.132.0: the audio section gates its own content on storyboard state, so
-  // re-evaluate it on entry; otherwise landing on the Audio step with no
-  // storyboard left it blank (the hidden attr was never cleared).
-  // v0.165.0 (#144): same pattern for cast -- showPreflightSection() and the
-  // bundle section are only revealed at plan-completion time; navigating back
-  // to Cast & Bundle must re-evaluate them so the sections appear.
+  // v0.165.0 (#144): showPreflightSection() and the bundle section are only
+  // revealed at plan-completion time; navigating back to Cast & Bundle must
+  // re-evaluate them so the sections appear.
   if (id === "cast") {
     showCastSection();
   }
-  if (id === "audio") {
+  if (id === "render") {
     showAudioSection();
-    // v0.137.6: the first time the user opens Audio for a plan, auto-suggest an
-    // ideal music prompt from the video (only when the field is empty, only once
-    // per plan; the suggest button re-runs it on demand).
-    if (!musicPromptAutoTried && planState.storyboard) {
-      const mp = $("#planner-music-prompt");
-      if (mp && !mp.value.trim()) {
-        musicPromptAutoTried = true;
-        suggestMusicPrompt({ force: false });
-      }
-    }
   }
   paintStepper();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -174,7 +163,7 @@ function paintStepper() {
   if (next) {
     const nextId = PLANNER_STEP_ORDER[curIdx + 1];
     next.disabled = !nextId || !stepState.unlocked[nextId];
-    if (stepState.current === "audio" && nextId === "render" && !stepState.unlocked.render) {
+    if (stepState.current === "cast" && nextId === "render" && !stepState.unlocked.render) {
       next.title = "Bundle on Cast & Bundle first";
     } else {
       next.title = "";

@@ -7,6 +7,30 @@
 
 // ---------- Render stage ----------
 
+// cf#649: one sentence first, raw provider payload behind a fold.
+function paintPlannerError(el, raw) {
+  if (!el) return;
+  const rec = window.plannerErrorRecipe
+    ? window.plannerErrorRecipe.recipeFromError(raw)
+    : { message: String(raw || "This render failed."), raw: String(raw || "") };
+  el.innerHTML = "";
+  const p = document.createElement("p");
+  p.className = "planner-error-recipe";
+  p.textContent = rec.message;
+  el.appendChild(p);
+  if (rec.raw && rec.raw !== rec.message) {
+    const det = document.createElement("details");
+    det.className = "planner-error-raw";
+    const sum = document.createElement("summary");
+    sum.textContent = "technical details";
+    const pre = document.createElement("pre");
+    pre.textContent = rec.raw;
+    det.appendChild(sum);
+    det.appendChild(pre);
+    el.appendChild(det);
+  }
+}
+
 function showRenderStage() {
   const stage = $("#planner-render");
   stage.hidden = false;
@@ -689,7 +713,7 @@ function updateRenderProgress(data) {
   if (data.error) {
     const err = $("#planner-render-error");
     err.hidden = false;
-    err.textContent = data.error;
+    paintPlannerError(err, data.error);
   }
 
   // v0.44.0: progress bar + ETA. Anchor startedAt on the first non-
