@@ -329,6 +329,9 @@ function afterFacesBindingChange() {
   persistSoon();
   if (typeof refreshCastLoraWarning === "function") refreshCastLoraWarning();
   renderFacesPanel();
+  if (planState.storyboard && typeof ensureFilmBundle === "function") {
+    ensureFilmBundle();
+  }
 }
 
 function setCastInFilm(castId, on) {
