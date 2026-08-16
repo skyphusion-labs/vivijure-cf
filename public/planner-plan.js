@@ -228,6 +228,9 @@ function renderPlanResult(httpStatus, data, model, characters) {
     refreshSteps();
     showStep("plan");
     savePersistedState();
+    if (typeof ensureFilmBundle === "function") {
+      ensureFilmBundle().then(() => refreshSteps());
+    }
     return;
   }
 

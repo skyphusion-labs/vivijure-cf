@@ -422,6 +422,100 @@ function renderSlotList(slot) {
       + (total ? " · " + formatBytes(total) : "");
 }
 
+function castStagedImageKeys(cast) {
+  const keys = [];
+  const push = (k) => {
+    if (typeof k === "string" && k && keys.indexOf(k) === -1) keys.push(k);
+  };
+  if (cast && cast.portrait_key) push(cast.portrait_key);
+  const bags = []
+    .concat(cast && cast.ref_keys ? cast.ref_keys : [])
+    .concat(cast && cast.source_keys ? cast.source_keys : []);
+  for (const r of bags) {
+    push(typeof r === "string" ? r : r && r.key);
+  }
+  return keys;
+}
+
+let filmBundleInFlight = false;
+let filmBundleQueued = false;
+
+async function ensureFilmBundle() {
+  if (!planState.storyboard) return { ok: false, reason: "no storyboard" };
+  const bindings = planState.castBindings || {};
+  let slots = Array.isArray(planState.storyboard.use_characters)
+    ? planState.storyboard.use_characters.slice()
+    : [];
+  for (const s of Object.keys(bindings)) {
+    if (slots.indexOf(s) === -1) slots.push(s);
+  }
+  if (slots.length === 0) return { ok: false, reason: "pick someone for this film first" };
+
+  const characterRefs = {};
+  const missing = [];
+  for (const slot of slots) {
+    const id = bindings[slot];
+    const cast = id ? findCastById(id) : null;
+    const name = (cast && cast.name) || (planState.cast.find((c) => c.slot === slot) || {}).name || "Someone";
+    const keys = castStagedImageKeys(cast);
+    if (keys.length === 0) {
+      missing.push(name);
+      continue;
+    }
+    characterRefs[slot] = {
+      name,
+      prompt: (cast && cast.bible) || "",
+      trainingImages: keys.map((key) => ({ key })),
+    };
+  }
+  if (missing.length) {
+    return { ok: false, reason: missing.join(", ") + " need a face photo on Cast" };
+  }
+  if (Object.keys(characterRefs).length === 0) {
+    return { ok: false, reason: "no faces to pack" };
+  }
+
+  if (filmBundleInFlight) {
+    filmBundleQueued = true;
+    return { ok: false, reason: "busy" };
+  }
+  filmBundleInFlight = true;
+  const status = $("#planner-faces-status");
+  if (status) status.textContent = "packing faces for render…";
+  try {
+    const resp = await fetch("/api/storyboard/bundle", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        storyboard: planState.storyboard,
+        characterRefs,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data || !data.ok || !data.bundleKey) {
+      const err = (data && (data.error || (data.errors && data.errors[0]))) || ("HTTP " + resp.status);
+      if (status) status.textContent = "could not pack faces: " + err;
+      return { ok: false, reason: String(err) };
+    }
+    bundleState.bundleKey = data.bundleKey;
+    bundleState.sizeBytes = data.sizeBytes || 0;
+    bundleState.fileCount = data.fileCount || 0;
+    if (status) status.textContent = "faces packed. next is render.";
+    refreshSteps();
+    savePersistedState();
+    return { ok: true, bundleKey: data.bundleKey };
+  } catch (err) {
+    if (status) status.textContent = "could not pack faces: " + (err && err.message ? err.message : err);
+    return { ok: false, reason: String(err && err.message ? err.message : err) };
+  } finally {
+    filmBundleInFlight = false;
+    if (filmBundleQueued) {
+      filmBundleQueued = false;
+      ensureFilmBundle();
+    }
+  }
+}
+
 async function bundleNow() {
   if (!planState.storyboard) {
     setBundleStatus("no validated storyboard; run 'plan' first", "error");

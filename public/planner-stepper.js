@@ -162,7 +162,7 @@ function paintStepper() {
     const nextId = PLANNER_STEP_ORDER[curIdx + 1];
     next.disabled = !nextId || !stepState.unlocked[nextId];
     if (stepState.current === "plan" && nextId === "render" && !stepState.unlocked.render) {
-      next.title = "Bundle the cast for this storyboard first";
+      next.title = "Pick people on Cast (their staged faces pack automatically)";
     } else {
       next.title = "";
     }
