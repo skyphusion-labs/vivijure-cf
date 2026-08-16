@@ -70,22 +70,34 @@
 // Every RunPod-envelope helper the modules already use (runpodJobGone, classifyGoneState,
 // terminalErrorInOutput, parseBackendOutput) therefore applies unchanged on this route.
 
-/** A Workers VPC service binding. Structurally a Fetcher; the URL's host is ignored by the binding,
- *  so callers pass an absolute URL purely because a bare path is not a valid `Request` input. */
-export interface DoorBinding {
-  fetch(url: RequestInfo, init?: RequestInit): Promise<Response>;
-}
+/** Public per-box HTTPS origin. Poll MUST use this, never the Traefik SUBMIT hostname:
+ *  job state is per-process RAM, and Traefik RR on a poll reports a live job as gone. */
+export const DOOR_ORIGIN = {
+  "finish-upscale": {
+    fatmike: "https://finish-upscale-fatmike.skyphusion.org",
+    propagandhi: "https://finish-upscale-propagandhi.skyphusion.org",
+  },
+  "speech-upscale": {
+    fatmike: "https://speech-upscale-fatmike.skyphusion.org",
+    propagandhi: "https://speech-upscale-propagandhi.skyphusion.org",
+  },
+  "finish-blender": {
+    descendents: "https://finish-blender-descendents.skyphusion.org",
+    badbrains: "https://finish-blender-badbrains.skyphusion.org",
+    jello: "https://finish-blender-jello.skyphusion.org",
+  },
+} as const;
 
 /** Which transport serves this job. Exactly one of the two, decided by bound-ness at submit. */
 export interface DoorRoute {
-  /** The bound door, or null when no binding is present (-> the caller takes the RunPod path). */
-  binding: DoorBinding | null;
+  /** Empty when unbound (-> the caller takes the RunPod path). */
+  baseUrl: string;
   /** Stable route name recorded in the poll token so a poll cannot cross routes OR DOORS. Empty
    *  when unbound, which is the same value an old RunPod-minted token carries -- so a token
    *  predating this change and a token minted on the RunPod route are the same object,
    *  deliberately. */
   name: string;
-  /** The door's bearer, resolved once. Empty when unbound OR when the binding is bound and the
+  /** The door's bearer, resolved once. Empty when unbound OR when the origin is set and the
    *  token is not visible yet -- the caller must distinguish those two (see doorProblem). */
   token: string;
   /** True for the ONE door that a bare `DOOR_ROUTE_NAME` token resolves to. See resolveDoor. */
@@ -108,11 +120,11 @@ export function doorName(host: string): string {
   return DOOR_ROUTE_PREFIX + "-" + host;
 }
 
-/** One candidate door, as a module declares it: a name, whatever wrangler bound (or did not), and
+/** One candidate door, as a module declares it: a name, a public origin (or empty), and
  *  the already-resolved bearer plaintext. */
 export interface DoorCandidate {
   name: string;
-  binding: DoorBinding | undefined | null;
+  baseUrl: string;
   token: string;
   /** Mark exactly ONE candidate per module: the door a bare `DOOR_ROUTE_NAME` token belongs to. */
   legacy?: boolean;
@@ -140,14 +152,14 @@ function usableToken(token: string): string {
  *  chasing a correctly-declared binding. Returns null when the route is usable, and null when the
  *  route is simply unbound (which is not a problem at all -- it is the RunPod path). */
 export function doorProblem(route: DoorRoute): string | null {
-  if (!route.binding) return null;          // unbound is the RunPod path, not a fault
+  if (!route.baseUrl) return null;          // unbound is the RunPod path, not a fault
   if (!route.token) return "door-token-not-yet-visible";
   return null;
 }
 
 /** True when this route should serve the job on our own iron. */
 export function doorBound(route: DoorRoute): boolean {
-  return Boolean(route.binding);
+  return Boolean(route.baseUrl);
 }
 
 /** Resolve a SINGLE door route (cf#480 shape, still used by modules that bind one door).
@@ -155,9 +167,9 @@ export function doorBound(route: DoorRoute): boolean {
  *  never touches a secret binding, so it stays testable with plain values and cannot leak one by
  *  accident). The single door is by definition the legacy door: its label is the bare
  *  `DOOR_ROUTE_NAME`, which is exactly what an in-flight token carries. */
-export function doorRoute(binding: DoorBinding | undefined | null, token: string): DoorRoute {
-  if (!binding) return { binding: null, name: "", token: "", legacy: false };
-  return { binding, name: DOOR_ROUTE_NAME, token: usableToken(token) || "", legacy: true };
+export function doorRoute(baseUrl: string | undefined | null, token: string): DoorRoute {
+  if (!baseUrl) return { baseUrl: "", name: "", token: "", legacy: false };
+  return { baseUrl, name: DOOR_ROUTE_NAME, token: usableToken(token) || "", legacy: true };
 }
 
 /** Build the pool of BOUND doors, in declaration order.
@@ -171,8 +183,8 @@ export function doorRoute(binding: DoorBinding | undefined | null, token: string
 export function doorPool(candidates: DoorCandidate[]): DoorRoute[] {
   const pool: DoorRoute[] = [];
   for (const c of candidates) {
-    if (!c.binding) continue;
-    pool.push({ binding: c.binding, name: c.name, token: usableToken(c.token) || "", legacy: Boolean(c.legacy) });
+    if (!c.baseUrl) continue;
+    pool.push({ baseUrl: c.baseUrl, name: c.name, token: usableToken(c.token) || "", legacy: Boolean(c.legacy) });
   }
   return pool;
 }
@@ -215,11 +227,9 @@ export function doorHeaders(route: DoorRoute, module: string): Record<string, st
   };
 }
 
-/** Absolute URL for a door path. The host is a label the binding ignores; it exists because
- *  `fetch("/run")` is not a valid absolute request. Kept in one place so every call site spells it
- *  the same way and a reader can see immediately that the host is not a routing decision. */
-export function doorUrl(path: string): string {
-  return "http://finish-door" + path;
+/** Absolute URL for a door path on THIS box. Never the Traefik SUBMIT hostname. */
+export function doorUrl(route: DoorRoute, path: string): string {
+  return route.baseUrl.replace(/\/$/, "") + path;
 }
 
 /** Did the poll token that minted this job come from a door route? A token with no route label

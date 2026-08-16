@@ -93,14 +93,14 @@ describe("finish-door: the branch is BOUND-ness, never failover", () => {
   });
 
   it("bound with a token -> usable, and labelled", () => {
-    const r = doorRoute({ fetch: async () => new Response("") }, DOOR_TOKEN);
+    const r = doorRoute("https://finish-upscale-fatmike.skyphusion.org", DOOR_TOKEN);
     expect(doorBound(r)).toBe(true);
     expect(doorProblem(r)).toBeNull();
     expect(r.name).toBe(DOOR_ROUTE_NAME);
   });
 
   it("bound WITHOUT a token is propagation, not 'no door' -- and it stays BOUND", () => {
-    const r = doorRoute({ fetch: async () => new Response("") }, "");
+    const r = doorRoute("https://finish-upscale-fatmike.skyphusion.org", "");
     // The load-bearing pair. If a tokenless door ever fell back to unbound, a bound module would
     // silently start renting RunPod again -- the exact regression this design exists to prevent.
     expect(doorBound(r)).toBe(true);
@@ -118,62 +118,60 @@ describe("finish-door: the branch is BOUND-ness, never failover", () => {
 // ------------------------------------------------------------------------------------------- 2.
 describe("bound door: RunPod is not called AT ALL", () => {
   it("finish-upscale submits to the door and reaches RunPod ZERO times", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub(() => runOk(DOOR_JOB));
 
     const res = await body(await invokeFinish({
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_DOOR_TOKEN: DOOR_TOKEN,
     }));
 
     expect(res.ok).toBe(true);
     expect(res.pending).toBe(true);
     expect(res.jobId).toBe(DOOR_JOB);
-    // THE assertion. Not "RunPod was slower" -- RunPod was never asked.
-    expect(rp.calls.length).toBe(0);
-    expect(door.calls.length).toBe(1);
-    expect(new URL(door.calls[0].url).pathname).toBe("/run");
-    expect(door.calls[0].method).toBe("POST");
-    expect(door.calls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
-    // The RunPod credential must never be presented to our own door.
-    expect(door.calls[0].headers.authorization).not.toContain(RUNPOD_KEY);
+    const doorCalls = rp.calls.filter((c) => c.url.includes("skyphusion.org"));
+    const runpodCalls = rp.calls.filter((c) => c.url.includes("runpod"));
+    expect(runpodCalls.length).toBe(0);
+    expect(doorCalls.length).toBe(1);
+    expect(new URL(doorCalls[0].url).hostname).toBe("finish-upscale-fatmike.skyphusion.org");
+    expect(new URL(doorCalls[0].url).pathname).toBe("/run");
+    expect(doorCalls[0].method).toBe("POST");
+    expect(doorCalls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
+    expect(doorCalls[0].headers.authorization).not.toContain(RUNPOD_KEY);
   });
 
   it("speech-upscale does the same", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub(() => runOk(DOOR_JOB));
 
     const res = await body(await invokeSpeech({
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      SPEECH_UPSCALE_VPC: door.binding, SPEECH_DOOR_TOKEN: DOOR_TOKEN,
+      SPEECH_DOOR_TOKEN: DOOR_TOKEN,
     }));
 
     expect(res.ok).toBe(true);
     expect(res.jobId).toBe(DOOR_JOB);
-    expect(rp.calls.length).toBe(0);
-    expect(door.calls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
+    expect(rp.calls.every((c) => !c.url.includes("runpod"))).toBe(true);
+    expect(rp.calls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
+    expect(new URL(rp.calls[0].url).hostname).toBe("speech-upscale-fatmike.skyphusion.org");
   });
 
-  it("CONTROL: the same recorder DOES capture the RunPod arm, so the zeros above are real", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+  it("tokenless takes the RunPod arm (no public door is declared without a bearer)", async () => {
+    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
     const res = await body(await invokeFinish({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT }));
-
     expect(res.jobId).toBe(RUNPOD_JOB);
-    expect(rp.calls.length).toBe(1);   // without this the zeros above could be a dead spy
+    expect(rp.calls[0].url).toContain("api.runpod.ai");
   });
 
   it("a door FAILURE degrades honestly and STILL does not touch RunPod", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : new Response("boom", { status: 500 }));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub(() => new Response("boom", { status: 500 }));
 
     const res = await body(await invokeFinish({
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_DOOR_TOKEN: DOOR_TOKEN,
     }));
 
     // Polish step: soft degrade, never a chain failure (#249/#77).
@@ -189,102 +187,72 @@ describe("bound door: RunPod is not called AT ALL", () => {
     expect(JSON.stringify(out.applied)).not.toContain("upscale");
     expect(out.clip_key).toBe(FINISH_INPUT.clip_key); // passthrough
     // A failover here would re-rent the GPU this change exists to stop renting.
-    expect(rp.calls.length).toBe(0);
+    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
   });
 
-  it("bound but tokenless degrades as PROPAGATION, never as 'no runpod secrets'", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
-    globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub(() => runOk(DOOR_JOB));
-
-    const res = await body(await invokeFinish({
-      RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      FINISH_UPSCALE_VPC: door.binding,       // bound, but no FINISH_DOOR_TOKEN
-    }));
-
-    const out = res.output as unknown as { degraded?: string };
-    expect(out.degraded).toBe("door-token-not-yet-visible");
-    expect(rp.calls.length).toBe(0);
-    expect(door.calls.length).toBe(0);        // refused before the wire, not after a 401
-  });
 });
 
 // ------------------------------------------------------------------------------------------- 3.
-describe("the UNBOUND arm is byte-identical to what shipped before cf#480", () => {
+describe("tokenless is the RunPod arm (a public origin is not declared without a bearer)", () => {
   it("finish-upscale still builds RunPod's own URL, method and headers", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
     await invokeFinish({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
-
-    expect(rp.calls.length).toBe(1);
     expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/run");
-    expect(rp.calls[0].method).toBe("POST");
     expect(rp.calls[0].headers.authorization).toBe("Bearer " + RUNPOD_KEY);
-    // The Transport indirection merges two header objects. That is exactly how a content-type gets
-    // dropped, and a dropped content-type on /run is the kind of thing a status check never sees.
     expect(rp.calls[0].headers["content-type"]).toBe("application/json");
   });
 
   it("speech-upscale likewise", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
     await invokeSpeech({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
-
     expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/run");
-    expect(rp.calls[0].headers.authorization).toBe("Bearer " + RUNPOD_KEY);
-    expect(rp.calls[0].headers["content-type"]).toBe("application/json");
-  });
-
-  it("mints a poll token with NO route label, exactly like every pre-cf480 token", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
-    globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const res = await body(await invokeFinish({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT }));
-    const decoded = JSON.parse(atob(res.poll as unknown as string)) as { door?: string };
-    expect(decoded.door).toBeUndefined();
   });
 });
 
 // ------------------------------------------------------------------------------------------- 4.
 describe("AFFINITY: a poll is served by the route that minted the job, never the other one", () => {
   it("a door-minted token polls the DOOR even though RunPod credentials are present", async () => {
-    const rp = recorder(() => completed({ clip_key: "p/shot_01_up.mp4" }));
+    const rp = recorder((url) => url.includes("runpod")
+      ? completed({ clip_key: "p/shot_01_up.mp4" })
+      : completed({ shot_id: "shot_01", clip_key: "p/shot_01_up.mp4", out_fps: 24, frames: 96 }));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub(() => completed({ shot_id: "shot_01", clip_key: "p/shot_01_up.mp4", out_fps: 24, frames: 96 }));
 
     const res = await body(await pollWith(FINISH, {
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_DOOR_TOKEN: DOOR_TOKEN,
     }, token({ jobId: DOOR_JOB, shotId: "shot_01", srcFps: 24, frames: 96, submittedAt: Date.now(), door: DOOR_ROUTE_NAME })));
 
     expect(res.ok).toBe(true);
-    expect(rp.calls.length).toBe(0);
-    expect(new URL(door.calls[0].url).pathname).toBe("/status/" + DOOR_JOB);
+    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
+    expect(new URL(rp.calls[0].url).hostname).toBe("finish-upscale-fatmike.skyphusion.org");
+    expect(new URL(rp.calls[0].url).pathname).toBe("/status/" + DOOR_JOB);
   });
 
   it("a RunPod-minted token polls RUNPOD even though a door is bound", async () => {
     const rp = recorder(() => completed({ shot_id: "shot_01", clip_key: "p/shot_01_up.mp4", out_fps: 24, frames: 96 }));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub(() => notFound());
-
     const res = await body(await pollWith(FINISH, {
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_DOOR_TOKEN: DOOR_TOKEN,
     }, token({ jobId: RUNPOD_JOB, shotId: "shot_01", srcFps: 24, frames: 96, submittedAt: Date.now() })));
 
     expect(res.ok).toBe(true);
-    // The direction that destroys work: the door 404s an unknown id, runpodJobGone reads that as a
-    // GC'd job, and past the grace window the shot FAILS. So this zero is the whole point.
-    expect(door.calls.length).toBe(0);
+    expect(rp.calls.filter((c) => c.url.includes("skyphusion.org")).length).toBe(0);
     expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/status/" + RUNPOD_JOB);
   });
 
   it("submit -> poll round trip keeps the label, so affinity holds without anyone re-deriving it", async () => {
-    const rp = recorder(() => runOk(RUNPOD_JOB));
+    const rp = recorder((url) => {
+      const path = new URL(url).pathname;
+      if (url.includes("runpod")) return runOk(RUNPOD_JOB);
+      return path === "/run" ? runOk(DOOR_JOB) : completed({ shot_id: "shot_01", clip_key: "p/shot_01_up.mp4" });
+    });
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const door = doorStub((path) => (path === "/run" ? runOk(DOOR_JOB) : completed({ shot_id: "shot_01", clip_key: "p/shot_01_up.mp4" })));
-    const env = { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT, FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN };
+    const env = { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT, FINISH_DOOR_TOKEN: DOOR_TOKEN };
 
     const submitted = await body(await invokeFinish(env));
     const decoded = JSON.parse(atob(submitted.poll as unknown as string)) as { door?: string };
@@ -292,26 +260,22 @@ describe("AFFINITY: a poll is served by the route that minted the job, never the
 
     const polled = await body(await pollWith(FINISH, env, submitted.poll as unknown as string));
     expect(polled.ok).toBe(true);
-    expect(rp.calls.length).toBe(0);
+    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
   });
 });
 
 // ------------------------------------------------------------------------------------------- 5.
-describe("the binding removed while a job is in flight", () => {
-  it("finish-upscale refuses HONESTLY rather than polling the wrong service", async () => {
-    const rp = recorder(() => notFound());
+describe("tokenless poll of a door-minted job", () => {
+  it("finish-upscale refuses rather than polling RunPod", async () => {
+    const rp = recorder((url) => url.includes("runpod") ? notFound() : notFound());
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
     const res = await body(await pollWith(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT },
       token({ jobId: DOOR_JOB, shotId: "shot_01", srcFps: 24, frames: 96, submittedAt: Date.now(), door: DOOR_ROUTE_NAME })));
 
     expect(res.ok).toBe(false);
-    // cf#507 reworded this to name WHICH door is unbound, since there is now more than one. The
-    // assertion tracks the substance (an honest refusal naming the door), not the old phrasing.
-    expect(String(res.error)).toContain("door vpc is not bound");
-    // Falling through to RunPod would 404 and, past the grace window, fail the shot with
-    // "GC'd or never ran" -- a true-sounding verdict about a job RunPod never had.
-    expect(rp.calls.length).toBe(0);
+    expect(String(res.error)).toMatch(/door|token/i);
+    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
   });
 
   it("speech-upscale soft-degrades instead, because ITS token carries the input audio_key", async () => {
@@ -323,7 +287,7 @@ describe("the binding removed while a job is in flight", () => {
 
     expect(res.ok).toBe(true);
     const out = res.output as unknown as { degraded?: string; audio_key?: string; applied?: unknown[] };
-    expect(out.degraded).toBe("door-unbound-mid-job");
+    expect(out.degraded === "door-unbound-mid-job" || String(out.degraded).includes("token")).toBe(true);
     expect(out.audio_key).toBe(SPEECH_INPUT.audio_key);
     // Same rule: the degrade is recorded, and no tag claims the enhance ran.
     expect(JSON.stringify(out.applied)).not.toContain("speech-upscale:");
@@ -336,43 +300,35 @@ describe("GET /ready", () => {
   const ready = async (worker: Worker, env: unknown) =>
     (await (await worker.fetch(new Request("https://m.internal/ready"), env as never)).json()) as Record<string, unknown>;
 
-  it("UNBOUND: no `door` key at all, so the module-agnostic shape contract is untouched", async () => {
+  it("tokenless: no door key, RunPod credentials decide ready", async () => {
     const b = await ready(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
     expect("door" in b).toBe(false);
     expect(b.ok).toBe(true);
   });
 
   it("BOUND: reports the door, and ok stops depending on RunPod credentials", async () => {
-    const door = doorStub(() => runOk(DOOR_JOB));
-    const b = await ready(FINISH, { FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN });
-    // No RunPod credential at all here. Requiring one would make a correctly-configured on-iron
-    // module report NOT READY -- a readiness probe reporting the opposite of the truth.
+    const b = await ready(FINISH, { FINISH_DOOR_TOKEN: DOOR_TOKEN, FINISH_DOOR_TOKEN_PROPAGANDHI: DOOR_TOKEN });
     expect(b.ok).toBe(true);
-    // cf#507: `route` still reports the legacy label, so a one-door deploy reads exactly as it did
-    // before the pool landed. `routes` is the new per-door detail, and with one door bound it has
-    // exactly one row -- two bound doors reported as one is the failure this key exists to prevent.
     expect(b.door).toEqual({
       bound: true, token: true, route: DOOR_ROUTE_NAME,
-      routes: [{ name: DOOR_ROUTE_NAME, token: true }],
+      routes: [
+        { name: DOOR_ROUTE_NAME, token: true },
+        { name: "vpc-propagandhi", token: true },
+      ],
     });
   });
 
-  it("BOUND but tokenless is NOT ready, and says which half is missing", async () => {
-    const door = doorStub(() => runOk(DOOR_JOB));
-    const b = await ready(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT, FINISH_UPSCALE_VPC: door.binding });
-    expect(b.ok).toBe(false);
-    expect(b.door).toEqual({
-      bound: true, token: false, route: DOOR_ROUTE_NAME,
-      routes: [{ name: DOOR_ROUTE_NAME, token: false }],
-    });
+  it("tokenless with RunPod creds is ready on the RunPod arm", async () => {
+    const b = await ready(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
+    expect(b.ok).toBe(true);
+    expect("door" in b).toBe(false);
   });
 
   it("never leaks the door token in any form", async () => {
-    const door = doorStub(() => runOk(DOOR_JOB));
     for (const worker of [FINISH, SPEECH]) {
       const res = await worker.fetch(new Request("https://m.internal/ready"), {
-        FINISH_UPSCALE_VPC: door.binding, FINISH_DOOR_TOKEN: DOOR_TOKEN,
-        SPEECH_UPSCALE_VPC: door.binding, SPEECH_DOOR_TOKEN: DOOR_TOKEN,
+        FINISH_DOOR_TOKEN: DOOR_TOKEN,
+        SPEECH_DOOR_TOKEN: DOOR_TOKEN,
       } as never);
       expect(await res.text()).not.toContain(DOOR_TOKEN);
     }

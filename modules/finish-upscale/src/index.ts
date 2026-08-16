@@ -38,7 +38,7 @@ import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedP
 // destroyed the film.
 import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, DOOR_ORIGIN, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -53,15 +53,6 @@ interface Env {
   /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
-  /** cf#480: the always-on upscale door on our own GPU iron, over a Workers VPC service.
-   *  Bound -> every job goes here and RunPod is not called at all. Unbound -> the RunPod path
-   *  below, byte for byte. The branch is BOUND-ness and NEVER a RunPod failure; see
-   *  modules/_shared/finish-door.ts for why a failover would silently undo this. */
-  FINISH_UPSCALE_VPC?: DoorBinding;
-  /** cf#507: the SECOND always-on upscale door. Both boxes run the same image and both are bound
-   *  when their ids are set; jobs round-robin across them and a poll returns to the box that took
-   *  it. Unset is a clean deploy with one door, which is exactly the cf#480 behaviour. */
-  FINISH_UPSCALE_VPC_PROPAGANDHI?: DoorBinding;
   FINISH_DOOR_TOKEN_PROPAGANDHI?: SecretsStoreSecret | string;
   /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN` on the container). Only read when the
    *  binding above is bound. */
@@ -138,7 +129,7 @@ function doorTransport(route: DoorRoute): Transport {
     // the box that holds the job; a constant here would send every poll to whichever door the
     // deploy happens to list first, which reads as a GC'd job on the other box.
     name: route.name,
-    call: (path, init) => route.binding!.fetch(doorUrl(path), {
+    call: (path, init) => fetch(doorUrl(route, path), {
       ...init,
       headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
     }),
@@ -176,10 +167,14 @@ async function doorsFor(env: Env): Promise<DoorRoute[]> {
     secretValue(env.FINISH_DOOR_TOKEN),
     secretValue(env.FINISH_DOOR_TOKEN_PROPAGANDHI),
   ]);
-  return doorPool([
-    { name: DOOR_ROUTE_NAME, binding: env.FINISH_UPSCALE_VPC, token: legacyToken, legacy: true },
-    { name: doorName("propagandhi"), binding: env.FINISH_UPSCALE_VPC_PROPAGANDHI, token: propagandhiToken },
-  ]);
+  const list = [];
+  if (legacyToken) {
+    list.push({ name: DOOR_ROUTE_NAME, baseUrl: DOOR_ORIGIN["finish-upscale"].fatmike, token: legacyToken, legacy: true });
+  }
+  if (propagandhiToken) {
+    list.push({ name: doorName("propagandhi"), baseUrl: DOOR_ORIGIN["finish-upscale"].propagandhi, token: propagandhiToken });
+  }
+  return doorPool(list);
 }
 
 /** Resolve both RunPod secrets once per request. */

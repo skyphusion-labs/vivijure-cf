@@ -36,7 +36,7 @@ import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedP
 // destroyed the film.
 import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorRoute, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, DOOR_ORIGIN, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -48,13 +48,7 @@ interface Env {
   RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
   RUNPOD_WORKERS_MAX?: string;
-  /** cf#489: the always-on blender door on our own iron, over a Workers VPC service. UNBOUND is
-   *  the normal state and leaves the RunPod path untouched byte for byte. The branch is
-   *  BOUND-ness, never a RunPod failure: see modules/_shared/finish-door.ts. */
-  FINISH_BLENDER_VPC?: DoorBinding;
-  /** cf#489: the door bearer (LOCAL_FINISH_TOKEN on the container). Only read when the binding
-   *  above is present. Named from the class rather than by analogy: finish-upscale uses
-   *  FINISH_DOOR_TOKEN and speech-upscale uses SPEECH_DOOR_TOKEN. */
+  /** cf#489: the door bearer (LOCAL_FINISH_TOKEN on the container). Same value on all three boxes. */
   BLENDER_DOOR_TOKEN?: SecretsStoreSecret | string;
   /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
@@ -163,17 +157,25 @@ function doorTransport(route: DoorRoute): Transport {
   return {
     door: true,
     name: DOOR_ROUTE_NAME,
-    call: (path, init) => route.binding!.fetch(doorUrl(path), {
+    call: (path, init) => fetch(doorUrl(route, path), {
       ...init,
       headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
     }),
   };
 }
 
-/** Resolve the on-iron door route once per request (cf#489). */
-async function doorFor(env: Env): Promise<DoorRoute> {
-  if (!env.FINISH_BLENDER_VPC) return doorRoute(null, "");
-  return doorRoute(env.FINISH_BLENDER_VPC, await secretValue(env.BLENDER_DOOR_TOKEN));
+let blenderCursor = 0;
+
+/** Three finishing boxes, public per-box origins. Same token on all three. */
+async function doorsFor(env: Env): Promise<DoorRoute[]> {
+  const token = await secretValue(env.BLENDER_DOOR_TOKEN);
+  if (!token) return [];
+  const o = DOOR_ORIGIN["finish-blender"];
+  return doorPool([
+    { name: DOOR_ROUTE_NAME, baseUrl: o.descendents, token, legacy: true },
+    { name: doorName("badbrains"), baseUrl: o.badbrains, token },
+    { name: doorName("jello"), baseUrl: o.jello, token },
+  ]);
 }
 
 /** cf#114: classify an absent RunPod credential HONESTLY.
@@ -282,13 +284,14 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   // to take it. And unlike its polish-step siblings this module does NOT soft-degrade a failure
   // into the chain -- a failed blender job fails the whole film -- so a silent second path is
   // exactly the wrong thing to have.
-  const door = await doorFor(env);
-  if (doorBound(door)) {
-    const problem = doorProblem(door);
-    // Bound binding, token not visible yet: propagation, not misconfiguration (the cf#114
-    // distinction applied to the door credential). Degrade and SAY WHICH.
-    if (problem) return passthrough(input, problem);
-    return submitVia(env, req, doorTransport(door));
+  const pool = await doorsFor(env);
+  if (pool.length > 0) {
+    const usable = usableDoors(pool);
+    if (usable.length === 0) {
+      return passthrough(input, doorProblem(pool[0]) ?? "door-token-not-yet-visible");
+    }
+    const chosen = pickDoor(usable, blenderCursor++)!;
+    return submitVia(env, req, doorTransport(chosen));
   }
 
   const { route, apiKey, endpointId } = await runpodCreds(env);
@@ -372,8 +375,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   let t: Transport;
   let route: RunpodRoute | null = null;
   if (tokenTookDoor(st.door)) {
-    const door = await doorFor(env);
-    if (!doorBound(door)) {
+    const door = resolveDoor(await doorsFor(env), st.door);
+    if (!door) {
       // The binding was removed while this job was in flight. Refusing to guess is the only
       // honest answer: a poll against RunPod would 404 and fail the shot, and this poll token
       // carries shotId/srcFps/frames but NOT clip_key, so a poll-time passthrough cannot

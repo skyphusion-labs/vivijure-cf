@@ -28,7 +28,6 @@ import {
   doorBound,
   doorProblem,
   tokenTookDoor,
-  type DoorBinding,
 } from "../modules/_shared/finish-door";
 
 /** Values that appear nowhere else in this repo, so a match cannot be a coincidence. */
@@ -38,25 +37,20 @@ const TOKEN_PROPAGANDHI = "lft_cf507_propagandhi_probe_8b4d";
 const FATMIKE = doorName("fatmike");
 const PROPAGANDHI = doorName("propagandhi");
 
-function binding(tag: string): DoorBinding {
-  return { fetch: async () => new Response(tag) };
-}
-
 /** The shape both upscale modules declare: the LEGACY door first and explicitly marked. */
 function candidates(opts: { fatmikeToken?: string; propagandhiToken?: string; dropPropagandhi?: boolean } = {}) {
-  const list = [
-    { name: FATMIKE, binding: binding("fatmike"), token: opts.fatmikeToken ?? TOKEN_FATMIKE, legacy: true },
-    { name: PROPAGANDHI, binding: opts.dropPropagandhi ? null : binding("propagandhi"), token: opts.propagandhiToken ?? TOKEN_PROPAGANDHI },
+  return [
+    { name: FATMIKE, baseUrl: "https://finish-upscale-fatmike.skyphusion.org", token: opts.fatmikeToken ?? TOKEN_FATMIKE, legacy: true },
+    { name: PROPAGANDHI, baseUrl: opts.dropPropagandhi ? "" : "https://finish-upscale-propagandhi.skyphusion.org", token: opts.propagandhiToken ?? TOKEN_PROPAGANDHI },
   ];
-  return list;
 }
 
 // ------------------------------------------------------------------------------------------- 1.
 describe("cf507 pool: bound-ness still decides door-vs-RunPod, never failure", () => {
   it("no binding at all -> empty pool, which is the RunPod path", () => {
     const pool = doorPool([
-      { name: FATMIKE, binding: null, token: "", legacy: true },
-      { name: PROPAGANDHI, binding: undefined, token: "" },
+      { name: FATMIKE, baseUrl: "", token: "", legacy: true },
+      { name: PROPAGANDHI, baseUrl: "", token: "" },
     ]);
     expect(pool).toHaveLength(0);
   });
@@ -186,7 +180,7 @@ describe("cf507 BACK-COMPAT: a bare 'vpc' token predates the pool and is still i
 
   it("bare 'vpc' resolves to NOTHING when no door is marked legacy", () => {
     // A deploy that binds only a NEW door cannot honestly claim an old token belongs to it.
-    const pool = doorPool([{ name: PROPAGANDHI, binding: binding("propagandhi"), token: TOKEN_PROPAGANDHI }]);
+    const pool = doorPool([{ name: PROPAGANDHI, baseUrl: "https://finish-upscale-propagandhi.skyphusion.org", token: TOKEN_PROPAGANDHI }]);
     expect(resolveDoor(pool, DOOR_ROUTE_NAME)).toBeNull();
   });
 });
