@@ -52,8 +52,10 @@ beforeEach(() => { realFetch = globalThis.fetch; });
 afterEach(() => { globalThis.fetch = realFetch; });
 
 describe("cf507 wire: two bound doors both carry jobs, and each poll goes home", () => {
-  function bothDoors(legacyRespond = (p: string) => (p === "/run" ? runOk("job-legacy") : done({ shot_id: "shot_01", clip_key: "p/a.mp4" })),
-                     propRespond = (p: string) => (p === "/run" ? runOk("job-prop") : done({ shot_id: "shot_01", clip_key: "p/b.mp4" }))) {
+  function bothDoors(
+    legacyRespond: (p: string, method?: string) => Response = (p) => (p === "/run" ? runOk("job-legacy") : done({ shot_id: "shot_01", clip_key: "p/a.mp4" })),
+    propRespond: (p: string, method?: string) => Response = (p) => (p === "/run" ? runOk("job-prop") : done({ shot_id: "shot_01", clip_key: "p/b.mp4" })),
+  ) {
     const legacyCalls: { path: string; method: string; auth: string }[] = [];
     const propCalls: { path: string; method: string; auth: string }[] = [];
     const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
