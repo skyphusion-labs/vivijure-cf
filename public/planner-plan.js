@@ -222,11 +222,11 @@ function renderPlanResult(httpStatus, data, model, characters) {
     // so the user sees the panel's state immediately.
     showPreflightSection();
     runPreflight();
+    // Prepare the later assemble UI, but stay on Plan so the shots stay
+    // on screen. Do not jump to Cast / bundle.
     showBundleStage(data.storyboard, characters);
-    // Shots exist. Take them back to Cast to attach faces / bundle for
-    // this storyboard. Cast was first so the brief already knew the names.
     refreshSteps();
-    showStep("cast");
+    showStep("plan");
     savePersistedState();
     return;
   }
