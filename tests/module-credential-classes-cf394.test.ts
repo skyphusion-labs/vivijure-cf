@@ -113,6 +113,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   BLENDER_DOOR_TOKEN: { path: "operator-only", note: "cf#489: the blender door own bearer (LOCAL_FINISH_TOKEN on the container), the same shared value the four GPU doors carry. Read ONLY when FINISH_BLENDER_VPC is bound" },
   AUDIO_BEAT_SYNC_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   VIDEO_FINISH_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
+  MEDIA_FINISH_TOKEN: { path: "operator-only", note: "cf#613/#615: bearer the fleet media containers (video-finish / audio-mix / audio-beat-sync) check. Reuses the FINISH_DOOR_TOKEN store secret. Operator infrastructure credential; read only to authenticate those VPC hops. Unset is fail-open" },
 
   // --- the self-host door ---
   LOCAL_BACKEND_URL: { path: "self-host-only", note: "the deploying operator's own GPU box" },

@@ -37,12 +37,14 @@ import {
 import {
   timedVpcFetch, logVpcAsyncTerminal, withVpcElapsedApplied,
 } from "../../_shared/vpc-call-log";
+import { mediaFinishHeaders } from "../../_shared/media-finish-auth";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
 
 interface Env {
   VIDEO_FINISH_VPC: { fetch(url: RequestInfo, init?: RequestInit): Promise<Response> };
+  MEDIA_FINISH_TOKEN?: { get(): Promise<string> } | string;
 }
 
 // The container route this module drives (sync POST /subtitle, async POST /async/subtitle).
@@ -91,7 +93,7 @@ async function submitAsync(
 ): Promise<string | null> {
   const timed = await timedVpcFetch(
     (url, init) => env.VIDEO_FINISH_VPC.fetch(url, init),
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(spec) },
+    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -120,7 +122,7 @@ async function invokeSync(
 ): Promise<InvokeResponse<FilmFinishOutput>> {
   const timed = await timedVpcFetch(
     (url, init) => env.VIDEO_FINISH_VPC.fetch(url, init),
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(spec) },
+    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -204,7 +206,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
   // Intermediate pending polls stay silent; only terminal outcomes emit vpc.call with job wall-clock.
   const timed = await timedVpcFetch(
     (url, init) => env.VIDEO_FINISH_VPC.fetch(url, init),
-    undefined,
+    { headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN) },
     {
       module: MANIFEST.name,
       service: "video-finish",

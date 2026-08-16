@@ -22,3 +22,9 @@ enabled = true
 binding = "VIDEO_FINISH_VPC"
 service_id = "REPLACE_WITH_VPC_VIDEO_FINISH_ID"
 remote = true
+
+# Same store secret as the GPU doors. Unbound is fail-open (vivijure-cf#613).
+[[secrets_store_secrets]]
+binding = "MEDIA_FINISH_TOKEN"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "FINISH_DOOR_TOKEN"

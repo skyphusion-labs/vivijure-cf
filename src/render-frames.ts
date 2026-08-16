@@ -21,6 +21,7 @@
 // as "checked"; the honest claim is "N frames sampled at these timestamps looked like this".
 import { presignR2Get, presignR2Put } from "./r2-presign";
 import type { Env } from "./env";
+import { mediaFinishToken } from "../modules/_shared/media-finish-auth";
 
 export const FRAMES_MIN_COUNT = 1;
 export const FRAMES_MAX_COUNT = 25;
@@ -164,13 +165,15 @@ function asFetcher(binding: unknown): FetcherLike | null {
 export async function requestFramesFromContainer(
   vpc: FetcherLike,
   payload: unknown,
-  opts: { retries?: number; backoffMs?: number } = {},
+  opts: { retries?: number; backoffMs?: number; token?: string } = {},
 ): Promise<{ ok: true; body: Record<string, unknown> } | FramesFailure> {
   const retries = opts.retries ?? 3;
   const backoffMs = opts.backoffMs ?? 1500;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (opts.token) headers.authorization = "Bearer " + opts.token;
   const init: RequestInit = {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
   };
   let resp: Response | null = null;
@@ -246,10 +249,11 @@ export async function buildFramesSheet(
     return framesFailure("container-error");
   }
 
+  const token = await mediaFinishToken(env.MEDIA_FINISH_TOKEN);
   const r = await requestFramesFromContainer(
     vpc,
     { videoUrl, outputUrl, outputKey: key, count, at, cols: grid.cols, rows: grid.rows, contentType: FRAMES_CONTENT_TYPE },
-    opts,
+    { ...opts, token: token || undefined },
   );
   if (!r.ok) return r;
 

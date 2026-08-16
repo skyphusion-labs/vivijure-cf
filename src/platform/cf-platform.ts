@@ -61,5 +61,11 @@ export function cfPlatformFromEnv(env: Env): Platform {
   if (env.MODULE_DISPATCH) {
     (platform.vars as Record<string, unknown>).MODULE_DISPATCH = env.MODULE_DISPATCH;
   }
+  // Handle, not resolved plaintext: core's mediaFinishToken awaits get() the same way
+  // it resolves R2 / RunPod secrets. Putting the handle on vars is how it reaches
+  // OrchestratorEnv; pickOrchestratorVars only copies strings and would drop it.
+  if (env.MEDIA_FINISH_TOKEN !== undefined) {
+    (platform.vars as Record<string, unknown>).MEDIA_FINISH_TOKEN = env.MEDIA_FINISH_TOKEN;
+  }
   return platform;
 }

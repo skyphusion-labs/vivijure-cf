@@ -94,6 +94,11 @@ export interface Env {
   // loudnorm). Optional so the Worker deploys before the VPC service is provisioned; the mux phase
   // degrades to the single-track remux when it is absent. Provisioned + bound by infra (Strummer).
   AUDIO_MIX_VPC?: Fetcher;
+  /**
+   * Bearer the fleet media containers check (vivijure-cf#613 / core#240). Optional: unset
+   * is fail-open. Reuses the FINISH_DOOR_TOKEN store secret when bound that way.
+   */
+  MEDIA_FINISH_TOKEN?: SecretsStoreSecret | string;
 
   // CF Access JWT verification (F2, src/access-auth.ts): fail-CLOSED in-Worker backstop so the data
   // plane never depends solely on the edge Access app. Deploy-specific, NOT secrets -> wrangler.toml
