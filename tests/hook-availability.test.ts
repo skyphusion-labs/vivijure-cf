@@ -71,7 +71,7 @@ describe("GET /api/modules host.hooks_unavailable", () => {
     // report does not exist.
     const res = await worker.fetch(
       req("/api/modules"),
-      envWith({ AI, GATEWAY_ID: "gw-1", VIDEO_FINISH_VPC: { fetch: async () => new Response("ok") } }),
+      envWith({ AI, GATEWAY_ID: "gw-1", VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" }),
       ctx,
     );
     const body = (await res.json()) as { host?: { hooks_unavailable?: unknown } };
@@ -124,7 +124,7 @@ describe("GET /api/modules with VIDEO_FINISH_TIER_STATE set (control-plane#136)"
     // tell a tenant a working capability can never be turned on for them.
     const map = await modulesHost({
       VIDEO_FINISH_TIER_STATE: "unprovisionable",
-      VIDEO_FINISH_VPC: { fetch: async () => new Response("ok") },
+      VIDEO_FINISH_URL: "https://video-finish.skyphusion.org",
     });
     expect(map[VIDEO_FINISH_CAPABILITY_KEY]).toBeUndefined();
   });

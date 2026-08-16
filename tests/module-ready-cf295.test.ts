@@ -253,6 +253,8 @@ describe("cf#295: none of the newly-covered modules 404 on GET /ready", () => {
     { name: "image-generate", worker: imageGenerateWorker as unknown as Worker },
     { name: "plan-enhance", worker: planEnhanceWorker as unknown as Worker },
     ...BINDING_GATED,
+    { name: "film-titles", worker: filmTitlesWorker as unknown as Worker },
+    { name: "subtitle", worker: subtitleWorker as unknown as Worker },
     { name: "notify-email", worker: notifyEmailWorker as unknown as Worker },
   ];
   it.each(ALL)("$name answers 200, not 404, with zero config", async ({ worker }) => {

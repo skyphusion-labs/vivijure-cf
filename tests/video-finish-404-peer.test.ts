@@ -365,7 +365,7 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
       },
     };
     const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
-    installVfFetch((input, init) => all404.fetch(input as RequestInfo, init));
+    installVfFetch((input) => all404.fetch(input as RequestInfo));
     const liveToken = encodeSubtitlePoll({
       jobId: "job-prod",
       filmKey: "renders/film-x/film.mp4",
@@ -408,7 +408,7 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
       },
     };
     const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
-    installVfFetch((input, init) => all404.fetch(input as RequestInfo, init));
+    installVfFetch((input) => all404.fetch(input as RequestInfo));
     const token = encodeSubtitlePoll({
       jobId: "job-gone",
       filmKey: "renders/film-x/film.mp4",

@@ -141,7 +141,7 @@ describe("GET /api/modules projection", () => {
   });
 
   it("POSITIVE CONTROL: a host that BINDS the tier reports no video-finish hook at all", async () => {
-    const body = await modulesBody(env({ VIDEO_FINISH_URL: { fetch: async () => new Response("ok") } }));
+    const body = await modulesBody(env({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" }));
     const host = body.host as { hooks_unavailable?: Record<string, string> };
     for (const key of [VIDEO_FINISH_CAPABILITY_KEY, ...VIDEO_FINISH_GATED_HOOKS]) {
       expect(host?.hooks_unavailable?.[key], key + " must not be reported on a bound host").toBeUndefined();

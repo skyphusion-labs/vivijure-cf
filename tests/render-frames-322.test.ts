@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { installVfFetch } from "./install-vf-fetch";
 import worker from "../src/index";
 import { ARTIFACT_PREFIXES, safeArtifactContentType } from "../src/index";
 import {
@@ -39,8 +40,12 @@ function makeEnv(opts: { vpc?: unknown; seed?: Record<string, { size: number; mi
         return o ? { size: o.size, httpMetadata: { contentType: o.mime } } : null;
       },
     },
-    ...(opts.vpc ? { VIDEO_FINISH_VPC: opts.vpc } : {}),
+    ...(opts.vpc ? { VIDEO_FINISH_URL: "https://video-finish.test" } : {}),
   } as unknown as Env;
+  if (opts.vpc && typeof opts.vpc === "object" && opts.vpc && "fetch" in opts.vpc) {
+    const fetcher = opts.vpc as { fetch: (u: RequestInfo, i?: RequestInit) => Promise<Response> };
+    installVfFetch((input, init) => fetcher.fetch(input as RequestInfo, init));
+  }
   return { env, r2 };
 }
 
@@ -217,7 +222,7 @@ describe("cf#322 a repeat request reuses the stored sheet", () => {
       seed: { [CLIP]: { size: 100, mime: "video/mp4" } },
     });
     await buildFramesSheet(env, CLIP, 9, null, { retries: 1, backoffMs: 0 });
-    expect(calls[0].url).toBe("http://video-finish/frames");
+    expect(calls[0].url).toBe("https://video-finish.test/frames");
     expect(calls[0].body.contentType).toBe(FRAMES_CONTENT_TYPE);
     expect(calls[0].body.cols).toBe(3);
     expect(calls[0].body.rows).toBe(3);
