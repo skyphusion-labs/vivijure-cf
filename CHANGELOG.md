@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.31.1 -- 2026-08-16
+
+### fix(cf-grok-video): pass output.upload_url for xAI ZDR teams
+
+Grok Imagine Video on a Zero Data Retention team refuses the job unless
+we give it a PUT URL. Mint a 40-minute R2 presign and read the clip
+back from the bucket.
+
 ## v1.31.0 -- 2026-08-16
 
 ### feat(doors): video-finish is a Traefik URL, not a VPC binding
