@@ -181,6 +181,53 @@ describe("the survivor check is COMMENT-AWARE (the headline defect)", () => {
 });
 
 // ------------------------------------------------------------------------------------------- 3.
+describe("R2 S3 identifiers fill from the account id (cf-grok-video ZDR)", () => {
+  const GROK_VARS = `[vars]
+R2_S3_ENDPOINT = "REPLACE_WITH_R2_S3_ENDPOINT"
+R2_S3_BUCKET = "REPLACE_WITH_R2_S3_BUCKET"
+`;
+
+  it("derives the endpoint from CLOUDFLARE_ACCOUNT_ID and defaults the bucket", () => {
+    const r = run(`name = "vivijure-module-cf-grok-video"\n${GROK_VARS}`, {
+      ...REQ,
+      CLOUDFLARE_ACCOUNT_ID: "acct123",
+    });
+    expect(r.status).toBe(0);
+    expect(r.text).toContain('R2_S3_ENDPOINT = "https://acct123.r2.cloudflarestorage.com"');
+    expect(r.text).toContain('R2_S3_BUCKET = "vivijure"');
+    expect(r.text).not.toContain("REPLACE_WITH_");
+  });
+
+  it("REFUSES when the endpoint cannot be derived", () => {
+    const r = run(`name = "x"\n${GROK_VARS}`, {
+      ...REQ,
+      CLOUDFLARE_ACCOUNT_ID: "",
+      R2_S3_ENDPOINT: "",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.out).toContain("R2_S3_ENDPOINT");
+    expect(r.text).toContain("REPLACE_WITH_R2_S3_ENDPOINT");
+  });
+
+  it("REFUSES a leftover wrangler ${R2_S3_ENDPOINT} interpolation (the v1.31.1 defect)", () => {
+    const r = run(`name = "x"\n[vars]\nR2_S3_ENDPOINT = "\${R2_S3_ENDPOINT}"\n`, REQ);
+    expect(r.status).not.toBe(0);
+    expect(r.out).toContain("${R2_S3_ENDPOINT}");
+  });
+
+  it("the shipped cf-grok-video toml fills clean", () => {
+    const r = run(readFileSync("modules/cf-grok-video/wrangler.toml", "utf8"), {
+      ...REQ,
+      CLOUDFLARE_ACCOUNT_ID: "acct123",
+    });
+    expect(r.status).toBe(0);
+    expect(r.text.replace(/^\s*#.*$/gm, "")).not.toContain("REPLACE_WITH_");
+    expect(r.text.replace(/^\s*#.*$/gm, "")).not.toContain("${R2_S3_");
+    expect(r.text).toContain('R2_S3_ENDPOINT = "https://acct123.r2.cloudflarestorage.com"');
+    expect(r.text).toContain('R2_S3_BUCKET = "vivijure"');
+  });
+});
+
 describe("REQUIRED bindings keep refusing -- the fix must not delete a working guard", () => {
   it("an unset REQUIRED VPC id still fails the deploy", () => {
     const t = `name = "x"\n\n[[vpc_services]]\nbinding = "AUDIO_MASTER_VPC"\nservice_id = "REPLACE_WITH_VPC_AUDIO_MASTER_ID"\n`;

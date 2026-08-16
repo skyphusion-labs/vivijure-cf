@@ -79,7 +79,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-grok-video",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Grok Imagine Video (CF AI)" }],
@@ -136,6 +136,15 @@ async function mintUploadUrl(env: Env, key: string): Promise<string> {
   const bucket = env.R2_S3_BUCKET || "";
   if (!accessKeyId || !secretAccessKey || !endpoint || !bucket) {
     throw new Error("cf-grok-video: ZDR upload needs R2_S3_ACCESS_KEY_ID, R2_S3_SECRET_ACCESS_KEY, R2_S3_ENDPOINT, R2_S3_BUCKET");
+  }
+  if (endpoint.includes("${") || bucket.includes("${") || endpoint.startsWith("REPLACE_WITH_")) {
+    throw new Error("cf-grok-video: R2_S3_ENDPOINT/BUCKET look unfilled (deploy did not substitute the identifiers)");
+  }
+  try {
+    const u = new URL(endpoint);
+    if (u.protocol !== "https:") throw new Error("not https");
+  } catch {
+    throw new Error("cf-grok-video: R2_S3_ENDPOINT is not a valid https URL");
   }
   return presignR2Put({ accessKeyId, secretAccessKey, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
 }

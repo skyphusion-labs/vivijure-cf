@@ -67,6 +67,8 @@ STORE_NAME = "vivijure"  # the account-level Secrets Store name (#237/#238)
 # replaces it with the real store id so the secrets_store_secrets bindings resolve at deploy.
 STORE_ID_PLACEHOLDER = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 D1_ID_PLACEHOLDER = "REPLACE_WITH_D1_DATABASE_ID"
+R2_S3_ENDPOINT_PLACEHOLDER = "REPLACE_WITH_R2_S3_ENDPOINT"
+R2_S3_BUCKET_PLACEHOLDER = "REPLACE_WITH_R2_S3_BUCKET"
 # Single-tenant studio gating (config, NOT secrets -- set these for your deploy):
 DEPLOY_DOMAIN = ""    # AUTH_MODE=access only: the studio hostname behind CF Access (the edge app host)
 OPERATOR_EMAIL = ""   # AUTH_MODE=access only: the one email allowed through the Access self-only policy
@@ -513,8 +515,10 @@ def render_module_toml(text: str, *, prefix: str = "") -> str:
         binding by id;
       - secret_name: scoped INSIDE the Secrets Store, and the store itself is created prefixed;
       - service = : no module toml binds another worker (the core binds modules, not the reverse);
-      - ${...} placeholders, [[routes]], [[migrations]], tail_consumers: no module toml carries any,
-        so the matching core-render passes have nothing here to miss;
+      - ${...} placeholders, [[routes]], [[migrations]], tail_consumers: no module toml carries any
+        wrangler ${VAR} interpolation (cf-grok-video used to, and an unset CI env shipped the
+        literal; those identifiers are now REPLACE_WITH_R2_S3_* and filled by
+        replace_r2_s3_placeholders, not this render);
       - workers_dev = false: NOT flipped to true as the core render does. A base install verifies on
         the core workers.dev URL; module workers are reached by service binding and need no public URL.
     """
@@ -961,6 +965,50 @@ def restore_d1_id_placeholder(repo: Path, d1_id: str) -> None:
     _restore_module_placeholder(repo, D1_ID_PLACEHOLDER, d1_id, "d1 database_id")
 
 
+def replace_r2_s3_placeholders(repo: Path, account_id: str) -> None:
+    """cf-grok-video ZDR upload_url. Identifiers, not secrets. Derive the S3 host from the
+    account id (same rule as the host wrangler render). Bucket follows DEPLOY_PREFIX so an
+    isolated install signs against its own prefixed R2_RENDERS, not the verbatim one."""
+    if not account_id:
+        needs = any(
+            R2_S3_ENDPOINT_PLACEHOLDER in p.read_text()
+            for p in sorted((repo / "modules").glob("*/wrangler.toml"))
+        )
+        if needs:
+            die("cf-grok-video needs CLOUDFLARE_ACCOUNT_ID to derive R2_S3_ENDPOINT")
+        return
+    _fill_module_placeholder(
+        repo, R2_S3_ENDPOINT_PLACEHOLDER,
+        f"https://{account_id}.r2.cloudflarestorage.com", "R2_S3_ENDPOINT",
+    )
+    _fill_module_placeholder(repo, R2_S3_BUCKET_PLACEHOLDER, prefixed("vivijure"), "R2_S3_BUCKET")
+
+
+def restore_r2_s3_placeholders(repo: Path, account_id: str) -> None:
+    """Restore only the [vars] assignment lines. A blanket replace of the bucket name
+    `vivijure` would rewrite `name = "vivijure-module-cf-grok-video"` too."""
+    endpoint = f"https://{account_id}.r2.cloudflarestorage.com" if account_id else ""
+    bucket = prefixed("vivijure")
+    n = 0
+    for toml in sorted((repo / "modules").glob("*/wrangler.toml")):
+        text = toml.read_text()
+        orig = text
+        if endpoint:
+            text = text.replace(
+                f'R2_S3_ENDPOINT = "{endpoint}"',
+                f'R2_S3_ENDPOINT = "{R2_S3_ENDPOINT_PLACEHOLDER}"',
+            )
+        text = text.replace(
+            f'R2_S3_BUCKET = "{bucket}"',
+            f'R2_S3_BUCKET = "{R2_S3_BUCKET_PLACEHOLDER}"',
+        )
+        if text != orig:
+            toml.write_text(text)
+            n += 1
+    if n:
+        log(f"  restored the R2_S3_* placeholders in {n} module wrangler.toml(s) (working tree left clean)")
+
+
 def resolved_secret_values(runpod_api_key: str, cf_derived: dict, runpod_endpoints: dict) -> dict:
     """The AUTO-sourced store secret values (store secret_name -> value). Operator-class names are NOT
     here (they seed as placeholders). Pure -- unit tested. Keys == AUTO_STORE_NAMES."""
@@ -1005,6 +1053,7 @@ def seed_secrets(repo: Path, s: Secrets, st: State, cf_derived: dict, runpod_end
     st.put_resource("store_id", store_id, adopted=store.adopted)
     replace_store_id_placeholder(repo, store_id)  # so the deploy's bindings resolve
     replace_d1_id_placeholder(repo, str(st.resource_id("d1_id") or ""))  # cf#279 TELEMETRY_DB
+    replace_r2_s3_placeholders(repo, acct)  # cf-grok-video ZDR upload_url identifiers
 
     base = f"/accounts/{acct}/secrets_store/stores/{store_id}/secrets"
     existing = {x.get("name"): x.get("id") for x in (cf_api("GET", base, tok) or []) if isinstance(x, dict) and x.get("name")}
@@ -1261,6 +1310,7 @@ def cmd_up(repo: Path, dry_run: bool, noninteractive: bool, rotate_token: bool =
         set_studio_api_token(repo, s, rotate_token, noninteractive)  # operator login (worker secret, safe post-deploy)
     restore_store_id_placeholder(repo, st.resource_id("store_id"))  # leave the working tree clean post-deploy
     restore_d1_id_placeholder(repo, str(st.resource_id("d1_id") or ""))
+    restore_r2_s3_placeholders(repo, s.cf_account_id)
     bring_up_containers(repo)
     finalize(repo, st)
 
