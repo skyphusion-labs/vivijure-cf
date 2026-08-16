@@ -293,10 +293,13 @@
         <h2 class="planner-stage-title">Who is in this movie</h2>
         <span id="planner-faces-status" class="planner-status"></span>
       </header>
-      <p class="planner-stage-hint">Pick the people in this film. A face photo is enough to preview. Training is optional.</p>
+      <p class="planner-stage-hint">Add who is in this film, then write the shots. A face photo is enough to preview. Training is optional.</p>
+      <div class="planner-faces-add">
+        <input id="planner-faces-new-name" class="planner-input" type="text" maxlength="80" placeholder="Name (e.g. Mira)" autocomplete="off" />
+        <button id="planner-faces-add" type="button" class="planner-primary">Add</button>
+      </div>
       <div id="planner-faces-empty" class="planner-faces-empty" hidden>
-        <p>No characters yet.</p>
-        <a id="planner-faces-create" class="planner-primary planner-faces-create" href="cast#new">Create a character</a>
+        <p>No characters yet. Type a name and hit Add.</p>
       </div>
       <div id="planner-faces-list" class="planner-faces-list"></div>
       <p id="planner-faces-more" class="planner-faces-more" hidden>

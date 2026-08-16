@@ -264,6 +264,44 @@ function syncCastFromBindings() {
   planState.cast = chars;
 }
 
+async function addCastFromPlanner() {
+  const input = $("#planner-faces-new-name");
+  const status = $("#planner-faces-status");
+  const name = input ? input.value.trim() : "";
+  if (!name) {
+    if (status) status.textContent = "Type a name first.";
+    if (input) input.focus();
+    return;
+  }
+  const btn = $("#planner-faces-add");
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "adding…";
+  try {
+    const resp = await fetch("/api/cast", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+    if (input) input.value = "";
+    await loadCast();
+    const created = data.cast || (planState.castCatalog || []).find((c) => c.name === name);
+    if (created && created.id) {
+      const slot = nextFreeSlot();
+      if (slot) bindSlotToCast(slot, created.id);
+    }
+    renderFacesPanel();
+    if (typeof refreshCastLoraWarning === "function") refreshCastLoraWarning();
+    if (status) status.textContent = created ? (created.name + " is in this film") : "added";
+    savePersistedState();
+  } catch (err) {
+    if (status) status.textContent = "could not add: " + (err && err.message ? err.message : err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function renderFacesPanel() {
   const empty = $("#planner-faces-empty");
   const list = $("#planner-faces-list");
