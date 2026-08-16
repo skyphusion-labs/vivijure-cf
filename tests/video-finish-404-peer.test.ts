@@ -7,6 +7,7 @@
 // / 90-min deadline).
 
 import { describe, it, expect } from "vitest";
+import { installVfFetch } from "./install-vf-fetch";
 import {
   classifyVideoFinish404,
   legacyClassifyVideoFinish404,
@@ -260,7 +261,8 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
       holder: 0,
       holderAnswer: () => ({ status: 200, body: { status: "pending" } }),
     });
-    const env = { VIDEO_FINISH_VPC: vip };
+    const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
+    installVfFetch((input, init) => vip.fetch(input as RequestInfo, init));
     // Skip replica 0 (the holder) so the first status GET is a peer 404.
     await vip.fetch("http://video-finish/async/status/warmup");
     const token = encodeSubtitlePoll({
@@ -286,7 +288,8 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
       holder: 0,
       holderAnswer: () => ({ status: 200, body: { status: "pending" } }),
     });
-    const env = { VIDEO_FINISH_VPC: vip };
+    const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
+    installVfFetch((input, init) => vip.fetch(input as RequestInfo, init));
     await vip.fetch("http://video-finish/async/status/warmup");
     const token = encodeTitlesPoll({
       jobId: "job-abc",
@@ -313,7 +316,8 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
         ? { status: 200, body: { status: "completed", result: { ok: true, key: "renders/film-x/film_subbed.mp4", burned: true, sidecar: false } } }
         : { status: 200, body: { status: "pending" } },
     });
-    const env = { VIDEO_FINISH_VPC: vip };
+    const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
+    installVfFetch((input, init) => vip.fetch(input as RequestInfo, init));
     const sub = (await (await subtitleWorker.fetch(invokeReq(subtitleInput()), env)).json()) as { poll: string };
     // invoke consumed RR slot 0 (submit). Next three status polls: replica 1 404, 2 404, 0 holder.
     const first = await drivePolls(subtitleWorker, env, sub.poll, 2);
@@ -333,7 +337,8 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
         ? { status: 200, body: { status: "completed", result: { ok: true, key: "renders/film-x/film_titled.mp4" } } }
         : { status: 200, body: { status: "pending" } },
     });
-    const env = { VIDEO_FINISH_VPC: vip };
+    const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
+    installVfFetch((input, init) => vip.fetch(input as RequestInfo, init));
     const sub = (await (await titlesWorker.fetch(invokeReq(titlesInput()), env)).json()) as { poll: string };
     const first = await drivePolls(titlesWorker, env, sub.poll, 2);
     expect(first.every((p) => p.ok && p.pending)).toBe(true);
@@ -359,7 +364,8 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
         return j({ ok: false }, 500);
       },
     };
-    const env = { VIDEO_FINISH_VPC: all404 };
+    const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
+    installVfFetch((input, init) => all404.fetch(input as RequestInfo, init));
     const liveToken = encodeSubtitlePoll({
       jobId: "job-prod",
       filmKey: "renders/film-x/film.mp4",
@@ -401,7 +407,8 @@ describe("subtitle + film-titles workers against a 3-replica VIP", () => {
         return j({ ok: false }, 500);
       },
     };
-    const env = { VIDEO_FINISH_VPC: all404 };
+    const env = { VIDEO_FINISH_URL: "https://video-finish.test" };
+    installVfFetch((input, init) => all404.fetch(input as RequestInfo, init));
     const token = encodeSubtitlePoll({
       jobId: "job-gone",
       filmKey: "renders/film-x/film.mp4",

@@ -37,8 +37,8 @@ export function orch<T extends Env>(env: T): T & OrchestratorEnv {
     const prev = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (u.includes("video-finish")) return vpc.fetch(input, init);
-      return prev(input as RequestInfo, init);
+      if (u.includes("video-finish")) return vpc.fetch!(input as RequestInfo, init);
+      return prev.call(globalThis, input as never, init);
     }) as typeof fetch;
     undoFetch = () => {
       globalThis.fetch = prev;

@@ -179,10 +179,8 @@ type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE">;
 
 /** Which state this studio is in. A public URL (or the default Traefik origin) is available. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
-  if (env.VIDEO_FINISH_URL === "") {
-    return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
-  }
-  return "available";
+  if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
+  return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
 }
 
 /** The sentence for a state. `available` has no sentence: the host reports nothing at all. */

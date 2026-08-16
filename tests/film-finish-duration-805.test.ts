@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { installVfFetch } from "./install-vf-fetch";
 import titlesWorker from "../modules/film-titles/src/index";
 import subtitleWorker from "../modules/subtitle/src/index";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
@@ -50,18 +51,17 @@ const j = (b: unknown, status = 200) =>
  *  both output-construction sites in each module get exercised rather than only one. */
 function vpcEnv(syncBody: unknown, opts: { asyncSupported?: boolean; statusResult?: unknown } = {}) {
   const asyncSupported = opts.asyncSupported ?? false;
+  installVfFetch(async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const path = new URL(url).pathname;
+    if (path.startsWith("/async/status/")) return j(opts.statusResult ?? { status: "completed", result: syncBody });
+    if (path.startsWith("/async/")) {
+      return asyncSupported ? j({ ok: true, jobId: "job-1", status: "pending" }, 202) : j({ ok: false, error: "unknown async route" }, 404);
+    }
+    return j(syncBody);
+  });
   return {
-    VIDEO_FINISH_VPC: {
-      async fetch(input: Request | string) {
-        const url = typeof input === "string" ? input : input.url;
-        const path = new URL(url).pathname;
-        if (path.startsWith("/async/status/")) return j(opts.statusResult ?? { status: "completed", result: syncBody });
-        if (path.startsWith("/async/")) {
-          return asyncSupported ? j({ ok: true, jobId: "job-1", status: "pending" }, 202) : j({ ok: false, error: "unknown async route" }, 404);
-        }
-        return j(syncBody);
-      },
-    },
+    VIDEO_FINISH_URL: "https://video-finish.test",
   } as unknown as Parameters<typeof titlesWorker.fetch>[1];
 }
 
