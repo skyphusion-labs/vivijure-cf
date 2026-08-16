@@ -30,7 +30,7 @@
 #
 # provenance: skyphusion-labs/vivijure-control-plane @ main, src/tenant-modules.ts:155-197
 # read-at: 2026-08-07, plane origin/main
-# count: 15
+# count: 19
 alibaba-wan
 alibaba-wan-lora
 finish-lipsync
@@ -46,3 +46,7 @@ plan-enhance
 seedance
 speech-upscale
 vidu-q3
+cf-flux-3-video
+cf-grok-video
+cf-hh1-r2v
+cf-seedance
