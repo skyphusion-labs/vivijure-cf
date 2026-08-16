@@ -5,6 +5,12 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(cf-seedance): use_virtual_avatar so synthetic faces are not 7003'd
+
+ByteDance 7003 InputImageSensitiveContentDetected.PrivacyInformation:
+"input image may contain real person." Our keyframes are AI stills.
+CF docs: use_virtual_avatar routes them through the trusted avatar library.
+
 ### fix(cf-flux-3-video): send keyframes[], not image
 
 AI Gateway 7003: "Unsupported field passed: image. Invalid value at keyframes."

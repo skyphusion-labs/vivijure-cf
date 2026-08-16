@@ -2,6 +2,9 @@
 // Distinct from modules/seedance (RunPod Seedance V1.5 Pro).
 // Models: bytedance/seedance-2.0 | seedance-2.0-fast | seedance-2.0-mini
 // i2v field: image; duration 4-12; resolution 480p/720p/1080p/4k (mini caps may apply provider-side).
+// use_virtual_avatar: ByteDance blocks faces as "real person" (7003 PrivacyInformation)
+// unless this flag routes the still through their virtual-avatar library. Our keyframes
+// are always synthetic.
 
 import type { MotionBackendInput } from "./contract";
 
@@ -68,6 +71,7 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
     watermark: false,
     generate_audio: config.generate_audio,
     seed: config.seed,
+    use_virtual_avatar: true,
   };
 }
 
