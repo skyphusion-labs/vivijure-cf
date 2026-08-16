@@ -75,7 +75,7 @@ describe("a gone job names the transport that actually ran it", () => {
     expect(err).not.toContain("RunPod");
     expect(err).toContain("door");
     expect(err).toContain("shot_01");
-    expect(rp).not.toHaveBeenCalled();                // and RunPod was never consulted
+    expect(rp.mock.calls.every((c) => !String(c[0]).includes("runpod"))).toBe(true);
   });
 
   it("finish-upscale: the message names WHICH door, so a two-door deploy is diagnosable", async () => {

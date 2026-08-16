@@ -5,6 +5,16 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.30.0 -- 2026-08-16
+
+### feat(doors): finish-upscale, speech-upscale, and finish-blender call public per-box HTTPS, not VPC
+
+VPC bindings are gone from the call path. Submit and poll use
+`https://finish-upscale-fatmike.skyphusion.org` (etc.). Poll never goes
+through the Traefik SUBMIT hostname: job state is per-process RAM.
+
+`vivijure.skyphusion.org` tests this as soon as v1.30.0 is deployed.
+
 ## v1.29.0 -- 2026-08-16
 
 ### feat(media): send MEDIA_FINISH_TOKEN on film-titles, subtitle, beat-sync, and frames (cf#615)

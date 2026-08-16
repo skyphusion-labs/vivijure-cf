@@ -38,7 +38,7 @@ import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-cor
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, type DoorBinding, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, DOOR_ORIGIN, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -53,13 +53,6 @@ interface Env {
   /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
-  /** cf#480: the always-on speech-enhance door on our own GPU iron, over a Workers VPC service.
-   *  Bound -> every job goes here and RunPod is not called at all. Unbound -> the RunPod path,
-   *  byte for byte. Bound-ness, never failover (modules/_shared/finish-door.ts). */
-  SPEECH_UPSCALE_VPC?: DoorBinding;
-  /** cf#507: the SECOND always-on speech door. Same image, same wire contract; jobs round-robin
-   *  across both and a poll returns to the box that took it. Unset = one door = cf#480 exactly. */
-  SPEECH_UPSCALE_VPC_PROPAGANDHI?: DoorBinding;
   SPEECH_DOOR_TOKEN_PROPAGANDHI?: SecretsStoreSecret | string;
   /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN`). Read only when the binding is bound. */
   SPEECH_DOOR_TOKEN?: SecretsStoreSecret | string;
@@ -113,7 +106,7 @@ function doorTransport(route: DoorRoute): Transport {
     // cf#507: the door's OWN name. A constant here would send a poll to whichever door is listed
     // first rather than to the box holding the job, which reads as a GC'd job on the other one.
     name: route.name,
-    call: (path, init) => route.binding!.fetch(doorUrl(path), {
+    call: (path, init) => fetch(doorUrl(route, path), {
       ...init,
       headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
     }),
@@ -132,8 +125,8 @@ async function doorsFor(env: Env): Promise<DoorRoute[]> {
     secretValue(env.SPEECH_DOOR_TOKEN_PROPAGANDHI),
   ]);
   return doorPool([
-    { name: DOOR_ROUTE_NAME, binding: env.SPEECH_UPSCALE_VPC, token: legacyToken, legacy: true },
-    { name: doorName("propagandhi"), binding: env.SPEECH_UPSCALE_VPC_PROPAGANDHI, token: propagandhiToken },
+    { name: DOOR_ROUTE_NAME, baseUrl: DOOR_ORIGIN["speech-upscale"].fatmike, token: legacyToken, legacy: true },
+    { name: doorName("propagandhi"), baseUrl: DOOR_ORIGIN["speech-upscale"].propagandhi, token: propagandhiToken },
   ]);
 }
 
