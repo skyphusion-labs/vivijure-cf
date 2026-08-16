@@ -189,6 +189,59 @@
     return null;
   }
 
+  // cf#595 / core#226: clip-level finish reasons. A SECOND signal, not a rewrite of
+  // degradeFrom() -- assemble/mux unavailability and a polish passthrough are different
+  // facts, and folding them would make an unpolished-but-assembled film look like "no film".
+  //
+  // Core writes `output.finish = { degraded, reasons }` once a finish chain ran (including
+  // degraded:0). Absent means this row predates the field or never entered finish.
+  function parseClipFinish(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    var n =
+      typeof raw.degraded === "number" && Number.isFinite(raw.degraded) && raw.degraded >= 0
+        ? Math.floor(raw.degraded)
+        : null;
+    var reasons = [];
+    if (raw.reasons !== undefined) {
+      if (!Array.isArray(raw.reasons)) return null;
+      for (var i = 0; i < raw.reasons.length; i++) {
+        if (isNonEmptyString(raw.reasons[i])) reasons.push(String(raw.reasons[i]).trim());
+      }
+    }
+    if (n === null && reasons.length === 0) return null;
+    return { degraded: n !== null ? n : reasons.length, reasons: reasons };
+  }
+
+  // Live-view parse: a degrade to SHOW, or null. Clean (degraded:0) and junk both null,
+  // same one-directional forgiveness as degradeFrom -- a parse failure must not scare
+  // a good film. clipFinishBand is the wider history projection.
+  function clipFinishFrom(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+    var parsed = parseClipFinish(output.finish);
+    if (!parsed) return null;
+    if (parsed.degraded <= 0 && parsed.reasons.length === 0) return null;
+    return parsed;
+  }
+
+  function clipFinishBand(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return BAND_UNMEASURED;
+    if (output.finish === null || output.finish === undefined) return BAND_UNMEASURED;
+    var parsed = parseClipFinish(output.finish);
+    if (!parsed) return BAND_UNREADABLE;
+    if (parsed.degraded <= 0 && parsed.reasons.length === 0) return BAND_NONE_REPORTED;
+    return BAND_REPORTED;
+  }
+
+  // Structural sentence, then the reasons VERBATIM. Never rewrite a reason into
+  // `passthrough:backend-soft-degrade` -- that collapse is the defect.
+  function clipFinishSummary(clip) {
+    if (!clip || (clip.degraded <= 0 && (!clip.reasons || clip.reasons.length === 0))) return null;
+    var n = clip.degraded || (clip.reasons ? clip.reasons.length : 0);
+    return n === 1
+      ? "One shot finished with limits (the polish step passed the clip through)."
+      : n + " shots finished with limits (the polish step passed those clips through).";
+  }
+
   return {
     NO_REASON: NO_REASON,
     DEGRADE_BANDS: {
@@ -203,5 +256,8 @@
     degradeFrom: degradeFrom,
     deliverable: deliverable,
     deliveredSummary: deliveredSummary,
+    clipFinishFrom: clipFinishFrom,
+    clipFinishBand: clipFinishBand,
+    clipFinishSummary: clipFinishSummary,
   };
 });

@@ -49,7 +49,14 @@ function buildHistoryRow(r, childrenByParent) {
   const finishDegradeInfo = window.finishDegrade
     ? window.finishDegrade.degradeFrom(r.output)
     : null;
+  const clipFinishInfo = window.finishDegrade
+    ? window.finishDegrade.clipFinishFrom(r.output)
+    : null;
+  const clipFinishBand = window.finishDegrade
+    ? window.finishDegrade.clipFinishBand(r.output)
+    : "unmeasured";
   li.dataset.finishDegrade = finishBand;
+  li.dataset.clipFinish = clipFinishBand;
 
   const meta = document.createElement("div");
   meta.className = "planner-history-meta";
@@ -214,11 +221,17 @@ function buildHistoryRow(r, childrenByParent) {
   const finishBandNote = window.finishDegrade
     ? window.finishDegrade.bandNote(finishBand)
     : null;
-  if (finishBandNote) {
+  const clipBandNote = window.finishDegrade
+    ? window.finishDegrade.bandNote(clipFinishBand)
+    : null;
+  const degNote = finishBandNote || clipBandNote;
+  if (degNote) {
     const degBadge = document.createElement("span");
     degBadge.className = "planner-history-mode planner-history-mode-degraded";
-    degBadge.textContent = finishBandNote.label;
-    degBadge.title = finishBandNote.title;
+    degBadge.textContent = degNote.label;
+    degBadge.title = clipFinishInfo && clipFinishInfo.reasons && clipFinishInfo.reasons.length
+      ? clipFinishInfo.reasons.join("; ")
+      : degNote.title;
     meta.appendChild(degBadge);
   }
 
@@ -535,6 +548,29 @@ function buildHistoryRow(r, childrenByParent) {
     why.textContent = finishDegradeInfo.reason;
     degWrap.appendChild(why);
     li.appendChild(degWrap);
+  }
+
+  // cf#595: clip-level polish reasons, VERBATIM. A second note so an assemble/mux degrade
+  // and a no-face passthrough cannot collapse into one sentence.
+  if (clipFinishInfo) {
+    const clipWrap = document.createElement("div");
+    clipWrap.className = "render-degrade planner-history-degrade";
+    clipWrap.setAttribute("role", "note");
+    clipWrap.setAttribute("data-clip-finish", "reported");
+    const clipSummary = window.finishDegrade.clipFinishSummary(clipFinishInfo);
+    if (clipSummary) {
+      const p = document.createElement("p");
+      p.className = "render-degrade-summary";
+      p.textContent = clipSummary;
+      clipWrap.appendChild(p);
+    }
+    for (let i = 0; i < clipFinishInfo.reasons.length; i++) {
+      const why = document.createElement("p");
+      why.className = "render-degrade-reason";
+      why.textContent = clipFinishInfo.reasons[i];
+      clipWrap.appendChild(why);
+    }
+    li.appendChild(clipWrap);
   }
 
   // v0.129.0: inline movie player, full card width, directly below the action

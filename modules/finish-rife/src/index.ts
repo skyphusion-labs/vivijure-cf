@@ -31,7 +31,7 @@ import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedP
 // cf#594: the poll-path soft-degrade contract, shared by all four finish modules. This module had NO
 // such branch before cf#594: a door's honest degrade fell through to the artifact parse and
 // destroyed the film.
-import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
+import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, csamRefusalInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 
 interface Env {
@@ -363,6 +363,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, softDegrade || undefined);
     if (passed) return passed;
   }
+  const csam = csamRefusalInCompletedOutput(s.output);
+  if (csam !== null) return { ok: false, error: "csam refusal: " + csam };
 
   const out = parseBackendOutput(s.output);
   // cf#604 / cf#578: WHICH FIELD carries the written key depends on a branch on the SATELLITE,
