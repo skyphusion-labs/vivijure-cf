@@ -886,6 +886,7 @@ the planner's existing poll loop understands a module render identically to a ra
 | `scenes` | `FilmScene[]` | yes | -- | `{ shot_id, prompt, seconds }`; `seconds` defaults 4 on normalize. |
 | `motion_backend` | string | yes for a full render | -- | Explicit motion module choice. A full (non-`keyframesOnly`) render with an omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#500); the old `serving[0]` default is unreachable. `keyframesOnly` renders need none (no motion leg). |
 | `castLoras` | `{ [slot]: cast_id }` | no | -- | Bound cast LoRAs. A bound-but-not-ready LoRA FAILS HARD (no silent inline retrain). |
+| `shardCount` | number | no | min(shots, 20) | Parallel jobs. Omitted uses the worker pool, not 2. `1` is one job. Ignored when `keyframesOnly`. Cap with `RENDER_SHARD_MAX`. |
 
 Guards / errors: `503 { error: "no keyframe module installed (bind MODULE_KEYFRAME)" }`;
 `400 "no motion.backend module installed for full render"`; `400 "scenes[] required ..."`;
@@ -989,6 +990,7 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
 | `cast_loras` | `{ [slot]: castId }` | no | -- | Binds storyboard character slots (A, B, ...) to cast ids. Drives the keyframe LoRAs AND per-slot voice resolution. A bound cast whose LoRA is not ready is rejected `400` (the untrained-cast message), symmetric with `/api/storyboard/render` (#738) -- never a silent drop to a generic render. |
+| `shard_count` | number | no | min(shots, 20) | Alias `shardCount`. Parallel shard jobs. Omitted uses the pool. `1` stays a single `film-*` job. `>= 2` starts a `scatter-*` parent; poll the same `GET /api/render/film/:id`. Cap with `RENDER_SHARD_MAX`. |
 
 **Dialogue voicing precedence (#582), one rule, both paths:**
 
@@ -1024,14 +1026,14 @@ inserted so the film shows in history.
 
 Advances the job one tick and returns its summary; keeps the history row in sync.
 
-**Request:** path `:id` = the `film-<...>` id. No body.
+**Request:** path `:id` = the `film-<...>` or `scatter-<...>` id. No body.
 
 **Response 200:** `{ ok: true, ...FilmSummary, download_url? }`:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `film_id` | string | The job id. |
-| `phase` | FilmPhase | One of `keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed` (section 6). |
+| `film_id` | string | The job id (`film-*` or `scatter-*`). |
+| `phase` | FilmPhase or scatter phase | Film: `keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed`. Scatter: `shards, gather, mux, finishing, done, failed`. |
 | `error` | string \| undefined | Set when `phase === "failed"`. |
 | `clips` | `JobSummary` \| undefined | `{ total, done, failed, pending, complete }`, when a clips job exists. |
 | `clip_deliveries` | `ClipDelivery[]` \| undefined | #707 duration honesty: one entry per DONE shot whose backend reported usable numbers -- `{ shot_id, planned_seconds, delivered_seconds, fps, frames, distilled? }`. `delivered_seconds` is `frames/fps` (ms-rounded), so a fixed-grid backend's clamp is visible instead of silent. `distilled` (#705) is `true` when a distilled model variant rendered the clip, carried only when the backend reported it. Absent until a backend reports numbers -- absence is honest, never fabricated. |
@@ -1066,7 +1068,7 @@ Sharded (scatter) render submission: split shots across shards.
 |-------|------|-----|---------|---------|
 | `bundleKey` | string | yes | -- | Render bundle. |
 | `shotIds` | string[] | yes (>= 2) | -- | Shots to render. |
-| `shardCount` | number | no | 2 | Shard count. |
+| `shardCount` | number | no | min(shots, 20) | Parallel shard jobs. 1 is a normal film. Omitted uses the worker pool, not 2. Cap with `RENDER_SHARD_MAX`. |
 | `project` | string | no | derived | Project namespace. |
 | `qualityTier` | tier | no | `"final"` | Quality. |
 | `castLoras` | `{ [slot]: cast_id }` | no | `{}` | Bound cast LoRAs. OPTIONAL (#739): absent/empty -> shards render generic, like the film/render paths. A PRESENT-but-not-ready binding is rejected `400` (the untrained-cast message), symmetric with #738 -- never a silent drop. |

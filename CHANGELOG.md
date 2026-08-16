@@ -5,6 +5,13 @@ for new features). Newest first.
 
 ## Unreleased
 
+### feat(render): parallelism is a knob, default is the worker pool, not 2
+
+`shardCount` / `shard_count` on the panel render, film, and scatter doors.
+Omitted means `min(shots, RENDER_SHARD_MAX or 20)`. Explicit 1 is one job.
+The leftover `?? 2` is gone. Film/MCP poll accepts `scatter-*` ids on
+`GET /api/render/film/:id` so one submit/poll pair can use the pool.
+
 ## v1.31.2 -- 2026-08-16
 
 ### fix(cf-grok-video): fill R2_S3_ENDPOINT at module deploy

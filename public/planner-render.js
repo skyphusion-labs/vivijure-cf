@@ -118,6 +118,34 @@ async function loraPreflightGate() {
   return false;
 }
 
+// Orchestrator-level parallelism (same class as qualityTier). Reads
+// #planner-scatter-shards. Omitted or invalid -> min(shotN, 20). An
+// explicit N is clamped to [1, shotN]. Writes max/value back so the
+// control matches what will be sent. 2 is not a default. shotN < 1
+// returns 1 and leaves the field empty so a later real shot count can
+// still apply the implicit default.
+function plannerShardCount(shotN) {
+  const shots = Math.max(0, Math.floor(Number(shotN)) || 0);
+  const implicit = shots === 0 ? 1 : Math.min(shots, 20);
+  const input = $("#planner-scatter-shards");
+  if (!input) return implicit;
+  input.min = "1";
+  if (shots < 1) {
+    input.max = "1";
+    return 1;
+  }
+  const raw = input.value;
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  let n = implicit;
+  if (trimmed !== "") {
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) n = Math.max(1, Math.min(Math.floor(parsed), shots));
+  }
+  input.max = String(shots);
+  input.value = String(n);
+  return n;
+}
+
 async function submitRender() {
   // vivijure#552: own the in-flight flag for the whole submit; cleared on jobId
   // handoff or on any bail/error path below.
@@ -161,6 +189,7 @@ async function submitRender() {
     renderState.pollTimer = null;
   }
   const qualityTier = $("#planner-quality-tier").value;
+  const shardCount = plannerShardCount(filmScenes.length);
   // v0.40.0: the checkbox (read above) is the source of truth for the next submission. The
   // Worker merges this into render_overrides.keyframes_only=true on the wire; the GPU side
   // (vivijure-serverless 0.4.2+) short-circuits the orchestrator after the SDXL pass when
@@ -174,6 +203,7 @@ async function submitRender() {
   const reqBody = {
     bundleKey: bundleState.bundleKey,
     scenes: filmScenes,
+    shardCount,
   };
   // cf#62: omit rather than invent when the projection gave us no tiers (the scatter
   // path below already gates the same way); the core applies its own default.
@@ -317,17 +347,9 @@ function updateScatterGate() {
     reasonEl.textContent = reason;
     reasonEl.hidden = !reason;
   }
-  if (shardWrap) {
-    shardWrap.hidden = !(checkbox.checked && !checkbox.disabled);
-  }
-
-  const shardInput = $("#planner-scatter-shards");
-  if (shardInput && scenes.length >= 2) {
-    shardInput.max = String(scenes.length);
-    const cur = parseInt(shardInput.value, 10);
-    if (!Number.isInteger(cur) || cur < 2) shardInput.value = "2";
-    else if (cur > scenes.length) shardInput.value = String(scenes.length);
-  }
+  // Parallelism is always on the render stage, not gated on scatter.
+  if (shardWrap) shardWrap.hidden = false;
+  plannerShardCount(scenes.length);
 }
 
 // vivijure#546: gate the primary render button on a REQUIRED-but-unmade motion-backend
@@ -394,10 +416,7 @@ async function submitScatterRender() {
   // without an active project -- and dialogue needs a saved project for its projectId anyway.
   if (planState.activeProjectId) await saveStoryboardToProject();
 
-  const shardInput = $("#planner-scatter-shards");
-  let shardCount = shardInput ? parseInt(shardInput.value, 10) : 2;
-  if (!Number.isInteger(shardCount) || shardCount < 2) shardCount = 2;
-  if (shardCount > shotIds.length) shardCount = shotIds.length;
+  const shardCount = plannerShardCount(shotIds.length);
 
   let renderOverrides;
   try {

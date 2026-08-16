@@ -339,13 +339,11 @@ document.addEventListener("DOMContentLoaded", () => {
       submitRender();
     }
   });
-  // Scatter checkbox: toggle the shard-count row visibility + re-gate.
+  // Scatter checkbox: re-gate only. Parallelism stays visible; the helper
+  // refreshes max/default from the current scene count.
   const scatterChk = $("#planner-scatter");
   if (scatterChk) {
-    scatterChk.addEventListener("change", () => {
-      const wrap = $("#planner-scatter-shard-wrap");
-      if (wrap) wrap.hidden = !scatterChk.checked || scatterChk.disabled;
-    });
+    scatterChk.addEventListener("change", updateScatterGate);
   }
   $("#planner-render-cancel").addEventListener("click", cancelRender);
   const dismissBtn = $("#planner-render-dismiss");

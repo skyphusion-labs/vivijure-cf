@@ -94,6 +94,7 @@ import {
   scatterJobToPollView,
   isScatterJobId,
 } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
@@ -813,6 +814,7 @@ const hSubmitRender: Handler = async (req, env) => {
     scenes?: unknown; motion_backend?: string;
     castLoras?: Record<string, unknown>;
     film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
+    shardCount?: number; shard_count?: number;
   }>(req);
   // cf#334: the guards below are the SHARED pre-flight, not this door's private copy. What stays
   // here is this door's own contract -- its field spellings, its keyframes-only mode, and its 503 on
@@ -885,6 +887,33 @@ const hSubmitRender: Handler = async (req, env) => {
         panelDialogue = lines;
       }
     } catch { /* best-effort */ }
+  }
+  const panelShots = scenes.map((s) => s.shot_id).filter((id) => typeof id === "string" && id.length > 0);
+  const panelShards = resolveShardCount(
+    b.shardCount ?? b.shard_count,
+    panelShots.length,
+    shardMaxFromEnv(env.RENDER_SHARD_MAX),
+  );
+  if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2) {
+    if (shouldProjectWanLoras(motionBackend, wanPretrained)) {
+      const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
+      b.renderOverrides = injected.overrides;
+      await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, injected.config);
+    }
+    const scatterJob = await startScatterRender(env, {
+      project,
+      bundle_key: bundleKey,
+      quality_tier: tier,
+      shot_ids: panelShots,
+      shard_count: panelShards,
+      cast_loras: b.castLoras ?? {},
+      render_overrides: b.renderOverrides,
+      motion_backend: motionBackend,
+      audio_key: b.audioKey,
+      film_titles: b.film_titles,
+      project_id: await resolveProjectRef(env, b.projectId),
+    });
+    return json(scatterJobToPollView(scatterJob), 201);
   }
   const job = await startFilmJob(env, {
     project,
@@ -1231,7 +1260,8 @@ const hScatterRender: Handler = async (req, env) => {
   if (!scatterShape.ok) throw badRequest(scatterShape.refusal.message);
   const scatterBundleKey = b.bundleKey as string;
   const scatterShotIds = b.shotIds as string[];
-  const shardCount = typeof b.shardCount === "number" ? b.shardCount : 2;
+  const shardCount = resolveShardCount(b.shardCount, scatterShotIds.length, shardMaxFromEnv(env.RENDER_SHARD_MAX));
+  if (shardCount < 2) throw badRequest("shardCount 1 is a normal film; use POST /api/storyboard/render or POST /api/render/film");
   const project = b.project ?? deriveProjectFromBundleKey(scatterBundleKey);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
   const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
@@ -1558,7 +1588,7 @@ async function withFilmDownloadUrlBestEffort(
   }
 }
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1657,6 +1687,42 @@ const hStartFilm: Handler = async (req, env) => {
     filmWanProj = await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
     a.motion_config = filmMotionConfig;
   }
+  const filmShards = resolveShardCount(
+    a.shard_count ?? a.shardCount,
+    filmScenes.length,
+    shardMaxFromEnv(env.RENDER_SHARD_MAX),
+  );
+  if (filmShards >= 2 && filmScenes.length >= 2) {
+    const bagConfig: Record<string, Record<string, unknown>> = {
+      ...(a.finish_config ?? {}),
+      ...(a.speech_config ?? {}),
+      ...(a.film_finish_config ?? {}),
+      ...(a.master_config ?? {}),
+    };
+    if (a.keyframe_backend && a.keyframe_config) bagConfig[a.keyframe_backend] = a.keyframe_config;
+    if (a.motion_backend && a.motion_config && !Array.isArray(a.motion_config)) {
+      bagConfig[a.motion_backend] = a.motion_config as Record<string, unknown>;
+    }
+    const scatterJob = await startScatterRender(env, {
+      project,
+      bundle_key: filmBundleKey,
+      quality_tier: coerceQualityTier(a.qualityTier) ?? "final",
+      shot_ids: filmScenes.map((s) => s.shot_id),
+      shard_count: filmShards,
+      cast_loras: a.cast_loras ?? {},
+      render_overrides: {
+        motion_backend: a.motion_backend,
+        keyframe_backend: a.keyframe_backend,
+        config: bagConfig,
+        select: a.finish_select != null ? { finish: a.finish_select } : undefined,
+      },
+      motion_backend: a.motion_backend,
+      audio_key: a.audio_key,
+      film_titles: a.film_titles,
+    });
+    const summary = scatterViewAsFilmSummary(scatterJobToPollView(scatterJob));
+    return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summary as FilmSummary)) }, 201);
+  }
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
@@ -1699,6 +1765,12 @@ const hStartFilm: Handler = async (req, env) => {
   return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))) }, 201);
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
+  if (isScatterJobId(p.id)) {
+    const view = await advanceScatterJob(env, p.id, ctx);
+    if (!view) throw notFound("film job");
+    const summary = scatterViewAsFilmSummary(view);
+    return json({ ok: true, ...(await withFilmDownloadUrl(env, summary as FilmSummary)) });
+  }
   const r = await advanceFilmJob(env, p.id);
   if (!r) throw notFound("film job");
   // Insert-if-missing (ON CONFLICT(job_id) DO NOTHING) so a film started before history

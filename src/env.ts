@@ -76,6 +76,8 @@ export interface Env {
   // CPU container Durable Objects (off-GPU beat-sync, portrait prep, ffmpeg finish).
   /** Public Traefik SUBMIT origin. Default in core is video-finish.skyphusion.org. Empty disables. */
   VIDEO_FINISH_URL?: string;
+  /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
+  RENDER_SHARD_MAX?: string;
   /** Retired. Assemble/mux/inspect/frames no longer read this. Left optional so old wrangler deploys typecheck. */
   VIDEO_FINISH_VPC?: Fetcher;
   // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
