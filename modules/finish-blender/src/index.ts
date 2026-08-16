@@ -169,6 +169,7 @@ let blenderCursor = 0;
 /** Three finishing boxes, public per-box origins. Same token on all three. */
 async function doorsFor(env: Env): Promise<DoorRoute[]> {
   const token = await secretValue(env.BLENDER_DOOR_TOKEN);
+  if (!token) return [];
   const o = DOOR_ORIGIN["finish-blender"];
   return doorPool([
     { name: DOOR_ROUTE_NAME, baseUrl: o.descendents, token, legacy: true },

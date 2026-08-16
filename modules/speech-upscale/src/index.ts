@@ -124,10 +124,14 @@ async function doorsFor(env: Env): Promise<DoorRoute[]> {
     secretValue(env.SPEECH_DOOR_TOKEN),
     secretValue(env.SPEECH_DOOR_TOKEN_PROPAGANDHI),
   ]);
-  return doorPool([
-    { name: DOOR_ROUTE_NAME, baseUrl: DOOR_ORIGIN["speech-upscale"].fatmike, token: legacyToken, legacy: true },
-    { name: doorName("propagandhi"), baseUrl: DOOR_ORIGIN["speech-upscale"].propagandhi, token: propagandhiToken },
-  ]);
+  const list = [];
+  if (legacyToken) {
+    list.push({ name: DOOR_ROUTE_NAME, baseUrl: DOOR_ORIGIN["speech-upscale"].fatmike, token: legacyToken, legacy: true });
+  }
+  if (propagandhiToken) {
+    list.push({ name: doorName("propagandhi"), baseUrl: DOOR_ORIGIN["speech-upscale"].propagandhi, token: propagandhiToken });
+  }
+  return doorPool(list);
 }
 
 function auth(route: RunpodRoute) {

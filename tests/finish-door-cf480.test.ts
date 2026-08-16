@@ -156,15 +156,13 @@ describe("bound door: RunPod is not called AT ALL", () => {
     expect(new URL(rp.calls[0].url).hostname).toBe("speech-upscale-fatmike.skyphusion.org");
   });
 
-  it("tokenless degrades as propagation and does not re-rent RunPod", async () => {
+  it("tokenless takes the RunPod arm (no public door is declared without a bearer)", async () => {
     const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
     const res = await body(await invokeFinish({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT }));
-
-    const out = res.output as unknown as { degraded?: string };
-    expect(out.degraded).toBe("door-token-not-yet-visible");
-    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
+    expect(res.jobId).toBe(RUNPOD_JOB);
+    expect(rp.calls[0].url).toContain("api.runpod.ai");
   });
 
   it("a door FAILURE degrades honestly and STILL does not touch RunPod", async () => {
@@ -192,40 +190,26 @@ describe("bound door: RunPod is not called AT ALL", () => {
     expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
   });
 
-  it("bound but tokenless degrades as PROPAGATION, never as 'no runpod secrets'", async () => {
-    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
-    globalThis.fetch = rp.fn as unknown as typeof fetch;
-
-    const res = await body(await invokeFinish({
-      RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-    }));
-
-    const out = res.output as unknown as { degraded?: string };
-    expect(out.degraded).toBe("door-token-not-yet-visible");
-    expect(rp.calls.length).toBe(0);
-  });
 });
 
 // ------------------------------------------------------------------------------------------- 3.
-describe("tokenless does not re-rent RunPod (public doors are always declared)", () => {
-  it("finish-upscale degrades instead of calling api.runpod.ai", async () => {
+describe("tokenless is the RunPod arm (a public origin is not declared without a bearer)", () => {
+  it("finish-upscale still builds RunPod's own URL, method and headers", async () => {
     const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
-    const res = await body(await invokeFinish({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT }));
-    const out = res.output as unknown as { degraded?: string };
-    expect(out.degraded).toBe("door-token-not-yet-visible");
-    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
+    await invokeFinish({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
+    expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/run");
+    expect(rp.calls[0].headers.authorization).toBe("Bearer " + RUNPOD_KEY);
+    expect(rp.calls[0].headers["content-type"]).toBe("application/json");
   });
 
   it("speech-upscale likewise", async () => {
     const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
 
-    const res = await body(await invokeSpeech({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT }));
-    const out = res.output as unknown as { degraded?: string };
-    expect(out.degraded).toBe("door-token-not-yet-visible");
-    expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
+    await invokeSpeech({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
+    expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/run");
   });
 });
 
@@ -316,10 +300,10 @@ describe("GET /ready", () => {
   const ready = async (worker: Worker, env: unknown) =>
     (await (await worker.fetch(new Request("https://m.internal/ready"), env as never)).json()) as Record<string, unknown>;
 
-  it("tokenless: door is declared but not ready", async () => {
+  it("tokenless: no door key, RunPod credentials decide ready", async () => {
     const b = await ready(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
-    expect(b.ok).toBe(false);
-    expect((b.door as { bound: boolean }).bound).toBe(true);
+    expect("door" in b).toBe(false);
+    expect(b.ok).toBe(true);
   });
 
   it("BOUND: reports the door, and ok stops depending on RunPod credentials", async () => {
@@ -334,11 +318,10 @@ describe("GET /ready", () => {
     });
   });
 
-  it("BOUND but tokenless is NOT ready, and says which half is missing", async () => {
+  it("tokenless with RunPod creds is ready on the RunPod arm", async () => {
     const b = await ready(FINISH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
-    expect(b.ok).toBe(false);
-    expect((b.door as { token: boolean; routes: { name: string }[] }).token).toBe(false);
-    expect((b.door as { routes: unknown[] }).routes).toHaveLength(2);
+    expect(b.ok).toBe(true);
+    expect("door" in b).toBe(false);
   });
 
   it("never leaks the door token in any form", async () => {
