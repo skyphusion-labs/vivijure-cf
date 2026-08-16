@@ -98,9 +98,10 @@ import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
-  coerceQualityTier, deriveProjectFromBundleKey,
+  coerceQualityTier,
   type AudioAnalyzeRequest,
 } from "@skyphusion-labs/vivijure-core/runpod-submit";
+import { resolveProjectForBundle } from "../modules/_shared/bundle-project";
 import { validateStoryboard } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { checkStoryboardShape, checkCastBindingsReady, checkDurationGrid, resolveCastBindings, summarize, type PreflightIssue } from "@skyphusion-labs/vivijure-core/preflight";
 import {
@@ -842,7 +843,7 @@ const hSubmitRender: Handler = async (req, env) => {
   if (!panelShape.ok) throw badRequest(panelShape.refusal.message);
   const bundleKey = b.bundleKey as string;
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
-  const project = b.project ?? deriveProjectFromBundleKey(bundleKey);
+  const project = resolveProjectForBundle(bundleKey, b.project);
 
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
   const parsedOverrides = parseModuleRenderOverrides(b.renderOverrides);
@@ -994,7 +995,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   }, fromKfProfile);
   if (!fromKfShape.ok) throw badRequest(fromKfShape.refusal.message);
   const fromKfBundleKey = b.bundleKey as string;
-  const project = b.project ?? deriveProjectFromBundleKey(fromKfBundleKey);
+  const project = resolveProjectForBundle(fromKfBundleKey, b.project);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
 
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
@@ -1262,7 +1263,7 @@ const hScatterRender: Handler = async (req, env) => {
   const scatterShotIds = b.shotIds as string[];
   const shardCount = resolveShardCount(b.shardCount, scatterShotIds.length, shardMaxFromEnv(env.RENDER_SHARD_MAX));
   if (shardCount < 2) throw badRequest("shardCount 1 is a normal film; use POST /api/storyboard/render or POST /api/render/film");
-  const project = b.project ?? deriveProjectFromBundleKey(scatterBundleKey);
+  const project = resolveProjectForBundle(scatterBundleKey, b.project);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
   const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
   const scatterOverrides = parseModuleRenderOverrides(b.renderOverrides);
@@ -1672,9 +1673,11 @@ const hStartFilm: Handler = async (req, env) => {
     const bundleScenes = await readBundleScenes(env, filmBundleKey);
     dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
   }
-  // project is optional; default it from the bundle key (mirrors hSubmitRender) so a caller that
+  // project is optional; derive it from the bundle key (mirrors hSubmitRender) so a caller that
   // only has a bundle (e.g. the Slate bot) lands in the same project namespace the monolith uses.
-  const project = a.project ?? deriveProjectFromBundleKey(filmBundleKey);
+  // A caller project that does not match the key is remapped: the GPU backend's tenancy check
+  // is correct, and sending the mismatch just burns a RunPod start.
+  const project = resolveProjectForBundle(filmBundleKey, a.project);
   // Wan cast adapters -> alibaba-wan-lora motion config, in place, before the job starts. hStartFilm
   // carries a.motion_config straight into startFilmJob unclamped, so the projected fields flow through.
   // Guarded so a non-Wan film never materializes an empty motion_config.

@@ -23,6 +23,15 @@ describe("keyframe pure logic", () => {
     });
   });
 
+  it("buildPreviewBody remaps a caller project that does not belong to the bundle", () => {
+    const { input } = buildPreviewBody(
+      { project: "loadtest_gpu_keyframe", bundle_key: "bundles/neon_courier-fa68fa014b049a43.tar.gz" },
+      {},
+    );
+    expect(input.project).toBe("neon_courier");
+    expect(input.bundle_key).toBe("bundles/neon_courier-fa68fa014b049a43.tar.gz");
+  });
+
   it("buildPreviewBody folds set config knobs into render_overrides.keyframe, omits unset", () => {
     const { input } = buildPreviewBody(
       { project: "p", bundle_key: "b" },

@@ -1684,7 +1684,9 @@ function promptCustomBundle() {
 }
 
 function deriveProjectFromKey(bundleKey) {
-  const m = bundleKey.match(/^bundles\/(.+)\.tar\.gz$/);
+  const hashed = String(bundleKey || "").match(/^bundles\/(.+)-([0-9a-f]{16})\.tar\.gz$/);
+  if (hashed) return hashed[1];
+  const m = String(bundleKey || "").match(/^bundles\/([^/]+)\.tar\.gz$/);
   if (m) return m[1];
   return bundleKey;
 }
