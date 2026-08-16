@@ -86,7 +86,15 @@ export const DOOR_ORIGIN = {
     badbrains: "https://finish-blender-badbrains.skyphusion.org",
     jello: "https://finish-blender-jello.skyphusion.org",
   },
+  "video-finish": {
+    descendents: "https://video-finish-descendents.skyphusion.org",
+    badbrains: "https://video-finish-badbrains.skyphusion.org",
+    jello: "https://video-finish-jello.skyphusion.org",
+  },
 } as const;
+
+/** Traefik SUBMIT name. Sync /finish /frames /inspect. Never for async poll. */
+export const VIDEO_FINISH_SUBMIT = "https://video-finish.skyphusion.org";
 
 /** Which transport serves this job. Exactly one of the two, decided by bound-ness at submit. */
 export interface DoorRoute {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { installVfFetch } from "./install-vf-fetch";
 import {
   coerceConfig,
   hasCards,
@@ -87,23 +88,22 @@ describe("film-titles module invoke (#602 async + #207 regression)", () => {
     const j = (b: unknown, status = 200) =>
       new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
     const env = {
-      VIDEO_FINISH_VPC: {
-        async fetch(input: Request | string) {
-          const url = typeof input === "string" ? input : input.url;
-          calls.push(url);
-          if (over.throws) throw new TypeError("Invalid URL");
-          const path = new URL(url).pathname;
-          if (path.startsWith("/async/status/")) {
-            const st = over.statusResult ?? { status: "completed", result: { ok: true, key: "renders/film-x/film_titled.mp4" } };
-            return j(st, st.status === "not_found" ? 404 : 200);
-          }
-          if (path.startsWith("/async/")) {
-            return asyncSupported ? j({ ok: true, jobId: "job-abc", status: "pending" }, 202) : j({ ok: false, error: "unknown async route" }, 404);
-          }
-          return j(over.syncBody ?? { ok: true, key: "renders/film-x/film_titled.mp4" }, over.syncStatus ?? 200);
-        },
-      },
+      VIDEO_FINISH_URL: "https://video-finish.test",
     } as unknown as Parameters<typeof worker.fetch>[1];
+    installVfFetch(async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(url);
+      if (over.throws) throw new TypeError("Invalid URL");
+      const path = new URL(url).pathname;
+      if (path.startsWith("/async/status/")) {
+        const st = over.statusResult ?? { status: "completed", result: { ok: true, key: "renders/film-x/film_titled.mp4" } };
+        return j(st, st.status === "not_found" ? 404 : 200);
+      }
+      if (path.startsWith("/async/")) {
+        return asyncSupported ? j({ ok: true, jobId: "job-abc", status: "pending" }, 202) : j({ ok: false, error: "unknown async route" }, 404);
+      }
+      return j(over.syncBody ?? { ok: true, key: "renders/film-x/film_titled.mp4" }, over.syncStatus ?? 200);
+    });
     return { env, calls };
   }
 
@@ -202,15 +202,14 @@ describe("film-titles prepend_seconds reporting (#663)", () => {
     const j = (b: unknown, status = 200) =>
       new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
     const env = {
-      VIDEO_FINISH_VPC: {
-        async fetch(input: Request | string) {
-          const path = new URL(typeof input === "string" ? input : input.url).pathname;
-          if (path.startsWith("/async/status/")) return j({ status: "completed", result: { ok: true, key: "renders/film-x/film_titled.mp4" } });
-          if (path.startsWith("/async/")) return asyncSupported ? j({ ok: true, jobId: "job-abc" }, 202) : j({ ok: false }, 404);
-          return j({ ok: true, key: "renders/film-x/film_titled.mp4" });
-        },
-      },
+      VIDEO_FINISH_URL: "https://video-finish.test",
     } as unknown as Parameters<typeof worker.fetch>[1];
+    installVfFetch(async (input) => {
+      const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname;
+      if (path.startsWith("/async/status/")) return j({ status: "completed", result: { ok: true, key: "renders/film-x/film_titled.mp4" } });
+      if (path.startsWith("/async/")) return asyncSupported ? j({ ok: true, jobId: "job-abc" }, 202) : j({ ok: false }, 404);
+      return j({ ok: true, key: "renders/film-x/film_titled.mp4" });
+    });
     return { env };
   }
   const invokeCfg = (input: FilmFinishInput, config: Record<string, unknown>) =>

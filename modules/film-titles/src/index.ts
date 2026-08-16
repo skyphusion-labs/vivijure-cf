@@ -34,12 +34,23 @@ import {
   timedVpcFetch, logVpcAsyncTerminal, withVpcElapsedApplied,
 } from "../../_shared/vpc-call-log";
 import { mediaFinishHeaders } from "../../_shared/media-finish-auth";
+import { VIDEO_FINISH_SUBMIT } from "../../_shared/finish-door";
+
+function vfBase(env: Env): string {
+  return (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.replace(/\/$/, "")) || VIDEO_FINISH_SUBMIT;
+}
+function vfCall(env: Env) {
+  return (url: RequestInfo, init?: RequestInit) => {
+    const path = new URL(String(url), "http://video-finish").pathname;
+    return fetch(vfBase(env) + path, init);
+  };
+}
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
 
 interface Env {
-  VIDEO_FINISH_VPC: { fetch(url: RequestInfo, init?: RequestInit): Promise<Response> };
+  VIDEO_FINISH_URL?: string;
   MEDIA_FINISH_TOKEN?: { get(): Promise<string> } | string;
 }
 
@@ -84,7 +95,7 @@ async function submitAsync(
   corr: VpcCorr = {},
 ): Promise<string | null> {
   const timed = await timedVpcFetch(
-    (url, init) => env.VIDEO_FINISH_VPC.fetch(url, init),
+    vfCall(env),
     { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
@@ -114,7 +125,7 @@ async function invokeSync(
   corr: VpcCorr = {},
 ): Promise<InvokeResponse<FilmFinishOutput>> {
   const timed = await timedVpcFetch(
-    (url, init) => env.VIDEO_FINISH_VPC.fetch(url, init),
+    vfCall(env),
     { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
@@ -159,7 +170,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
     return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key" };
   }
   if (!hasCards(input)) return passthrough(input, "noop:no-cards");
-  if (!env.VIDEO_FINISH_VPC) return passthrough(input, "passthrough:no-vpc-binding", true);
+  if (!vfBase(env)) return passthrough(input, "passthrough:no-video-finish-url", true);
 
   const cfg = coerceConfig(req.config);
   const spec = buildContainerSpec(input, cfg);
@@ -182,12 +193,12 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinishOutput>> {
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "film-titles: bad poll token" };
-  if (!env.VIDEO_FINISH_VPC) return { ok: false, error: "film-titles: no VIDEO_FINISH_VPC binding" };
+  if (!vfBase(env)) return { ok: false, error: "film-titles: no VIDEO_FINISH_URL" };
 
   const statusUrl = `http://video-finish/async/status/${encodeURIComponent(st.jobId)}`;
   // Intermediate pending polls stay silent; only terminal outcomes emit vpc.call with job wall-clock.
   const timed = await timedVpcFetch(
-    (url, init) => env.VIDEO_FINISH_VPC.fetch(url, init),
+    vfCall(env),
     { headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN) },
     {
       module: MANIFEST.name,
@@ -294,9 +305,9 @@ export default {
     // off by default, still gated on `ok` so an operator can tell whether the feature CAN ever fire).
     if (request.method === "GET" && url.pathname === "/ready") {
       return json({
-        ok: Boolean(env.VIDEO_FINISH_VPC),
+        ok: Boolean(vfBase(env)),
         module: MANIFEST.name,
-        bindings: { video_finish_vpc: Boolean(env.VIDEO_FINISH_VPC) },
+        bindings: { video_finish_url: Boolean(vfBase(env)) },
       });
     }
 

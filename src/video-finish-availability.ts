@@ -175,11 +175,11 @@ export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
  * true for every studio. NOTHING sets this var today: the plane-side half (who sets it, and when) is
  * a control-plane decision, not a panel one.
  */
-type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_VPC" | "VIDEO_FINISH_TIER_STATE">;
+type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE">;
 
-/** Which state this studio is in. Bound tier wins over any var: an observation beats a label. */
+/** Which state this studio is in. A public URL (or the default Traefik origin) is available. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
-  if (env.VIDEO_FINISH_VPC) return "available";
+  if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
   return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
 }
 

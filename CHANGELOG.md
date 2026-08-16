@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.31.0 -- 2026-08-16
+
+### feat(doors): video-finish is a Traefik URL, not a VPC binding
+
+Assemble, mux, inspect, frames, film-titles, and subtitle fetch
+`https://video-finish.skyphusion.org` (VIDEO_FINISH_URL) with the existing
+bearer. The host VPC binding is gone from the call path. Pins core 1.18.1.
+
 ## v1.30.0 -- 2026-08-16
 
 ### feat(doors): finish-upscale, speech-upscale, and finish-blender call public per-box HTTPS, not VPC

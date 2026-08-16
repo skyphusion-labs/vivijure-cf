@@ -16,12 +16,8 @@ workers_dev = false
 [observability]
 enabled = true
 
-# Workers VPC -> always-on video-finish container on the fleet (issue #83). Same endpoint the core
-# uses for /finish; this module calls the /film-titles route (title + credit cards).
-[[vpc_services]]
-binding = "VIDEO_FINISH_VPC"
-service_id = "REPLACE_WITH_VPC_VIDEO_FINISH_ID"
-remote = true
+[vars]
+VIDEO_FINISH_URL = "https://video-finish.skyphusion.org"
 
 # Same store secret as the GPU doors. Unbound is fail-open (vivijure-cf#613).
 [[secrets_store_secrets]]

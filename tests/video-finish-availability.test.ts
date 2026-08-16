@@ -47,7 +47,7 @@ describe("videoFinishHooksUnavailable", () => {
     // score is ABSENT from this set on purpose and that is the whole of cf#229: bed generation
     // (src/score-bed.ts) touches no VPC binding and the film path never calls the score hook at all,
     // so reporting it unavailable claims more than the truth and would grey out a working control.
-    expect(Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_VPC: undefined } as never)).sort()).toEqual(
+    expect(Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: undefined } as never)).sort()).toEqual(
       ["capability:video-finish", "film.finish", "master", "notify"],
     );
     expect([...VIDEO_FINISH_GATED_HOOKS].sort()).toEqual(["film.finish", "master", "notify"]);
@@ -57,7 +57,7 @@ describe("videoFinishHooksUnavailable", () => {
     // The named failure, not a wording: a studio that can generate a bed must never be told it
     // cannot serve score. This is the assertion that fails if someone folds the advisory hooks back
     // into the gated set to simplify them.
-    const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_VPC: undefined } as never));
+    const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: undefined } as never));
     for (const advisory of VIDEO_FINISH_ADVISORY_HOOKS) {
       expect(named, advisory + " RUNS on a VPC-less studio; only its delivery is dead").not.toContain(advisory);
     }
@@ -75,14 +75,14 @@ describe("videoFinishHooksUnavailable", () => {
   });
 
   it("does NOT name the per-shot hooks, which are exactly what a VPC-less host still delivers", () => {
-    const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_VPC: undefined } as never));
+    const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: undefined } as never));
     for (const survives of ["keyframe", "motion.backend", "finish", "speech", "dialogue", "image.generate", "cast.image"]) {
       expect(named, `${survives} still works on a clips delivery`).not.toContain(survives);
     }
   });
 
   it("reports NOTHING when the tier is bound (absent key means available)", () => {
-    expect(videoFinishHooksUnavailable({ VIDEO_FINISH_VPC: {} as never })).toEqual({});
+    expect(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" })).toEqual({});
   });
 });
 
@@ -141,7 +141,7 @@ describe("GET /api/modules projection", () => {
   });
 
   it("POSITIVE CONTROL: a host that BINDS the tier reports no video-finish hook at all", async () => {
-    const body = await modulesBody(env({ VIDEO_FINISH_VPC: { fetch: async () => new Response("ok") } }));
+    const body = await modulesBody(env({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" }));
     const host = body.host as { hooks_unavailable?: Record<string, string> };
     for (const key of [VIDEO_FINISH_CAPABILITY_KEY, ...VIDEO_FINISH_GATED_HOOKS]) {
       expect(host?.hooks_unavailable?.[key], key + " must not be reported on a bound host").toBeUndefined();
@@ -166,17 +166,17 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
   // so what `unprovisionable` now names is a studio the PLANE declares unreachable. The copy is
   // swapped as of cf#243; the sentences and their properties are asserted at the bottom.
   it("a bound tier is available, and available has no sentence at all", () => {
-    expect(videoFinishState({ VIDEO_FINISH_VPC: {} as never })).toBe("available");
+    expect(videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" })).toBe("available");
     expect(videoFinishReason("available")).toBeNull();
   });
 
   it("an unbound tier defaults to provisionable, which is what lane A makes true for everyone", () => {
-    expect(videoFinishState({ VIDEO_FINISH_VPC: undefined } as never)).toBe("provisionable");
+    expect(videoFinishState({ VIDEO_FINISH_URL: undefined } as never)).toBe("provisionable");
   });
 
   it("an operator/plane can declare the studio unreachable by any operator action", () => {
     expect(
-      videoFinishState({ VIDEO_FINISH_VPC: undefined, VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
+      videoFinishState({ VIDEO_FINISH_URL: undefined, VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
     ).toBe("unprovisionable");
   });
 
@@ -184,13 +184,13 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     // The failure this forbids is a stale var outliving the provisioning it described, with the
     // panel then telling a studio that HAS a working tier that it has none.
     expect(
-      videoFinishState({ VIDEO_FINISH_VPC: {} as never, VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
+      videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org", VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
     ).toBe("available");
   });
 
   it("an unrecognised var value falls back to the default rather than inventing a state", () => {
     expect(
-      videoFinishState({ VIDEO_FINISH_VPC: undefined, VIDEO_FINISH_TIER_STATE: "banana" } as never),
+      videoFinishState({ VIDEO_FINISH_URL: undefined, VIDEO_FINISH_TIER_STATE: "banana" } as never),
     ).toBe("provisionable");
   });
 
@@ -224,7 +224,7 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     // studio with no binding and no var resolves to `provisionable`, so this asserts the sentence
     // above is unreachable in production rather than merely unused. The panel is honest either way;
     // what makes the estate honest is the bindings refresh and the bytes move, not this constant.
-    expect(videoFinishState({ VIDEO_FINISH_VPC: undefined } as never)).toBe("provisionable");
+    expect(videoFinishState({ VIDEO_FINISH_URL: undefined } as never)).toBe("provisionable");
     expect(videoFinishReason("provisionable")).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
   });
 });

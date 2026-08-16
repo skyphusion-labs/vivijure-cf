@@ -64,6 +64,8 @@ ACCESS_AUD = "${ACCESS_AUD}"
 # Store entry (#238 follow-up; they are identifiers, not secrets).
 R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
 R2_S3_BUCKET = "${R2_S3_BUCKET}"
+# Public Traefik SUBMIT origin for video-finish. Not a VPC binding.
+VIDEO_FINISH_URL = "https://video-finish.skyphusion.org"
 # S4/S9 spend-posture knobs (src/rate-limit.ts):
 #   SPEND_LIMIT_FAIL_CLOSED -- fail-CLOSED by DEFAULT (S9 F7): when the spend limiter is BROKEN
 #     (SPEND_RATE_LIMITER unbound, or .limit()/the daily-ceiling check throws) the spend routes are
@@ -149,16 +151,8 @@ tag = "v2-drop-cpu-containers"
 # an outsider deploying from this example does not.
 deleted_classes = ["VideoFinishContainer"]
 
-# Workers VPC -> the media-stack CPU containers (video-finish / image-prep / audio-beat-sync /
-# audio-mix) run always-on on the operator's own container host (containers/compose.yaml),
-# reached over private VPC bindings. STANDARD as of #519: deploy.sh creates the tunnel + these
-# VPC services and renders their ids here, so there is nothing to strip (issue #83 -- off CF
-# Containers, no cold start).
-[[vpc_services]]
-binding = "VIDEO_FINISH_VPC"
-service_id = "${VPC_VIDEO_FINISH_ID}"
-remote = true
-
+# Workers VPC leftover for image-prep / audio-beat-sync / audio-mix until those move
+# to public doors. video-finish is Traefik-only (VIDEO_FINISH_URL above).
 [[vpc_services]]
 binding = "IMAGE_PREP_VPC"
 service_id = "${VPC_IMAGE_PREP_ID}"
