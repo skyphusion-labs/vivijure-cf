@@ -96,7 +96,9 @@ To self-host (service `vivijure-module-cloud-keyframe`, bound into the core as `
 
 This is a **producer** stage, not a polish step: a shot it cannot render is an honest `ok:false` (no
 soft-degrade, no fake keyframe), because nothing downstream can animate a frame that was never
-rendered. Only a real render/store failure or malformed I/O fails loud.
+rendered. A flaky FLUX **3030** ("Your output has been flagged") is retried up to 3 times on the same
+shot (the flag is per-call nondeterministic). A persistent 3030 still hard-fails. CSAM refusals are
+never retried. Only a real render/store failure or malformed I/O fails loud.
 
 ## License
 

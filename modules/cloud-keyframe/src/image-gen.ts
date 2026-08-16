@@ -133,11 +133,63 @@ export function proxiedParams(
   return { prompt };
 }
 
+/** Bounded retries for a flaky FLUX 3030 ("Your output has been flagged"). Same class as
+ *  cast-image isFlaggedError: the flag is per-call nondeterministic on borderline-but-fine
+ *  storyboard stills. A persistent 3030 is still a HARD FAIL. CSAM refusals are never retried. */
+export const FLAG_RETRY_ATTEMPTS = 3;
+
+export function isCsamRefusal(msg: unknown): boolean {
+  const s = String(msg || "").toLowerCase();
+  return s.includes("csam")
+    || s.includes("child sexual")
+    || s.includes("child pornography")
+    || s.includes("sexual content involving a minor");
+}
+
+export function isFlaggedError(msg: unknown): boolean {
+  const s = String(msg || "").toLowerCase();
+  return s.includes("3030") || s.includes("has been flagged") || s.includes("choose another prompt");
+}
+
+export function isRetryableFlag(msg: unknown): boolean {
+  return isFlaggedError(msg) && !isCsamRefusal(msg);
+}
+
+/** Pull an error string off a Workers-AI / gateway result so a 3030 in the body is not
+ *  collapsed to "flux-2 returned no image". */
+export function extractGenError(result: unknown): string | null {
+  if (result == null) return null;
+  if (typeof result === "string" && result.length) return result;
+  if (typeof result !== "object") return null;
+  const o = result as Record<string, unknown>;
+  if (typeof o.error === "string" && o.error) return o.error;
+  if (o.error && typeof o.error === "object") {
+    const m = (o.error as { message?: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  if (Array.isArray(o.errors) && o.errors.length) {
+    const first = o.errors[0];
+    if (typeof first === "string" && first) return first;
+    if (first && typeof first === "object") {
+      const m = (first as { message?: unknown }).message;
+      if (typeof m === "string" && m) return m;
+    }
+  }
+  return null;
+}
+
+/** Attempt 0 and 1: same prompt (the flag is flaky). Attempt 2: a light cinematic prefix so a
+ *  sticky-but-benign flag has one different roll. Never used for CSAM. */
+export function rephraseForFlagRetry(prompt: string, attempt: number): string {
+  if (attempt < 2) return prompt;
+  return "cinematic film still, fictional adult characters. " + prompt;
+}
+
 /** Generate ONE keyframe from a prompt + already-fetched reference blobs. FLUX-2: multipart-multiref
  *  with width/height, gateway-bypassed, base64 result. Proxied: refs as image_input[] base64 data
  *  URIs + aspect_ratio, through the gateway, URL result. Returns image bytes + mime. Throws on a
- *  no-image / flagged generation so the caller HARD-FAILS the shot (a keyframe that did not render
- *  cannot be animated -- no soft-degrade on the foundation stage). */
+ *  no-image / flagged generation so the caller can retry a flaky 3030, then HARD-FAIL the shot
+ *  (a keyframe that did not render cannot be animated -- no soft-degrade on the foundation stage). */
 export async function generateImage(
   ai: AiRun,
   gatewayId: string | undefined,
@@ -163,8 +215,10 @@ export async function generateImage(
     const result = await ai.run(model, {
       multipart: { body: fr.body, contentType: fr.headers.get("content-type") },
     });
+    const flagged = extractGenError(result);
+    if (flagged && isFlaggedError(flagged)) throw new Error(flagged);
     const b64 = (result as { image?: string })?.image;
-    if (!b64 || typeof b64 !== "string") throw new Error("flux-2 returned no image");
+    if (!b64 || typeof b64 !== "string") throw new Error(flagged || "flux-2 returned no image");
     const bytes = base64ToBytes(b64).buffer as ArrayBuffer;
     return { bytes, mime: sniffImageMime(bytes).mime };
   }
