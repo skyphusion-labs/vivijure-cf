@@ -1668,5 +1668,9 @@
     wire();
     loadVoices();
     loadCastList();
+    // cf#648: planner "Create a character" lands on cast#new.
+    const wantNew = window.location.hash === "#new"
+      || /(?:\?|&)create=1(?:&|$)/.test(window.location.search);
+    if (wantNew) newCast();
   });
 })();

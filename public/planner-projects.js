@@ -96,6 +96,7 @@ function applyProjectPrefs(prefs) {
     window.plannerRenderConfig.selectTier(prefs.qualityTier);
   }
   setCheck("#planner-keyframes-only", prefs.keyframesOnly);
+  if (typeof syncRenderModeUi === "function") syncRenderModeUi();
   setVal("#planner-seed", prefs.seed);
   setVal("#planner-face-lock-mode", prefs.faceLockMode);
   if (typeof prefs.renderOverridesText === "string") {

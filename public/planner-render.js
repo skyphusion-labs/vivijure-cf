@@ -42,7 +42,7 @@ function showRenderStage() {
   hideLoraPreflightWarning();
   loraPreflightAck = null;
   updateScatterGate();
-  updateRenderGate();
+  syncRenderModeUi();
 }
 
 // ---------- LoRA training preflight (v0.221.0) ----------
@@ -70,26 +70,31 @@ function hideLoraPreflightWarning() {
   el.textContent = "";
 }
 
-function showLoraPreflightWarning(unready) {
-  const el = $("#planner-lora-preflight-warning");
+function paintLoraWarning(el, unready, proceedHint) {
   if (!el) return;
   const names = unready.map((u) => u.name).join(", ");
   el.textContent = "";
-  // Build with textContent (names are user-authored) plus a real link to /cast.
   const msg = document.createElement("span");
   msg.className = "planner-lora-preflight-msg";
   msg.textContent =
-    "Warning: these characters have no trained LoRA and will be retrained inline " +
-    "(~15-25 min each) during this render: " + names + ". Train them on the Cast page " +
-    "first for instant reuse. Click render again to proceed anyway.";
+    "These characters are not trained for consistency yet: " + names + ". "
+    + (proceedHint || "Continue without consistency, or train them first.");
   const link = document.createElement("a");
-  link.href = "/cast";
+  link.href = "cast";
   link.className = "planner-lora-preflight-link";
-  link.textContent = "open Cast page";
+  link.textContent = "Train on Cast";
   el.appendChild(msg);
   el.appendChild(document.createTextNode(" "));
   el.appendChild(link);
   el.hidden = false;
+}
+
+function showLoraPreflightWarning(unready) {
+  paintLoraWarning(
+    $("#planner-lora-preflight-warning"),
+    unready,
+    "Click render again to proceed anyway (inline training takes ~15-25 min each).",
+  );
 }
 
 // Motion backend for the LoRA preflight gate: mirrors the render submit's backend
@@ -400,6 +405,59 @@ function updateRenderGate() {
     reasonEl.textContent = reason;
     reasonEl.hidden = !reason;
   }
+}
+
+function isStillsMode() {
+  const kf = $("#planner-keyframes-only");
+  return !!(kf && kf.checked);
+}
+
+function setStillsMode(stills) {
+  const kf = $("#planner-keyframes-only");
+  if (kf) kf.checked = !!stills;
+  syncRenderModeUi();
+  persistSoon();
+}
+
+function syncRenderModeUi() {
+  const stills = isStillsMode();
+  const stillsRadio = $("#planner-mode-stills");
+  const motionRadio = $("#planner-mode-motion");
+  if (stillsRadio) stillsRadio.checked = stills;
+  if (motionRadio) motionRadio.checked = !stills;
+  const wrap = $("#planner-motion-backend-wrap");
+  if (wrap) wrap.dataset.stills = stills ? "1" : "0";
+  const btn = $("#planner-render-btn");
+  if (btn && !(renderState && (renderState.submitting || renderState.jobId || renderState.pollTimer))) {
+    btn.textContent = stills ? "Preview stills" : "Animate";
+  }
+  paintRenderSpend();
+  updateRenderGate();
+}
+
+function selectedDoorCost() {
+  const sel = $("#planner-motion-backend");
+  if (!sel || !sel.value || !window.plannerRegistry || typeof window.plannerRegistry.motionBackendModules !== "function") {
+    return "";
+  }
+  const mods = window.plannerRegistry.motionBackendModules() || [];
+  const mod = mods.find((m) => m.name === sel.value);
+  return mod && mod.ui && typeof mod.ui.cost === "string" ? mod.ui.cost : "";
+}
+
+function paintRenderSpend() {
+  const el = $("#planner-render-spend");
+  if (!el) return;
+  const cfg = window.plannerRenderConfig;
+  const stills = isStillsMode();
+  const tierEl = $("#planner-quality-tier");
+  const tier = tierEl && tierEl.value ? tierEl.value : "";
+  const sentence = cfg && typeof cfg.spendSentence === "function"
+    ? cfg.spendSentence({ stills, tier, cost: stills ? "" : selectedDoorCost() })
+    : (stills
+      ? "Stills preview; billed per render; usually a few minutes."
+      : "Motion render; billed per render.");
+  el.textContent = sentence;
 }
 
 // v0.162.0: POST to /api/storyboard/render/scatter and drive the existing

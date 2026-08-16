@@ -17,56 +17,7 @@ function showBundleStage(storyboard, characters, initialUploads, initialSceneSta
   bundleState.sizeBytes = 0;
   bundleState.fileCount = 0;
 
-  const useChars =
-    Array.isArray(storyboard.use_characters) && storyboard.use_characters.length > 0
-      ? storyboard.use_characters
-      : [];
-
-  const root = $("#planner-bundle-cast");
-  root.innerHTML = "";
-
-  if (useChars.length === 0) {
-    // No slots loaded in the storyboard. The bundle is still legal (the
-    // GPU side will skip identity-lock for empty-cast renders), but
-    // assemble.py needs at least the storyboard.yaml. Show a note and
-    // enable the bundle button immediately.
-    const note = document.createElement("p");
-    note.className = "planner-stage-hint";
-    note.textContent =
-      "this storyboard has no character slots loaded (use_characters is empty). "
-      + "the bundle will ship just the storyboard; the GPU worker renders "
-      + "without identity lock.";
-    root.appendChild(note);
-  } else {
-    for (const slot of useChars) {
-      // v0.48.0: if this slot is bound to a persisted cast member,
-      // synthesize the perSlotUploads entries from the cast's portrait
-      // + ref_keys and overwrite any inline uploads from a prior pass.
-      // This makes the bundle-assembly code (which reads keys from
-      // perSlotUploads) work without any change.
-      const boundId = planState.castBindings[slot];
-      const bound = boundId ? findCastById(boundId) : null;
-      if (bound) {
-        bundleState.perSlotUploads[slot] = synthesizeUploadsFromCast(bound);
-      } else if (!bundleState.perSlotUploads[slot]) {
-        // v0.38.0: only initialize an empty array when we did not get
-        // pre-populated uploads from restoration. Otherwise the existing
-        // entries are preserved.
-        bundleState.perSlotUploads[slot] = [];
-      }
-      const ch = characters.find((c) => c.slot === slot) || {
-        name: "Character " + slot,
-        bible: "",
-      };
-      root.appendChild(buildSlotUploadRow(slot, ch, bound));
-      // Hydrate the file list from any pre-existing entries (typically
-      // staged-to-R2 keys from before a tab close, or v0.48.0
-      // synthesized from a bound cast).
-      if (bundleState.perSlotUploads[slot].length > 0) {
-        renderSlotList(slot);
-      }
-    }
-  }
+  refreshBundleCastRows(storyboard, characters);
 
   // v0.149.0 (Phase 4b): per-scene start-keyframe pickers (rehydrate from any
   // keys passed in via initialSceneStartImages, set above).
@@ -78,6 +29,47 @@ function showBundleStage(storyboard, characters, initialUploads, initialSceneSta
   $("#planner-bundle-result").hidden = true;
   setBundleStatus("", "");
   setBundleMeta("");
+}
+
+// Rebuild who-is-in-the-film rows without wiping a staged bundle.
+// Faces-panel toggles call this; showBundleStage still does the full reset.
+function refreshBundleCastRows(storyboard, characters) {
+  const root = $("#planner-bundle-cast");
+  if (!root) return;
+  root.innerHTML = "";
+  const useChars =
+    Array.isArray(storyboard.use_characters) && storyboard.use_characters.length > 0
+      ? storyboard.use_characters
+      : [];
+  const people = characters || planState.cast || [];
+
+  if (useChars.length === 0) {
+    const note = document.createElement("p");
+    note.className = "planner-stage-hint";
+    note.textContent =
+      "No one is picked for this film yet. You can still assemble and preview; "
+      + "faces will not be locked. Create a character or pick one above if you want someone specific.";
+    root.appendChild(note);
+    return;
+  }
+
+  for (const slot of useChars) {
+    const boundId = planState.castBindings[slot];
+    const bound = boundId ? findCastById(boundId) : null;
+    if (bound) {
+      bundleState.perSlotUploads[slot] = synthesizeUploadsFromCast(bound);
+    } else if (!bundleState.perSlotUploads[slot]) {
+      bundleState.perSlotUploads[slot] = [];
+    }
+    const ch = people.find((c) => c.slot === slot) || {
+      name: "Someone in the film",
+      bible: "",
+    };
+    root.appendChild(buildSlotUploadRow(slot, ch, bound));
+    if (bundleState.perSlotUploads[slot].length > 0) {
+      renderSlotList(slot);
+    }
+  }
 }
 
 // v0.149.0 (Phase 4b): resolve a scene's id the same way the validator + pod do
@@ -250,7 +242,7 @@ function buildSlotUploadRow(slot, char, bound) {
   const head = document.createElement("div");
   head.className = "planner-slot-head";
   const headTitle = document.createElement("strong");
-  headTitle.textContent = "slot " + slot + (char.name ? " · " + char.name : "");
+  headTitle.textContent = char.name ? char.name : "Someone in the film";
   head.appendChild(headTitle);
   if (char.bible) {
     const bible = document.createElement("span");
@@ -270,9 +262,13 @@ function buildSlotUploadRow(slot, char, bound) {
     const portraitCount = bound.portrait_key ? 1 : 0;
     const refCount = (bound.ref_keys || []).length;
     linked.textContent =
-      "linked to cast member: " + bound.name
-      + " (" + portraitCount + " portrait, " + refCount + " refs). "
-      + "manage at /cast.";
+      bound.name + " is in this film"
+      + (portraitCount || refCount
+        ? " (" + (portraitCount ? "has a face" : "no face yet")
+          + (refCount ? ", " + refCount + " extra photo" + (refCount === 1 ? "" : "s") : "")
+          + ")."
+        : " (add a face photo on Cast).")
+      + " Manage on Cast.";
     row.appendChild(linked);
     const list = document.createElement("ul");
     list.className = "planner-slot-list";
@@ -295,7 +291,7 @@ function buildSlotUploadRow(slot, char, bound) {
   const label = document.createElement("label");
   label.htmlFor = input.id;
   label.className = "planner-slot-pick";
-  label.textContent = "+ select PNG / JPEG / WEBP files (8 or more recommended)";
+  label.textContent = "Add a face photo (PNG, JPEG, or WEBP)";
 
   row.appendChild(label);
   row.appendChild(input);
@@ -437,21 +433,21 @@ async function bundleNow() {
   const errors = [];
 
   for (const slot of useChars) {
+    const ch = planState.cast.find((c) => c.slot === slot) || {
+      name: "Someone in the film",
+      bible: "",
+    };
     const uploads = bundleState.perSlotUploads[slot] || [];
     const stillUploading = uploads.some((e) => e.status === "uploading");
     if (stillUploading) {
-      errors.push("slot " + slot + " has uploads still in progress");
+      errors.push((ch.name || "a character") + " still has photos uploading");
       continue;
     }
     const staged = uploads.filter((e) => e.status === "done" && e.key);
     if (staged.length === 0) {
-      errors.push("slot " + slot + " has no staged training images");
+      errors.push((ch.name || "this character") + " needs a face photo before assemble");
       continue;
     }
-    const ch = planState.cast.find((c) => c.slot === slot) || {
-      name: "Character " + slot,
-      bible: "",
-    };
     characterRefs[slot] = {
       name: ch.name,
       prompt: ch.bible || "",

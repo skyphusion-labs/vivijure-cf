@@ -81,6 +81,10 @@ function showPreflightSection() {
 // hidden attr), so sections that start with `hidden` in HTML stay invisible
 // unless their hidden attr is explicitly cleared here.
 function showCastSection() {
+  const faces = $("#planner-faces");
+  if (faces) faces.hidden = !planState.storyboard;
+  if (typeof renderFacesPanel === "function") renderFacesPanel();
+  if (typeof refreshCastLoraWarning === "function") refreshCastLoraWarning();
   showPreflightSection();
   if (planState.storyboard) {
     const bundle = $("#planner-bundle");
