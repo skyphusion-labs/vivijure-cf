@@ -1,7 +1,7 @@
 // WHAT THE ABSENT VIDEO-FINISH TIER ACTUALLY TAKES WITH IT (cf#118, split by cf#229).
 //
-// `VIDEO_FINISH_VPC` is a Workers VPC binding to the always-on fleet video-finish container. A
-// self-host or flagship deploy binds it; a hosted TENANT studio does not (the provisioner cannot
+// `VIDEO_FINISH_URL` is the public HTTPS origin of the always-on fleet video-finish container. A
+// self-host or flagship deploy sets it; a hosted TENANT studio may not (the provisioner cannot
 // attach it to an already-provisioned studio today, cp#112), so the tier is genuinely absent there
 // and the render degrades honestly.
 //
@@ -12,7 +12,7 @@
 //
 // THE SET IS READ OFF THE EXECUTION PATHS, not off intuition, because both errors are bad in
 // opposite ways: name too few and the panel offers buttons that cannot deliver; name too many and it
-// hides capability that works. With no VIDEO_FINISH_VPC the film path does this (core
+// hides capability that works. With no VIDEO_FINISH_URL the film path does this (core
 // film-orchestrator):
 //
 //   assemble  -> `degradeAssembleUnavailable` sets `phase = "done"` DIRECTLY ("no assembled film to
@@ -28,11 +28,11 @@
 // the receipt: `score` names two capabilities that do not fail together.
 //
 //   bed GENERATION  POST /api/storyboard/score-bed -> src/score-bed.ts, which references
-//                   VIDEO_FINISH_VPC nowhere. The film path never calls the score hook at all (the
+//                   VIDEO_FINISH_URL nowhere. The film path never calls the score hook at all (the
 //                   bed is an artifact the planner attaches BEFORE submit, job.audio_key). On a
 //                   studio with no video-finish tier this works, start to finish.
 //   the MUX         laying that bed onto a finished MP4 -- core render-mux.js, which refuses with
-//                   "video-finish VPC binding not configured". Dead without the tier.
+//                   "video-finish URL not configured". Dead without the tier.
 //
 // Reporting `score` unavailable therefore says "this host cannot serve score", which is BROADER than
 // the truth, and the moment anyone correctly declares the hook their bed-generation control drives
@@ -53,7 +53,7 @@
 //
 // And what is NOT here, deliberately: keyframe, motion.backend, finish, speech, dialogue,
 // plan.enhance, image.generate, cast.image. All of those are PER-SHOT work, and per-shot clips are
-// exactly what a VPC-less host delivers. A panel that greyed those out would lie the other way.
+// exactly what a video-finish-less host delivers. A panel that greyed those out would lie the other way.
 //
 // Scope note: this describes the FILM path. A clips-only render is unaffected by construction, and
 // the scatter path degrades through its own gates in the same family.
@@ -89,7 +89,7 @@ import type { Env } from "./env";
  *
  * A FOURTH COMBINATION, which that census did not enumerate and which cp#112 creates (Strummer,
  * evidence on control-plane#112). Binding and channel do NOT travel together: a bindings refresh
- * adds `VIDEO_FINISH_VPC` without touching studio bytes, so a studio can be binding-WITHOUT-channel.
+ * adds `VIDEO_FINISH_URL` without touching studio bytes, so a studio can be URL-WITHOUT-channel.
  * The live tenant is exactly that (18 -> 19 bindings, bytes byte-identical before and after).
  * Followed through the resolver it lands right: an ABSENT `hooks_unavailable` reads as available,
  * and for a studio that genuinely HAS the binding that optimism is TRUE. The silent-and-optimistic

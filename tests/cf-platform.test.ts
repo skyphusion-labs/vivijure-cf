@@ -15,9 +15,9 @@ describe("cf platform adapter", () => {
       GATEWAY_ID: "gw",
       RUNPOD_API_KEY: "k",
       RUNPOD_ENDPOINT_ID: "e",
-      VIDEO_FINISH_VPC: fakeFetcher,
-      IMAGE_PREP_VPC: fakeFetcher,
-      AUDIO_BEAT_SYNC_VPC: fakeFetcher,
+      VIDEO_FINISH_URL: "https://video-finish.test",
+      IMAGE_PREP_URL: "https://image-prep.test",
+      AUDIO_BEAT_SYNC_URL: "https://audio-beat-sync.test",
       MODULE_KEYFRAME: fakeFetcher,
     } as unknown as Env;
 

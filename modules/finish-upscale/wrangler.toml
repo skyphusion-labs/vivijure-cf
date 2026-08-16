@@ -45,51 +45,20 @@ store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID"
 
 
-# --- OPTIONAL (cf#480): the always-on upscale door on our own GPU iron, reached over a Workers VPC
-# --- service. UNSET IS THE NORMAL STATE and deploys unchanged: both blocks below are stripped and
-# --- this module uses RunPod exactly as it always has. Set VPC_FINISH_UPSCALE_ID only once the
-# --- matching connectivity-directory service exists.
-# ---
-# --- Both blocks carry the marker `cf482-optional:VPC_FINISH_UPSCALE_ID` so the stripper knows this
-# --- binding's full extent. Stripping only the [[vpc_services]] block would leave wrangler
-# --- resolving a Secrets Store entry that need not exist -- a half-strip that fails at deploy.
-# ---
-# --- The module branches on the binding being BOUND, never on RunPod failing
-# --- (modules/_shared/finish-door.ts); a failover would silently re-rent the GPU this removes.
-[[vpc_services]]
-# cf482-optional:VPC_FINISH_UPSCALE_ID
-binding = "FINISH_UPSCALE_VPC"
-service_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"
-remote = true
-
+# Door bearers. Origins are FINISH_UPSCALE_DOORS below (empty = RunPod path). Tokens stay
+# bound so a configured door can authenticate; the pool is empty until the var lists origins.
 [[secrets_store_secrets]]
-# cf482-optional:VPC_FINISH_UPSCALE_ID
 binding = "FINISH_DOOR_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "FINISH_DOOR_TOKEN"
 
-# --- OPTIONAL (cf#507): the SECOND upscale door, on the other GPU box. Same shape, same rules as
-# --- the block above, and independently optional: unset is a clean deploy with one door, which is
-# --- byte-for-byte the cf#480 behaviour. Set VPC_FINISH_UPSCALE_PROPAGANDHI_ID only once the
-# --- matching connectivity-directory service exists.
-# ---
-# --- Both blocks carry the marker `cf482-optional:VPC_FINISH_UPSCALE_PROPAGANDHI_ID` so the
-# --- stripper knows this binding's full extent; a half-strip fails at deploy.
-# ---
-# --- Its own bearer, rather than sharing the first door's: two doors are two services, and one
-# --- token binding that happens to work for both is a coupling nobody declared. Point both at the
-# --- same store secret if they do share a bearer -- that is an operator decision, not a schema one.
-[[vpc_services]]
-# cf482-optional:VPC_FINISH_UPSCALE_PROPAGANDHI_ID
-binding = "FINISH_UPSCALE_VPC_PROPAGANDHI"
-service_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_PROPAGANDHI_ID"
-remote = true
-
 [[secrets_store_secrets]]
-# cf482-optional:VPC_FINISH_UPSCALE_PROPAGANDHI_ID
 binding = "FINISH_DOOR_TOKEN_PROPAGANDHI"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "FINISH_DOOR_TOKEN_PROPAGANDHI"
 
 [vars]
 RUNPOD_WORKERS_MAX = "2"
+# Comma-separated HTTPS origins. Empty = no door (RunPod path). First URL is the legacy door.
+# Filled at deploy; never a baked production hostname.
+FINISH_UPSCALE_DOORS = "${FINISH_UPSCALE_DOORS}"

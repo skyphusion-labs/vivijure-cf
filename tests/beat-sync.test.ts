@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   buildAnalyzeBody,
   normalizeConfig,
@@ -110,7 +110,9 @@ describe("beat-analyze helpers", () => {
 
 // cf#396: as with audio-master, the attribution is only reachable through the worker. These are the
 // first worker.fetch tests in this file.
-describe("beat-sync: VPC wall-clock attribution (cf#396)", () => {
+describe("beat-sync: wall-clock attribution (cf#396)", () => {
+  const restores: Array<() => void> = [];
+  afterEach(() => { while (restores.length) restores.pop()!(); });
   const PLAN = {
     mode: "beat",
     audio_key: "audio/x.mp3",
@@ -124,13 +126,14 @@ describe("beat-sync: VPC wall-clock attribution (cf#396)", () => {
     timed_scenes: [{ index: 0, start: 0, end: 8, target_seconds: 8 }],
     note: "ok",
   };
-  const vpcEnv = () => ({
-    AUDIO_BEAT_SYNC_VPC: {
-      async fetch() {
-        return new Response(JSON.stringify(PLAN), { status: 200, headers: { "content-type": "application/json" } });
-      },
-    },
-  } as unknown as Parameters<typeof worker.fetch>[1]);
+  const vpcEnv = () => {
+    const prev = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(PLAN), { status: 200, headers: { "content-type": "application/json" } })
+    ) as typeof fetch;
+    restores.push(() => { globalThis.fetch = prev; });
+    return { AUDIO_BEAT_SYNC_URL: "https://audio-beat-sync.test" } as unknown as Parameters<typeof worker.fetch>[1];
+  };
   const invoke = () =>
     new Request("https://module/invoke", {
       method: "POST",

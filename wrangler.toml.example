@@ -64,8 +64,16 @@ ACCESS_AUD = "${ACCESS_AUD}"
 # Store entry (#238 follow-up; they are identifiers, not secrets).
 R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
 R2_S3_BUCKET = "${R2_S3_BUCKET}"
-# Public Traefik SUBMIT origin for video-finish. Not a VPC binding.
-VIDEO_FINISH_URL = "https://video-finish.skyphusion.org"
+# Public HTTPS origins for CPU media + on-iron finish doors. Empty = that service is off.
+# Filled at deploy from operator config (deploy.env). Never a baked production hostname.
+VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"
+IMAGE_PREP_URL = "${IMAGE_PREP_URL}"
+AUDIO_BEAT_SYNC_URL = "${AUDIO_BEAT_SYNC_URL}"
+AUDIO_MIX_URL = "${AUDIO_MIX_URL}"
+AUDIO_MASTER_URL = "${AUDIO_MASTER_URL}"
+FINISH_UPSCALE_DOORS = "${FINISH_UPSCALE_DOORS}"
+SPEECH_UPSCALE_DOORS = "${SPEECH_UPSCALE_DOORS}"
+FINISH_BLENDER_DOORS = "${FINISH_BLENDER_DOORS}"
 # S4/S9 spend-posture knobs (src/rate-limit.ts):
 #   SPEND_LIMIT_FAIL_CLOSED -- fail-CLOSED by DEFAULT (S9 F7): when the spend limiter is BROKEN
 #     (SPEND_RATE_LIMITER unbound, or .limit()/the daily-ceiling check throws) the spend routes are
@@ -133,10 +141,12 @@ binding = "DB"
 database_name = "vivijure-studio"
 database_id = "${D1_DATABASE_ID}"
 
-# --- Off-GPU CPU work runs always-on on the fleet (issue #83), reached privately over Workers VPC
-# --- (see [[vpc_services]] below). The CF Container + its Durable Object class were removed once the
-# --- VPC path was validated end-to-end in prod (clears #64, #82). Build contexts for the 3 images
-# --- live in containers/<name>/ and now run as always-on Docker via containers/compose.yaml.
+# --- Off-GPU CPU work runs always-on on the fleet (issue #83), reached over public HTTPS
+# --- origins (VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL above). The CF Container + its
+# --- Durable Object class were removed once the fleet path was validated end-to-end in prod
+# --- (clears #64, #82). Build contexts live in containers/<name>/ (containers/compose.yaml).
+# --- Hosted no longer uses Workers VPC. setup-media-vpc.py remains for the self-host installer
+# --- only; FLAG: that script still creates VPC services this studio no longer binds.
 
 # Migration history: v1 created the video-finish container DO class; v2 drops it (off CF Containers).
 [[migrations]]
@@ -150,24 +160,6 @@ tag = "v2-drop-cpu-containers"
 # deleting them hard-fails the deploy (API code 10074). Prod created all three in its real history;
 # an outsider deploying from this example does not.
 deleted_classes = ["VideoFinishContainer"]
-
-# Workers VPC leftover for image-prep / audio-beat-sync / audio-mix until those move
-# to public doors. video-finish is Traefik-only (VIDEO_FINISH_URL above).
-[[vpc_services]]
-binding = "IMAGE_PREP_VPC"
-service_id = "${VPC_IMAGE_PREP_ID}"
-remote = true
-
-[[vpc_services]]
-binding = "AUDIO_BEAT_SYNC_VPC"
-service_id = "${VPC_AUDIO_BEAT_SYNC_ID}"
-remote = true
-# max_instances = 5
-
-[[vpc_services]]
-binding = "AUDIO_MIX_VPC"
-service_id = "${VPC_AUDIO_MIX_ID}"
-remote = true
 
 # --- Credential secrets via the Cloudflare Secrets Store (#238). Seeded ONCE by the operator
 # --- (npx wrangler secrets-store secret create <STORE_ID> --name <NAME> ...); values never touch
@@ -343,13 +335,13 @@ service = "vivijure-module-music-gen"
 binding = "MODULE_NARRATION_GEN"
 service = "vivijure-module-narration-gen"
 
-# Beat sync: librosa analysis via fleet audio-beat-sync container (score chain, VPC).
+# Beat sync: librosa analysis via fleet audio-beat-sync container (score chain, AUDIO_BEAT_SYNC_URL).
 [[services]]
 binding = "MODULE_BEAT_SYNC"
 service = "vivijure-module-beat-sync"
 
 # Audio master: film-level mastering of the assembled audio bed (music upscale + LUFS loudness) on the
-# audio-master CPU VPC container (containers/audio-master over AUDIO_MASTER_VPC -- CPU ffmpeg, NEVER
+# audio-master CPU container (containers/audio-master over AUDIO_MASTER_URL -- CPU ffmpeg, NEVER
 # RunPod/GPU). The `master` chain runs after assemble, before the final mux; a master miss soft-degrades
 # to the un-mastered bed (never fails the render).
 [[services]]

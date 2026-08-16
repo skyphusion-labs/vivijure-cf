@@ -93,14 +93,14 @@ describe("finish-door: the branch is BOUND-ness, never failover", () => {
   });
 
   it("bound with a token -> usable, and labelled", () => {
-    const r = doorRoute("https://finish-upscale-fatmike.skyphusion.org", DOOR_TOKEN);
+    const r = doorRoute("https://finish-upscale-fatmike.test", DOOR_TOKEN);
     expect(doorBound(r)).toBe(true);
     expect(doorProblem(r)).toBeNull();
     expect(r.name).toBe(DOOR_ROUTE_NAME);
   });
 
   it("bound WITHOUT a token is propagation, not 'no door' -- and it stays BOUND", () => {
-    const r = doorRoute("https://finish-upscale-fatmike.skyphusion.org", "");
+    const r = doorRoute("https://finish-upscale-fatmike.test", "");
     // The load-bearing pair. If a tokenless door ever fell back to unbound, a bound module would
     // silently start renting RunPod again -- the exact regression this design exists to prevent.
     expect(doorBound(r)).toBe(true);
@@ -124,16 +124,17 @@ describe("bound door: RunPod is not called AT ALL", () => {
     const res = await body(await invokeFinish({
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test",
     }));
 
     expect(res.ok).toBe(true);
     expect(res.pending).toBe(true);
     expect(res.jobId).toBe(DOOR_JOB);
-    const doorCalls = rp.calls.filter((c) => c.url.includes("skyphusion.org"));
+    const doorCalls = rp.calls.filter((c) => c.url.includes("finish-upscale-fatmike.test"));
     const runpodCalls = rp.calls.filter((c) => c.url.includes("runpod"));
     expect(runpodCalls.length).toBe(0);
     expect(doorCalls.length).toBe(1);
-    expect(new URL(doorCalls[0].url).hostname).toBe("finish-upscale-fatmike.skyphusion.org");
+    expect(new URL(doorCalls[0].url).hostname).toBe("finish-upscale-fatmike.test");
     expect(new URL(doorCalls[0].url).pathname).toBe("/run");
     expect(doorCalls[0].method).toBe("POST");
     expect(doorCalls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
@@ -147,13 +148,14 @@ describe("bound door: RunPod is not called AT ALL", () => {
     const res = await body(await invokeSpeech({
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       SPEECH_DOOR_TOKEN: DOOR_TOKEN,
+      SPEECH_UPSCALE_DOORS: "https://speech-upscale-fatmike.test",
     }));
 
     expect(res.ok).toBe(true);
     expect(res.jobId).toBe(DOOR_JOB);
     expect(rp.calls.every((c) => !c.url.includes("runpod"))).toBe(true);
     expect(rp.calls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
-    expect(new URL(rp.calls[0].url).hostname).toBe("speech-upscale-fatmike.skyphusion.org");
+    expect(new URL(rp.calls[0].url).hostname).toBe("speech-upscale-fatmike.test");
   });
 
   it("tokenless takes the RunPod arm (no public door is declared without a bearer)", async () => {
@@ -172,6 +174,7 @@ describe("bound door: RunPod is not called AT ALL", () => {
     const res = await body(await invokeFinish({
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test",
     }));
 
     // Polish step: soft degrade, never a chain failure (#249/#77).
@@ -224,11 +227,12 @@ describe("AFFINITY: a poll is served by the route that minted the job, never the
     const res = await body(await pollWith(FINISH, {
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test",
     }, token({ jobId: DOOR_JOB, shotId: "shot_01", srcFps: 24, frames: 96, submittedAt: Date.now(), door: DOOR_ROUTE_NAME })));
 
     expect(res.ok).toBe(true);
     expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
-    expect(new URL(rp.calls[0].url).hostname).toBe("finish-upscale-fatmike.skyphusion.org");
+    expect(new URL(rp.calls[0].url).hostname).toBe("finish-upscale-fatmike.test");
     expect(new URL(rp.calls[0].url).pathname).toBe("/status/" + DOOR_JOB);
   });
 
@@ -238,10 +242,11 @@ describe("AFFINITY: a poll is served by the route that minted the job, never the
     const res = await body(await pollWith(FINISH, {
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test",
     }, token({ jobId: RUNPOD_JOB, shotId: "shot_01", srcFps: 24, frames: 96, submittedAt: Date.now() })));
 
     expect(res.ok).toBe(true);
-    expect(rp.calls.filter((c) => c.url.includes("skyphusion.org")).length).toBe(0);
+    expect(rp.calls.filter((c) => c.url.includes("finish-upscale-fatmike.test")).length).toBe(0);
     expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/status/" + RUNPOD_JOB);
   });
 
@@ -252,7 +257,7 @@ describe("AFFINITY: a poll is served by the route that minted the job, never the
       return path === "/run" ? runOk(DOOR_JOB) : completed({ shot_id: "shot_01", clip_key: "p/shot_01_up.mp4" });
     });
     globalThis.fetch = rp.fn as unknown as typeof fetch;
-    const env = { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT, FINISH_DOOR_TOKEN: DOOR_TOKEN };
+    const env = { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT, FINISH_DOOR_TOKEN: DOOR_TOKEN, FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test" };
 
     const submitted = await body(await invokeFinish(env));
     const decoded = JSON.parse(atob(submitted.poll as unknown as string)) as { door?: string };
@@ -307,13 +312,17 @@ describe("GET /ready", () => {
   });
 
   it("BOUND: reports the door, and ok stops depending on RunPod credentials", async () => {
-    const b = await ready(FINISH, { FINISH_DOOR_TOKEN: DOOR_TOKEN, FINISH_DOOR_TOKEN_PROPAGANDHI: DOOR_TOKEN });
+    const b = await ready(FINISH, {
+      FINISH_DOOR_TOKEN: DOOR_TOKEN,
+      FINISH_DOOR_TOKEN_PROPAGANDHI: DOOR_TOKEN,
+      FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test,https://finish-upscale-propagandhi.test",
+    });
     expect(b.ok).toBe(true);
     expect(b.door).toEqual({
       bound: true, token: true, route: DOOR_ROUTE_NAME,
       routes: [
         { name: DOOR_ROUTE_NAME, token: true },
-        { name: "vpc-propagandhi", token: true },
+        { name: "door-propagandhi", token: true },
       ],
     });
   });

@@ -67,7 +67,7 @@ describe("cf507 wire: two bound doors both carry jobs, and each poll goes home",
         propCalls.push(rec);
         return propRespond(url.pathname, rec.method);
       }
-      if (url.hostname.includes("skyphusion.org")) {
+      if (url.hostname.includes("fatmike")) {
         legacyCalls.push(rec);
         return legacyRespond(url.pathname, rec.method);
       }
@@ -78,6 +78,10 @@ describe("cf507 wire: two bound doors both carry jobs, and each poll goes home",
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       FINISH_DOOR_TOKEN: TOKEN_LEGACY,
       FINISH_DOOR_TOKEN_PROPAGANDHI: TOKEN_PROP,
+      FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test,https://finish-upscale-propagandhi.test",
+      SPEECH_DOOR_TOKEN: TOKEN_LEGACY,
+      SPEECH_DOOR_TOKEN_PROPAGANDHI: TOKEN_PROP,
+      SPEECH_UPSCALE_DOORS: "https://speech-upscale-fatmike.test,https://speech-upscale-propagandhi.test",
     };
     return { legacy: { calls: legacyCalls }, prop: { calls: propCalls }, env };
   }
@@ -156,6 +160,7 @@ describe("cf507 wire: two bound doors both carry jobs, and each poll goes home",
       RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
       SPEECH_DOOR_TOKEN: TOKEN_LEGACY,
       SPEECH_DOOR_TOKEN_PROPAGANDHI: TOKEN_PROP,
+      SPEECH_UPSCALE_DOORS: "https://speech-upscale-fatmike.test,https://speech-upscale-propagandhi.test",
     };
     const inv = { hook: "speech", input: { shot_id: "shot_01", audio_key: "p/shot_01.wav" }, config: { enable: true }, context: { project: "cf507" } };
 

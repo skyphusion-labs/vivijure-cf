@@ -38,7 +38,7 @@ import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-cor
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, DOOR_ORIGIN, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorProblem, doorHeaders, doorUrl, tokenTookDoor, doorsFromEnv, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -54,8 +54,10 @@ interface Env {
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
   SPEECH_DOOR_TOKEN_PROPAGANDHI?: SecretsStoreSecret | string;
-  /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN`). Read only when the binding is bound. */
+  /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN`). Read only when a door origin is configured. */
   SPEECH_DOOR_TOKEN?: SecretsStoreSecret | string;
+  /** Comma-separated HTTPS origins. Empty = RunPod path. First URL is the legacy door. */
+  SPEECH_UPSCALE_DOORS?: string;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -116,22 +118,17 @@ function doorTransport(route: DoorRoute): Transport {
 /** Round-robin cursor; per-isolate, deliberately not health-aware (see finish-upscale). */
 let doorCursor = 0;
 
-/** Resolve the on-iron door POOL once per request (cf#480, pooled cf#507). The legacy door keeps
- *  the bare `DOOR_ROUTE_NAME` label so an in-flight poll token's label IS this door's name and
- *  back-compat is structural rather than a special case. */
+/** Resolve the on-iron door POOL once per request (cf#480, pooled cf#507). Origins come from
+ *  SPEECH_UPSCALE_DOORS. Empty var = empty pool = RunPod path. */
 async function doorsFor(env: Env): Promise<DoorRoute[]> {
   const [legacyToken, propagandhiToken] = await Promise.all([
     secretValue(env.SPEECH_DOOR_TOKEN),
     secretValue(env.SPEECH_DOOR_TOKEN_PROPAGANDHI),
   ]);
-  const list = [];
-  if (legacyToken) {
-    list.push({ name: DOOR_ROUTE_NAME, baseUrl: DOOR_ORIGIN["speech-upscale"].fatmike, token: legacyToken, legacy: true });
-  }
-  if (propagandhiToken) {
-    list.push({ name: doorName("propagandhi"), baseUrl: DOOR_ORIGIN["speech-upscale"].propagandhi, token: propagandhiToken });
-  }
-  return doorPool(list);
+  return doorPool(doorsFromEnv({ SPEECH_UPSCALE_DOORS: env.SPEECH_UPSCALE_DOORS }, "SPEECH_UPSCALE_DOORS", {
+    legacy: legacyToken,
+    byName: { propagandhi: propagandhiToken },
+  }));
 }
 
 function auth(route: RunpodRoute) {

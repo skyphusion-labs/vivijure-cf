@@ -116,7 +116,10 @@ describe("finish-blender: GET /ready door object (cf#612)", () => {
   it("a door-backed blender is ready without RunPod credentials", async () => {
     const res = await w.fetch(
       new Request("https://m.internal/ready"),
-      { BLENDER_DOOR_TOKEN: TOKEN } as never,
+      {
+        BLENDER_DOOR_TOKEN: TOKEN,
+        FINISH_BLENDER_DOORS: "https://finish-blender-descendents.test,https://finish-blender-badbrains.test,https://finish-blender-jello.test",
+      } as never,
     );
     const body = await res.json() as Record<string, unknown>;
     expect(body.ok, "door-backed blender classified as misconfigured").toBe(true);
@@ -127,8 +130,8 @@ describe("finish-blender: GET /ready door object (cf#612)", () => {
       route: DOOR_ROUTE_NAME,
       routes: [
         { name: DOOR_ROUTE_NAME, token: true },
-        { name: "vpc-badbrains", token: true },
-        { name: "vpc-jello", token: true },
+        { name: "door-badbrains", token: true },
+        { name: "door-jello", token: true },
       ],
     });
   });

@@ -1,9 +1,8 @@
 // audio-master: a `master` module worker (vivijure-module/2). Film-level audio mastering -- music
 // upscale (VHQ soxr resample to 48k + gentle high-shelf air lift) + LUFS loudness normalization -- via
-// the always-on audio-master CPU container on the fleet over Workers VPC (AUDIO_MASTER_VPC).
+// the always-on audio-master CPU container on the fleet over AUDIO_MASTER_URL.
 //
-// CPU mastering is ffmpeg DSP, so it must NEVER touch a GPU/RunPod (GPU money is for GPU work only). The
-// work runs on the CPU VPC container, the same pattern as the audio-mix + subtitle modules.
+// CPU mastering is ffmpeg DSP, so it must NEVER touch a GPU/RunPod (GPU money is for GPU work only).
 //
 // It is the audio sibling of `finish` (which polishes a clip) and the dialogue / speech lane (which
 // polishes per-shot voice): `master` runs ONCE, on the whole film's assembled audio bed, AFTER the mix
@@ -13,7 +12,7 @@
 // SYNCHRONOUS: a two-pass ffmpeg master of a few-minute bed completes within the Worker request budget,
 // so there is ONE round-trip and no /poll:
 //   GET  /module.json -> manifest
-//   POST /invoke      -> one synchronous AUDIO_MASTER_VPC.fetch to the container; return the output
+//   POST /invoke      -> one synchronous fetch(AUDIO_MASTER_URL) to the container; return the output
 //
 // CREDENTIALLESS by design: the core presigns the bed GET + the mastered PUT and hands them in the input
 // (audio_url / output_url / output_key); this worker forwards them to the container and reports the
@@ -35,9 +34,11 @@ import {
   coerceConfig, buildMasterBody, parseContainerResult, masterOutputFromResult, passthroughOutput,
 } from "./master";
 import { timedVpcFetch, withVpcElapsedApplied } from "../../_shared/vpc-call-log";
+import { mediaFinishHeaders } from "../../_shared/media-finish-auth";
 
 interface Env {
-  AUDIO_MASTER_VPC: { fetch(url: RequestInfo, init?: RequestInit): Promise<Response> };
+  AUDIO_MASTER_URL?: string;
+  MEDIA_FINISH_TOKEN?: { get(): Promise<string> } | string;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -60,6 +61,17 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+function masterBase(env: Env): string {
+  return typeof env.AUDIO_MASTER_URL === "string" ? env.AUDIO_MASTER_URL.trim().replace(/\/$/, "") : "";
+}
+
+function masterCall(env: Env) {
+  return (url: RequestInfo, init?: RequestInit) => {
+    const path = new URL(String(url), "http://audio-master").pathname;
+    return fetch(masterBase(env) + path, init);
+  };
+}
+
 /** Soft degrade: pass the INPUT bed through unchanged (a no-op beats a drop in the render), but ALWAYS
  *  record why -- `passthroughOutput` tags `applied` and sets `degraded`, so a real misconfig / container
  *  failure is never indistinguishable from a no-op (#77). A real degrade is also warned. */
@@ -78,24 +90,20 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
   if (!input?.film_id || !input?.audio_key || !input?.audio_url || !input?.output_url || !input?.output_key) {
     return { ok: false, error: "audio-master: input needs film_id, audio_key, audio_url, output_url, output_key" };
   }
-  if (!env.AUDIO_MASTER_VPC) return passthrough(input, "no-vpc-binding");  // not configured: degrade, but say so
+  if (!masterBase(env)) return passthrough(input, "no-audio-master-url");
 
   const cfg = coerceConfig(req.config);
-  // Absolute URL (the host is the VPC service, ignored by the binding). A bare "/master" is not a valid
-  // URL and throws in the Workers runtime, which would mask as "container-unreachable", silently
-  // shipping the bed unmastered. (The #207 film-titles lesson, mirrored from subtitle.)
-  // cf#396: wall-clock start + duration on every fleet VPC hop (structured log + applied tag).
   const timed = await timedVpcFetch(
-    (url, init) => env.AUDIO_MASTER_VPC.fetch(url, init),
+    masterCall(env),
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN),
       body: JSON.stringify(buildMasterBody(input, cfg)),
     },
     {
       module: MANIFEST.name,
       service: "audio-master",
-      binding: "AUDIO_MASTER_VPC",
+      binding: "audio-master",
       url: "http://audio-master/master",
       mode: "sync",
       filmKey: input.audio_key,
@@ -133,16 +141,13 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
-    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
-    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
-    // Booleans only, in a `bindings` field kept separate from `credentials`. Its absence does not fail
-    // the render (invoke() passthroughs to "no-vpc-binding", degraded) -- gated on `ok` anyway so an
-    // operator can tell whether mastering can ever actually run on this deployment.
+    // GET /ready (cf#295): URL-visibility probe. Absence does not fail the render
+    // (invoke passthroughs to "no-audio-master-url", degraded).
     if (request.method === "GET" && url.pathname === "/ready") {
       return json({
-        ok: Boolean(env.AUDIO_MASTER_VPC),
+        ok: Boolean(masterBase(env)),
         module: MANIFEST.name,
-        bindings: { audio_master_vpc: Boolean(env.AUDIO_MASTER_VPC) },
+        bindings: { audio_master_url: Boolean(masterBase(env)) },
       });
     }
 

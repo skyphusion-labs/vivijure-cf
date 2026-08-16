@@ -28,33 +28,13 @@ binding = "RUNPOD_ENDPOINT_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "BLENDER_RUNPOD_ENDPOINT_ID"
 
-# --- OPTIONAL (cf#489): the always-on blender door on our own iron, reached over a Workers VPC
-# --- service. UNSET IS THE NORMAL STATE and deploys unchanged: both blocks below are stripped and
-# --- this module uses RunPod exactly as it always has. Set VPC_FINISH_BLENDER_ID only once the
-# --- matching connectivity-directory service exists.
-# ---
-# --- Both blocks carry the marker cf482-optional:VPC_FINISH_BLENDER_ID so the stripper knows the
-# --- full extent of this binding. Stripping only the [[vpc_services]] block would leave wrangler
-# --- resolving a Secrets Store entry that need not exist, a half-strip that fails at deploy.
-# --- This module had NO marker at all before cf#489, so adding the binding without adding the
-# --- marker in the same change would have broken the deploy: the stripper is marker-driven and
-# --- deploy-module-workers.sh hard-fails on REPLACE_WITH_ with a match that is not comment-aware.
-# ---
-# --- The module branches on the binding being BOUND, never on RunPod failing
-# --- (modules/_shared/finish-door.ts); a failover would silently re-rent the GPU this removes,
-# --- and the blender RunPod endpoint is parked at workersMax 0, so a failover would hang rather
-# --- than merely cost money.
-[[vpc_services]]
-# cf482-optional:VPC_FINISH_BLENDER_ID
-binding = "FINISH_BLENDER_VPC"
-service_id = "REPLACE_WITH_VPC_FINISH_BLENDER_ID"
-remote = true
-
+# Door bearer. Origins are FINISH_BLENDER_DOORS (empty = RunPod path). One token applies to every door.
 [[secrets_store_secrets]]
-# cf482-optional:VPC_FINISH_BLENDER_ID
 binding = "BLENDER_DOOR_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "BLENDER_DOOR_TOKEN"
 
 [vars]
 RUNPOD_WORKERS_MAX = "2"
+# Comma-separated HTTPS origins. Empty = no door (RunPod path). First URL is the legacy door.
+FINISH_BLENDER_DOORS = "${FINISH_BLENDER_DOORS}"

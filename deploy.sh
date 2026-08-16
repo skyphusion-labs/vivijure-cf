@@ -352,7 +352,9 @@ fi
 # never touches stdout or a log. Its JSON stdout carries only the NON-secret ids, which we render into
 # the core wrangler.toml (envsubst below) and into the 5 media module tomls (the F8/#520 fix: no
 # hardcoded prod VPC ids in the tracked configs). Idempotent: a re-run reuses the tunnel + services.
-say "Step 4/9: media stack -- Cloudflare tunnel + Workers VPC services"
+# Hosted no longer attaches vpc_services. This step still runs for self-host (tunnel token
+# for containers/compose.yaml). FLAG: it still creates VPC services nothing in this studio binds.
+say "Step 4/9: media stack -- Cloudflare tunnel + Workers VPC services (self-host leftover; hosted uses URL vars)"
 # Optional VIVIJURE_TUNNEL_NAME override (deploy.env) names the tunnel on a FIRST install; on an
 # upgrade the script adopts whatever tunnel the existing VPC services already point at (#531).
 media_args=(--token-file containers/tunnel.env)
@@ -372,21 +374,16 @@ export VPC_VIDEO_FINISH_ID VPC_IMAGE_PREP_ID VPC_AUDIO_BEAT_SYNC_ID VPC_AUDIO_MI
 for v in VPC_VIDEO_FINISH_ID VPC_IMAGE_PREP_ID VPC_AUDIO_BEAT_SYNC_ID VPC_AUDIO_MIX_ID VPC_AUDIO_MASTER_ID; do
   eval "vv=\${$v:-}"; [ -n "$vv" ] || die "media stack: $v came back empty from setup-media-vpc.py"
 done
-# Fill each media module's service_id placeholder with its real VPC service id (idempotent: matches the
-# committed REPLACE_WITH_* placeholder OR a prior id). Mirrors the store_id rewrite above.
-set_module_vpc() { sed -i -E "s|^service_id = \"[^\"]*\"|service_id = \"$2\"|" "modules/$1/wrangler.toml"; }
-for m in film-titles subtitle; do set_module_vpc "$m" "$VPC_VIDEO_FINISH_ID"; done
-set_module_vpc beat-sync    "$VPC_AUDIO_BEAT_SYNC_ID"
-set_module_vpc audio-master "$VPC_AUDIO_MASTER_ID"
-info "media stack: tunnel + 5 VPC services ready; token -> containers/tunnel.env (0600)"
+info "media stack: tunnel token -> containers/tunnel.env (0600). Hosted studio binds no vpc_services; set VIDEO_FINISH_URL / AUDIO_*_URL / *_DOORS in deploy.env."
 
 # ---- 5. render wrangler.toml from the template ------------------------------
 say "Step 5/9: render wrangler.toml ($VIVIJURE_PROFILE profile)"
 command -v envsubst >/dev/null || die "envsubst not found -- install gettext (apt-get install gettext-base)"
 export AUTH_MODE ACCESS_TEAM_DOMAIN ACCESS_AUD D1_DATABASE_ID SPEND_RATE_LIMITER_NS_ID
 export R2_S3_ENDPOINT R2_S3_BUCKET   # #238 follow-up: now rendered into [vars], not put as secrets
-# VPC_* ids are already exported by step 4 (the media stack is provisioned before this render).
-VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$D1_DATABASE_ID \$VPC_VIDEO_FINISH_ID \$VPC_IMAGE_PREP_ID \$VPC_AUDIO_BEAT_SYNC_ID \$VPC_AUDIO_MIX_ID \$SPEND_RATE_LIMITER_NS_ID \$R2_S3_ENDPOINT \$R2_S3_BUCKET"
+export VIDEO_FINISH_URL IMAGE_PREP_URL AUDIO_BEAT_SYNC_URL AUDIO_MIX_URL AUDIO_MASTER_URL
+export FINISH_UPSCALE_DOORS SPEECH_UPSCALE_DOORS FINISH_BLENDER_DOORS
+VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$D1_DATABASE_ID \$VIDEO_FINISH_URL \$IMAGE_PREP_URL \$AUDIO_BEAT_SYNC_URL \$AUDIO_MIX_URL \$AUDIO_MASTER_URL \$FINISH_UPSCALE_DOORS \$SPEECH_UPSCALE_DOORS \$FINISH_BLENDER_DOORS \$SPEND_RATE_LIMITER_NS_ID \$R2_S3_ENDPOINT \$R2_S3_BUCKET"
 
 # Strip the wrangler.toml.example blocks this deploy does not want, then envsubst the rest:
 #   SELFHOST-SKIP -- OUR-fleet-only (e.g. the vivijure-tail consumer); ALWAYS stripped for a self-host.

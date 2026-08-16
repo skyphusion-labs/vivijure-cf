@@ -1,5 +1,5 @@
 # film-titles module worker (vivijure-module/2): opening title + end credit cards on the assembled
-# film, via the video-finish CPU container's /film-titles route (Workers VPC). A film.finish hook
+# film, via the video-finish CPU container's /film-titles route (VIDEO_FINISH_URL). A film.finish hook
 # (#190). Bound into the core as MODULE_FILM_TITLES; the registry discovers it from GET /module.json.
 #
 # CREDENTIALLESS: the core presigns the film GET + the result PUT and hands them in the invoke input,
@@ -17,7 +17,7 @@ workers_dev = false
 enabled = true
 
 [vars]
-VIDEO_FINISH_URL = "https://video-finish.skyphusion.org"
+VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"
 
 # Same store secret as the GPU doors. Unbound is fail-open (vivijure-cf#613).
 [[secrets_store_secrets]]

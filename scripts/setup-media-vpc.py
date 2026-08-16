@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Provision the media-stack tunnel + Workers VPC services (deploy.sh, #519).
 
-The media stack (5 always-on CPU containers reached over Workers VPC) is part of the STANDARD
-install as of #519. This script automates the whole VPC leg with the API so the operator never
-touches the dashboard:
+HOSTED NO LONGER USES THESE SERVICES. The studio reaches media over public HTTPS origins
+(VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL). This script stays for the self-host
+installer path. FLAG: hosted deploy.sh still calls it, and it still creates VPC services
+the studio no longer binds.
+
+The media stack (5 always-on CPU containers) is part of the STANDARD install as of #519.
+This script automates the tunnel + VPC leg with the API so the operator never touches the
+dashboard (self-host leftover):
 
   1. resolve ONE cloudflared tunnel (adoption-first, #531): if any of the 5 named VPC Services
      already exist, adopt the tunnel THEY point at; only create a new tunnel on a true first install

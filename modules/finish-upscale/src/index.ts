@@ -38,7 +38,7 @@ import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedP
 // destroyed the film.
 import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorBound, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, DOOR_ORIGIN, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorProblem, doorHeaders, doorUrl, tokenTookDoor, doorsFromEnv, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -54,9 +54,11 @@ interface Env {
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
   FINISH_DOOR_TOKEN_PROPAGANDHI?: SecretsStoreSecret | string;
-  /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN` on the container). Only read when the
-   *  binding above is bound. */
+  /** cf#480: the door's bearer (`LOCAL_FINISH_TOKEN` on the container). Only read when a
+   *  door origin is configured. */
   FINISH_DOOR_TOKEN?: SecretsStoreSecret | string;
+  /** Comma-separated HTTPS origins. Empty = RunPod path. First URL is the legacy door. */
+  FINISH_UPSCALE_DOORS?: string;
 }
 
 // Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
@@ -157,24 +159,19 @@ let doorCursor = 0;
 
 /** Resolve the on-iron door POOL once per request (cf#480, pooled cf#507).
  *
- *  The legacy door keeps the bare `DOOR_ROUTE_NAME` label deliberately. Renaming it to
- *  `vpc-fatmike` would have left every in-flight poll token resolving through the back-compat
- *  fallback for the length of the longest job; keeping it means an old token's label IS this
- *  door's name, so back-compat is structural rather than a special case. The fallback still exists
- *  for a deploy that binds only the newer door. */
+ *  Origins come from FINISH_UPSCALE_DOORS. Empty var = empty pool = RunPod path. The first
+ *  URL keeps the bare `DOOR_ROUTE_NAME` label (`door`) so a newly minted token names the
+ *  legacy door; in-flight `vpc` tokens still resolve to it. Per-name tokens override when
+ *  present; a single readable token applies to every configured door. */
 async function doorsFor(env: Env): Promise<DoorRoute[]> {
   const [legacyToken, propagandhiToken] = await Promise.all([
     secretValue(env.FINISH_DOOR_TOKEN),
     secretValue(env.FINISH_DOOR_TOKEN_PROPAGANDHI),
   ]);
-  const list = [];
-  if (legacyToken) {
-    list.push({ name: DOOR_ROUTE_NAME, baseUrl: DOOR_ORIGIN["finish-upscale"].fatmike, token: legacyToken, legacy: true });
-  }
-  if (propagandhiToken) {
-    list.push({ name: doorName("propagandhi"), baseUrl: DOOR_ORIGIN["finish-upscale"].propagandhi, token: propagandhiToken });
-  }
-  return doorPool(list);
+  return doorPool(doorsFromEnv({ FINISH_UPSCALE_DOORS: env.FINISH_UPSCALE_DOORS }, "FINISH_UPSCALE_DOORS", {
+    legacy: legacyToken,
+    byName: { propagandhi: propagandhiToken },
+  }));
 }
 
 /** Resolve both RunPod secrets once per request. */
