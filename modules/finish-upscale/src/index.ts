@@ -72,6 +72,8 @@ export const MANIFEST: ModuleManifest = {
     { id: "upscale", label: "Upscale resolution (Real-ESRGAN)" },
   ],
   config_schema: {
+    // 2 or 4 only: the live serve pin (`vivijure-upscale:1.1.1-serve`) still clamps scale
+    // and ignores `target_height`. Do not add a height knob until a pin includes upscale #109.
     scale: { type: "int",  default: 2, min: 2, max: 4, label: "upscale factor", enum_labels: { "2": "2x", "4": "4x" } },
     model: { type: "enum", values: ["realesr-animevideov3", "RealESRGAN_x4plus"], default: "realesr-animevideov3", label: "model" },
   },

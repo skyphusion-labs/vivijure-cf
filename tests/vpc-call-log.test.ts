@@ -1,4 +1,4 @@
-// cf#396: wall-clock attribution for fleet VPC calls from the four finishing modules.
+// cf#396: wall-clock attribution for fleet Traefik HTTPS door hops from the four finishing modules.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   vpcElapsedAppliedTag,

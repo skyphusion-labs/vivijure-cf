@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  appliedTags,
   buildAnalyzeBody,
   normalizeConfig,
   parseAudioBeatPlan,
@@ -66,6 +67,10 @@ describe("beat-sync pure logic", () => {
       min_scene_s: 2.5,
       max_scene_s: 12,
     });
+  });
+
+  it("appliedTags names librosa, not VPC", () => {
+    expect(appliedTags("beat")).toEqual(["beat-sync:librosa", "mode:beat"]);
   });
 });
 
@@ -158,7 +163,7 @@ describe("beat-sync: wall-clock attribution (cf#396)", () => {
   it("keeps the real applied tags alongside it", async () => {
     const json = (await (await worker.fetch(invoke(), vpcEnv())).json()) as
       { output: { applied: string[] } };
-    expect(json.output.applied).toContain("beat-sync:librosa-vpc");
+    expect(json.output.applied).toContain("beat-sync:librosa");
     expect(json.output.applied.filter((t) => !t.startsWith(VPC_ELAPSED_APPLIED_PREFIX)).length).toBeGreaterThan(0);
   });
 });

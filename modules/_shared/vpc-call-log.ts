@@ -1,5 +1,6 @@
 // Best-effort wall-clock attribution for module workers that reach fleet infrastructure over
-// Workers VPC (cf#396).
+// Traefik public HTTPS doors (cf#396). Event names stay `vpc.call` / `vpc:elapsed_ms=` so
+// existing Loki queries and in-flight applied tags keep matching; the transport is no longer VPC.
 //
 // WHY. cp#288 meters RunPod. Nothing metered the finishing swarm (video-finish, audio-master,
 // audio-beat-sync). A hosted consumer using film-titles / subtitle / audio-master / beat-sync would
@@ -13,7 +14,7 @@
 //
 // WHAT THIS IS NOT. Full billing, per-tenant spend ledger, or control-plane metering. Those need a
 // plane ruling (same breath as cp#288 / cp#284). Absent that ruling we do not invent a billing
-// table; we make every fleet VPC call queryable by wall-clock start + duration.
+// table; we make every fleet door hop queryable by wall-clock start + duration.
 //
 // NEVER throws. Telemetry that converted a soft degrade into a hard failure would be worse than
 // the gap it closes.

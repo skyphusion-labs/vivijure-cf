@@ -104,5 +104,5 @@ export function parseContainerResponse(raw: unknown): { ok: true; plan: AudioBea
 }
 
 export function appliedTags(mode: AnalyzeMode): string[] {
-  return ["beat-sync:librosa-vpc", `mode:${mode}`];
+  return ["beat-sync:librosa", `mode:${mode}`];
 }
