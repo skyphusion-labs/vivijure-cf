@@ -5,6 +5,8 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.32.1 -- 2026-08-16
+
 ### fix(cf-seedance): use_virtual_avatar so synthetic faces are not 7003'd
 
 ByteDance 7003 InputImageSensitiveContentDetected.PrivacyInformation:
