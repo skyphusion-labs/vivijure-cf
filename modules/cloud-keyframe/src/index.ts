@@ -26,7 +26,14 @@ import {
   type KeyframeInput,
   type KeyframeOutput,
 } from "./contract";
-import { generateImage, maxRefsForModel, type AiRun } from "./image-gen";
+import {
+  generateImage,
+  maxRefsForModel,
+  isRetryableFlag,
+  rephraseForFlagRetry,
+  FLAG_RETRY_ATTEMPTS,
+  type AiRun,
+} from "./image-gen";
 import {
   gunzipBundle,
   extractTarText,
@@ -90,7 +97,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -319,11 +326,35 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       if (r) refBlobs.push(await r.blob());
     }
 
-    let gen: { bytes: ArrayBuffer; mime: string };
-    try {
-      gen = await generateImage(env.AI, gatewayId, state.model, shot.prompt, refBlobs, state.width, state.height);
-    } catch (e) {
-      return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " render failed: " + (e as Error).message };
+    let gen: { bytes: ArrayBuffer; mime: string } | undefined;
+    let lastFlag: Error | undefined;
+    for (let attempt = 0; attempt < FLAG_RETRY_ATTEMPTS; attempt++) {
+      try {
+        gen = await generateImage(
+          env.AI,
+          gatewayId,
+          state.model,
+          rephraseForFlagRetry(shot.prompt, attempt),
+          refBlobs,
+          state.width,
+          state.height,
+        );
+        lastFlag = undefined;
+        break;
+      } catch (e) {
+        const err = e as Error;
+        if (!isRetryableFlag(err.message)) {
+          return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " render failed: " + err.message };
+        }
+        lastFlag = err;
+      }
+    }
+    if (!gen) {
+      return {
+        ok: false,
+        error: "cloud-keyframe: shot " + shot.shot_id + " flagged " + FLAG_RETRY_ATTEMPTS
+          + " times (persistent 3030): " + (lastFlag?.message || "output has been flagged"),
+      };
     }
 
     let norm: { bytes: ArrayBuffer; mime: string };

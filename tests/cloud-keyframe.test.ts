@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import worker from "../modules/cloud-keyframe/src/index";
 import { emitTar } from "@skyphusion-labs/vivijure-core/tar";
 import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
@@ -40,6 +40,13 @@ import {
   nearestAspectRatio,
   proxiedParams,
   maxRefsForModel,
+  isFlaggedError,
+  isCsamRefusal,
+  isRetryableFlag,
+  extractGenError,
+  rephraseForFlagRetry,
+  FLAG_RETRY_ATTEMPTS,
+  generateImage,
 } from "../modules/cloud-keyframe/src/image-gen";
 
 // A storyboard.yaml in the exact deterministic shape the core's serializeStoryboardYaml emits.
@@ -239,6 +246,31 @@ describe("cloud-keyframe image-gen helpers", () => {
     expect(p.output_format).toBe("png");
     expect((p.image_input as string[]).length).toBe(3);
   });
+
+  it("isFlaggedError catches FLUX 3030, not real failures or CSAM", () => {
+    expect(isFlaggedError("error 3030: Your output has been flagged")).toBe(true);
+    expect(isFlaggedError("please choose another prompt")).toBe(true);
+    expect(isFlaggedError("flux-2 returned no image")).toBe(false);
+    expect(isCsamRefusal("csam detected")).toBe(true);
+    expect(isRetryableFlag("error 3030: has been flagged")).toBe(true);
+    expect(isRetryableFlag("3030 CSAM child sexual content")).toBe(false);
+    expect(isRetryableFlag("connection reset")).toBe(false);
+  });
+
+  it("extractGenError reads the 3030 off a result body so it is not 'no image'", () => {
+    expect(extractGenError({ error: "error 3030: Your output has been flagged" })).toContain("3030");
+    expect(extractGenError({ error: { message: "has been flagged" } })).toBe("has been flagged");
+    expect(extractGenError({ errors: [{ message: "choose another prompt" }] })).toBe("choose another prompt");
+    expect(extractGenError({ image: "abc" })).toBeNull();
+  });
+
+  it("rephraseForFlagRetry keeps the prompt on the first two rolls, prefixes the last", () => {
+    expect(rephraseForFlagRetry("wide street", 0)).toBe("wide street");
+    expect(rephraseForFlagRetry("wide street", 1)).toBe("wide street");
+    expect(rephraseForFlagRetry("wide street", 2)).toMatch(/cinematic film still/);
+    expect(rephraseForFlagRetry("wide street", 2)).toContain("wide street");
+    expect(FLAG_RETRY_ATTEMPTS).toBe(3);
+  });
 });
 
 describe("cloud-keyframe conformance (the contract is the law)", () => {
@@ -354,6 +386,75 @@ async function drainPolls(env: Parameters<typeof worker.fetch>[1], poll: string)
   }
   return r;
 }
+
+const tinyPng = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).buffer as ArrayBuffer, mime: "image/png" };
+
+function restoreGenOk() {
+  vi.mocked(generateImage).mockImplementation(async (_ai, _gw, _model, prompt, refBlobs) => {
+    genCalls.push({ prompt, refCount: refBlobs.length });
+    return tinyPng;
+  });
+}
+
+describe("cloud-keyframe 3030 flag retry (integration)", () => {
+  afterEach(() => {
+    restoreGenOk();
+    genCalls.length = 0;
+  });
+
+  it("retries a flaky 3030 and succeeds on the later roll", async () => {
+    let n = 0;
+    vi.mocked(generateImage).mockImplementation(async (_ai, _gw, _model, prompt, refBlobs) => {
+      genCalls.push({ prompt, refCount: refBlobs.length });
+      n += 1;
+      if (n < 3) throw new Error("error 3030: Your output has been flagged");
+      return tinyPng;
+    });
+    const env = await makeKeyframeEnv(
+      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: [A]", ""].join("\n"),
+    );
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    expect(n).toBe(3);
+    expect(genCalls[0].prompt).toBe(genCalls[1].prompt);
+    expect(genCalls[2].prompt).toMatch(/cinematic film still/);
+  });
+
+  it("does not swallow a persistent 3030", async () => {
+    vi.mocked(generateImage).mockImplementation(async () => {
+      throw new Error("error 3030: Your output has been flagged");
+    });
+    const env = await makeKeyframeEnv(
+      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: [A]", ""].join("\n"),
+    );
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok).toBe(false);
+    expect(done.error).toMatch(/flagged 3 times/);
+    expect(done.error).toMatch(/3030/);
+  });
+
+  it("does not retry a CSAM refusal even if the message also has 3030", async () => {
+    let n = 0;
+    vi.mocked(generateImage).mockImplementation(async () => {
+      n += 1;
+      throw new Error("error 3030: CSAM child sexual content");
+    });
+    const env = await makeKeyframeEnv(
+      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: [A]", ""].join("\n"),
+    );
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok).toBe(false);
+    expect(n).toBe(1);
+    expect(done.error).toMatch(/child sexual/);
+    expect(done.error).not.toMatch(/flagged 3 times/);
+  });
+});
 
 describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
   it("cast:<slot> conditions a CHARACTER-LESS shot with the film-wide reference", async () => {
