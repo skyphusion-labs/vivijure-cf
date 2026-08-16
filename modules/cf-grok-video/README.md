@@ -14,6 +14,7 @@ and `/poll` watches R2 state until the clip lands.
 
 - **Hook**: `motion.backend` (`pick_one`). Provides `i2v-cloud`.
 - **Input**: `shot_id`, `keyframe_url` (presigned), `prompt`, `seconds`.
+- **ZDR**: xAI will not host the mp4. The module mints a 40-minute R2 PUT (`output.upload_url`) and reads the object back from R2. Needs the same `R2_S3_*` store secrets as the host.
 - **Output**: `shot_id`, `clip_key`, `fps` (24), `frames`.
 - **Bindings**: `AI`, `GATEWAY_ID` (Secrets Store), `R2_RENDERS` (`vivijure`), `I2V_WORKFLOW`.
 - **Service**: `vivijure-module-cf-grok-video` bound as `MODULE_CF_GROK_VIDEO`.

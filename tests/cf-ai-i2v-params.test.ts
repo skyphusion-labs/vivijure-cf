@@ -77,6 +77,11 @@ describe("cf-grok-video params", () => {
       aspect_ratio: "16:9",
       image: { url: "https://r2.example/k.png" },
     });
+    expect(p.output).toBeUndefined();
+  });
+  it("buildParams adds output.upload_url when given (xAI ZDR)", () => {
+    const p = grok.buildParams(shot, grok.normalizeConfig({}), "https://r2.example/put");
+    expect(p.output).toEqual({ upload_url: "https://r2.example/put" });
   });
   it("clampDuration is [1,15] (0/NaN snap to default 5 like other modules)", () => {
     expect(grok.clampDuration(0)).toBe(5);

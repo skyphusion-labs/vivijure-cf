@@ -100,6 +100,10 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   // dialogue/score -- the Workflow class ships with the operator module script; plane has no
   // mediated tenant path for Workflow bindings today.
   I2V_WORKFLOW: { path: "operator-only", note: "Workflow binding for CF AI Gateway i2v modules; gen runs in the Workflow step, not waitUntil (#155)" },
+  R2_S3_ACCESS_KEY_ID: { path: "operator-only", note: "R2 S3 API key so cf-grok-video can mint a ZDR output.upload_url PUT; same store secret as the host" },
+  R2_S3_SECRET_ACCESS_KEY: { path: "operator-only", note: "R2 S3 API secret for the ZDR upload_url PUT" },
+  R2_S3_ENDPOINT: { path: "operator-only", note: "R2 S3 endpoint identifier (not a secret)" },
+  R2_S3_BUCKET: { path: "operator-only", note: "R2 bucket name for the ZDR upload_url PUT" },
   AUDIO_MASTER_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
   FINISH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the upscale door's own bearer (LOCAL_FINISH_TOKEN). Public HTTPS to finish-upscale-{box}.skyphusion.org, not VPC" },
   SPEECH_DOOR_TOKEN: { path: "operator-only", note: "cf#480: the speech door's own bearer. Public HTTPS to speech-upscale-{box}.skyphusion.org" },

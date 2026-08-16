@@ -27,3 +27,18 @@ class_name = "CfGrokVideoWorkflow"
 binding = "GATEWAY_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "GATEWAY_ID"
+
+# ZDR: xAI PUTs the mp4 to a presigned R2 URL. Same store secrets as the host.
+[[secrets_store_secrets]]
+binding = "R2_S3_ACCESS_KEY_ID"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "R2_S3_ACCESS_KEY_ID"
+
+[[secrets_store_secrets]]
+binding = "R2_S3_SECRET_ACCESS_KEY"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "R2_S3_SECRET_ACCESS_KEY"
+
+[vars]
+R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
+R2_S3_BUCKET = "${R2_S3_BUCKET}"

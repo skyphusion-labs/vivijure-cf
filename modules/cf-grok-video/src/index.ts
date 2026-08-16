@@ -37,6 +37,7 @@ import {
   type ModuleConfig,
 } from "./params";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
+import { presignR2Put } from "./r2-put";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer | string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
@@ -61,6 +62,10 @@ interface Env {
   GATEWAY_ID: SecretsStoreSecret;
   R2_RENDERS: R2Bucket;
   I2V_WORKFLOW: WorkflowBinding;
+  R2_S3_ACCESS_KEY_ID?: SecretsStoreSecret | string;
+  R2_S3_SECRET_ACCESS_KEY?: SecretsStoreSecret | string;
+  R2_S3_ENDPOINT?: string;
+  R2_S3_BUCKET?: string;
 }
 
 export interface WorkflowParams {
@@ -74,7 +79,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-grok-video",
-  version: "0.1.0",
+  version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Grok Imagine Video (CF AI)" }],
@@ -122,18 +127,46 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Blocking env.AI.run -> download video -> R2 clip + done state. Runs inside a Workflow step. */
+const UPLOAD_TTL_SECONDS = 40 * 60; // workflow step timeout is 25m; leave headroom for the PUT
+
+async function mintUploadUrl(env: Env, key: string): Promise<string> {
+  const accessKeyId = await secretValue(env.R2_S3_ACCESS_KEY_ID);
+  const secretAccessKey = await secretValue(env.R2_S3_SECRET_ACCESS_KEY);
+  const endpoint = env.R2_S3_ENDPOINT || "";
+  const bucket = env.R2_S3_BUCKET || "";
+  if (!accessKeyId || !secretAccessKey || !endpoint || !bucket) {
+    throw new Error("cf-grok-video: ZDR upload needs R2_S3_ACCESS_KEY_ID, R2_S3_SECRET_ACCESS_KEY, R2_S3_ENDPOINT, R2_S3_BUCKET");
+  }
+  return presignR2Put({ accessKeyId, secretAccessKey, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
+}
+
+/** Blocking env.AI.run. ZDR teams get no xAI-hosted URL; they PUT to output.upload_url. */
 async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
-  const modelParams = buildParams(params.input, params.config);
+  const key = clipKey(params.project, params.shot_id);
+  const uploadUrl = await mintUploadUrl(env, key);
+  const modelParams = buildParams(params.input, params.config, uploadUrl);
   const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+
+  const existing = await env.R2_RENDERS.get(key);
+  if (existing) {
+    await writeState(env, params.job_id, {
+      status: "done",
+      project: params.project,
+      shot_id: params.shot_id,
+      seconds: params.seconds,
+      clip_key: key,
+    });
+    return;
+  }
+
+  // Non-ZDR fallback: xAI still hosted a URL.
   const url = parseVideoUrl(result);
-  if (!url) throw new Error("model completed but returned no video URL");
+  if (!url) throw new Error("model completed but wrote no object to upload_url and returned no video URL");
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
   const bytes = await vresp.arrayBuffer();
-  const key = clipKey(params.project, params.shot_id);
   await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: "video/mp4" } });
   await writeState(env, params.job_id, {
     status: "done",

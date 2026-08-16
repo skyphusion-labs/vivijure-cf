@@ -40,15 +40,21 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
   };
 }
 
-export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
-  return {
+export function buildParams(
+  input: MotionBackendInput,
+  config: ModuleConfig,
+  uploadUrl?: string,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
     prompt: input.prompt,
     duration: clampDuration(input.seconds),
     aspect_ratio: config.aspect_ratio,
     resolution: config.resolution,
-    // CF schema: image is an object. URL form matches Unified catalog examples for fetchable refs.
     image: { url: input.keyframe_url },
   };
+  // xAI ZDR teams cannot store video on xAI. They require output.upload_url; xAI PUTs the mp4 there.
+  if (uploadUrl) params.output = { upload_url: uploadUrl };
+  return params;
 }
 
 export function parseVideoUrl(result: unknown): string | null {
