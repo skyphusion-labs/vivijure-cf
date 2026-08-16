@@ -5,6 +5,17 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.31.2 -- 2026-08-16
+
+### fix(cf-grok-video): fill R2_S3_ENDPOINT at module deploy
+
+v1.31.1 minted `output.upload_url` but the module wrangler used wrangler
+`${R2_S3_ENDPOINT}` interpolation. Module deploy never exported those
+vars, so live shipped the literal string and every grok clip failed
+`Invalid URL string.` Fill `REPLACE_WITH_R2_S3_*` from
+`CLOUDFLARE_ACCOUNT_ID` (same derivation as the host) and refuse a leftover
+`${R2_S3_*}` so a tag cannot ship that again.
+
 ## v1.31.1 -- 2026-08-16
 
 ### fix(cf-grok-video): pass output.upload_url for xAI ZDR teams

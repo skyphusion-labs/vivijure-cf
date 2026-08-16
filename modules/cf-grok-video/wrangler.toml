@@ -39,6 +39,9 @@ binding = "R2_S3_SECRET_ACCESS_KEY"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "R2_S3_SECRET_ACCESS_KEY"
 
+# Identifiers, not secrets. Filled by fill-module-placeholders.sh from the account id.
+# Do not use wrangler env interpolation here: an unset CI env deploys the literal
+# and mintUploadUrl throws "Invalid URL string." That is what v1.31.1 shipped.
 [vars]
-R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
-R2_S3_BUCKET = "${R2_S3_BUCKET}"
+R2_S3_ENDPOINT = "REPLACE_WITH_R2_S3_ENDPOINT"
+R2_S3_BUCKET = "REPLACE_WITH_R2_S3_BUCKET"

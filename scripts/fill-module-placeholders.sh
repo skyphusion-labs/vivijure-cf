@@ -41,11 +41,17 @@ toml="${1:?usage: fill-module-placeholders.sh <wrangler.toml>}"
 
 here="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 
+# GNU sed -i and BSD sed -i '' disagree. tmp+mv is the portable form (BusyBox ash + macOS).
+replace_in_place() {
+  tmp="${toml}.fill.tmp"
+  sed "$1" "$toml" > "$tmp" && mv "$tmp" "$toml"
+}
+
 # Scalars. Their "must be set" pre-flight lives in the caller, which checks once rather than once
 # per module; this script substitutes whatever it is given and lets the survivor check below catch
 # an empty one.
-sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/${SECRETS_STORE_ID:-}/g" "$toml"
-sed -i "s/REPLACE_WITH_D1_DATABASE_ID/${D1_DATABASE_ID:-}/g" "$toml"
+replace_in_place "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/${SECRETS_STORE_ID:-}/g"
+replace_in_place "s/REPLACE_WITH_D1_DATABASE_ID/${D1_DATABASE_ID:-}/g"
 
 # --- REQUIRED VPC ids: substitute; an unset one is caught by the caller's pre-flight and, failing
 # --- that, by the survivor check at the bottom of this file.
@@ -62,7 +68,7 @@ for v in VPC_VIDEO_FINISH_ID VPC_AUDIO_BEAT_SYNC_ID VPC_AUDIO_MASTER_ID; do
     echo "::error::${toml} needs ${v} and it is unset -- ${placeholder} is a REQUIRED binding (this module has no path without it), refusing" >&2
     exit 1
   fi
-  sed -i "s/${placeholder}/${val}/g" "$toml"
+  replace_in_place "s/${placeholder}/${val}/g"
 done
 
 # --- OPTIONAL VPC ids: set -> substitute. Unset -> strip the block that names the placeholder.
@@ -76,7 +82,7 @@ for v in VPC_FINISH_UPSCALE_ID VPC_SPEECH_UPSCALE_ID VPC_FINISH_BLENDER_ID VPC_F
   grep -q "$marker" "$toml" || continue               # this module does not declare that binding
   eval "val=\${$v:-}"
   if [ -n "$val" ]; then
-    sed -i "s/REPLACE_WITH_${v}/${val}/g" "$toml"
+    replace_in_place "s/REPLACE_WITH_${v}/${val}/g"
     echo "  ${toml}: ${v} set -- bound the optional VPC service"
   else
     # awk exits 3 when it dropped nothing, so a strip that silently matches NOTHING cannot read as
@@ -92,6 +98,36 @@ for v in VPC_FINISH_UPSCALE_ID VPC_SPEECH_UPSCALE_ID VPC_FINISH_BLENDER_ID VPC_F
     fi
   fi
 done
+
+# --- R2 S3 identifiers (cf-grok-video ZDR upload_url). NOT secrets. -----------------------------
+# Wrangler ${VAR} interpolation is a trap: an unset env var deploys the LITERAL
+# ${R2_S3_ENDPOINT} and mintUploadUrl throws "Invalid URL string." (v1.31.1 live).
+# These are REPLACE_WITH_* so the survivor check below catches a missed fill.
+if grep -q "REPLACE_WITH_R2_S3_ENDPOINT" "$toml"; then
+  endpoint="${R2_S3_ENDPOINT:-}"
+  if [ -z "$endpoint" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    endpoint="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+  fi
+  if [ -z "$endpoint" ]; then
+    echo "::error::${toml} needs R2_S3_ENDPOINT (or CLOUDFLARE_ACCOUNT_ID to derive it) and it is unset -- refusing" >&2
+    exit 1
+  fi
+  escaped=$(printf '%s' "$endpoint" | sed 's/[|&]/\\&/g')
+  replace_in_place "s|REPLACE_WITH_R2_S3_ENDPOINT|${escaped}|g"
+fi
+if grep -q "REPLACE_WITH_R2_S3_BUCKET" "$toml"; then
+  bucket="${R2_S3_BUCKET:-vivijure}"
+  replace_in_place "s/REPLACE_WITH_R2_S3_BUCKET/${bucket}/g"
+fi
+
+# A raw wrangler interpolation that survived is the v1.31.1 defect. Refuse it here so a
+# module toml cannot ship the literal again even if someone reverts the REPLACE_WITH_ form.
+leftover="$(grep -vE '^[[:space:]]*#' "$toml" | grep -oE '\$\{R2_S3_[A-Z0-9_]+\}' | sort -u || true)"
+if [ -n "$leftover" ]; then
+  echo "::error::unfilled wrangler interpolation in ${toml}: $(echo "$leftover" | tr '\n' ' ')" >&2
+  echo "::error::use REPLACE_WITH_R2_S3_* (filled by this script); a raw \${R2_S3_*} deploys as a literal" >&2
+  exit 1
+fi
 
 # --- SURVIVOR CHECK -------------------------------------------------------------------------------
 # COMMENT-AWARE (cf#482). The old check was a bare `grep -q "REPLACE_WITH_"`, which matches inside a

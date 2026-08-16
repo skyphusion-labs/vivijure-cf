@@ -210,6 +210,50 @@ def test_d1_placeholder_is_filled_then_restored(tmp_path):
     assert toml.read_text() == TOML   # working tree left exactly as checked out
 
 
+GROK_TOML = (
+    "name = \"vivijure-module-cf-grok-video\"\n"
+    "[vars]\n"
+    "R2_S3_ENDPOINT = \"REPLACE_WITH_R2_S3_ENDPOINT\"\n"
+    "R2_S3_BUCKET = \"REPLACE_WITH_R2_S3_BUCKET\"\n"
+)
+
+
+def test_r2_s3_placeholders_fill_from_account_id(tmp_path):
+    repo, toml = _module_repo(tmp_path, GROK_TOML)
+    vd.replace_r2_s3_placeholders(repo, "acct123")
+    filled = toml.read_text()
+    assert 'R2_S3_ENDPOINT = "https://acct123.r2.cloudflarestorage.com"' in filled
+    assert 'R2_S3_BUCKET = "vivijure"' in filled
+    assert vd.R2_S3_ENDPOINT_PLACEHOLDER not in filled
+    vd.restore_r2_s3_placeholders(repo, "acct123")
+    assert toml.read_text() == GROK_TOML
+
+
+def test_r2_s3_bucket_follows_deploy_prefix(tmp_path):
+    repo, toml = _module_repo(tmp_path, GROK_TOML)
+    prev = vd.DEPLOY_PREFIX
+    vd.DEPLOY_PREFIX = "proving"
+    try:
+        vd.replace_r2_s3_placeholders(repo, "acct123")
+        filled = toml.read_text()
+        assert 'R2_S3_BUCKET = "proving-vivijure"' in filled
+        vd.restore_r2_s3_placeholders(repo, "acct123")
+        assert toml.read_text() == GROK_TOML
+    finally:
+        vd.DEPLOY_PREFIX = prev
+
+
+def test_r2_s3_refuses_empty_account_when_needed(tmp_path):
+    repo, toml = _module_repo(tmp_path, GROK_TOML)
+    try:
+        vd.replace_r2_s3_placeholders(repo, "")
+        raised = False
+    except SystemExit:
+        raised = True
+    assert raised
+    assert vd.R2_S3_ENDPOINT_PLACEHOLDER in toml.read_text()
+
+
 def test_d1_restore_is_a_no_op_without_an_id(tmp_path):
     # NEGATIVE CONTROL: an empty id must not blank-substitute every module toml. Without this, the
     # round-trip test above passes on a restore that simply deletes the id it was given.
