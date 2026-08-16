@@ -210,9 +210,27 @@ function setSnapStatus(text, kind) {
   el.className = "planner-status" + (kind ? " planner-" + kind : "");
 }
 
+function initAudioOnRender() {
+  const details = $("#planner-audio-details");
+  if (!details || details.dataset.wired === "1") return;
+  details.dataset.wired = "1";
+  details.addEventListener("toggle", () => {
+    if (!details.open) return;
+    showAudioSection();
+    if (!musicPromptAutoTried && planState.storyboard) {
+      const mp = $("#planner-music-prompt");
+      if (mp && !mp.value.trim()) {
+        musicPromptAutoTried = true;
+        suggestMusicPrompt({ force: false });
+      }
+    }
+  });
+}
+
 function showAudioSection() {
   const section = $("#planner-audio");
   if (!section) return;
+  initAudioOnRender();
   // v0.132.0: never leave the Audio step blank. Previously this set the
   // section's `hidden` attribute true whenever there was no storyboard, and
   // since showStep only toggles the step-hidden class (not the hidden attr),

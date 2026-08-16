@@ -93,7 +93,7 @@ async function plan() {
     return;
   }
   if (!model) {
-    setStatus("select a model first", "error");
+    setStatus("planning models are still loading; try again in a moment, or open Advanced to pick one", "error");
     return;
   }
 
@@ -223,8 +223,8 @@ function renderPlanResult(httpStatus, data, model, characters) {
     showPreflightSection();
     runPreflight();
     showBundleStage(data.storyboard, characters);
-    // v0.120.0: a fresh plan unlocks Cast & Bundle + Audio. Stay on the Plan
-    // step so the user can review the output / refine; the rail lights up.
+    // v0.120.0: a fresh plan unlocks Cast & Bundle. Stay on the Plan
+    // step so the user can review the shots; the rail lights up.
     refreshSteps();
     savePersistedState();
     return;
