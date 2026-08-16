@@ -12,8 +12,8 @@
 // plausible wrong value, which is the failure mode this whole defect is made of. So the panel
 // must choose deliberately from {2, 4}; it must never compute a float.
 //
-// origin/main #109 honours `target_height`. That commit is untagged and not on this pin, so
-// this suite still asserts the 2|4 contract. A height knob against the live pin would lie.
+// After v1.1.3 the door honours `target_height`. This suite still covers the
+// explicit-scale 2|4 derivation used when the caller set `scale`.
 //
 //   handler.py:281 -- `out_w, out_h = _capped(sw * final_scale, sh * final_scale, MAX_LONG_EDGE)`
 //

@@ -5,6 +5,13 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(finish-upscale): send target_height once serve is 1.1.3
+
+vivijure-upscale v1.1.3 honours the studio height contract. A film with a
+delivery height and no explicit scale now sends `target_height` and omits
+`scale`, so the door is not also given a 2|4 that must agree. Explicit
+2x/4x still goes out as `scale` only.
+
 ## v1.32.2 -- 2026-08-16
 
 ### fix(cf-flux-3-video): keyframes is a URL string (CF i2v schema)
