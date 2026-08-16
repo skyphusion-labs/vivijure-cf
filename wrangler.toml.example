@@ -218,6 +218,13 @@ binding = "R2_S3_SECRET_ACCESS_KEY"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "R2_S3_SECRET_ACCESS_KEY"
 
+# Fleet media containers (video-finish / audio-mix / audio-beat-sync). Reuses the GPU door
+# store secret so we do not mint a second bearer. Unset is fail-open.
+[[secrets_store_secrets]]
+binding = "MEDIA_FINISH_TOKEN"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "FINISH_DOOR_TOKEN"
+
 # --- Non-secret / operator-provided values that stay OUT of the Secrets Store:
 # ---   R2_S3_ENDPOINT + R2_S3_BUCKET : identifiers (URL + bucket name), now rendered into [vars]
 # ---     above from CLOUDFLARE_ACCOUNT_ID at deploy (#238 follow-up) -- NOT wrangler secrets.

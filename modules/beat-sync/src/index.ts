@@ -21,9 +21,11 @@ import {
   parseContainerResponse,
 } from "./beat-sync";
 import { timedVpcFetch, withVpcElapsedApplied } from "../../_shared/vpc-call-log";
+import { mediaFinishHeaders } from "../../_shared/media-finish-auth";
 
 interface Env {
   AUDIO_BEAT_SYNC_VPC: Fetcher;
+  MEDIA_FINISH_TOKEN?: { get(): Promise<string> } | string;
 }
 
 const MANIFEST: ModuleManifest = {
@@ -96,7 +98,7 @@ async function runAnalyze(
     (url, init) => env.AUDIO_BEAT_SYNC_VPC.fetch(url, init),
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN),
       body: JSON.stringify(body),
     },
     {

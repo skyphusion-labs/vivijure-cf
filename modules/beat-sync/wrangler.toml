@@ -16,3 +16,8 @@ enabled = true
 binding = "AUDIO_BEAT_SYNC_VPC"
 service_id = "REPLACE_WITH_VPC_AUDIO_BEAT_SYNC_ID"
 remote = true
+
+[[secrets_store_secrets]]
+binding = "MEDIA_FINISH_TOKEN"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "FINISH_DOOR_TOKEN"

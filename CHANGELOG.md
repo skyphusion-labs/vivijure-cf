@@ -3,7 +3,7 @@
 Notable changes per release. SemVer-style (pre-1.0: PATCH for fixes / backend-only tweaks, MINOR
 for new features). Newest first.
 
-## Unreleased
+## Unreleased / v1.29.0
 
 ## v1.28.0 -- 2026-08-15
 
