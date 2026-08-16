@@ -55,6 +55,7 @@ describe("cf-seedance params", () => {
       camera_fixed: false,
       watermark: false,
       generate_audio: false,
+      use_virtual_avatar: true,
     });
     expect(seedance.selectedModel(cfg)).toBe("bytedance/seedance-2.0-fast");
   });
