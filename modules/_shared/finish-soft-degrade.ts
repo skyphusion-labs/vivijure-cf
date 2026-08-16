@@ -54,16 +54,20 @@
 // SCOPE, deliberately narrow. This file decides WHETHER a poll answer is a soft degrade and returns
 // the door's reason text. It does not build the passthrough output (each module has its own
 // `passthroughOutput` over its own vendored `FinishOutput`) and it does not decide the TAG. The tag
-// is `passthrough:backend-soft-degrade` for every cause today, which is generic; per
-// vivijure-core#226 the tag prefix is the only thing `summarizeFinish` counts, so a wall-clock
-// timeout and a no-face degrade are indistinguishable downstream. That is a real gap and it is
-// filed separately: it is a contract addition across four doors and this fix must not wait on it.
+// is still `passthrough:backend-soft-degrade` for every polish miss (a closed cause-code
+// vocabulary is a later contract). The CAUSE rides in `FinishOutput.degraded`; core#226 persists
+// that field so the panel can tell "no face" from "door timed out". CSAM is never a degrade.
 
 /** The `reason` every poll-path backend soft degrade is tagged with today, so the four call sites
  *  cannot drift into four spellings of it. Passed to each module's `passthroughOutput`, which
  *  renders it as `applied: ["passthrough:backend-soft-degrade"]`. Generic on purpose for now; see
  *  the SCOPE note above. */
 export const BACKEND_SOFT_DEGRADE = "backend-soft-degrade";
+
+/** House CSAM needle, same as the keyframe door. A refusal is a HARD FAIL, never a polish degrade. */
+export function isCsamRefusalReason(text: unknown): boolean {
+  return typeof text === "string" && text.toLowerCase().includes("csam");
+}
 
 /** Shared body of both entry points below: given an envelope whose `output` is already known to be
  *  a structured `ok:false`, which string is the door's reason? Preference order is the door's own
@@ -94,7 +98,10 @@ export function softDegradeInFailedEnvelope(s: { status?: string; output?: unkno
   if (s.status !== "FAILED") return null;
   if (!s.output || typeof s.output !== "object") return null;
   if ((s.output as { ok?: unknown }).ok !== false) return null;
-  return degradeReason(s.output, s.error);
+  const reason = degradeReason(s.output, s.error);
+  // CSAM is not a polish miss. Returning null here falls through to the module's loud fail.
+  if (isCsamRefusalReason(reason) || isCsamRefusalReason(s.error)) return null;
+  return reason;
 }
 
 /** Pure: is a COMPLETED job's `output` the handler's own structured soft-degrade? Same
@@ -108,5 +115,16 @@ export function softDegradeInFailedEnvelope(s: { status?: string; output?: unkno
 export function softDegradeInCompletedOutput(output: unknown): string | null {
   if (!output || typeof output !== "object") return null;
   if ((output as { ok?: unknown }).ok !== false) return null;
-  return degradeReason(output);
+  const reason = degradeReason(output);
+  if (isCsamRefusalReason(reason)) return null;
+  return reason;
+}
+
+/** COMPLETED + structured ok:false that is a CSAM refusal. Callers must check this BEFORE the
+ *  no-output-key passthrough, or a CSAM door return would degrade as `passthrough:no-output-key`. */
+export function csamRefusalInCompletedOutput(output: unknown): string | null {
+  if (!output || typeof output !== "object") return null;
+  if ((output as { ok?: unknown }).ok !== false) return null;
+  const reason = degradeReason(output);
+  return isCsamRefusalReason(reason) ? reason : null;
 }

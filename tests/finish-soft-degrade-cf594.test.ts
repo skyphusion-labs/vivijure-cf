@@ -191,6 +191,32 @@ for (const { name, worker, completedNoKey } of SUBJECTS) {
       expect(outcomes(calls)).toEqual(["failed"]);
     });
 
+    it("a CSAM refusal stays a HARD FAIL, never a passthrough degrade", async () => {
+      const { body } = await pollWith(worker, {
+        status: "COMPLETED",
+        output: { ok: false, detail: "csam detected" },
+      });
+      expect(body.ok).toBe(false);
+      expect(String(body.error)).toMatch(/csam/i);
+      expect(body.output).toBeUndefined();
+    });
+
+    it("a CSAM refusal in a FAILED envelope also fails loud (not a lifted degrade)", async () => {
+      const { body } = await pollWith(worker, {
+        status: "FAILED",
+        error: "csam detected",
+        output: { ok: false, detail: "csam detected" },
+      });
+      expect(body.ok).toBe(false);
+      expect(body.output).toBeUndefined();
+    });
+
+    it("CSAM CONTROL: a no-face degrade still passthroughs, so the refusal is a distinction", async () => {
+      const { body } = await pollWith(worker, COMPLETED_DEGRADE);
+      expect(body.ok).toBe(true);
+      expect(body.output?.degraded).toBe("backend-soft-degrade: no detectable face in clip");
+    });
+
     it("a COMPLETED result with NO artifact key behaves as cf#604 settled it: " + completedNoKey, async () => {
       // NOT the cf#594 contract, asserted here so the decision is visible rather than inferred. All
       // four now read `degrade`; the branch is kept parameterised so a future divergence has to be

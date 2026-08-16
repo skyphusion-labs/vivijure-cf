@@ -879,7 +879,9 @@ function finalizeRenderPoll(data) {
     // hosted tenant). The orchestrator then degrades honestly and SAYS SO in the payload;
     // the panel used to drop that on the floor and paint a plain green "completed".
     const degrade = window.finishDegrade ? window.finishDegrade.degradeFrom(out) : null;
-    setRenderStatus((degrade ? "completed with limits" : "completed") + elapsed, degrade ? "warn" : "success");
+    const clipFinish = window.finishDegrade ? window.finishDegrade.clipFinishFrom(out) : null;
+    const limited = !!(degrade || clipFinish);
+    setRenderStatus((limited ? "completed with limits" : "completed") + elapsed, limited ? "warn" : "success");
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
     $("#planner-render-output-content").textContent = JSON.stringify(
@@ -940,14 +942,15 @@ function renderDegradeNote(degrade, deliv, out) {
   const host = $("#planner-render-degrade");
   if (!host) return;
   while (host.firstChild) host.removeChild(host.firstChild);
-  if (!degrade) {
+  const fd = window.finishDegrade;
+  const clip = fd ? fd.clipFinishFrom(out) : null;
+  if (!degrade && !clip) {
     host.hidden = true;
     return;
   }
   host.hidden = false;
 
-  const fd = window.finishDegrade;
-  const summary = fd ? fd.deliveredSummary(degrade) : null;
+  const summary = fd && degrade ? fd.deliveredSummary(degrade) : null;
   if (summary) {
     const p = document.createElement("p");
     p.className = "render-degrade-summary";
@@ -957,10 +960,28 @@ function renderDegradeNote(degrade, deliv, out) {
 
   // Rendered verbatim. The studio wrote the truest available description of why the step
   // is dead; paraphrasing it here would lose information the reader needs.
-  const why = document.createElement("p");
-  why.className = "render-degrade-reason";
-  why.textContent = degrade.reason;
-  host.appendChild(why);
+  if (degrade) {
+    const why = document.createElement("p");
+    why.className = "render-degrade-reason";
+    why.textContent = degrade.reason;
+    host.appendChild(why);
+  }
+
+  if (clip) {
+    const clipSummary = fd.clipFinishSummary(clip);
+    if (clipSummary) {
+      const p = document.createElement("p");
+      p.className = "render-degrade-summary";
+      p.textContent = clipSummary;
+      host.appendChild(p);
+    }
+    for (let i = 0; i < clip.reasons.length; i++) {
+      const why = document.createElement("p");
+      why.className = "render-degrade-reason";
+      why.textContent = clip.reasons[i];
+      host.appendChild(why);
+    }
+  }
 
   if (deliv.kind === "clips" && deliv.clips.length) {
     const h = document.createElement("h5");

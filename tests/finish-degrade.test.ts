@@ -5,6 +5,9 @@ import {
   NO_REASON,
   bandNote,
   clipsFrom,
+  clipFinishBand,
+  clipFinishFrom,
+  clipFinishSummary,
   degradeBand,
   degradeFrom,
   deliverable,
@@ -291,5 +294,73 @@ describe("bandNote (cf#549)", () => {
     expect(unreadable).not.toBeNull();
     expect(reported?.label).not.toBe(unreadable?.label);
     expect(reported?.title).not.toBe(unreadable?.title);
+  });
+});
+
+// cf#595 / core#226: clip-level polish reasons. A second signal, not a rewrite of
+// finish_unavailable -- an unpolished-but-assembled film still has a film.
+const FACE = "backend-soft-degrade: no detectable face in clip";
+const TIMEOUT = "backend-soft-degrade: wall-clock guard expired after 900s";
+const CLIP_DIRTY: RenderOutput = {
+  project: "p1",
+  output_key: "renders/f/film.mp4",
+  finish: { degraded: 2, reasons: [FACE, TIMEOUT] },
+};
+const CLIP_CLEAN: RenderOutput = {
+  project: "p1",
+  output_key: "renders/f/film.mp4",
+  finish: { degraded: 0, reasons: [] },
+};
+
+describe("clipFinishFrom (cf#595)", () => {
+  it("projects the two causes VERBATIM, not one passthrough: literal", () => {
+    const c = clipFinishFrom(CLIP_DIRTY);
+    expect(c).not.toBeNull();
+    expect(c?.degraded).toBe(2);
+    expect(c?.reasons).toEqual([FACE, TIMEOUT]);
+    expect(c?.reasons.join(" ")).not.toMatch(/^passthrough:$/);
+  });
+
+  it("CONTROL: a clean finish chain reports nothing to render", () => {
+    expect(clipFinishFrom(CLIP_CLEAN)).toBeNull();
+    expect(clipFinishFrom(HEALTHY)).toBeNull();
+  });
+
+  it("does not steal an assemble/mux degrade's deliverable", () => {
+    // The defect this second signal exists to avoid: folding clip-finish into degradeFrom
+    // would make a complete film look like "no film".
+    expect(degradeFrom(CLIP_DIRTY)).toBeNull();
+    expect(deliverable(CLIP_DIRTY).kind).toBe("film");
+  });
+});
+
+describe("clipFinishBand (cf#595)", () => {
+  it("absent finish is unmeasured (row predates the field)", () => {
+    expect(clipFinishBand(HEALTHY)).toBe("unmeasured");
+    expect(clipFinishBand(null)).toBe("unmeasured");
+  });
+
+  it("degraded:0 is none-reported, never a clean verdict about assemble/mux", () => {
+    expect(clipFinishBand(CLIP_CLEAN)).toBe("none-reported");
+    expect(degradeBand(CLIP_CLEAN)).toBe("none-reported");
+  });
+
+  it("two distinct reasons band as reported", () => {
+    expect(clipFinishBand(CLIP_DIRTY)).toBe("reported");
+  });
+
+  it("junk finish is unreadable, not silence", () => {
+    expect(clipFinishBand({ finish: "broken" } as RenderOutput)).toBe("unreadable");
+    expect(clipFinishBand({ finish: { reasons: "x" } } as RenderOutput)).toBe("unreadable");
+  });
+});
+
+describe("clipFinishSummary (cf#595)", () => {
+  it("states the count, never paraphrases the reasons", () => {
+    const c = clipFinishFrom(CLIP_DIRTY);
+    const s = clipFinishSummary(c);
+    expect(s).toContain("2 shots");
+    expect(s).not.toContain("no detectable face");
+    expect(s).not.toContain("passthrough:");
   });
 });

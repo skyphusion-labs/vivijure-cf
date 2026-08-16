@@ -65,3 +65,13 @@ export function degradeBand(output: RenderOutput | null | undefined): DegradeBan
 /** null for the bands that must render nothing ("unmeasured", "none-reported") and for
  *  any unrecognised value. */
 export function bandNote(band: DegradeBand | string | null | undefined): DegradeBandNote | null;
+
+/** Clip-level finish reasons from `output.finish` (core#226 / cf#595). */
+export interface ClipFinishDegrade {
+  degraded: number;
+  reasons: string[];
+}
+
+export function clipFinishFrom(output: RenderOutput | null | undefined): ClipFinishDegrade | null;
+export function clipFinishBand(output: RenderOutput | null | undefined): DegradeBand;
+export function clipFinishSummary(clip: ClipFinishDegrade | null | undefined): string | null;
