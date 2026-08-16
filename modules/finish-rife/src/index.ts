@@ -21,7 +21,8 @@ import {
   type FinishOutput,
 } from "./contract";
 import {
-  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, passthroughOutput,
+  coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
+  passthroughOutput,
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
   type PollState,
 } from "./finish";
@@ -116,10 +117,29 @@ async function runpodCreds(env: Env): Promise<{ route: RunpodRoute; apiKey: stri
     secretValue(env.RUNPOD_API_KEY),
     secretValue(env.RUNPOD_ENDPOINT_ID),
   ]);
-  // apiKey is kept alongside the route for ONE caller: the workersMax reconcile, which
-  // targets the RunPod MANAGEMENT API and is gated to the direct route. Nothing else
-  // reads it -- the bearer on every render call comes off `route`.
+  // apiKey is unused here. This module has no workersMax reconcile. The bearer on
+  // every render call comes off `route`.
   return { route, apiKey, endpointId };
+}
+
+/** cf#114: classify an absent RunPod credential HONESTLY.
+ *  RUNPOD_ENDPOINT_ID is a plain_text binding written at module UPLOAD; RUNPOD_API_KEY is a secret
+ *  written LATER (by installInvokeKey on the control plane). The two therefore arrive by different
+ *  routes at different times, so endpoint-present + key-absent is diagnostic of PROPAGATION, not of
+ *  misconfiguration, and saying "not configured" about it is a lie that sent a real tenant chasing a
+ *  correctly-configured credential. Both absent stays a genuine "not configured".
+ *  Returns null when both are readable. */
+function credentialProblem(route: RunpodRoute, endpointId: string): string | null {
+  return runpodCredentialProblem(route, Boolean(endpointId));
+}
+
+/** cf#114, degrade side of credentialProblem: the same propagation-vs-misconfiguration distinction,
+ *  expressed as a machine-readable degrade REASON. A polish step never fails the chain, but it must
+ *  still say WHICH of the two it hit -- "no-runpod-secrets" on a key that is merely not visible yet
+ *  reads as an operator error that does not exist. Returns null when both are readable. */
+function credentialDegradeReason(route: RunpodRoute, endpointId: string): string | null {
+  if (route.credential && endpointId) return null;
+  return endpointId ? "runpod-key-not-yet-visible" : "no-runpod-secrets";
 }
 
 /** Is the endpoint still in its virgin cold start (no worker has ever come up)? Best-effort: any
@@ -195,7 +215,8 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   }
   const { route, endpointId } = await runpodCreds(env);
   if (!route.credential || !endpointId) {
-    return passthrough(input, "no-runpod-secrets");  // not configured: degrade, but say so
+    // Degrade, but say WHICH: absent-key-with-endpoint is propagation, not misconfiguration (cf#114).
+    return passthrough(input, credentialDegradeReason(route, endpointId) ?? "no-runpod-secrets");
   }
 
   const cfg = coerceConfig(req.config);
@@ -232,7 +253,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   const st = decodePoll(body.poll);
   if (!st) return { ok: false, error: "finish-rife: bad poll token" };
   const { route, endpointId } = await runpodCreds(env);
-  if (!route.credential || !endpointId) return { ok: false, error: "finish-rife: not configured" };
+  const credProblem = credentialProblem(route, endpointId);
+  if (credProblem) return { ok: false, error: "finish-rife: " + credProblem };
 
   let httpStatus: number;
   let s: { status?: string; output?: unknown; error?: unknown };
@@ -343,38 +365,35 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   }
 
   const out = parseBackendOutput(s.output);
-  if (!out?.clip_key) {
-    // cf#604: A REAL absence -- the job reached COMPLETED and produced no artifact key. Polish never
+  // cf#604 / cf#578: WHICH FIELD carries the written key depends on a branch on the SATELLITE,
+  // not on anything visible here -- R2 mode echoes it as `clip_key`, presigned mode returns it
+  // as `output_key`. Reading only `clip_key` threw away a finished, uploaded, paid-for artifact
+  // (the film then degraded one shot via no-output-key, which is still a loss of billed work).
+  const key = finishedKey(out);
+  if (!key) {
+    // A REAL absence -- the job reached COMPLETED and produced no artifact key. Polish never
     // fails the chain (#77/#249), and an `ok:false` HERE is not the safe shape it looks like: it is
     // the MODULE layer, so vivijure-core failOrRetry classifies it deterministic and FAILS THE FILM
     // on a render that ran to completion and was paid for. It also skips the degrade accounting
     // entirely -- applyFinishOutput never sees an ok:false -- so the class was uncountable by
     // construction rather than merely uncounted. Same decision as speech-upscale, finish-lipsync and
-    // finish-upscale, at the same site; this module and finish-blender were the two the cf#578 sweep
-    // did not reach.
+    // finish-upscale, at the same site.
     //
     // The reason string is `no-output-key` verbatim, not a rife-specific one, because summarizeFinish
     // (vivijure-core src/film-model.ts:421-423) counts a degraded shot by its `passthrough:`-prefixed
     // tag and one grep across the five doors has to find the whole class.
-    //
-    // DELIBERATELY NOT the other half of cf#578, the `clip_key ?? output_key` read: vivijure-backend
-    // at f9dc930 has exactly ONE completed return for finish_clip (harness/handler.py:471-476) and it
-    // hardcodes `clip_key`; `output_key` is not a field of that result at all, and the repo argues the
-    // exclusion of presigned transport on purpose (docs/contract.md:249-268). This door cannot produce
-    // the shape that fix exists for, so widening the read here would be changing code on a hypothesis.
-    // See the EXEMPT census in tests/presigned-finish-output-key-cf578.test.ts, which measured that.
     const passed = pollPassthrough(st, "no-output-key");
     if (passed) return passed;
-    return { ok: false, error: "finish-rife: backend returned no clip_key, and this poll token carries no clip to pass through" };
+    return { ok: false, error: "finish-rife: backend returned no clip_key or output_key, and this poll token carries no clip to pass through" };
   }
   return {
     ok: true,
     output: {
-      shot_id: out.shot_id ?? st.shotId,
-      clip_key: out.clip_key,
-      out_fps: out.out_fps ?? st.srcFps,
-      frames: out.frames ?? st.frames,
-      applied: out.applied ?? [],
+      shot_id: out?.shot_id ?? st.shotId,
+      clip_key: key,
+      out_fps: out?.out_fps ?? st.srcFps,
+      frames: out?.frames ?? st.frames,
+      applied: out?.applied ?? [],
     },
   };
 }

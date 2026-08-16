@@ -7,8 +7,12 @@ import {
   encodePoll,
   decodePoll,
   parseBackendOutput,
+  finishedKey,
   defaultConfig,
 } from "../modules/finish-blender/src/finish";
+import { MANIFEST } from "../modules/finish-blender/src/index";
+import worker from "../modules/finish-blender/src/index";
+import { DOOR_ROUTE_NAME } from "../modules/_shared/finish-door";
 import type { FinishInput } from "../modules/finish-blender/src/contract";
 
 const sample: FinishInput = {
@@ -68,6 +72,22 @@ describe("finish-blender: parseBackendOutput", () => {
   it("reads clip_key", () => {
     expect(parseBackendOutput({ clip_key: "a_bl.mp4", frames: 10 })?.frames).toBe(10);
   });
+
+  it("parses output_key so a presigned satellite return is not dropped (cf#604)", () => {
+    const o = parseBackendOutput({ shot_id: "s", output_key: "renders/p/clips/written.mp4" });
+    expect(o?.output_key).toBe("renders/p/clips/written.mp4");
+    expect(o?.clip_key).toBeUndefined();
+  });
+});
+
+describe("finish-blender: finishedKey (cf#604)", () => {
+  it("prefers clip_key, falls back to output_key, undefined when neither", () => {
+    expect(finishedKey({ clip_key: "a", output_key: "b" })).toBe("a");
+    expect(finishedKey({ output_key: "b" })).toBe("b");
+    expect(finishedKey({ clip_key: "a" })).toBe("a");
+    expect(finishedKey({})).toBeUndefined();
+    expect(finishedKey(null)).toBeUndefined();
+  });
 });
 
 describe("finish-blender: passthroughOutput", () => {
@@ -75,5 +95,49 @@ describe("finish-blender: passthroughOutput", () => {
     const o = passthroughOutput(sample, "no-runpod-secrets");
     expect(o.degraded).toBe("no-runpod-secrets");
     expect(o.clip_key).toBe(sample.clip_key);
+  });
+});
+
+describe("finish-blender: GET /ready door object (cf#612)", () => {
+  type Worker = { fetch(request: Request, env: never): Promise<Response> };
+  const w = worker as unknown as Worker;
+  const TOKEN = "lft_cf612_blender_ready_probe";
+
+  it("unbound /ready stays byte-identical (no door key)", async () => {
+    const res = await w.fetch(
+      new Request("https://m.internal/ready"),
+      { RUNPOD_API_KEY: "rpa_cf612", RUNPOD_ENDPOINT_ID: "nbfj3iatp62ek9" } as never,
+    );
+    const body = await res.json() as Record<string, unknown>;
+    expect("door" in body).toBe(false);
+    expect(body.ok).toBe(true);
+  });
+
+  it("a door-backed blender is ready without RunPod credentials", async () => {
+    const res = await w.fetch(
+      new Request("https://m.internal/ready"),
+      { BLENDER_DOOR_TOKEN: TOKEN } as never,
+    );
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok, "door-backed blender classified as misconfigured").toBe(true);
+    expect(body.module).toBe(MANIFEST.name);
+    expect(body.door).toEqual({
+      bound: true,
+      token: true,
+      route: DOOR_ROUTE_NAME,
+      routes: [
+        { name: DOOR_ROUTE_NAME, token: true },
+        { name: "vpc-badbrains", token: true },
+        { name: "vpc-jello", token: true },
+      ],
+    });
+  });
+
+  it("never leaks the door token", async () => {
+    const res = await w.fetch(
+      new Request("https://m.internal/ready"),
+      { BLENDER_DOOR_TOKEN: TOKEN } as never,
+    );
+    expect(await res.text()).not.toContain(TOKEN);
   });
 });

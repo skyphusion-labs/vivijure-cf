@@ -160,6 +160,10 @@ export function classifyGoneState(
 export interface BackendOutput {
   shot_id?: string;
   clip_key?: string;
+  /** cf#604 / cf#578 PRESIGNED MODE. Same one-liner as finish-lipsync and finish-upscale:
+   *  R2 mode echoes the written key as `clip_key`; a presigned satellite returns it as
+   *  `output_key` and no `clip_key`. Reading only the first threw away billed work. */
+  output_key?: string;
   out_fps?: number;
   frames?: number;
   applied?: string[];
@@ -171,10 +175,16 @@ export function parseBackendOutput(output: unknown): BackendOutput | null {
   return {
     shot_id: typeof o.shot_id === "string" ? o.shot_id : undefined,
     clip_key: typeof o.clip_key === "string" ? o.clip_key : undefined,
+    output_key: typeof o.output_key === "string" ? o.output_key : undefined,
     out_fps: typeof o.out_fps === "number" ? o.out_fps : undefined,
     frames: typeof o.frames === "number" ? o.frames : undefined,
     applied: Array.isArray(o.applied) ? (o.applied as string[]) : [],
   };
+}
+
+/** The key the endpoint actually WROTE, whichever transport it ran on (cf#604 / cf#578). */
+export function finishedKey(out: BackendOutput | null): string | undefined {
+  return out?.clip_key ?? out?.output_key;
 }
 
 export function workersStillCold(health: unknown): boolean {

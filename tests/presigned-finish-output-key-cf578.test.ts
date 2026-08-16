@@ -263,16 +263,14 @@ describe.each(CASES)("$name: a presigned satellite return (cf#578)", (c) => {
 //   vivijure-upscale       d34135d  presigned returns output_key, NO clip_key   -> finish-upscale  AFFECTED
 //   vivijure-musetalk      c97bd61  presigned returns output_key, NO clip_key   -> finish-lipsync  AFFECTED
 //   vivijure-audio-upscale f2b3908  output_key in both modes, never a clip_key  -> speech-upscale  ALREADY CORRECT
-//   vivijure-blender       4fa33fe  ONE unified return, clip_key in BOTH modes  -> finish-blender  NOT AFFECTED
-//   vivijure-backend       f9dc930  NO presigned branch anywhere (0 hits for
-//                                   presigned/video_url/output_url/audio_url
-//                                   across src/, against 710 _key and 1496 def
-//                                   hits as the positive control)             -> finish-rife     NOT IN POPULATION
+//   vivijure-blender       4fa33fe  historically clip_key in BOTH modes; a later
+//                                   satellite / version skew can emit output_key
+//                                   and must not throw the billed artifact away -> finish-blender  AFFECTED (cf#604)
+//   vivijure-backend       f9dc930  historically no presigned branch; same
+//                                   version-skew rule as blender               -> finish-rife     AFFECTED (cf#604)
 //
-// So the affected population is 2 of the 5 finish-class doors. finish-blender and finish-rife hard-
-// fail on a missing clip_key too, and including them would have widened the scope to make a number
-// work: their satellites cannot produce the shape. The census below re-derives the 5 from source so
-// a NEW finish door cannot join the class unnoticed.
+// cf#604 retired the EXEMPT list: a finish door must accept whichever field the satellite wrote.
+// The census below re-derives the 5 from source so a NEW finish door cannot join the class unnoticed.
 describe("the finish-class population is derived, not asserted (cf#578 denominator)", () => {
   it("every finish-class door that parses a terminal artifact key is accounted for", async () => {
     const { readdirSync, readFileSync } = await import("node:fs");
@@ -309,19 +307,12 @@ describe("the finish-class population is derived, not asserted (cf#578 denominat
     const READS_RESPONSE = "output_key: typeof o.output_key";
     const readsOutputKey = finishClass.filter((n) => helper(n).includes(READS_RESPONSE));
 
-    // THE AFFECTED POPULATION, and the two the sweep DELIBERATELY does not touch.
-    //
-    // A door is affected iff its satellite can actually emit output_key without clip_key. That is a
-    // fact about the OTHER repo, so it cannot be asserted here; it is recorded above with the sha it
-    // was measured at. What IS assertable here is that the class is fully classified: every
-    // finish-class door is either fixed or explicitly exempt, so a SIXTH door cannot join silently.
-    const AFFECTED = ["finish-lipsync", "finish-upscale"];
-    // NOT a to-do list. finish-rife talks to vivijure-backend, which has no presigned branch at all;
-    // finish-blender talks to vivijure-blender, whose single return path emits clip_key in BOTH
-    // modes. Widening the fix to them to make a count look tidier would be changing code on a
-    // hypothesis, and the two of them are why the four-hard-failing-modules number is not the
-    // cf#578 population.
-    const EXEMPT = ["finish-blender", "finish-rife"];
+    // THE AFFECTED POPULATION. cf#604 retired the exemption: finish-rife and finish-blender now
+    // resolve finishedKey the same way finish-lipsync and finish-upscale do, so a satellite that
+    // returns output_key cannot throw billed work away. EXEMPT is empty on purpose and stays in
+    // the union so a future door that truly cannot produce either field is classified, not silent.
+    const AFFECTED = ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"];
+    const EXEMPT: string[] = [];
 
     console.log(JSON.stringify({ modulesScanned: candidates.length, finishClass: finishClass.length, readsOutputKey: readsOutputKey.length, finishClassNames: finishClass.slice().sort() }));
 
