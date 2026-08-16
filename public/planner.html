@@ -365,16 +365,17 @@
            the storyboard has >= 2 shots AND at least one character slot is
            bound (scatter requires castLoras to be non-empty -- the server
            hard-400s otherwise). updateScatterGate() enforces this dynamically
-           and shows a short reason when disabled. The shard-count input is
-           hidden until the checkbox is checked. -->
+           and shows a short reason when disabled. Parallelism is an
+           orchestrator-level knob (like quality tier), always visible on
+           the render stage; plannerShardCount() supplies the default. -->
       <label class="planner-field-check" id="planner-scatter-wrap">
         <input id="planner-scatter" type="checkbox" />
         <span>distributed render (scatter/gather)</span>
       </label>
       <span id="planner-scatter-reason" class="planner-status planner-scatter-reason" hidden></span>
-      <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap" hidden>
-        <label class="planner-field-check" for="planner-scatter-shards">shards</label>
-        <input id="planner-scatter-shards" type="number" min="2" value="2" inputmode="numeric" />
+      <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap">
+        <label class="planner-field-check" for="planner-scatter-shards">parallelism (shards)</label>
+        <input id="planner-scatter-shards" type="number" min="1" inputmode="numeric" />
       </div>
       </div>
       <!-- Module render config: projected from GET /api/modules. The hook set comes from the live
