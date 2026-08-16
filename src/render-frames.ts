@@ -237,7 +237,7 @@ export async function buildFramesSheet(
     return { ok: true, key, count, grid, frame_times, duration, reused: true };
   }
 
-  const base = typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.replace(/\/$/, "") : "https://video-finish.skyphusion.org";
+  const base = typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.replace(/\/$/, "") : "";
   if (!base) return framesFailure("tier-unavailable");
   const vpc: FetcherLike = {
     fetch: (url, init) => {
