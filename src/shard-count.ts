@@ -30,7 +30,7 @@ export function scatterViewAsFilmSummary(view: {
   status: string;
   statusRaw?: string;
   error?: string;
-  output?: Record<string, unknown>;
+  output?: unknown;
 }): {
   film_id: string;
   phase: string;
@@ -42,8 +42,9 @@ export function scatterViewAsFilmSummary(view: {
     view.status === "COMPLETED" ? "done"
     : view.status === "FAILED" || view.status === "CANCELLED" ? "failed"
     : String(view.statusRaw || "shards");
-  const film_key = typeof view.output?.output_key === "string" ? view.output.output_key : undefined;
-  const total = typeof view.output?.shards === "number" ? view.output.shards : undefined;
+  const out = view.output && typeof view.output === "object" ? (view.output as Record<string, unknown>) : undefined;
+  const film_key = typeof out?.output_key === "string" ? out.output_key : undefined;
+  const total = typeof out?.shards === "number" ? out.shards : undefined;
   return {
     film_id: view.jobId,
     phase,
