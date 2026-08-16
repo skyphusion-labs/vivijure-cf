@@ -82,7 +82,7 @@ function showPreflightSection() {
 // unless their hidden attr is explicitly cleared here.
 function showCastSection() {
   const faces = $("#planner-faces");
-  if (faces) faces.hidden = !planState.storyboard;
+  if (faces) faces.hidden = false;
   if (typeof renderFacesPanel === "function") renderFacesPanel();
   if (typeof refreshCastLoraWarning === "function") refreshCastLoraWarning();
   showPreflightSection();

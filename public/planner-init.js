@@ -309,6 +309,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // v0.43.0: persist the structured render-settings fields. Each
   // listens for the appropriate event (input on text + number,
   // change on selects).
+  const facesAdd = $("#planner-faces-add");
+  const facesName = $("#planner-faces-new-name");
+  if (facesAdd) facesAdd.addEventListener("click", addCastFromPlanner);
+  if (facesName) {
+    facesName.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addCastFromPlanner();
+      }
+    });
+  }
   $("#planner-plan").addEventListener("click", plan);
   $("#planner-reprompt").addEventListener("click", repromptWithErrors);
   $("#planner-bundle-btn").addEventListener("click", bundleNow);
