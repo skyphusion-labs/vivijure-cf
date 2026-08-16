@@ -136,7 +136,7 @@ function buildSceneRow(scene, idx, useChars) {
   const promptField = document.createElement("label");
   promptField.className = "planner-field";
   const promptLabel = document.createElement("span");
-  promptLabel.textContent = "prompt";
+  promptLabel.textContent = "shot";
   promptField.appendChild(promptLabel);
   const promptInput = document.createElement("textarea");
   promptInput.rows = 3;

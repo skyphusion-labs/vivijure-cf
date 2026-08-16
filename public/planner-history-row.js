@@ -96,17 +96,26 @@ function buildHistoryRow(r, childrenByParent) {
   status.title = stalled ? "render phase has not advanced -- may need attention" : "";
   meta.appendChild(status);
 
-  // v0.40.0: keyframes-only badge. Marks rows that ran the SDXL preview
-  // pass with no Wan I2V or silent-MP4 assembly. The badge sits right
-  // after the status so it is visible in both collapsed and expanded
-  // views. row.mode is collapsed to 'full' for legacy rows in
-  // renders-db.ts so the equality check is safe without a NULL guard.
-  if (r.mode === "keyframes-only") {
-    const modeBadge = document.createElement("span");
-    modeBadge.className = "planner-history-mode planner-history-mode-keyframes-only";
-    modeBadge.textContent = "kf only";
-    modeBadge.title = "this render produced " + keyframeLabel() + " keyframes only; no motion / no silent MP4";
-    meta.appendChild(modeBadge);
+  // cf#649: preview vs final on the collapsed row. keyframes-only is a
+  // stills preview; full / finalized / cloud-finalized shipped motion.
+  const passLabel = historyPassLabel(r);
+  if (passLabel) {
+    const passBadge = document.createElement("span");
+    passBadge.className = "planner-history-mode planner-history-mode-" + passLabel;
+    passBadge.textContent = passLabel;
+    passBadge.title = passLabel === "preview"
+      ? "stills preview; no motion / no silent MP4"
+      : "motion film (preview stills were already generated)";
+    meta.appendChild(passBadge);
+  }
+
+  const backendLabel = historyBackendLabel(r);
+  if (backendLabel) {
+    const backendBadge = document.createElement("span");
+    backendBadge.className = "planner-history-mode planner-history-mode-backend";
+    backendBadge.textContent = backendLabel;
+    backendBadge.title = "module / backend: " + backendLabel;
+    meta.appendChild(backendBadge);
   }
 
   // v0.221.0: LoRA inline-retrain (fail-safe) badge. A bound character with no
@@ -345,19 +354,17 @@ function buildHistoryRow(r, childrenByParent) {
   }
   sub.textContent = parts.join(" · ");
 
-  // v0.170.0: inline error snippet for terminal-failed rows. Shows the first
-  // ~100 chars of the error in the sub-line without requiring the user to
-  // expand the row. Long errors are truncated with an ellipsis; the full text
-  // remains visible after clicking "view".
+  // cf#649: collapsed failed row shows the mapped recipe, not the first
+  // 100 chars of provider JSON. Raw text stays on the title for operators.
   const isFailed2 = r.status === "FAILED" || r.status === "CANCELLED" || r.status === "TIMED_OUT";
   if (isFailed2 && r.error) {
+    const rec = window.plannerErrorRecipe
+      ? window.plannerErrorRecipe.recipeFromError(r.error)
+      : { message: String(r.error), raw: String(r.error) };
     const errSnip = document.createElement("span");
     errSnip.className = "planner-history-error-inline";
-    const maxLen = 100;
-    errSnip.textContent =
-      "error: " +
-      (r.error.length > maxLen ? r.error.slice(0, maxLen) + "..." : r.error);
-    errSnip.title = r.error;
+    errSnip.textContent = rec.message;
+    errSnip.title = rec.raw || rec.message;
     sub.appendChild(errSnip);
   }
 
@@ -491,11 +498,23 @@ function buildHistoryRow(r, childrenByParent) {
     // Finalize/cloud failures use their own finalize/animate controls on the parent preview.
     const retry = document.createElement("button");
     retry.type = "button";
-    retry.className = "planner-history-action";
+    retry.className = "planner-history-action planner-history-action-primary";
     retry.textContent = "retry";
     retry.title = "re-submit this render with the same stored args (new history row; GPU may resume off volume)";
     retry.addEventListener("click", () => retryFailedRender(r, retry));
     actions.appendChild(retry);
+    // cf#649: one next action on the collapsed row, without expanding.
+    const quickRetry = document.createElement("button");
+    quickRetry.type = "button";
+    quickRetry.className = "planner-history-action planner-history-action-primary planner-history-quick-retry";
+    quickRetry.textContent = "retry";
+    quickRetry.title = retry.title;
+    quickRetry.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      retryFailedRender(r, quickRetry);
+    });
+    meta.appendChild(quickRetry);
   }
 
   // v0.35.4: delete the row from history (and the silent MP4 from R2 when
@@ -1785,6 +1804,32 @@ function historyStatusKind(status) {
   return "running";
 }
 
+// cf#649: collapsed-row labels. Only emit a string when the field is actually
+// present so a missing backend does not invent one.
+function historyPassLabel(r) {
+  if (!r || typeof r.mode !== "string") return "";
+  if (r.mode === "keyframes-only") return "preview";
+  if (r.mode === "full" || r.mode === "finalized" || r.mode === "cloud-finalized") return "final";
+  return "";
+}
+
+function historyBackendLabel(r) {
+  if (!r) return "";
+  const ov = r.render_overrides && typeof r.render_overrides === "object" ? r.render_overrides : {};
+  const out = r.output && typeof r.output === "object" ? r.output : {};
+  const name =
+    r.motion_backend
+    || r.motionBackend
+    || r.keyframe_backend
+    || r.keyframeBackend
+    || ov.motion_backend
+    || ov.motionBackend
+    || out.motion_backend
+    || (typeof out.model === "string" ? out.model : "");
+  if (typeof name !== "string" || !name.trim()) return "";
+  return name.trim().split("/").pop();
+}
+
 // v0.170.0: read the explicit stall signal Rollins' driver (#131) writes into
 // output_json on IN_PROGRESS film-job rows. The field is ABSENT on healthy rows
 // (treat missing as false) and present + true once the current phase has sat
@@ -1885,7 +1930,7 @@ function resumeRender(row) {
   if (row.error) {
     const err = $("#planner-render-error");
     err.hidden = false;
-    err.textContent = row.error;
+    paintPlannerError(err, row.error);
   }
 
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
