@@ -209,8 +209,6 @@ describe("plan-enhance: GET /ready (Opus credentials informational; local fallba
 // /invoke), so `ok` mirrors what the module can actually do here, the same discipline as a required
 // credential -- just reported under `bindings` instead of `credentials` since there is no secret.
 const BINDING_GATED: { name: string; worker: Worker; envKey: string; bindingsKey: string }[] = [
-  { name: "film-titles", worker: filmTitlesWorker as unknown as Worker, envKey: "VIDEO_FINISH_VPC", bindingsKey: "video_finish_vpc" },
-  { name: "subtitle", worker: subtitleWorker as unknown as Worker, envKey: "VIDEO_FINISH_VPC", bindingsKey: "video_finish_vpc" },
   { name: "audio-master", worker: audioMasterWorker as unknown as Worker, envKey: "AUDIO_MASTER_VPC", bindingsKey: "audio_master_vpc" },
   { name: "beat-sync", worker: beatSyncWorker as unknown as Worker, envKey: "AUDIO_BEAT_SYNC_VPC", bindingsKey: "audio_beat_sync_vpc" },
 ];

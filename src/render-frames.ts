@@ -128,7 +128,7 @@ const FAILURES: Record<FramesFailureState, { status: number; reason: string }> =
   "tier-unavailable": {
     status: 503,
     reason:
-      "the video-finish tier is not installed on this studio (VIDEO_FINISH_VPC is unbound), so no frame can be extracted. This is a provisioning state, not a fault: bind the tier to enable frame extraction.",
+      "the video-finish tier is not installed on this studio (VIDEO_FINISH_URL is empty), so no frame can be extracted.",
   },
   "route-not-served": {
     status: 503,
@@ -237,8 +237,14 @@ export async function buildFramesSheet(
     return { ok: true, key, count, grid, frame_times, duration, reused: true };
   }
 
-  const vpc = asFetcher(env.VIDEO_FINISH_VPC);
-  if (!vpc) return framesFailure("tier-unavailable");
+  const base = typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.replace(/\/$/, "") : "https://video-finish.skyphusion.org";
+  if (!base) return framesFailure("tier-unavailable");
+  const vpc: FetcherLike = {
+    fetch: (url, init) => {
+      const path = new URL(String(url), "http://video-finish").pathname;
+      return fetch(base + path, init);
+    },
+  };
 
   let videoUrl: string;
   let outputUrl: string;

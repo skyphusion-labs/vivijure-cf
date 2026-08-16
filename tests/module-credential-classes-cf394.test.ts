@@ -107,7 +107,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   SPEECH_DOOR_TOKEN_PROPAGANDHI: { path: "operator-only", note: "cf#507: propagandhi speech door bearer" },
   BLENDER_DOOR_TOKEN: { path: "operator-only", note: "cf#489: blender door bearer. Public HTTPS to finish-blender-{box}.skyphusion.org on all three finishing nodes" },
   AUDIO_BEAT_SYNC_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
-  VIDEO_FINISH_VPC: { path: "operator-only", note: "VPC service into the operator finishing swarm" },
+  VIDEO_FINISH_URL: { path: "operator-only", note: "public Traefik SUBMIT origin for video-finish; not a VPC binding" },
   MEDIA_FINISH_TOKEN: { path: "operator-only", note: "cf#613/#615: bearer the fleet media containers (video-finish / audio-mix / audio-beat-sync) check. Reuses the FINISH_DOOR_TOKEN store secret. Operator infrastructure credential; read only to authenticate those VPC hops. Unset is fail-open" },
 
   // --- the self-host door ---

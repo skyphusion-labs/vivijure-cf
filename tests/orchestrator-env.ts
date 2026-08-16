@@ -1,6 +1,13 @@
+import { afterEach } from "vitest";
 import { attachPresigner } from "../src/orchestrator-env.js";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import type { Env } from "../src/env.js";
+
+let undoFetch: (() => void) | undefined;
+afterEach(() => {
+  undoFetch?.();
+  undoFetch = undefined;
+});
 
 /**
  * Attach a mock PRESIGNER for orchestration calls in unit tests (cf#107).
@@ -24,6 +31,19 @@ import type { Env } from "../src/env.js";
  * not implement, that surfaces as a runtime failure in the suite, not a silent pass.
  */
 export function orch<T extends Env>(env: T): T & OrchestratorEnv {
+  const vpc = (env as { VIDEO_FINISH_VPC?: { fetch?: (u: RequestInfo, i?: RequestInit) => Promise<Response> } }).VIDEO_FINISH_VPC;
+  if (vpc?.fetch && (env as { VIDEO_FINISH_URL?: string }).VIDEO_FINISH_URL === undefined) {
+    (env as { VIDEO_FINISH_URL?: string }).VIDEO_FINISH_URL = "https://video-finish.test";
+    const prev = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (u.includes("video-finish")) return vpc.fetch(input, init);
+      return prev(input as RequestInfo, init);
+    }) as typeof fetch;
+    undoFetch = () => {
+      globalThis.fetch = prev;
+    };
+  }
   return attachPresigner(env) as unknown as T & OrchestratorEnv;
 }
 

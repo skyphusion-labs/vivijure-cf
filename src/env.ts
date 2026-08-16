@@ -74,7 +74,10 @@ export interface Env {
   RUNPOD_WAN_TRAIN_ENDPOINT_ID?: SecretsStoreSecret | string;
 
   // CPU container Durable Objects (off-GPU beat-sync, portrait prep, ffmpeg finish).
-  VIDEO_FINISH_VPC: Fetcher; // Workers VPC -> always-on fleet video-finish (issue #83)
+  /** Public Traefik SUBMIT origin. Default in core is video-finish.skyphusion.org. Empty disables. */
+  VIDEO_FINISH_URL?: string;
+  /** Retired. Assemble/mux/inspect/frames no longer read this. Left optional so old wrangler deploys typecheck. */
+  VIDEO_FINISH_VPC?: Fetcher;
   // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
   // VIDEO_FINISH_VPC is unbound. "unprovisionable" = provisioned before the tier existed, with no
   // operator action that can reach it (the cp#112 population). Absent -> the conservative default,
