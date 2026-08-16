@@ -20,7 +20,7 @@
 
 import { describe, it, expect, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -52,102 +52,48 @@ function run(toml: string, env: Record<string, string>): { status: number; out: 
   }
 }
 
-/** Required ids present, so a case can isolate the ONE thing it is about. */
+/** Store / D1 fills, so a case can isolate the ONE thing it is about. */
 const REQ = {
   SECRETS_STORE_ID: "store_cf482",
   D1_DATABASE_ID: "d1_cf482",
-  VPC_VIDEO_FINISH_ID: "vf_cf482",
-  VPC_AUDIO_BEAT_SYNC_ID: "bs_cf482",
-  VPC_AUDIO_MASTER_ID: "am_cf482",
-  VPC_FINISH_UPSCALE_ID: "",
-  VPC_SPEECH_UPSCALE_ID: "",
 };
 
-const OPTIONAL_TOML = `# header comment
-name = "vivijure-module-probe"
-main = "src/index.ts"
-
-[observability]
-enabled = true
-
-[[d1_databases]]
-binding = "TELEMETRY_DB"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
-
+const VPC_LEFTOVER = `name = "vivijure-module-probe"
 [[vpc_services]]
-# cf482-optional:VPC_FINISH_UPSCALE_ID
 binding = "FINISH_UPSCALE_VPC"
 service_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"
-remote = true
-
-[[secrets_store_secrets]]
-# cf482-optional:VPC_FINISH_UPSCALE_ID
-binding = "FINISH_DOOR_TOKEN"
-store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
-secret_name = "FINISH_DOOR_TOKEN"
-
-[vars]
-RUNPOD_WORKERS_MAX = "2"
 `;
 
 // ------------------------------------------------------------------------------------------- 1.
-describe("an OPTIONAL binding is optional all the way down", () => {
-  it("UNSET strips BOTH of its blocks and deploys", () => {
-    const r = run(OPTIONAL_TOML, REQ);
-    expect(r.status).toBe(0);
-    expect(r.text).not.toContain("FINISH_UPSCALE_VPC");
-    // The half a block-type-keyed stripper would have missed: the bearer's Secrets Store block.
-    // Left behind, wrangler resolves a store entry that need not exist and the deploy fails.
-    expect(r.text).not.toContain("FINISH_DOOR_TOKEN");
-    expect(r.text).not.toContain("REPLACE_WITH_");
-  });
-
-  it("UNSET leaves everything else BYTE-IDENTICAL, so an operator with no door is unaffected", () => {
-    const r = run(OPTIONAL_TOML, REQ);
-    // The compatibility guarantee, asserted rather than assumed.
-    expect(r.text).toContain('name = "vivijure-module-probe"');
-    expect(r.text).toContain("[observability]");
-    expect(r.text).toContain('database_id = "d1_cf482"');
-    expect(r.text).toContain('RUNPOD_WORKERS_MAX = "2"');
-    expect(r.text).toContain("# header comment");
-  });
-
-  it("SET keeps both blocks and fills the id", () => {
-    const r = run(OPTIONAL_TOML, { ...REQ, VPC_FINISH_UPSCALE_ID: "vpc_door_cf482" });
-    expect(r.status).toBe(0);
-    expect(r.text).toContain('service_id = "vpc_door_cf482"');
-    expect(r.text).toContain('binding = "FINISH_UPSCALE_VPC"');
-    expect(r.text).toContain('binding = "FINISH_DOOR_TOKEN"');
-    expect(r.text).not.toContain("REPLACE_WITH_");
-  });
-
-  it("logs the strip -- a degrade is never silent", () => {
-    const r = run(OPTIONAL_TOML, REQ);
-    expect(r.out).toMatch(/VPC_FINISH_UPSCALE_ID unset/);
-  });
-
-  it("REFUSES when the marker is present but no block carries it", () => {
-    // A renamed or half-deleted binding. The stripper exits 3 rather than emitting its input
-    // unchanged, because a filter that matches nothing is byte-identical to a successful no-op.
-    // The marker sits in the PREAMBLE, which is never dropped, so no block carries it.
-    const broken = `# cf482-optional:VPC_FINISH_UPSCALE_ID\nname = "x"\n\n[vars]\nA = "1"\n`;
-    const r = run(broken, REQ);
+describe("hosted no longer fills Workers VPC", () => {
+  it("REFUSES a leftover [[vpc_services]] block", () => {
+    const r = run(VPC_LEFTOVER, REQ);
     expect(r.status).not.toBe(0);
-    expect(r.out).toContain("refusing rather than deploying a dangling binding");
+    expect(r.out).toMatch(/vpc_services/);
   });
 
-  it("never drops the PREAMBLE, even when the marker appears in a header comment", () => {
-    // The first version of this case put the marker ONLY in the preamble, which made dropped=0, so
-    // the script REFUSED and left the file untouched -- and the assertion passed because of the
-    // refusal rather than because the preamble was preserved. It would have passed identically
-    // with the preamble guard deleted. A real marked block is present here so the strip actually
-    // runs and the preamble has a chance to be wrongly dropped.
-    const t = `# see cf482-optional:VPC_FINISH_UPSCALE_ID for why\nname = "keepme"\n` + OPTIONAL_TOML.slice(OPTIONAL_TOML.indexOf("\n[observability]"));
-    const r = run(t, REQ);
-    expect(r.status).toBe(0);
-    expect(r.text).toContain('name = "keepme"');
-    expect(r.text).toContain("# see cf482-optional:VPC_FINISH_UPSCALE_ID for why");
-    expect(r.text).not.toContain("FINISH_UPSCALE_VPC");   // the real block still went
+  it("REFUSES a leftover REPLACE_WITH_VPC_* even without a vpc_services header", () => {
+    const r = run(`name = "x"\n[vars]\nservice_id = "REPLACE_WITH_VPC_AUDIO_MASTER_ID"\n`, REQ);
+    expect(r.status).not.toBe(0);
+    expect(r.out).toContain("REPLACE_WITH_VPC_AUDIO_MASTER_ID");
+  });
+
+  it("REFUSES a leftover ${VPC_ interpolation", () => {
+    const r = run(`name = "x"\n[vars]\nservice_id = "\${VPC_AUDIO_MASTER_ID}"\n`, REQ);
+    expect(r.status).not.toBe(0);
+    expect(r.out).toMatch(/VPC_AUDIO_MASTER_ID/);
+  });
+
+  it("fills a door-list / media URL from env, and empty when unset", () => {
+    const t = `name = "x"\n[vars]\nFINISH_UPSCALE_DOORS = "\${FINISH_UPSCALE_DOORS}"\nVIDEO_FINISH_URL = "\${VIDEO_FINISH_URL}"\n`;
+    const empty = run(t, REQ);
+    expect(empty.status).toBe(0);
+    expect(empty.text).toContain('FINISH_UPSCALE_DOORS = ""');
+    expect(empty.text).toContain('VIDEO_FINISH_URL = ""');
+    const set = run(t, { ...REQ, FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test", VIDEO_FINISH_URL: "https://video-finish.test" });
+    expect(set.status).toBe(0);
+    expect(set.text).toContain('FINISH_UPSCALE_DOORS = "https://finish-upscale-fatmike.test"');
+    expect(set.text).toContain('VIDEO_FINISH_URL = "https://video-finish.test"');
   });
 });
 
@@ -228,124 +174,24 @@ R2_S3_BUCKET = "REPLACE_WITH_R2_S3_BUCKET"
   });
 });
 
-describe("REQUIRED bindings keep refusing -- the fix must not delete a working guard", () => {
-  it("an unset REQUIRED VPC id still fails the deploy", () => {
-    const t = `name = "x"\n\n[[vpc_services]]\nbinding = "AUDIO_MASTER_VPC"\nservice_id = "REPLACE_WITH_VPC_AUDIO_MASTER_ID"\n`;
-    const r = run(t, { ...REQ, VPC_AUDIO_MASTER_ID: "" });
-    // The script must REFUSE, not substitute an empty id: blanking the placeholder deletes the
-    // evidence the survivor check looks for, and the module deploys with `service_id = ""`.
-    // audio-master reaches its container ONLY over this binding; unbound it soft-degrades and the
-    // film ships without the master phase. Making every VPC id optional would have shipped that
-    // silently, which is a symptom-shaped fix deleting the control.
-    expect(r.status).not.toBe(0);
-    expect(r.out).toContain("REPLACE_WITH_VPC_AUDIO_MASTER_ID");
-  });
-});
-
-// ------------------------------------------------------------------------------------------- 4.
-describe("DENOMINATOR: the shipped tomls and the script's optional list agree", () => {
-  const script = readFileSync(SCRIPT, "utf8");
-
-  it("POSITIVE CONTROL: the marker extractor finds a marker in a known file", () => {
-    const t = readFileSync("modules/finish-upscale/wrangler.toml", "utf8");
-    expect(t.match(/cf482-optional:[A-Z0-9_]+/g)?.length).toBeGreaterThan(0);
-  });
-
-  it("every marker declared in a module toml is handled by the script", () => {
-    const declared = new Set<string>();
-    for (const m of readdirSync("modules")) {
-      let t: string;
-      try { t = readFileSync(`modules/${m}/wrangler.toml`, "utf8"); } catch { continue; }
-      for (const hit of t.match(/cf482-optional:([A-Z0-9_]+)/g) ?? []) declared.add(hit.split(":")[1]);
-    }
-    // A third optional binding cannot be added without either wiring it here or turning this red.
-    // Without this, an unhandled marker leaves its placeholder unfilled and the deploy fails on a
-    // tag, which is the failure this whole file exists to move earlier.
-    const unhandled = [...declared].filter((v) => !script.includes(v));
-    expect(unhandled, `optional markers no script branch handles: ${unhandled.join(", ")}`).toEqual([]);
-    expect(declared.size).toBeGreaterThan(0);   // a zero here would make the assertion vacuous
-  });
-
-  it("each declared marker covers MORE THAN ONE block, or the multi-block strip is untested", () => {
-    const t = readFileSync("modules/finish-upscale/wrangler.toml", "utf8");
-    expect((t.match(/cf482-optional:VPC_FINISH_UPSCALE_ID/g) ?? []).length).toBeGreaterThanOrEqual(2);
-  });
-});
-
-// ------------------------------------------------------------------------------------------- 5.
-describe("the REAL shipped tomls render clean with no door configured (today's state)", () => {
-  /** Every `binding = "X"` in a toml, in order. */
-  const bindings = (s: string) => (s.match(/^binding = "([^"]+)"/gm) ?? []).map((l) => l.split('"')[1]);
-
-  for (const m of ["finish-upscale", "speech-upscale"]) {
-    it(`${m} fills with zero survivors and no door binding`, () => {
+describe("shipped door / media tomls fill clean with empty origins", () => {
+  for (const m of ["finish-upscale", "speech-upscale", "finish-blender", "audio-master", "beat-sync", "film-titles", "subtitle"]) {
+    it(`${m} fills with zero survivors and no vpc_services`, () => {
       const r = run(readFileSync(`modules/${m}/wrangler.toml`, "utf8"), REQ);
       expect(r.status).toBe(0);
-      expect(r.text).not.toContain("REPLACE_WITH_");
-      expect(r.text).not.toContain("_UPSCALE_VPC");
-      expect(r.text).not.toContain("DOOR_TOKEN");
+      const live = r.text.replace(/^\s*#.*$/gm, "");
+      expect(live).not.toContain("REPLACE_WITH_");
+      expect(live).not.toContain("[[vpc_services]]");
+      expect(live).not.toContain("${VPC_");
       expect(r.text).toContain(`name = "vivijure-module-${m}"`);
-    });
-
-    // cf#484. THE ASSERTION THAT WAS MISSING, and its absence let a real defect merge: the case
-    // above checks the door bindings are GONE and the module NAME survives, which is what I was
-    // thinking about -- it says nothing about the module's OTHER bindings. The stripper was
-    // deleting RUNPOD_ENDPOINT_ID from finish-upscale (5 bindings -> 2 where 3 is correct),
-    // because a sentence in the toml mentioning the marker sits ABOVE [[vpc_services]] and comment
-    // lines preceding a header belong to the block BEFORE it. On a tag deploy that module ships
-    // with no endpoint id and every upscale job soft-degrades to passthrough -- a silent
-    // capability loss.
-    //
-    // DERIVED, not a hand-written expected list: read the bindings out of the source, subtract the
-    // ones the marked blocks declare, and require exactly that. A hardcoded list would have to be
-    // updated by the same person who broke this, at the same moment.
-    it(`${m} loses EXACTLY its door bindings and nothing else`, () => {
-      const src = readFileSync(`modules/${m}/wrangler.toml`, "utf8");
-      const before = bindings(src);
-      const r = run(src, REQ);
-      const after = bindings(r.text);
-
-      // The bindings declared inside a block that carries a whole-line marker.
-      const doorBindings = new Set<string>();
-      for (const block of src.split(/^(?=\[)/m)) {
-        if (/^[ \t]*#[ \t]*cf482-optional:[A-Z0-9_]+[ \t]*$/m.test(block)) {
-          for (const b of bindings(block)) doorBindings.add(b);
-        }
-      }
-      expect(doorBindings.size, "no marked blocks found -- the derivation is vacuous").toBeGreaterThan(0);
-
-      expect(after).toEqual(before.filter((b) => !doorBindings.has(b)));
-      // Named explicitly too, because this is the one that was actually lost and a set comparison
-      // reads past a single missing element easily.
-      expect(after).toContain("RUNPOD_ENDPOINT_ID");
     });
   }
 
-  it("PROSE mentioning a marker does not arm the strip (cf#484 root cause)", () => {
-    // The exact shape that shipped: a sentence naming the marker, sitting above the marked block
-    // and therefore inside the PRECEDING one. Before the fix this deleted the preceding block.
-    const t = `name = "x"
-
-[[secrets_store_secrets]]
-binding = "KEEP_ME"
-secret_name = "KEEP_ME"
-# Both blocks carry the marker \`cf482-optional:VPC_FINISH_UPSCALE_ID\` so the stripper knows.
-
-[[vpc_services]]
-# cf482-optional:VPC_FINISH_UPSCALE_ID
-binding = "GO_AWAY"
-service_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"
-`;
-    const r = run(t, REQ);
+  it("finish-upscale keeps its RunPod + door-token bindings", () => {
+    const r = run(readFileSync("modules/finish-upscale/wrangler.toml", "utf8"), REQ);
     expect(r.status).toBe(0);
-    expect(r.text).toContain('binding = "KEEP_ME"');   // the block the prose landed in
-    expect(r.text).not.toContain('binding = "GO_AWAY"');
-  });
-
-  it("an indented whole-line marker still arms it, so the fix did not over-tighten", () => {
-    const t = `name = "x"\n\n[[vpc_services]]\n   # cf482-optional:VPC_FINISH_UPSCALE_ID\nbinding = "GO_AWAY"\nservice_id = "REPLACE_WITH_VPC_FINISH_UPSCALE_ID"\n`;
-    const r = run(t, REQ);
-    expect(r.status).toBe(0);
-    expect(r.text).not.toContain("GO_AWAY");
+    expect(r.text).toContain('binding = "RUNPOD_ENDPOINT_ID"');
+    expect(r.text).toContain('binding = "FINISH_DOOR_TOKEN"');
+    expect(r.text).toContain('FINISH_UPSCALE_DOORS = ""');
   });
 });

@@ -17,9 +17,12 @@
 // propagandhi bearer went on the wire" is distinguishable from "a bearer went on the wire".
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   DOOR_ROUTE_NAME,
   DOOR_ROUTE_PREFIX,
+  LEGACY_DOOR_ROUTE_NAME,
   doorName,
   doorPool,
   usableDoors,
@@ -28,6 +31,9 @@ import {
   doorBound,
   doorProblem,
   tokenTookDoor,
+  doorsFromEnv,
+  hostnameLabel,
+  parseDoorOrigins,
 } from "../modules/_shared/finish-door";
 
 /** Values that appear nowhere else in this repo, so a match cannot be a coincidence. */
@@ -40,8 +46,8 @@ const PROPAGANDHI = doorName("propagandhi");
 /** The shape both upscale modules declare: the LEGACY door first and explicitly marked. */
 function candidates(opts: { fatmikeToken?: string; propagandhiToken?: string; dropPropagandhi?: boolean } = {}) {
   return [
-    { name: FATMIKE, baseUrl: "https://finish-upscale-fatmike.skyphusion.org", token: opts.fatmikeToken ?? TOKEN_FATMIKE, legacy: true },
-    { name: PROPAGANDHI, baseUrl: opts.dropPropagandhi ? "" : "https://finish-upscale-propagandhi.skyphusion.org", token: opts.propagandhiToken ?? TOKEN_PROPAGANDHI },
+    { name: FATMIKE, baseUrl: "https://finish-upscale-fatmike.test", token: opts.fatmikeToken ?? TOKEN_FATMIKE, legacy: true },
+    { name: PROPAGANDHI, baseUrl: opts.dropPropagandhi ? "" : "https://finish-upscale-propagandhi.test", token: opts.propagandhiToken ?? TOKEN_PROPAGANDHI },
   ];
 }
 
@@ -147,17 +153,22 @@ describe("cf507 AFFINITY: a token minted against door A never resolves to door B
 
 // ------------------------------------------------------------------------------------------- 4.
 describe("cf507 BACK-COMPAT: a bare 'vpc' token predates the pool and is still in flight", () => {
-  it("bare 'vpc' resolves to the LEGACY door -- the only door traffic ever reached", () => {
-    // Load-bearing. Tokens minted before this change carry the bare label and are in flight RIGHT
+  it("new mints use door; in-flight vpc still resolves to the LEGACY door", () => {
+    // Load-bearing. Tokens minted before the prefix change carry `vpc` and are in flight RIGHT
     // NOW. Resolving one to the wrong box is the same destroyed-work failure as a crossed poll.
     const pool = doorPool(candidates());
-    expect(DOOR_ROUTE_NAME).toBe("vpc");
+    expect(DOOR_ROUTE_NAME).toBe("door");
+    expect(LEGACY_DOOR_ROUTE_NAME).toBe("vpc");
     expect(resolveDoor(pool, DOOR_ROUTE_NAME)!.name).toBe(FATMIKE);
+    expect(resolveDoor(pool, LEGACY_DOOR_ROUTE_NAME)!.name).toBe(FATMIKE);
     expect(resolveDoor(pool, DOOR_ROUTE_NAME)!.legacy).toBe(true);
   });
 
-  it("bare 'vpc' still counts as a door token", () => {
+  it("bare door and bare vpc both count as a door token", () => {
     expect(tokenTookDoor(DOOR_ROUTE_NAME)).toBe(true);
+    expect(tokenTookDoor(LEGACY_DOOR_ROUTE_NAME)).toBe(true);
+    expect(tokenTookDoor("vpc-fatmike")).toBe(true);
+    expect(tokenTookDoor("door-fatmike")).toBe(true);
   });
 
   it("a per-door label counts as a door token", () => {
@@ -180,7 +191,60 @@ describe("cf507 BACK-COMPAT: a bare 'vpc' token predates the pool and is still i
 
   it("bare 'vpc' resolves to NOTHING when no door is marked legacy", () => {
     // A deploy that binds only a NEW door cannot honestly claim an old token belongs to it.
-    const pool = doorPool([{ name: PROPAGANDHI, baseUrl: "https://finish-upscale-propagandhi.skyphusion.org", token: TOKEN_PROPAGANDHI }]);
+    const pool = doorPool([{ name: PROPAGANDHI, baseUrl: "https://finish-upscale-propagandhi.test", token: TOKEN_PROPAGANDHI }]);
     expect(resolveDoor(pool, DOOR_ROUTE_NAME)).toBeNull();
+    expect(resolveDoor(pool, LEGACY_DOOR_ROUTE_NAME)).toBeNull();
+  });
+
+  it("an in-flight vpc-<host> label resolves to the door whose hostname is that host", () => {
+    const pool = doorPool(candidates());
+    expect(resolveDoor(pool, "vpc-propagandhi")!.name).toBe(PROPAGANDHI);
+    expect(resolveDoor(pool, "vpc-fatmike")!.name).toBe(FATMIKE);
+  });
+});
+
+describe("doorsFromEnv: origins are config, never code", () => {
+  const DOORS = "https://finish-upscale-fatmike.test,https://finish-upscale-propagandhi.test";
+
+  it("empty / missing var is an empty candidate list (the RunPod path)", () => {
+    expect(doorsFromEnv({}, "FINISH_UPSCALE_DOORS", TOKEN_FATMIKE)).toEqual([]);
+    expect(doorsFromEnv({ FINISH_UPSCALE_DOORS: "" }, "FINISH_UPSCALE_DOORS", TOKEN_FATMIKE)).toEqual([]);
+    expect(doorsFromEnv({ FINISH_UPSCALE_DOORS: "   " }, "FINISH_UPSCALE_DOORS", TOKEN_FATMIKE)).toEqual([]);
+  });
+
+  it("first URL is the legacy door; later URLs take door-<hostnameLabel>", () => {
+    const list = doorsFromEnv({ FINISH_UPSCALE_DOORS: DOORS }, "FINISH_UPSCALE_DOORS", {
+      legacy: TOKEN_FATMIKE,
+      byName: { propagandhi: TOKEN_PROPAGANDHI },
+    });
+    expect(list.map((c) => c.name)).toEqual([DOOR_ROUTE_NAME, PROPAGANDHI]);
+    expect(list[0].legacy).toBe(true);
+    expect(list[1].legacy).toBe(false);
+    expect(list[0].token).toBe(TOKEN_FATMIKE);
+    expect(list[1].token).toBe(TOKEN_PROPAGANDHI);
+    expect(list[0].baseUrl).toBe("https://finish-upscale-fatmike.test");
+  });
+
+  it("a single token string applies to every door", () => {
+    const list = doorsFromEnv({ FINISH_UPSCALE_DOORS: DOORS }, "FINISH_UPSCALE_DOORS", TOKEN_FATMIKE);
+    expect(list.every((c) => c.token === TOKEN_FATMIKE)).toBe(true);
+  });
+
+  it("hostnameLabel reads the last hyphen-separated label", () => {
+    expect(hostnameLabel("https://finish-upscale-fatmike.test")).toBe("fatmike");
+    expect(hostnameLabel("https://finish-blender-descendents.example")).toBe("descendents");
+  });
+
+  it("parseDoorOrigins drops non-HTTPS and junk", () => {
+    expect(parseDoorOrigins("http://insecure.test,not-a-url,https://ok.test/path")).toEqual(["https://ok.test"]);
+  });
+});
+
+describe("finish-door.ts must not bake a production hostname", () => {
+  it("fails if someone re-adds a skyphusion.org origin, DOOR_ORIGIN, or VIDEO_FINISH_SUBMIT", () => {
+    const src = readFileSync(join(__dirname, "../modules/_shared/finish-door.ts"), "utf8");
+    expect(src).not.toMatch(/skyphusion\.org/);
+    expect(src).not.toMatch(/\bDOOR_ORIGIN\b/);
+    expect(src).not.toMatch(/\bVIDEO_FINISH_SUBMIT\b/);
   });
 });

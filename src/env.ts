@@ -73,18 +73,25 @@ export interface Env {
   // so a deploy without Wan training still typechecks; handleCastTrainWanLora fails loud if it is unset.
   RUNPOD_WAN_TRAIN_ENDPOINT_ID?: SecretsStoreSecret | string;
 
-  // CPU container Durable Objects (off-GPU beat-sync, portrait prep, ffmpeg finish).
-  /** Public Traefik SUBMIT origin. Default in core is video-finish.skyphusion.org. Empty disables. */
+  // CPU media containers (off-GPU beat-sync, portrait prep, ffmpeg finish) over public HTTPS.
+  // Empty / unset disables that service (honest degrade or RunPod). No baked hostname.
+  /** Public Traefik SUBMIT origin. Empty disables the video-finish tier. */
   VIDEO_FINISH_URL?: string;
+  IMAGE_PREP_URL?: string;
+  AUDIO_BEAT_SYNC_URL?: string;
+  AUDIO_MIX_URL?: string;
+  AUDIO_MASTER_URL?: string;
+  /** Comma-separated HTTPS origins for on-iron finish doors. Empty = RunPod path. */
+  FINISH_UPSCALE_DOORS?: string;
+  SPEECH_UPSCALE_DOORS?: string;
+  FINISH_BLENDER_DOORS?: string;
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
   RENDER_SHARD_MAX?: string;
-  /** Retired. Assemble/mux/inspect/frames no longer read this. Left optional so old wrangler deploys typecheck. */
-  VIDEO_FINISH_VPC?: Fetcher;
   // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
-  // VIDEO_FINISH_VPC is unbound. "unprovisionable" = provisioned before the tier existed, with no
+  // VIDEO_FINISH_URL is empty. "unprovisionable" = provisioned before the tier existed, with no
   // operator action that can reach it (the cp#112 population). Absent -> the conservative default,
   // "provisionable". Nothing sets this today; the plane-side half is a control-plane decision.
-  // A bound tier always wins over this var: see videoFinishState (an observation beats a label).
+  // A configured URL always wins over this var: see videoFinishState (an observation beats a label).
   VIDEO_FINISH_TIER_STATE?: string;
 
   // OPTIONAL var (control-plane#130), NOT a binding: where a reporter should be sent to report
@@ -93,12 +100,6 @@ export interface Env {
   // provider for a self-hosted studio and cannot act on its content. A self-hoster who wants their
   // own contact published sets this to their own URL. See src/abuse-contact.ts.
   ABUSE_REPORT_URL?: string;
-  IMAGE_PREP_VPC: Fetcher; // Workers VPC -> always-on fleet image-prep (issue #83)
-  AUDIO_BEAT_SYNC_VPC: Fetcher; // Workers VPC -> always-on fleet audio-beat-sync (issue #83)
-  // OPTIONAL (#231): Workers VPC -> always-on fleet audio-mix container (/mix: multi-track duck +
-  // loudnorm). Optional so the Worker deploys before the VPC service is provisioned; the mux phase
-  // degrades to the single-track remux when it is absent. Provisioned + bound by infra (Strummer).
-  AUDIO_MIX_VPC?: Fetcher;
   /**
    * Bearer the fleet media containers check (vivijure-cf#613 / core#240). Optional: unset
    * is fail-open. Reuses the FINISH_DOOR_TOKEN store secret when bound that way.

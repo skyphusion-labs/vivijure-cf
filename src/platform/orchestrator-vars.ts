@@ -45,6 +45,13 @@ export const ORCHESTRATOR_VAR_KEYS = [
   // renders no link, the deliberate self-host behaviour.
   "ABUSE_REPORT_URL",
   "VIDEO_FINISH_URL",
+  "IMAGE_PREP_URL",
+  "AUDIO_BEAT_SYNC_URL",
+  "AUDIO_MIX_URL",
+  "AUDIO_MASTER_URL",
+  "FINISH_UPSCALE_DOORS",
+  "SPEECH_UPSCALE_DOORS",
+  "FINISH_BLENDER_DOORS",
 ] as const;
 // cf#287 STUDIO_RELEASE / STUDIO_GIT_SHA are intentional NOT listed here yet. They are optional
 // identity overrides (src/studio-release.ts falls back to the baked package version when unset),

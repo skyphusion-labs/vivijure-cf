@@ -208,17 +208,17 @@ describe("plan-enhance: GET /ready (Opus credentials informational; local fallba
 // A missing binding degrades the render (soft passthrough or, for beat-sync, a hard ok:false at
 // /invoke), so `ok` mirrors what the module can actually do here, the same discipline as a required
 // credential -- just reported under `bindings` instead of `credentials` since there is no secret.
-const BINDING_GATED: { name: string; worker: Worker; envKey: string; bindingsKey: string }[] = [
-  { name: "audio-master", worker: audioMasterWorker as unknown as Worker, envKey: "AUDIO_MASTER_VPC", bindingsKey: "audio_master_vpc" },
-  { name: "beat-sync", worker: beatSyncWorker as unknown as Worker, envKey: "AUDIO_BEAT_SYNC_VPC", bindingsKey: "audio_beat_sync_vpc" },
+const BINDING_GATED: { name: string; worker: Worker; envKey: string; bindingsKey: string; url: string }[] = [
+  { name: "audio-master", worker: audioMasterWorker as unknown as Worker, envKey: "AUDIO_MASTER_URL", bindingsKey: "audio_master_url", url: "https://audio-master.test" },
+  { name: "beat-sync", worker: beatSyncWorker as unknown as Worker, envKey: "AUDIO_BEAT_SYNC_URL", bindingsKey: "audio_beat_sync_url", url: "https://audio-beat-sync.test" },
 ];
 
-describe.each(BINDING_GATED)("$name: GET /ready (binding-gated)", ({ name, worker, envKey, bindingsKey }) => {
-  it("ok:true when the VPC binding is present", async () => {
-    const { body } = await get(worker, { [envKey]: { fetch: async () => new Response("{}") } });
+describe.each(BINDING_GATED)("$name: GET /ready (url-gated)", ({ name, worker, envKey, bindingsKey, url }) => {
+  it("ok:true when the URL is set", async () => {
+    const { body } = await get(worker, { [envKey]: url });
     expect(body).toEqual({ ok: true, module: name, bindings: { [bindingsKey]: true } });
   });
-  it("ok:false when the VPC binding is absent", async () => {
+  it("ok:false when the URL is absent", async () => {
     const { body } = await get(worker, {});
     expect(body).toEqual({ ok: false, module: name, bindings: { [bindingsKey]: false } });
   });

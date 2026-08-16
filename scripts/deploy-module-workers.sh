@@ -4,13 +4,10 @@
 # FINISH_SATELLITES_ONLY=1 (cf#197): deploy only modules listed in finish-satellite-modules.txt.
 # Used when CORE_ONLY_DEPLOY=1 so finish RunPod proxy workers cannot drift from the studio tag.
 #
-# Requires: SECRETS_STORE_ID, D1_DATABASE_ID, VPC_VIDEO_FINISH_ID, VPC_AUDIO_BEAT_SYNC_ID,
-# VPC_AUDIO_MASTER_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (wrangler).
+# Requires: SECRETS_STORE_ID, D1_DATABASE_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (wrangler).
 #
-# OPTIONAL (cf#482): VPC_FINISH_UPSCALE_ID, VPC_SPEECH_UPSCALE_ID, and their cf#507 second-door
-# siblings VPC_FINISH_UPSCALE_PROPAGANDHI_ID / VPC_SPEECH_UPSCALE_PROPAGANDHI_ID. Unset is the NORMAL state and
-# deploys unchanged -- the module keeps its RunPod path and its [[vpc_services]] block is stripped.
-# Set one only when the matching connectivity-directory service exists (cf#480).
+# Media origins (VIDEO_FINISH_URL / AUDIO_*_URL / *_DOORS) are filled by fill-module-placeholders.sh
+# from env; unset becomes empty (honest off / RunPod). Hosted no longer uses Workers VPC ids.
 #
 # Placeholder filling lives in scripts/fill-module-placeholders.sh so it is reachable by
 # tests/deploy-placeholders-cf482.test.ts. This script runs ONLY on a tag deploy, which is the
@@ -31,14 +28,6 @@ if [ -z "${D1_DATABASE_ID:-}" ]; then
   echo "::error::D1_DATABASE_ID is unset -- refusing to deploy a module with an unfilled TELEMETRY_DB database_id (cf#279)"
   exit 1
 fi
-for v in VPC_VIDEO_FINISH_ID VPC_AUDIO_BEAT_SYNC_ID VPC_AUDIO_MASTER_ID; do
-  eval "vv=\${$v:-}"
-  if [ -z "$vv" ]; then
-    echo "::error::$v repo secret is unset -- refusing to deploy a module with an unfilled VPC service_id (#520)"
-    exit 1
-  fi
-done
-
 finish_satellite() {
   grep -qxF "$1" scripts/finish-satellite-modules.txt
 }

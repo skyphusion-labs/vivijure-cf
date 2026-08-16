@@ -118,7 +118,7 @@ database_id = "${D1_DEMO_DATABASE_ID}"
 #     assistant is OSS-only; metered frontier tokens are unreachable.
 #   * NO R2 buckets (R2 / R2_RENDERS) and NO R2_S3_* presign creds -- the box owns the render bytes to an
 #     isolated public prefix; the demo only string-builds the public URL.
-#   * NO CPU-container VPCs (VIDEO_FINISH_VPC / IMAGE_PREP_VPC / AUDIO_BEAT_SYNC_VPC / AUDIO_MIX_VPC) --
+#   * NO CPU-container URLs (VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_BEAT_SYNC_URL / AUDIO_MIX_URL) --
 #     Phase B renders ONE i2v clip, no assemble/mux.
 #   * NO MODULE_DISPATCH namespace and NO OTHER MODULE_* service binding -- the catalog stays the seeded
 #     rows; ONLY the local-gpu door is reachable, so no other GPU/paid backend can be invoked.

@@ -1,5 +1,5 @@
 // beat-sync: a `score` module worker (vivijure-module/2). Runs librosa beat analysis on the
-// always-on audio-beat-sync container over Workers VPC (Hetzner fleet; issue #83).
+// always-on audio-beat-sync container over AUDIO_BEAT_SYNC_URL (Hetzner fleet; issue #83).
 //
 // SYNC: analysis completes in one invoke (no /poll). The core presigns the audio bed and passes
 // `audio_url` + `audio_key` in config at invoke time (runtime fields, not in config_schema).
@@ -24,7 +24,7 @@ import { timedVpcFetch, withVpcElapsedApplied } from "../../_shared/vpc-call-log
 import { mediaFinishHeaders } from "../../_shared/media-finish-auth";
 
 interface Env {
-  AUDIO_BEAT_SYNC_VPC: Fetcher;
+  AUDIO_BEAT_SYNC_URL?: string;
   MEDIA_FINISH_TOKEN?: { get(): Promise<string> } | string;
 }
 
@@ -33,7 +33,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["score"],
-  provides: [{ id: "librosa-beat-sync", label: "Beat sync (librosa, fleet VPC)" }],
+  provides: [{ id: "librosa-beat-sync", label: "Beat sync (librosa)" }],
   config_schema: {
     clip_seconds: {
       type: "float",
@@ -77,6 +77,17 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+function beatBase(env: Env): string {
+  return typeof env.AUDIO_BEAT_SYNC_URL === "string" ? env.AUDIO_BEAT_SYNC_URL.trim().replace(/\/$/, "") : "";
+}
+
+function beatCall(env: Env) {
+  return (url: RequestInfo, init?: RequestInit) => {
+    const path = new URL(String(url), "http://audio-beat-sync").pathname;
+    return fetch(beatBase(env) + path, init);
+  };
+}
+
 async function runAnalyze(
   env: Env,
   req: InvokeRequest<ScoreInput>,
@@ -89,13 +100,16 @@ async function runAnalyze(
     return { ok: true, output: { film_key: filmKey, applied: ["beat-sync:skipped"] } };
   }
 
+  if (!beatBase(env)) {
+    return { ok: false, error: "score: AUDIO_BEAT_SYNC_URL not configured" };
+  }
+
   const audioKey = typeof req.config?.audio_key === "string" ? req.config.audio_key.trim() : "";
   const config = normalizeConfig(req.config);
   const body = buildAnalyzeBody(config, audioUrl, audioKey);
 
-  // cf#396: wall-clock start + duration on every fleet VPC hop (structured log + applied tag).
   const timed = await timedVpcFetch(
-    (url, init) => env.AUDIO_BEAT_SYNC_VPC.fetch(url, init),
+    beatCall(env),
     {
       method: "POST",
       headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN),
@@ -104,7 +118,7 @@ async function runAnalyze(
     {
       module: MANIFEST.name,
       service: "audio-beat-sync",
-      binding: "AUDIO_BEAT_SYNC_VPC",
+      binding: "audio-beat-sync",
       url: "http://audio-beat-sync/analyze",
       mode: "sync",
       filmKey: filmKey,
@@ -114,7 +128,7 @@ async function runAnalyze(
   );
   if (timed.err || !timed.resp) {
     const msg = timed.err instanceof Error ? timed.err.message : String(timed.err ?? "unreachable");
-    return { ok: false, error: "score: beat-sync VPC fetch failed: " + msg.slice(0, 200) };
+    return { ok: false, error: "score: beat-sync fetch failed: " + msg.slice(0, 200) };
   }
   const resp = timed.resp;
 
@@ -145,17 +159,13 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
-    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
-    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
-    // Booleans only, in a `bindings` field kept separate from `credentials`. Unlike audio-master's
-    // soft degrade, a missing AUDIO_BEAT_SYNC_VPC binding hard-fails runAnalyze() (the bare property
-    // access throws inside the try/catch and returns ok:false), so this is a genuine ready/not-ready
-    // signal, not merely informational.
+    // GET /ready (cf#295): URL-visibility probe. A missing AUDIO_BEAT_SYNC_URL hard-fails
+    // runAnalyze(), so this is a genuine ready/not-ready signal.
     if (request.method === "GET" && url.pathname === "/ready") {
       return json({
-        ok: Boolean(env.AUDIO_BEAT_SYNC_VPC),
+        ok: Boolean(beatBase(env)),
         module: MANIFEST.name,
-        bindings: { audio_beat_sync_vpc: Boolean(env.AUDIO_BEAT_SYNC_VPC) },
+        bindings: { audio_beat_sync_url: Boolean(beatBase(env)) },
       });
     }
 

@@ -27,7 +27,7 @@ export const FRAMES_MIN_COUNT = 1;
 export const FRAMES_MAX_COUNT = 25;
 export const FRAMES_DEFAULT_COUNT = 9;
 /** The source clip is presigned for the container to GET, and the sheet for it to PUT. Both are
- *  capability credentials handed to a service on our own private VPC, so they are short-lived: long
+ *  capability credentials handed to a service on our own private network, so they are short-lived: long
  *  enough to download a 256 MB clip and upload a jpeg, not long enough to be worth capturing. */
 export const FRAMES_PRESIGN_TTL_SECONDS = 900;
 
@@ -154,16 +154,11 @@ export function framesFailure(state: FramesFailureState): FramesFailure {
 
 interface FetcherLike { fetch(input: string, init?: RequestInit): Promise<Response>; }
 
-function asFetcher(binding: unknown): FetcherLike | null {
-  if (binding && typeof (binding as FetcherLike).fetch === "function") return binding as FetcherLike;
-  return null;
-}
-
 /** Ask the container for a contact sheet. Retries only the transient gateway statuses, the way
  *  callVideoFinishInspect does, and maps every other outcome onto its OWN state rather than folding
  *  them into one null. */
 export async function requestFramesFromContainer(
-  vpc: FetcherLike,
+  container: FetcherLike,
   payload: unknown,
   opts: { retries?: number; backoffMs?: number; token?: string } = {},
 ): Promise<{ ok: true; body: Record<string, unknown> } | FramesFailure> {
@@ -179,7 +174,7 @@ export async function requestFramesFromContainer(
   let resp: Response | null = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      resp = await vpc.fetch("http://video-finish/frames", init);
+      resp = await container.fetch("http://video-finish/frames", init);
     } catch {
       resp = null;
     }
@@ -239,7 +234,7 @@ export async function buildFramesSheet(
 
   const base = typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.replace(/\/$/, "") : "";
   if (!base) return framesFailure("tier-unavailable");
-  const vpc: FetcherLike = {
+  const container: FetcherLike = {
     fetch: (url, init) => {
       const path = new URL(String(url), "http://video-finish").pathname;
       return fetch(base + path, init);
@@ -257,7 +252,7 @@ export async function buildFramesSheet(
 
   const token = await mediaFinishToken(env.MEDIA_FINISH_TOKEN);
   const r = await requestFramesFromContainer(
-    vpc,
+    container,
     { videoUrl, outputUrl, outputKey: key, count, at, cols: grid.cols, rows: grid.rows, contentType: FRAMES_CONTENT_TYPE },
     { ...opts, token: token || undefined },
   );

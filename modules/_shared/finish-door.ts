@@ -1,64 +1,33 @@
-// The ON-IRON FINISH DOOR route: reach an always-on GPU door over a Workers VPC service binding
-// instead of renting a RunPod serverless worker for the same job (cf#480), across a POOL of such
-// doors (cf#507).
+// The ON-IRON FINISH DOOR route: reach always-on GPU doors over public HTTPS origins from
+// operator config, instead of renting a RunPod serverless worker for the same job (cf#480),
+// across a POOL of such doors (cf#507).
 //
-// ------------------------------------------------------------------------------------------------
-// WHY THIS IS NOT A COPY OF vivijure-local's `src/modules/door-pool.ts`.
+// Origins are CONFIG, never code. FINISH_UPSCALE_DOORS / SPEECH_UPSCALE_DOORS /
+// FINISH_BLENDER_DOORS are comma-separated HTTPS lists. An empty list is the RunPod path,
+// the same as an unbound VPC binding was. There is no baked fallback origin.
 //
-// The obvious reading of cf#480 is "local already solved door selection, import it". Measured
-// against both trees, the two panels' doors are not the same KIND of object, and the parts that
-// look shared mostly are not:
+// Token resolution stays in the module (Secrets Store). This file only pairs already-resolved
+// plaintext with the parsed origin list. One token applies to every door when the operator
+// chooses that; per-name tokens override when supplied.
 //
-//   * local's door is a URL STRING from an env var (`LOCAL_FINISH_UPSCALE_URL`), so 39 of
-//     door-pool.ts's 125 lines are `normalizeDoorBaseUrl` / `normalizeDoorBaseUrls` -- a
-//     comma-list parser, a protocol check, a de-duplicator and a dropped-entry counter.
-//   * cf's door is a `[[vpc_services]]` BINDING. There is no URL to parse, no list to split, no
-//     entry that can be invalid, and nothing to de-duplicate: a binding is bound or it is not,
-//     decided at deploy time by wrangler. Copying that parser here would be a duplicate of code
-//     this repo can never call.
-//
-// What genuinely IS shared is `orderDoors` (health-probe, drop the dead, rotate the survivors) --
-// and sharing it needs it generalised over an opaque door handle, because local probes with global
-// `fetch(url + "/health")` while cf must probe with `binding.fetch(...)`. That generalisation is a
-// change to vivijure-local's shipped code and a new module in vivijure-core, which cf consumes as a
-// PUBLISHED npm dependency (`"@skyphusion-labs/vivijure-core": "^1.10.0"`) -- so it cannot be
-// imported here until core cuts a release and this repo bumps. It is filed, not forgotten.
-//
-// cf#507 DELIBERATELY DOES NOT PRE-EMPT IT. This file carries a pool and a rotation; it carries NO
-// HEALTH PROBING. Selection here is over doors already known bound and already known to hold a
-// readable bearer -- both facts are decided by wrangler and the Secrets Store at deploy time, with
-// no network call. `orderDoors` (probe /health, drop the dead) remains the filed core work. Two
-// known-healthy doors do not need it, and building a probe here would be the duplicate this
-// comment block exists to prevent.
-//
-// (Correction to the original cf#480 dispatch premise, kept because a wrong premise outlives the
-// work built on it: the poll AFFINITY is not in local's `door-pool.ts`. It is in
-// `src/modules/chain/handlers.ts`, which puts `doorUrl` in the speech poll token. door-pool.ts has
-// no affinity of any kind.)
-// ------------------------------------------------------------------------------------------------
+// WHAT IS SHARED WITH local's door-pool.ts: the comma-list parse + HTTPS check. What is not:
+// this file also names doors for poll affinity (job state is per-process RAM) and keeps
+// resolving in-flight `vpc` / `vpc-<host>` labels. New tokens mint as `door` / `door-<host>`.
+// Health probing (`orderDoors`) remains the filed core work.
 //
 // WHY BOUND-NESS AND NEVER FAILOVER. Same rule as the RunPod plane proxy (cp#321, see
-// modules/_shared/runpod-route.ts): the branch is whether a binding is BOUND, never whether the
-// other path FAILED. A door-to-RunPod failover would silently re-rent the GPU this change exists to
-// stop renting, at exactly the moment nobody is watching -- so the cost saving would decay to zero
-// with every signal still green. Unbound is the untouched RunPod path, byte for byte.
+// modules/_shared/runpod-route.ts): the branch is whether a door origin is CONFIGURED, never
+// whether the other path FAILED. A door-to-RunPod failover would silently re-rent the GPU
+// this change exists to stop renting. Unconfigured is the untouched RunPod path.
 //
-// cf#507 SHARPENS THAT RULE RATHER THAN RELAXING IT. Door-to-DOOR selection is NOT failover and is
-// explicitly allowed. Door-to-RUNPOD is still forbidden, and the pool makes it easier to get wrong:
-// the door branch is taken when the pool is NON-EMPTY (any binding bound), NOT when some door is
-// usable. A pool of bound doors that all lack a readable bearer degrades with a named reason, the
-// same as cf#480's single tokenless door -- it must never fall through to RunPod, because "every
-// door's secret is still propagating" is precisely the transient that would silently restore the
-// rented dependency.
+// Door-to-DOOR selection is NOT failover and is allowed. A pool of configured doors that all
+// lack a readable bearer degrades with a named reason; it must never fall through to RunPod.
 //
-// WHY AFFINITY IS APPLICATION-LEVEL AND MANDATORY (cf#507). Job state on a door is PER-PROCESS RAM
-// (`JobRegistry._jobs` in the satellites' `runpod_http_serve.py`), and a poll for an id a process
-// does not hold returns `404 {"status":404,...}`, which `runpodJobGone` / `classifyGoneState` read
-// as TERMINAL "job gone". A poll landing on the WRONG DOOR therefore does not error: it reports a
-// live job as finished-and-vanished while the other box is still burning GPU on it, and past the
-// grace window the shot FAILS. Transport affinity cannot fix this -- the poll is a separate Worker
-// invocation with no cookie jar and no stable source IP -- so the door's NAME rides in the poll
-// token and the poll resolves BY NAME. The poll never re-picks.
+// WHY AFFINITY IS APPLICATION-LEVEL AND MANDATORY (cf#507). Job state on a door is PER-PROCESS
+// RAM (`JobRegistry._jobs` in the satellites' `runpod_http_serve.py`), and a poll for an id a
+// process does not hold returns `404 {"status":404,...}`, which `runpodJobGone` /
+// `classifyGoneState` read as TERMINAL "job gone". The door's NAME rides in the poll token
+// and the poll resolves BY NAME. The poll never re-picks.
 //
 // WIRE CONTRACT. The door is the same image as the RunPod endpoint behind a serve overlay
 // (`runpod_http_serve.py` in the satellite repos), so it speaks the RunPod job API exactly:
@@ -67,63 +36,36 @@
 //                                            404 {"status":404,...} once the job is unknown
 //   POST /cancel/<id>                     -> 200 {"ok":true}              (bearer)
 //   GET  /health                          -> 200 {"ok":true,...}          (NO auth, by design)
-// Every RunPod-envelope helper the modules already use (runpodJobGone, classifyGoneState,
-// terminalErrorInOutput, parseBackendOutput) therefore applies unchanged on this route.
 
-/** Public per-box HTTPS origin. Poll MUST use this, never the Traefik SUBMIT hostname:
- *  job state is per-process RAM, and Traefik RR on a poll reports a live job as gone. */
-export const DOOR_ORIGIN = {
-  "finish-upscale": {
-    fatmike: "https://finish-upscale-fatmike.skyphusion.org",
-    propagandhi: "https://finish-upscale-propagandhi.skyphusion.org",
-  },
-  "speech-upscale": {
-    fatmike: "https://speech-upscale-fatmike.skyphusion.org",
-    propagandhi: "https://speech-upscale-propagandhi.skyphusion.org",
-  },
-  "finish-blender": {
-    descendents: "https://finish-blender-descendents.skyphusion.org",
-    badbrains: "https://finish-blender-badbrains.skyphusion.org",
-    jello: "https://finish-blender-jello.skyphusion.org",
-  },
-  "video-finish": {
-    descendents: "https://video-finish-descendents.skyphusion.org",
-    badbrains: "https://video-finish-badbrains.skyphusion.org",
-    jello: "https://video-finish-jello.skyphusion.org",
-  },
-} as const;
-
-/** Traefik SUBMIT name. Sync /finish /frames /inspect. Never for async poll. */
-export const VIDEO_FINISH_SUBMIT = "https://video-finish.skyphusion.org";
-
-/** Which transport serves this job. Exactly one of the two, decided by bound-ness at submit. */
+/** Which transport serves this job. Exactly one of the two, decided by configured-ness at submit. */
 export interface DoorRoute {
-  /** Empty when unbound (-> the caller takes the RunPod path). */
+  /** Empty when unconfigured (-> the caller takes the RunPod path). */
   baseUrl: string;
   /** Stable route name recorded in the poll token so a poll cannot cross routes OR DOORS. Empty
-   *  when unbound, which is the same value an old RunPod-minted token carries -- so a token
+   *  when unconfigured, which is the same value an old RunPod-minted token carries -- so a token
    *  predating this change and a token minted on the RunPod route are the same object,
    *  deliberately. */
   name: string;
-  /** The door's bearer, resolved once. Empty when unbound OR when the origin is set and the
+  /** The door's bearer, resolved once. Empty when unconfigured OR when the origin is set and the
    *  token is not visible yet -- the caller must distinguish those two (see doorProblem). */
   token: string;
-  /** True for the ONE door that a bare `DOOR_ROUTE_NAME` token resolves to. See resolveDoor. */
+  /** True for the ONE door that a bare `DOOR_ROUTE_NAME` (and in-flight `vpc`) token resolves to. */
   legacy: boolean;
 }
 
-/** The namespace every door route label lives in. A label is either exactly this (the cf#480
- *  single-door token, still in flight) or this plus `-<host>` (cf#507 per-door). Kept as a
- *  constant because the token OUTLIVES the request that minted it: a route label must not change
- *  when a binding is renamed. */
-export const DOOR_ROUTE_PREFIX = "vpc";
+/** New mint namespace. A label is either exactly this (first/legacy door) or this plus `-<host>`. */
+export const DOOR_ROUTE_PREFIX = "door";
 
-/** The bare cf#480 route label. LOAD-BEARING BACK-COMPAT: poll tokens carrying this were minted
- *  before the pool existed and are in flight right now, so it must keep resolving -- to the door
- *  that traffic actually reached, which is the door the deploy marks `legacy`. */
+/** In-flight mint namespace from before the VPC purge. Still RESOLVED. Never minted. */
+export const LEGACY_DOOR_ROUTE_PREFIX = "vpc";
+
+/** Bare label minted for the first door on a new submit. */
 export const DOOR_ROUTE_NAME = DOOR_ROUTE_PREFIX;
 
-/** The per-door route label for a named box, e.g. `doorName("fatmike") === "vpc-fatmike"`. */
+/** Bare label still riding on in-flight poll tokens minted before the prefix change. */
+export const LEGACY_DOOR_ROUTE_NAME = LEGACY_DOOR_ROUTE_PREFIX;
+
+/** The per-door route label for a named box, e.g. `doorName("fatmike") === "door-fatmike"`. */
 export function doorName(host: string): string {
   return DOOR_ROUTE_PREFIX + "-" + host;
 }
@@ -137,6 +79,11 @@ export interface DoorCandidate {
   /** Mark exactly ONE candidate per module: the door a bare `DOOR_ROUTE_NAME` token belongs to. */
   legacy?: boolean;
 }
+
+/** Tokens already resolved by the module. A single string applies to every door (operator choice).
+ *  The object form uses `legacy` on the first URL and `byName[hostnameLabel]` on later ones,
+ *  falling back to `legacy` when a later door has no per-name token. */
+export type DoorTokens = { legacy: string; byName?: Record<string, string> } | string;
 
 /** The self-host installer seeds an operator-supplied secret as this MARKED placeholder so the
  *  module deploy resolves, and the operator replaces it afterwards (deploy/vivijure_deploy.py).
@@ -152,15 +99,74 @@ function usableToken(token: string): string {
   return token.trim() === OPERATOR_PLACEHOLDER ? "" : token;
 }
 
+/** Last hyphen-separated label of the hostname: finish-upscale-fatmike.example -> fatmike. */
+export function hostnameLabel(origin: string): string {
+  let host: string;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return "";
+  }
+  const first = host.split(".")[0] ?? "";
+  const parts = first.split("-").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+/** Parse a comma-separated list of HTTPS origins. Non-HTTPS and unparseable entries are dropped. */
+export function parseDoorOrigins(raw: string | undefined | null): string[] {
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const s = part.trim();
+    if (!s) continue;
+    try {
+      const u = new URL(s);
+      if (u.protocol !== "https:") continue;
+      out.push(u.origin);
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+function tokenFor(tokens: DoorTokens, index: number, label: string): string {
+  if (typeof tokens === "string") return tokens;
+  if (index === 0) return tokens.legacy;
+  return tokens.byName?.[label] ?? tokens.legacy;
+}
+
+/** Build DoorCandidate[] from an env var of comma-separated HTTPS origins plus already-resolved
+ *  tokens. First URL is the legacy door (bare DOOR_ROUTE_NAME). Later URLs are named
+ *  door-<hostnameLabel>. Empty / missing var -> empty list (RunPod path). */
+export function doorsFromEnv(
+  env: Record<string, unknown>,
+  varName: string,
+  tokens: DoorTokens,
+): DoorCandidate[] {
+  const raw = typeof env[varName] === "string" ? (env[varName] as string) : "";
+  const origins = parseDoorOrigins(raw);
+  return origins.map((baseUrl, i) => {
+    const label = hostnameLabel(baseUrl);
+    return {
+      name: i === 0 ? DOOR_ROUTE_NAME : doorName(label),
+      baseUrl,
+      token: tokenFor(tokens, i, label),
+      legacy: i === 0,
+    };
+  });
+}
+
 /** Classify a door route HONESTLY, in the same spirit as cf#114's credential classification.
  *
- *  A bound binding with no readable token is NOT "no door": the binding is a plain wrangler block
- *  written at deploy while the token is a Secrets Store value written separately, so the two arrive
- *  by different routes at different times. Saying "not configured" about that sends an operator
- *  chasing a correctly-declared binding. Returns null when the route is usable, and null when the
- *  route is simply unbound (which is not a problem at all -- it is the RunPod path). */
+ *  A configured origin with no readable token is NOT "no door": the origin is a wrangler var
+ *  written at deploy while the token is a Secrets Store value written separately, so the two
+ *  arrive by different routes at different times. Saying "not configured" about that sends an
+ *  operator chasing a correctly-declared origin. Returns null when the route is usable, and
+ *  null when the route is simply unconfigured (which is not a problem at all -- it is the
+ *  RunPod path). */
 export function doorProblem(route: DoorRoute): string | null {
-  if (!route.baseUrl) return null;          // unbound is the RunPod path, not a fault
+  if (!route.baseUrl) return null;          // unconfigured is the RunPod path, not a fault
   if (!route.token) return "door-token-not-yet-visible";
   return null;
 }
@@ -174,18 +180,18 @@ export function doorBound(route: DoorRoute): boolean {
  *  `token` is already-resolved plaintext (the module owns Secrets Store resolution; this file
  *  never touches a secret binding, so it stays testable with plain values and cannot leak one by
  *  accident). The single door is by definition the legacy door: its label is the bare
- *  `DOOR_ROUTE_NAME`, which is exactly what an in-flight token carries. */
+ *  `DOOR_ROUTE_NAME`, which is exactly what a newly minted one-door token carries. */
 export function doorRoute(baseUrl: string | undefined | null, token: string): DoorRoute {
   if (!baseUrl) return { baseUrl: "", name: "", token: "", legacy: false };
   return { baseUrl, name: DOOR_ROUTE_NAME, token: usableToken(token) || "", legacy: true };
 }
 
-/** Build the pool of BOUND doors, in declaration order.
+/** Build the pool of CONFIGURED doors, in declaration order.
  *
- *  Bound-ness ONLY -- a door with no readable bearer is still in the pool, because dropping it here
- *  would let a module whose secrets are still propagating read as having no door at all and fall
- *  through to RunPod. That is the one transition this design forbids. `usableDoors` is the
- *  narrower set, and the caller must use the two for different decisions:
+ *  Configured-ness ONLY -- a door with no readable bearer is still in the pool, because dropping
+ *  it here would let a module whose secrets are still propagating read as having no door at all
+ *  and fall through to RunPod. That is the one transition this design forbids. `usableDoors` is
+ *  the narrower set, and the caller must use the two for different decisions:
  *    pool non-empty  -> take the door branch (never RunPod)
  *    usable non-empty-> which door serves this job */
 export function doorPool(candidates: DoorCandidate[]): DoorRoute[] {
@@ -211,18 +217,40 @@ export function pickDoor(pool: DoorRoute[], n: number): DoorRoute | null {
   return pool[i];
 }
 
+function hostFromRouteName(routeName: string): string {
+  if (routeName.startsWith(DOOR_ROUTE_PREFIX + "-")) {
+    return routeName.slice(DOOR_ROUTE_PREFIX.length + 1);
+  }
+  if (routeName.startsWith(LEGACY_DOOR_ROUTE_PREFIX + "-")) {
+    return routeName.slice(LEGACY_DOOR_ROUTE_PREFIX.length + 1);
+  }
+  return "";
+}
+
+function doorMatchesHost(d: DoorRoute, host: string): boolean {
+  if (!host) return false;
+  if (d.name === doorName(host)) return true;
+  if (d.name.endsWith("-" + host)) return true;
+  return hostnameLabel(d.baseUrl) === host;
+}
+
 /** Resolve the door a poll token names. A LOOKUP, never a pick: polling any door but the one that
  *  minted the job reports a live job as gone (see the header). Returns null when this deploy does
- *  not bind the named door, and the caller must refuse rather than guess a sibling. */
+ *  not configure the named door, and the caller must refuse rather than guess a sibling.
+ *
+ *  New tokens are `door` / `door-<host>`. In-flight tokens may still say `vpc` / `vpc-<host>`;
+ *  those resolve to the same door and must keep working until they drain. */
 export function resolveDoor(pool: DoorRoute[], routeName: string | undefined): DoorRoute | null {
-  if (!tokenTookDoor(routeName)) return null;
+  if (!tokenTookDoor(routeName) || !routeName) return null;
   const exact = pool.find((d) => d.name === routeName);
   if (exact) return exact;
-  // BACK-COMPAT, load-bearing: a bare cf#480 label names no box because only one existed. It can
-  // only have been served by the door this deploy marks legacy. If nothing is marked, we do NOT
-  // guess -- a deploy binding only new doors cannot honestly claim an old job belongs to one.
-  if (routeName === DOOR_ROUTE_NAME) return pool.find((d) => d.legacy) ?? null;
-  return null;
+  // Bare labels name the first/legacy door. `vpc` is the in-flight mint; `door` is the new one.
+  if (routeName === DOOR_ROUTE_NAME || routeName === LEGACY_DOOR_ROUTE_NAME) {
+    return pool.find((d) => d.legacy) ?? null;
+  }
+  const host = hostFromRouteName(routeName);
+  if (!host) return null;
+  return pool.find((d) => doorMatchesHost(d, host)) ?? null;
 }
 
 /** Bearer headers for the door. Separate from `runpodHeaders` on purpose: this is a different
@@ -235,7 +263,7 @@ export function doorHeaders(route: DoorRoute, module: string): Record<string, st
   };
 }
 
-/** Absolute URL for a door path on THIS box. Never the Traefik SUBMIT hostname. */
+/** Absolute URL for a door path on THIS box. Never a Traefik SUBMIT hostname. */
 export function doorUrl(route: DoorRoute, path: string): string {
   return route.baseUrl.replace(/\/$/, "") + path;
 }
@@ -244,10 +272,14 @@ export function doorUrl(route: DoorRoute, path: string): string {
  *  predates cf#480 or was minted on RunPod -- identical cases, both RunPod.
  *
  *  Matched as the bare label OR the prefix followed by its `-` separator, never as a loose
- *  `startsWith`: `vpcfoo` shares the prefix and is not a door, and a prefix/suffix matcher that
- *  quietly accepts a near-miss is a matcher that will one day route a poll to a door that does not
- *  hold the job. */
+ *  `startsWith`: `doorfoo` / `vpcfoo` share a prefix and are not a door. New mints use `door`;
+ *  in-flight `vpc` / `vpc-<host>` still count so a poll mid-cutover does not fail. */
 export function tokenTookDoor(routeName: string | undefined): boolean {
   if (!routeName) return false;
-  return routeName === DOOR_ROUTE_NAME || routeName.startsWith(DOOR_ROUTE_PREFIX + "-");
+  return (
+    routeName === DOOR_ROUTE_NAME ||
+    routeName === LEGACY_DOOR_ROUTE_NAME ||
+    routeName.startsWith(DOOR_ROUTE_PREFIX + "-") ||
+    routeName.startsWith(LEGACY_DOOR_ROUTE_PREFIX + "-")
+  );
 }

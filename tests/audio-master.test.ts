@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   coerceConfig, defaultConfig, buildMasterBody, parseContainerResult, masterOutputFromResult,
   passthroughOutput,
@@ -147,7 +147,7 @@ describe("audio-master: passthroughOutput (degrade observability #77)", () => {
     expect(o.degraded).toBe("container-failed: HTTP 500");
   });
   it("covers every degrade reason the worker emits", () => {
-    for (const reason of ["no-vpc-binding", "container-unreachable", "container-failed", "container-bad-response", "no-output-key"]) {
+    for (const reason of ["no-audio-master-url", "container-unreachable", "container-failed", "container-bad-response", "no-output-key"]) {
       const o = passthroughOutput(SAMPLE_INPUT, reason);
       expect(o.applied[0]).toBe(`passthrough:${reason}`);
       expect(o.degraded).toBeTruthy();
@@ -158,22 +158,26 @@ describe("audio-master: passthroughOutput (degrade observability #77)", () => {
 // cf#396: the wall-clock attribution wraps the VPC hop, so it is only reachable through the worker.
 // These are the first tests in this file that drive worker.fetch; the helper tests above sit inside
 // the wrapper and pass whether or not the attribution exists.
-describe("audio-master: VPC wall-clock attribution (cf#396)", () => {
+describe("audio-master: wall-clock attribution (cf#396)", () => {
+  let restore: (() => void) | undefined;
+  afterEach(() => { restore?.(); restore = undefined; });
   const vpcEnv = (over: { body?: unknown; status?: number; throws?: boolean } = {}) => {
     const calls: string[] = [];
+    const prev = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(u);
+      if (over.throws) throw new TypeError("Invalid URL");
+      return new Response(
+        JSON.stringify(over.body ?? { ok: true, key: "renders/neon/audio/bed_mastered.wav", bytes: 12, lufs: -14 }),
+        { status: over.status ?? 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    restore = () => { globalThis.fetch = prev; };
     return {
       calls,
       env: {
-        AUDIO_MASTER_VPC: {
-          async fetch(input: Request | string) {
-            calls.push(typeof input === "string" ? input : input.url);
-            if (over.throws) throw new TypeError("Invalid URL");
-            return new Response(
-              JSON.stringify(over.body ?? { ok: true, key: "renders/neon/audio/bed_mastered.wav", bytes: 12, lufs: -14 }),
-              { status: over.status ?? 200, headers: { "content-type": "application/json" } },
-            );
-          },
-        },
+        AUDIO_MASTER_URL: "https://audio-master.test",
       } as unknown as Parameters<typeof worker.fetch>[1],
     };
   };

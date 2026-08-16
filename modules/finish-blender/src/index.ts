@@ -37,7 +37,7 @@ import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedP
 // destroyed the film.
 import { softDegradeInFailedEnvelope, softDegradeInCompletedOutput, BACKEND_SOFT_DEGRADE } from "../../_shared/finish-soft-degrade";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
-import { doorPool, usableDoors, pickDoor, resolveDoor, doorName, doorProblem, doorHeaders, doorUrl, tokenTookDoor, DOOR_ROUTE_NAME, DOOR_ORIGIN, type DoorRoute } from "../../_shared/finish-door";
+import { doorPool, usableDoors, pickDoor, resolveDoor, doorProblem, doorHeaders, doorUrl, tokenTookDoor, doorsFromEnv, type DoorRoute } from "../../_shared/finish-door";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -49,8 +49,10 @@ interface Env {
   RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
   RUNPOD_ENDPOINT_ID: SecretsStoreSecret;
   RUNPOD_WORKERS_MAX?: string;
-  /** cf#489: the door bearer (LOCAL_FINISH_TOKEN on the container). Same value on all three boxes. */
+  /** cf#489: the door bearer (LOCAL_FINISH_TOKEN on the container). Same value on all boxes when only one token is set. */
   BLENDER_DOOR_TOKEN?: SecretsStoreSecret | string;
+  /** Comma-separated HTTPS origins. Empty = RunPod path. First URL is the legacy door. */
+  FINISH_BLENDER_DOORS?: string;
   /** cf#279 job log. OPTIONAL: a module deployed without it still works, and its absence
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
@@ -157,7 +159,7 @@ function runpodTransport(route: RunpodRoute, endpointId: string): Transport {
 function doorTransport(route: DoorRoute): Transport {
   return {
     door: true,
-    name: DOOR_ROUTE_NAME,
+    name: route.name,
     call: (path, init) => fetch(doorUrl(route, path), {
       ...init,
       headers: { ...doorHeaders(route, MANIFEST.name), ...(init?.headers as Record<string, string> | undefined) },
@@ -167,16 +169,10 @@ function doorTransport(route: DoorRoute): Transport {
 
 let blenderCursor = 0;
 
-/** Three finishing boxes, public per-box origins. Same token on all three. */
+/** Origins from FINISH_BLENDER_DOORS. One token applies to every configured door. */
 async function doorsFor(env: Env): Promise<DoorRoute[]> {
   const token = await secretValue(env.BLENDER_DOOR_TOKEN);
-  if (!token) return [];
-  const o = DOOR_ORIGIN["finish-blender"];
-  return doorPool([
-    { name: DOOR_ROUTE_NAME, baseUrl: o.descendents, token, legacy: true },
-    { name: doorName("badbrains"), baseUrl: o.badbrains, token },
-    { name: doorName("jello"), baseUrl: o.jello, token },
-  ]);
+  return doorPool(doorsFromEnv({ FINISH_BLENDER_DOORS: env.FINISH_BLENDER_DOORS }, "FINISH_BLENDER_DOORS", token));
 }
 
 /** cf#114: classify an absent RunPod credential HONESTLY.

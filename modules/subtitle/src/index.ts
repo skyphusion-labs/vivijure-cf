@@ -1,6 +1,6 @@
 // subtitle: a film.finish module worker (vivijure-module/2). Burns time-synced dialogue CAPTIONS onto
 // the assembled+muxed film (and/or emits a soft .srt sidecar), via the always-on video-finish CPU
-// container's video-finish route over Workers VPC (VIDEO_FINISH_VPC).
+// container's video-finish route over VIDEO_FINISH_URL (public HTTPS origin).
 //
 // ASYNC job+poll (#602): an SRT burn is a full libx264 re-encode; on a LONG film it can outlast a
 // Worker request budget, so this module submits to the container's async route and returns
@@ -38,10 +38,8 @@ import {
   timedVpcFetch, logVpcAsyncTerminal, withVpcElapsedApplied,
 } from "../../_shared/vpc-call-log";
 import { mediaFinishHeaders } from "../../_shared/media-finish-auth";
-import { VIDEO_FINISH_SUBMIT } from "../../_shared/finish-door";
-
 function vfBase(env: Env): string {
-  return (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.replace(/\/$/, "")) || VIDEO_FINISH_SUBMIT;
+  return typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.trim().replace(/\/$/, "") : "";
 }
 function vfCall(env: Env) {
   return (url: RequestInfo, init?: RequestInit) => {
@@ -108,7 +106,7 @@ async function submitAsync(
     {
       module: MANIFEST.name,
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "video-finish",
       url: `http://video-finish/async/${ROUTE}`,
       mode: "async_submit",
       filmKey: corr.filmKey,
@@ -137,7 +135,7 @@ async function invokeSync(
     {
       module: MANIFEST.name,
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "video-finish",
       url: "http://video-finish/subtitle",
       mode: "sync",
       filmKey: corr.filmKey ?? input.film_key,
@@ -221,7 +219,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
     {
       module: MANIFEST.name,
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "video-finish",
       url: statusUrl,
       mode: "async_poll",
       containerJobId: st.jobId,
@@ -244,7 +242,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
     logVpcAsyncTerminal({
       module: MANIFEST.name,
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "video-finish",
       route: `/async/status/${st.jobId}`,
       outcome: "not_found",
       submittedAtMs: st.submittedAt,
@@ -263,7 +261,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
       logVpcAsyncTerminal({
         module: MANIFEST.name,
         service: "video-finish",
-        binding: "VIDEO_FINISH_VPC",
+        binding: "video-finish",
         route: `/async/status/${st.jobId}`,
         outcome: "failed",
         submittedAtMs: st.submittedAt,
@@ -277,7 +275,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
     const jobMs = logVpcAsyncTerminal({
       module: MANIFEST.name,
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "video-finish",
       route: `/async/status/${st.jobId}`,
       outcome: "completed",
       submittedAtMs: st.submittedAt,
@@ -293,7 +291,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
     logVpcAsyncTerminal({
       module: MANIFEST.name,
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "video-finish",
       route: `/async/status/${st.jobId}`,
       outcome: "failed",
       submittedAtMs: st.submittedAt,
@@ -315,12 +313,9 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
-    // GET /ready (cf#295): binding-visibility probe, the same discipline as credential readiness
-    // (docs/module-api.md "Credential readiness") applied to a service binding instead of a secret.
-    // Booleans only, in a `bindings` field kept separate from `credentials`: VIDEO_FINISH_VPC is a
-    // Workers binding, never a value that could leak. Its absence does not fail the render (invoke()
-    // passthroughs to "no-vpc-binding", degraded) -- exactly the speech-upscale precedent (opt-in,
-    // off by default, still gated on `ok` so an operator can tell whether the feature CAN ever fire).
+    // GET /ready (cf#295): URL-visibility probe. Booleans only. VIDEO_FINISH_URL unset
+    // passthroughs at invoke (passthrough:no-video-finish-url), still gated on `ok` so an
+    // operator can tell whether the feature CAN ever fire.
     if (request.method === "GET" && url.pathname === "/ready") {
       return json({
         ok: Boolean(vfBase(env)),

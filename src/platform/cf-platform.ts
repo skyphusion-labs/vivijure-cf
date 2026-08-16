@@ -21,12 +21,10 @@ function pickOrchestratorVars(env: Env): Record<string, string | undefined> {
   return vars;
 }
 
-function pickHostBindings(env: Env): Platform["hostBindings"] {
-  const out: NonNullable<Platform["hostBindings"]> = {};
-  if (env.IMAGE_PREP_VPC) out.IMAGE_PREP_VPC = env.IMAGE_PREP_VPC;
-  if (env.AUDIO_BEAT_SYNC_VPC) out.AUDIO_BEAT_SYNC_VPC = env.AUDIO_BEAT_SYNC_VPC;
-  if (env.AUDIO_MIX_VPC) out.AUDIO_MIX_VPC = env.AUDIO_MIX_VPC;
-  return out;
+function pickHostBindings(_env: Env): Platform["hostBindings"] {
+  // VPC fetchers are gone. Media URLs travel through vars (IMAGE_PREP_URL / AUDIO_*_URL /
+  // VIDEO_FINISH_URL). Core still accepts hostBindings; nothing is injected here.
+  return {};
 }
 
 function cfRateLimiterFromEnv(env: Env): RateLimiter | undefined {
