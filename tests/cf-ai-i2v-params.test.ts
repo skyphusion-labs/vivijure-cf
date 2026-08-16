@@ -92,16 +92,17 @@ describe("cf-grok-video params", () => {
 });
 
 describe("cf-flux-3-video params", () => {
-  it("buildParams uses mode=i2v with keyframes[], never image", () => {
+  it("buildParams uses mode=i2v with keyframes as a URL string, never image", () => {
     const p = flux.buildParams(shot, flux.normalizeConfig({ resolution: "fhd" }));
     expect(p).toMatchObject({
       mode: "i2v",
       prompt: "slow camera push-in",
-      keyframes: ["https://r2.example/k.png"],
+      keyframes: "https://r2.example/k.png",
       resolution: "fhd",
       generate_audio: false,
     });
     expect(p.image).toBeUndefined();
+    expect(Array.isArray(p.keyframes)).toBe(false);
     expect(p.duration).toBe(5);
   });
   it("clampDuration prefers 5/10/15/20 steps", () => {
