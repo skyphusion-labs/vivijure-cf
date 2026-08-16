@@ -125,6 +125,7 @@ export async function retryFailedRender(
       keyframe_config: mapped.keyframe_config,
       motion_config: mapped.motion_config,
       finish_config: mapped.finish_config,
+      finish_select: mapped.finish_select,
       speech_config: mapped.speech_config,
       film_finish_config: mapped.film_finish_config,
       master_config: mapped.master_config,

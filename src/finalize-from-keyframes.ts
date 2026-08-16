@@ -221,6 +221,7 @@ export async function animateFromPreview(
     // here in the same change and caught by the ledger cell rather than by review.
     motionConfig: parseModuleRenderOverrides(args.parent.render_overrides ?? undefined)
       .config?.[(motionBackend ?? "").trim()],
+    finishSelect: mapped.finish_select,
   }, {
     door: `panel ${args.deriveMode}`,
     hasMotionLeg: true,

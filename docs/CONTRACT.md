@@ -982,10 +982,11 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `keyframe_backend` | string | no | `ui.order`-first keyframe module | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. |
 | `keyframe_config` | object | no | -- | **Flat** keyframe module knobs (cf#390 shape A). |
 | `motion_config` | object | no | -- | **Flat** motion module knobs (shape A); judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
-| `finish_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-finish-module config (shape B; per-shot `finish` chain). **Omitting a `*_config` does NOT skip the chain** (cf#386): every serving module for that hook still runs, clamped to its `config_schema` defaults. To no-op a step, set the module's own skip/disable knob (e.g. `finish-rife` with `interpolate: false` yields `noop:interpolate-off`). |
-| `speech_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-module config for the `speech` chain (shape B; per-shot dialogue-audio cleanup, post-dialogue, pre-finish). Same omit rule as `finish_config`. |
-| `film_finish_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-module config for the `film.finish` chain (shape B) on the assembled, muxed film. Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. Same omit rule as `finish_config` -- an absent map still runs subtitle / film-titles at their defaults (and bills for them). |
-| `master_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-module config for the `master` chain (shape B; audio bed mastering, pre-mux). Same omit rule as `finish_config`. Full map: [api-config-conventions.md](api-config-conventions.md). |
+| `finish_config` | `{ [moduleName]: object }` | no | **no finish** | **Nested** per-finish-module knobs (shape B; per-shot `finish` chain). **Omitting `finish_config` (and `finish_select`) skips the finish chain** (cf#386): an MCP/API caller who does not mention finish does not get default rife+upscale and is not billed for polish. Explicit empty (`finish_config: {}` or `finish_select: { mode: "named", modules: [] }`) is also no finish. Keys of a present `finish_config` (minus `finish-order`) become the named module list when `finish_select` is omitted. `{ mode: "default" }` is how a caller still asks for the participation set. A named module this studio does not serve is `400` at submit (cf#593), never a silent drop. |
+| `finish_select` | `{ mode: "default" }` or `{ mode: "named", modules: string[] }` | no | derived from `finish_config` / omit | Explicit finish participation for this door. Present and well-formed wins over `finish_config` keys. Malformed is dropped (same parser as the panel bag) and then the omit/`finish_config` rule above applies. |
+| `speech_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-module config for the `speech` chain (shape B; per-shot dialogue-audio cleanup, post-dialogue, pre-finish). Omit still runs serving speech modules at schema defaults (only `finish_config` flipped the omit rule). |
+| `film_finish_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-module config for the `film.finish` chain (shape B) on the assembled, muxed film. Subtitle mode (`burn`/`sidecar`/`both`) lives HERE, not in `finish_config`. An absent map still runs subtitle / film-titles at their defaults. |
+| `master_config` | `{ [moduleName]: object }` | no | schema defaults | **Nested** per-module config for the `master` chain (shape B; audio bed mastering, pre-mux). Omit still runs serving master modules at schema defaults. Full map: [api-config-conventions.md](api-config-conventions.md). |
 | `audio_key` | string | no | -- | Staged audio bed (score/narration) to mux after assemble; absent => silent film. |
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
@@ -1015,7 +1016,8 @@ message) for an omitted / non-serving `motion_backend` (#504); `400` (the untrai
 field when any config map (`keyframe_config` / `motion_config` top-level; `finish_config` /
 `speech_config` / `film_finish_config` / `master_config` top-level AND per-module entry) is present
 but not a plain JSON object (#696) -- a mis-encoded map can no longer clamp to defaults and
-silently degrade a film.
+silently degrade a film; `400 "finish module(s) requested but not serving: ..."` when a named
+finish module is not in the registry (cf#593), before any keyframe spend.
 
 **Response 201:** `{ ok: true, ...FilmSummary, download_url? }` (see 2.21). A renders-table row is
 inserted so the film shows in history.

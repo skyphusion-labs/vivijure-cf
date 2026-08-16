@@ -79,6 +79,11 @@ preflight / clamp treats it as unknown and the film runs at defaults.
 - Inner object = that module's knobs.
 - Door shape: top level AND every per-module entry must be plain objects (`deep: true`, #696).
 - Subtitle mode (`burn` / `sidecar` / `both`) lives in **`film_finish_config`**, not `finish_config`.
+- **Omit `finish_config` on `POST /api/render/film` means no per-shot finish** (cf#386). It is not
+  "run rife+upscale at schema defaults". Send `finish_select: { mode: "default" }` to ask for the
+  participation set, or name the modules (`finish_select` or the keys of `finish_config`). A named
+  module this studio does not serve is `400` (cf#593), not a silent drop. Speech / film.finish /
+  master omit rules are unchanged (those maps still run serving modules at defaults).
 
 **Wrong (silent):** a flat map `finish_config: { "scale": 2 }` -- there is no module named by those
 keys; the per-module lookup finds nothing and the chain runs on defaults.
