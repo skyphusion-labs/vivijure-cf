@@ -141,12 +141,12 @@ binding = "DB"
 database_name = "vivijure-studio"
 database_id = "${D1_DATABASE_ID}"
 
-# --- Off-GPU CPU work runs always-on on the fleet (issue #83), reached over public HTTPS
+# --- Off-GPU CPU work runs always-on on the fleet (issue #83), reached over public HTTPS / Traefik
 # --- origins (VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL above). The CF Container + its
 # --- Durable Object class were removed once the fleet path was validated end-to-end in prod
 # --- (clears #64, #82). Build contexts live in containers/<name>/ (containers/compose.yaml).
-# --- Hosted no longer uses Workers VPC. setup-media-vpc.py remains for the self-host installer
-# --- only; FLAG: that script still creates VPC services this studio no longer binds.
+# --- Hosted does not bind Workers VPC for media. Auth is MEDIA_FINISH_TOKEN (FINISH_DOOR_TOKEN).
+# --- setup-media-vpc.py writes the compose tunnel token only; it does not create media VPC services.
 
 # Migration history: v1 created the video-finish container DO class; v2 drops it (off CF Containers).
 [[migrations]]
