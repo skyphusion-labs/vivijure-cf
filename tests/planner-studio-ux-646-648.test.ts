@@ -46,7 +46,7 @@ describe("cf#646 render is three choices then spend", () => {
     expect(html).toMatch(/id="planner-finish-lipsync"/);
     expect(html).toMatch(/id="planner-finish-blender"/);
     expect(html).not.toMatch(/id="planner-finish-upscale"/);
-    expect(html).toMatch(/Lip-sync \(MuseTalk\)/);
+    expect(html).toMatch(/Replace mouths with MuseTalk/);
   });
 
   it("motion is the default job and stills is a peer choice", () => {

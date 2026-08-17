@@ -63,6 +63,8 @@ export interface MotionBackendInput {
   shot_id: string;
   keyframe_url: string;
   keyframe_key?: string;
+  last_keyframe_url?: string;
+  last_keyframe_key?: string;
   prompt: string;
   seconds: number;
 }

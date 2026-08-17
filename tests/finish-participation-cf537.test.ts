@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 const MANIFESTS = [
   { name: "finish-blender", m: BLENDER, expect: "opt_in" as const },
   { name: "finish-rife", m: RIFE, expect: "default" as const },
-  { name: "finish-lipsync", m: LIPSYNC, expect: "default" as const },
+  { name: "finish-lipsync", m: LIPSYNC, expect: "opt_in" as const },
   { name: "finish-upscale", m: UPSCALE, expect: "default" as const },
 ];
 
@@ -45,9 +45,9 @@ describe("cf#537: the SHIPPED finish manifests declare their participation", () 
     expect(declared.length, `${declared.length} of ${MANIFESTS.length} finish manifests declare participation`).toBe(4);
   });
 
-  it("finish-blender is the ONLY opt_in module, and the other three are unchanged", () => {
+  it("blender and lipsync are opt_in; rife and upscale stay default", () => {
     const optIn = MANIFESTS.filter((x) => x.m.participation === "opt_in").map((x) => x.name);
-    expect(optIn, `1 of ${MANIFESTS.length} is opt_in`).toEqual(["finish-blender"]);
+    expect(optIn, `2 of ${MANIFESTS.length} are opt_in`).toEqual(["finish-blender", "finish-lipsync"]);
     for (const { name, m, expect: want } of MANIFESTS) {
       expect(m.participation, `${name}`).toBe(want);
     }
@@ -99,10 +99,10 @@ const SERVING = [
 const names = (ms: { name: string }[]) => ms.map((m) => m.name);
 
 describe("cf#537: the shipped manifests produce the ruled behaviour end to end", () => {
-  it("THE TICKET: with no selection, the real four resolve to three -- blender excluded", () => {
+  it("THE TICKET: with no selection, default finish is rife+upscale (lipsync/blender opt_in)", () => {
     const got = selectForChain(SERVING, "finish", undefined);
-    expect(names(got.modules)).toEqual(["finish-rife", "finish-lipsync", "finish-upscale"]);
-    expect(got.modules.length, `3 of ${SERVING.length} shipped finish modules run by default`).toBe(3);
+    expect(names(got.modules)).toEqual(["finish-rife", "finish-upscale"]);
+    expect(got.modules.length, `2 of ${SERVING.length} shipped finish modules run by default`).toBe(2);
   });
 
   it("naming blender runs it -- opt_in is 'not unless asked', never 'not ever'", () => {

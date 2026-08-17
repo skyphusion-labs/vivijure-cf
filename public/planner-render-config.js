@@ -733,7 +733,7 @@
   function lipsyncOn() {
     if (!finishMod("finish-lipsync")) return false;
     const el = document.getElementById("planner-finish-lipsync");
-    return !el || !!el.checked;
+    return !!(el && el.checked);
   }
 
   function renderFinishPicks() {
@@ -760,9 +760,10 @@
     const hasLipsync = !!finishMod("finish-lipsync");
     const hasBlender = !!finishMod("finish-blender");
     if (!hasLipsync && !hasBlender) return undefined;
-    const wantLipsync = !hasLipsync || !lipsyncEl || lipsyncEl.checked;
+    const wantLipsync = hasLipsync && !!lipsyncEl && !!lipsyncEl.checked;
     const wantBlender = hasBlender && blenderEl && blenderEl.checked;
-    const defaultsOn = wantLipsync && !wantBlender;
+    // Lipsync is opt_in. Unchecked + no blender = default finish (rife/upscale).
+    const defaultsOn = !wantLipsync && !wantBlender;
     if (defaultsOn) return { mode: "default" };
     const named = [];
     for (const m of finishCache().finish || []) {

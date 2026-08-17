@@ -44,12 +44,12 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "vidu-q3",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Vidu Q3 (cloud i2v)" }],
   config_schema: {
-    generate_audio: { type: "bool", default: false, label: "native audio (off: core mux chain owns audio)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
     bgm: { type: "bool", default: false, label: "background music (off by default)" },
   },
   ui: { section: "motion", order: 60, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },

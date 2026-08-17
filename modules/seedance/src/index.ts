@@ -42,7 +42,7 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "seedance",
-  version: "0.2.2",
+  version: "0.2.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Seedance V1.5 Pro (cloud i2v)" }],
@@ -53,7 +53,7 @@ const MANIFEST: ModuleManifest = {
     resolution: { type: "enum", values: RESOLUTIONS, default: DEFAULT_RESOLUTION, label: "resolution" },
     aspect_ratio: { type: "enum", values: ["16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
     camera_fixed: { type: "bool", default: false, label: "lock camera" },
-    generate_audio: { type: "bool", default: false, label: "generate audio" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
   },
   ui: { section: "motion", order: 10, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },

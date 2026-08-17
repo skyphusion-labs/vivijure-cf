@@ -4,7 +4,7 @@
 // "Unsupported field passed: image. Invalid value at keyframes").
 // CF dashboard schema (i2v): keyframes is string | array | string[] | array[].
 // BFL: one still is a URL string; two stills are string[]; timed pins are [seconds, url][].
-// Duration 5-20s; resolution hd (and fhd per catalog). generate_audio default off (core score/mux owns audio).
+// Duration 5-20s; resolution hd (and fhd per catalog). generate_audio default ON (native AV).
 
 import type { MotionBackendInput } from "./contract";
 
@@ -49,7 +49,7 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
   const res = String(raw.resolution ?? DEFAULT_RESOLUTION);
   return {
     resolution: (RESOLUTIONS as readonly string[]).includes(res) ? (res as ModuleConfig["resolution"]) : DEFAULT_RESOLUTION,
-    generate_audio: raw.generate_audio === true,
+    generate_audio: raw.generate_audio !== false,
   };
 }
 
@@ -57,8 +57,10 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
   return {
     mode: "i2v",
     prompt: input.prompt,
-    // One still = string (CF i2v schema + BFL "animate a still"). Objects { url } 7003.
-    keyframes: input.keyframe_url,
+    // One still = string. Two stills = string[] (first + last / next shot).
+    keyframes: input.last_keyframe_url
+      ? [input.keyframe_url, input.last_keyframe_url]
+      : input.keyframe_url,
     duration: clampDuration(input.seconds),
     resolution: config.resolution,
     generate_audio: config.generate_audio,

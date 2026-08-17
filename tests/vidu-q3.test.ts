@@ -38,12 +38,12 @@ describe("vidu-q3 pure logic", () => {
     });
   });
 
-  it("buildViduBody defaults generate_audio and bgm OFF when config is empty", () => {
+  it("buildViduBody defaults generate_audio ON and bgm OFF when config is empty", () => {
     const body = buildViduBody(
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
       {},
     );
-    expect(body.input).toMatchObject({ generate_audio: false, bgm: false, duration: 5, size: "720p" });
+    expect(body.input).toMatchObject({ generate_audio: true, bgm: false, duration: 5, size: "720p" });
   });
 
   it("extractVideoUrl finds the video url across output shapes", () => {
