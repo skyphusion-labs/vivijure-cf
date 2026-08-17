@@ -5,6 +5,15 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.32.8 -- 2026-08-17
+
+### feat(motion): first+last frame + native AV default
+
+Next shot's still is the end frame on Flux 3 and HH1. Seedance / Flux /
+Veo / Vidu keep model audio. MuseTalk is opt-in replace-mouth. Pins
+core 1.21.3.
+
+
 ### fix(planner): pick cast before you write the shots
 
 The rail locked Cast until a storyboard existed, so the planner wrote
