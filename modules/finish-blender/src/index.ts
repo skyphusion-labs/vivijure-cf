@@ -91,6 +91,8 @@ export const MANIFEST: ModuleManifest = {
     output_key: { kind: "append_suffix", suffix: "_bl" },
     applied: [{ tag: "blender:{job_type|grade}:{preset|filmic_warm}" }],
   },
+  // Door aborts if sequential caps would exceed PHASE_HARD_DEADLINE_SECONDS.
+  max_invocation_seconds: 5400,
 };
 
 function json(body: unknown, status = 200): Response {
