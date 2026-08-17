@@ -210,13 +210,24 @@ async function submitRender() {
   // vivijure#552: own the in-flight flag for the whole submit; cleared on jobId
   // handoff or on any bail/error path below.
   renderState.submitting = true;
-  if (!bundleState.bundleKey) {
-    setRenderStatus("no bundleKey; run 'bundle' first", "error");
+  if (!planState.storyboard || !Array.isArray(planState.storyboard.scenes) || planState.storyboard.scenes.length === 0) {
+    setRenderStatus("no storyboard scenes; plan first", "error");
     renderState.submitting = false;
     return;
   }
-  if (!planState.storyboard || !Array.isArray(planState.storyboard.scenes) || planState.storyboard.scenes.length === 0) {
-    setRenderStatus("no storyboard scenes; plan first", "error");
+  // Scatter reads storyboard.yaml from the tar, not the planner JSON. Pack
+  // now so Render never uses a faces-only or stale bundleKey.
+  if (typeof ensureFilmBundle === "function") {
+    setRenderStatus("packing the storyboard into the bundle...", "loading");
+    const packed = await ensureFilmBundle();
+    if (!packed || packed.ok !== true) {
+      setRenderStatus((packed && packed.reason) || "could not pack the storyboard; try Render again", "error");
+      renderState.submitting = false;
+      return;
+    }
+  }
+  if (!bundleState.bundleKey) {
+    setRenderStatus("no bundleKey; pack faces after you plan", "error");
     renderState.submitting = false;
     return;
   }
