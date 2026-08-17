@@ -91,7 +91,7 @@ FINISH_BLENDER_DOORS = "${FINISH_BLENDER_DOORS}"
 #     closed), same posture as the spend ceiling. Backfill + drift repair: POST /api/storage/reconcile
 #     (accounting starts at the version that shipped it). Bytes only -- no "50GB" unit parsing.
 # SPEND_LIMIT_FAIL_CLOSED = "false"
-# SPEND_DAILY_CEILING = "25"
+SPEND_DAILY_CEILING = "25"
 # R2_STORAGE_QUOTA_BYTES = "53687091200"
 # Assemble duration honesty gate (#697, src/film-orchestrator.ts):
 #   FILM_CLIP_DURATION_FLOOR -- the fraction of a shot`s PLANNED seconds its ASSEMBLED clip must reach

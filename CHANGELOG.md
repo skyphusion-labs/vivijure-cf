@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.32.10 -- 2026-08-17
+
+### fix(security): report door, hosted spend ceiling, no quarantine GET
+
+POST /api/report copies named keys to quarantine/ (not served). Token
+mode defaults SPEND_DAILY_CEILING to 25 (set 0 to disable). Pins core
+1.21.6 when published (fail-closed finish bearer, project keys).
+
 ## v1.32.9 -- 2026-08-17
 
 ### feat(motion): voice/look lock, new doors, no scatter on talking

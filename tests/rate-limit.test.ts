@@ -223,6 +223,8 @@ describe("dailyCeiling / utcDay (pure)", () => {
   it("parses a positive integer; off for unset / 0 / negative / garbage", () => {
     expect(dailyCeiling({ SPEND_DAILY_CEILING: "25" })).toBe(25);
     expect(dailyCeiling({})).toBeNull();
+    expect(dailyCeiling({ AUTH_MODE: "token" })).toBe(25);
+    expect(dailyCeiling({ AUTH_MODE: "token", SPEND_DAILY_CEILING: "0" })).toBeNull();
     expect(dailyCeiling({ SPEND_DAILY_CEILING: "" })).toBeNull();
     expect(dailyCeiling({ SPEND_DAILY_CEILING: "0" })).toBeNull();
     expect(dailyCeiling({ SPEND_DAILY_CEILING: "-3" })).toBeNull();

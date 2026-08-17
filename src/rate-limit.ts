@@ -43,8 +43,10 @@ export interface SpendLimitEnv {
   // Fail-CLOSED by default for BOTH checks (broken limiter / broken ceiling check => deny 503). Set
   // to the literal "false" to opt back to fail-open (allow + warn on a broken check). See failClosed.
   SPEND_LIMIT_FAIL_CLOSED?: string;
-  // Positive integer as a string; unset/0/garbage = ceiling off.
+  // Positive integer as a string; unset/0/garbage = ceiling off, EXCEPT AUTH_MODE=token
+  // (hosted) defaults to 25 so a stolen studio token is not an open GPU tap.
   SPEND_DAILY_CEILING?: string;
+  AUTH_MODE?: string;
   DB?: SpendCounterDb;
 }
 
@@ -116,10 +118,14 @@ export type SpendLimitResult =
 
 let warnedUnbound = false;
 
-/** Pure: the daily ceiling from env, or null when the knob is off (unset / 0 / garbage). */
+/** Pure: the daily ceiling from env, or null when the knob is off (unset / 0 / garbage).
+ *  Hosted token mode defaults to 25 when the var is unset. Set 0 to disable. */
 export function dailyCeiling(env: SpendLimitEnv): number | null {
   const raw = env.SPEND_DAILY_CEILING;
-  if (typeof raw !== "string" || raw.trim() === "") return null;
+  if (typeof raw === "string" && raw.trim() === "0") return null;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return env.AUTH_MODE === "token" ? 25 : null;
+  }
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : null;
 }
