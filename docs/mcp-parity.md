@@ -17,7 +17,7 @@ without saying so is the defect, not the subset.
 | Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **84** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
+| Reachable via `studio_request` | **85** | Every route EXCEPT the three that read a raw request body. The hatch sends `application/json` and those refuse it on the content-type. |
 | Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
 | Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **84 of 88** route
+`studio_request` sends any method to any path with the studio bearer, so for **85 of 88** route
 entries there is nothing an agent cannot invoke. Curated coverage is 41 of 88 (48%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 84 a low number costs discoverability, not reach, and 47
+contract to find the route. For those 85 a low number costs discoverability, not reach, and 47
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim

@@ -432,7 +432,7 @@ const PUBLISHED = {
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
   panelUncurated: 30, // panel-reachable entries with NO curated tool, METHOD-aware
   panelUncuratedPathOnly: 34, // the same set under the PRE-cf#333 path-only matcher
-  hatchReachable: 84, // reachable via studio_request = routes minus the raw-body class
+  hatchReachable: 85, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously
