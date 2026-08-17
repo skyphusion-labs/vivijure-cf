@@ -101,9 +101,10 @@ shared note just below), then put its endpoint id into the account Secrets Store
   release tag) + the four R2 env vars from your `deploy.env`. Put the printed
   `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID` in deploy.env.
 
-### finish-lipsync (talking characters)
-- **What it is:** a lip-sync engine (MuseTalk). It rewrites a character's mouth to match spoken lines.
-- **What you get:** characters whose lips move in time with their dialogue.
+### finish-lipsync (homelab / self-host only)
+- **Not on hosted.** Hosted talking films keep native audio from the motion door that animated our keyframe. MuseTalk is a replace-mouth dub; we do not run it in production.
+- **What it is:** a lip-sync engine (MuseTalk) for people who self-host and still want Cast TTS on a silent look door.
+- **What you get:** mouths pasted onto a clip to match dialogue. Looks like a dub.
 - **What it needs:** a RunPod endpoint running the `vivijure-musetalk` image, with the four R2 env vars
   above set on it; its id in the store secret `MUSETALK_RUNPOD_ENDPOINT_ID`; and the `finish-lipsync`
   (`MODULE_LIPSYNC`) binding kept. It works best with `speech-upscale` on.

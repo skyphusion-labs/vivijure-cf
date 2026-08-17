@@ -563,15 +563,18 @@ jobs:
           # tests/local-gpu-strip-cf560.test.ts DERIVING the set of hosted render paths from the
           # workflows themselves and refusing if any member does not call it.
           #
-          # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour. SATELLITE
-          # and SELFHOST-SKIP blocks are deliberately NOT stripped -- hosted wants the satellite
-          # finish doors, and SELFHOST-SKIP marks our-fleet-only blocks, which hosted IS.
+          # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour.
+          # SATELLITE finish-upscale / speech-upscale stay. SATELLITE finish-lipsync is
+          # stripped next: MuseTalk is homelab only. SELFHOST-SKIP marks fleet-only blocks,
+          # which hosted IS.
           #
           # deploy.sh (SELF-HOST, where local-gpu is ALLOWED) keeps its own INSTALL_LOCAL_GPU switch
           # and deliberately does NOT call this: the invariant is about the HOSTED studio, and
           # bolting the unconditional strip onto the self-host path would remove a door its operator
           # is entitled to run.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
+          mv .wrangler.hosted2.toml .wrangler.hosted.toml
           envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a

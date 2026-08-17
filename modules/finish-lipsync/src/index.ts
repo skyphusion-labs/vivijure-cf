@@ -67,6 +67,7 @@ export const MANIFEST: ModuleManifest = {
   },
   // Order < the upscaler's 20 so a lip-synced shot is then upscaled (the 256px face region wants it).
   ui: { section: "finish", icon: "mic", order: 15 },
+  // Homelab / self-host only. Hosted flagship does not bind this module.
   // Native AV already talks. MuseTalk is replace-mouth (planner checkbox).
   participation: "opt_in",
   // Declared artifact conventions (S6): the MuseTalk container appends _ls to the input clip key.

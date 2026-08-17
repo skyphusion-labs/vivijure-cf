@@ -360,8 +360,8 @@ binding = "MODULE_DIALOGUE"
 service = "vivijure-module-dialogue-gen"
 
 # >>> SATELLITE: finish-lipsync -- MuseTalk lip-sync on a SEPARATE RunPod endpoint
-# Lip-sync (finish chain): MuseTalk on the dedicated cu128 RunPod endpoint; rewrites a shot's mouth
-# to the dialogue audio_key. Runs before the upscaler (ui.order 15 < 20).
+# HOMELAB / self-host only. Hosted flagship does not bind this door.
+# Native AV on our keyframes is the talking movie path.
 [[services]]
 binding = "MODULE_LIPSYNC"
 service = "vivijure-module-finish-lipsync"
