@@ -491,16 +491,25 @@ describe("collectFinishSelect (cf#690)", () => {
   }
 
   const installed = [
-    { name: "finish-lipsync", participation: "default" },
+    { name: "finish-lipsync", participation: "opt_in" },
     { name: "finish-upscale", participation: "default" },
     { name: "finish-blender", participation: "opt_in" },
     { name: "finish-rife", participation: "default" },
   ];
 
-  it("default checks emit mode default (lipsync on, blender off)", () => {
-    finishDoc({ lipsync: true, blender: false });
+  it("unchecked lipsync is the default finish set (native AV keeps talking)", () => {
+    finishDoc({ lipsync: false, blender: false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
+  });
+
+  it("checking lipsync names it in plus the default modules", () => {
+    finishDoc({ lipsync: true, blender: false });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({
+      mode: "named",
+      modules: ["finish-lipsync", "finish-upscale", "finish-rife"],
+    });
   });
 
   it("naming blender emits the default modules plus finish-blender", () => {
@@ -509,15 +518,6 @@ describe("collectFinishSelect (cf#690)", () => {
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
       modules: ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"],
-    });
-  });
-
-  it("turning lipsync off drops it from the named list", () => {
-    finishDoc({ lipsync: false, blender: false });
-    mod.__testSeedFinish(installed);
-    expect(mod.collectFinishSelect()).toEqual({
-      mode: "named",
-      modules: ["finish-upscale", "finish-rife"],
     });
   });
 

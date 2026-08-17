@@ -39,12 +39,12 @@ describe("google-veo pure logic", () => {
     });
   });
 
-  it("buildVeoBody defaults generate_audio OFF when config is empty", () => {
+  it("buildVeoBody defaults generate_audio ON when config is empty", () => {
     const body = buildVeoBody(
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 6 },
       {},
     );
-    expect(body.input).toMatchObject({ generate_audio: false, duration: 6, aspect_ratio: "16:9" });
+    expect(body.input).toMatchObject({ generate_audio: true, duration: 6, aspect_ratio: "16:9" });
   });
 
   it("extractVideoUrl finds the video url across output shapes", () => {

@@ -54,7 +54,7 @@ describe("cf-seedance params", () => {
       fps: 24,
       camera_fixed: false,
       watermark: false,
-      generate_audio: false,
+      generate_audio: true,
       use_virtual_avatar: true,
     });
     expect(seedance.selectedModel(cfg)).toBe("bytedance/seedance-2.0-fast");
@@ -99,7 +99,7 @@ describe("cf-flux-3-video params", () => {
       prompt: "slow camera push-in",
       keyframes: "https://r2.example/k.png",
       resolution: "fhd",
-      generate_audio: false,
+      generate_audio: true,
     });
     expect(p.image).toBeUndefined();
     expect(Array.isArray(p.keyframes)).toBe(false);

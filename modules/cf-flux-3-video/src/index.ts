@@ -74,13 +74,13 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-flux-3-video",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "FLUX 3 Video (CF AI)" }],
   config_schema: {
     resolution: { type: "enum", values: ["hd", "fhd"], default: "hd", label: "resolution" },
-    generate_audio: { type: "bool", default: false, label: "native audio (off: core score/mux owns audio)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
   },
   ui: {
     section: "motion",

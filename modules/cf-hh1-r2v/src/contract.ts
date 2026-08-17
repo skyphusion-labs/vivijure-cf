@@ -62,6 +62,8 @@ export type PollResponse<O = unknown> =
 export interface MotionBackendInput {
   shot_id: string;
   keyframe_url: string;
+  last_keyframe_url?: string;
+  last_keyframe_key?: string;
   keyframe_key?: string;
   prompt: string;
   seconds: number;

@@ -34,7 +34,7 @@ describe("seedance pure logic", () => {
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 8 },
       {},
     );
-    expect(body.input).toMatchObject({ resolution: "720p", aspect_ratio: "16:9", camera_fixed: false, generate_audio: false, seed: -1, duration: 8 });
+    expect(body.input).toMatchObject({ resolution: "720p", aspect_ratio: "16:9", camera_fixed: false, generate_audio: true, seed: -1, duration: 8 });
   });
 
   it("#577: the manifest's resolution enum IS the provider-accepted set (no 1080p over-promise)", async () => {

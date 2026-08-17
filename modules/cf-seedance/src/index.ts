@@ -74,7 +74,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-seedance",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Seedance 2.0 (CF AI)" }],
@@ -88,7 +88,7 @@ const MANIFEST: ModuleManifest = {
     resolution: { type: "enum", values: ["480p", "720p", "1080p", "4k"], default: "720p", label: "resolution" },
     aspect_ratio: { type: "enum", values: ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"], default: "16:9", label: "aspect ratio" },
     camera_fixed: { type: "bool", default: false, label: "lock camera" },
-    generate_audio: { type: "bool", default: false, label: "native audio (off: core score/mux owns audio)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
   },
   ui: {

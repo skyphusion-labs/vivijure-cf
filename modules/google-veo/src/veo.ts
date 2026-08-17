@@ -29,7 +29,7 @@ export function buildVeoBody(input: MotionBackendInput, cfg: Record<string, unkn
       aspect_ratio: "16:9",
       duration: clampDuration(input.seconds),
       resolution: "720p",
-      generate_audio: cfg.generate_audio === true,
+      generate_audio: cfg.generate_audio !== false,
       seed: 0,
     },
   };

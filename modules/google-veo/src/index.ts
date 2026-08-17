@@ -44,12 +44,12 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "google-veo",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Google Veo 3.1 Fast (cloud i2v)" }],
   config_schema: {
-    generate_audio: { type: "bool", default: false, label: "native audio (off: core mux chain owns audio)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
   },
   ui: { section: "motion", order: 50, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
 };

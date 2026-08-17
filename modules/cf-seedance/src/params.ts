@@ -54,7 +54,7 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
     resolution: (RESOLUTIONS as readonly string[]).includes(res) ? (res as ModuleConfig["resolution"]) : DEFAULT_RESOLUTION,
     aspect_ratio: (ASPECT_RATIOS as readonly string[]).includes(ar) ? (ar as ModuleConfig["aspect_ratio"]) : DEFAULT_ASPECT,
     camera_fixed: raw.camera_fixed === true,
-    generate_audio: raw.generate_audio === true,
+    generate_audio: raw.generate_audio !== false,
     seed: typeof raw.seed === "number" ? raw.seed : -1,
   };
 }
