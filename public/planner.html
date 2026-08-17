@@ -400,6 +400,21 @@
            plan.enhance / score / dialogue / cast.image / notify project on their own surfaces),
            and each module renders its own config_schema. Nothing per-hook is hardcoded. -->
       <div id="planner-motion-backend-wrap" class="planner-overrides-common"></div>
+      <div id="planner-finish-picks" class="planner-finish-picks" hidden>
+        <p class="planner-finish-picks-lede">Finish this film</p>
+        <label class="planner-field-check" id="planner-finish-lipsync-wrap" hidden>
+          <input id="planner-finish-lipsync" type="checkbox" checked />
+          <span>Lip-sync (MuseTalk) on shots with spoken lines</span>
+        </label>
+        <label class="planner-field-check" id="planner-finish-upscale-wrap" hidden>
+          <input id="planner-finish-upscale" type="checkbox" checked />
+          <span>Sharpen / upscale (2x)</span>
+        </label>
+        <label class="planner-field-check" id="planner-finish-blender-wrap" hidden>
+          <input id="planner-finish-blender" type="checkbox" />
+          <span>Color grade (Blender)</span>
+        </label>
+      </div>
       <p id="planner-render-spend" class="planner-render-spend" role="status"></p>
       <div class="planner-actions">
         <button id="planner-render-btn" type="button" class="planner-primary">Render this film</button>

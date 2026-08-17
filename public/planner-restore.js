@@ -278,6 +278,14 @@ function restoreRenderStagePanel(saved) {
   setFilmField("#planner-film-title", saved.filmTitle);
   setFilmField("#planner-film-subtitle", saved.filmSubtitle);
   setFilmField("#planner-film-credits", saved.filmCredits);
+  const setCheck = (sel, v) => {
+    if (v == null) return;
+    const el = $(sel);
+    if (el) el.checked = !!v;
+  };
+  setCheck("#planner-finish-lipsync", saved.finishLipsync);
+  setCheck("#planner-finish-upscale", saved.finishUpscale);
+  setCheck("#planner-finish-blender", saved.finishBlender);
   if ((saved.filmTitle || saved.filmSubtitle || saved.filmCredits || "").toString().trim().length > 0) {
     const ft = $(".planner-film-titles");
     if (ft) ft.open = true;

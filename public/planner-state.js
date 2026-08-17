@@ -188,10 +188,35 @@ function hasPersistedWork(stash) {
   return false;
 }
 
-// Reload / back-forward keeps the in-tab failsafe; cross-page navigation does not.
+// Reload / back-forward keeps the in-tab failsafe. A Cast hop is a
+// document navigation (type === "navigate"), so we also treat a
+// recent same-browser hop as auto-resume (cf#691).
+const HOP_KEY = "skyphusion.planner.hop";
+const HOP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 function isSameTabReload() {
   const nav = performance.getEntriesByType("navigation")[0];
   return !!(nav && (nav.type === "reload" || nav.type === "back_forward"));
+}
+
+function markPlannerHop() {
+  try { sessionStorage.setItem(HOP_KEY, String(Date.now())); } catch {}
+}
+
+function consumeFreshHop() {
+  try {
+    const raw = sessionStorage.getItem(HOP_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(HOP_KEY);
+    const t = Number(raw);
+    return Number.isFinite(t) && (Date.now() - t) < HOP_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function shouldAutoResumeStash() {
+  return isSameTabReload() || consumeFreshHop();
 }
 
 let pendingResumeStash = null;
@@ -358,6 +383,9 @@ function collectRenderStageState() {
     filmTitle: readVal("#planner-film-title"),
     filmSubtitle: readVal("#planner-film-subtitle"),
     filmCredits: readVal("#planner-film-credits"),
+    finishLipsync: readCheck("#planner-finish-lipsync"),
+    finishUpscale: readCheck("#planner-finish-upscale"),
+    finishBlender: readCheck("#planner-finish-blender"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-
     // flight render observed yet"; the updater anchors it lazily.
@@ -374,6 +402,11 @@ function collectRenderStageState() {
 function readVal(selector) {
   const el = $(selector);
   return el ? el.value : "";
+}
+
+function readCheck(selector) {
+  const el = $(selector);
+  return el ? !!el.checked : null;
 }
 
 function lastKnownStatusFromPanel() {

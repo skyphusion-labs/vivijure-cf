@@ -41,6 +41,14 @@ describe("cf#648 cast is who is in the movie", () => {
 });
 
 describe("cf#646 render is three choices then spend", () => {
+  it("Render has first-class lip-sync, upscale, and blender picks (cf#690)", () => {
+    expect(html).toMatch(/id="planner-finish-picks"/);
+    expect(html).toMatch(/id="planner-finish-lipsync"/);
+    expect(html).toMatch(/id="planner-finish-upscale"/);
+    expect(html).toMatch(/id="planner-finish-blender"/);
+    expect(html).toMatch(/Lip-sync \(MuseTalk\)/);
+  });
+
   it("motion is the default job and stills is a peer choice", () => {
     expect(html).toMatch(/id="planner-mode-stills"/);
     expect(html).toMatch(/id="planner-mode-motion"[^>]*checked/);

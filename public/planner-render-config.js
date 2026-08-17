@@ -714,6 +714,68 @@
     if (motionWrap && !motionShown && !motionWrap.querySelector(".planner-backend-selector")) {
       motionWrap.hidden = true;
     }
+    renderFinishPicks();
+  }
+
+  function finishCache() {
+    const c = global.plannerRegistry && global.plannerRegistry._cacheForRenderConfig;
+    return c && typeof c === "object" ? c : {};
+  }
+
+  function finishMod(name) {
+    return (finishCache().finish || []).find((m) => m.name === name) || null;
+  }
+
+  function renderFinishPicks() {
+    const box = document.getElementById("planner-finish-picks");
+    if (!box) return;
+    const pairs = [
+      ["finish-lipsync", "planner-finish-lipsync-wrap"],
+      ["finish-upscale", "planner-finish-upscale-wrap"],
+      ["finish-blender", "planner-finish-blender-wrap"],
+    ];
+    let any = false;
+    for (const [name, wrapId] of pairs) {
+      const wrap = document.getElementById(wrapId);
+      if (!wrap) continue;
+      const on = !!finishMod(name);
+      wrap.hidden = !on;
+      if (on) any = true;
+    }
+    box.hidden = !any;
+  }
+
+  function collectFinishSelect() {
+    const lipsyncEl = document.getElementById("planner-finish-lipsync");
+    const upscaleEl = document.getElementById("planner-finish-upscale");
+    const blenderEl = document.getElementById("planner-finish-blender");
+    const hasLipsync = !!finishMod("finish-lipsync");
+    const hasUpscale = !!finishMod("finish-upscale");
+    const hasBlender = !!finishMod("finish-blender");
+    if (!hasLipsync && !hasUpscale && !hasBlender) return undefined;
+    const wantLipsync = !hasLipsync || !lipsyncEl || lipsyncEl.checked;
+    const wantUpscale = !hasUpscale || !upscaleEl || upscaleEl.checked;
+    const wantBlender = hasBlender && blenderEl && blenderEl.checked;
+    const defaultsOn = wantLipsync && wantUpscale && !wantBlender;
+    if (defaultsOn) return { mode: "default" };
+    const named = [];
+    for (const m of finishCache().finish || []) {
+      const part = m.participation || "default";
+      if (m.name === "finish-lipsync") {
+        if (wantLipsync) named.push(m.name);
+        continue;
+      }
+      if (m.name === "finish-upscale") {
+        if (wantUpscale) named.push(m.name);
+        continue;
+      }
+      if (m.name === "finish-blender") {
+        if (wantBlender) named.push(m.name);
+        continue;
+      }
+      if (part !== "opt_in") named.push(m.name);
+    }
+    return { mode: "named", modules: named };
   }
 
   function readFieldValue(el) {
@@ -749,6 +811,8 @@
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;
+    const finishSelect = collectFinishSelect();
+    if (finishSelect) out.select = { finish: finishSelect };
     return out;
   }
 
@@ -847,6 +911,15 @@
     mergeExpert,
     renderTierPicker,
     selectTier,
+    collectFinishSelect,
+    renderFinishPicks,
+    __testSeedFinish: (mods) => {
+      if (!global.plannerRegistry) global.plannerRegistry = {};
+      global.plannerRegistry._cacheForRenderConfig = {
+        ...(global.plannerRegistry._cacheForRenderConfig || {}),
+        finish: Array.isArray(mods) ? mods : [],
+      };
+    },
     backendChoicePending,
     tierDisplayLabel,
     filmmakerCostLine,

@@ -124,7 +124,9 @@ let mod: {
   renderBackendSelector: (mods: unknown[], wrap: El) => boolean;
   defaultSpeedDoor: (mods: unknown[]) => { name?: string } | null;
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
-  collect: () => { motion_backend?: string };
+  collect: () => { motion_backend?: string; select?: { finish?: unknown } };
+  collectFinishSelect: () => unknown;
+  __testSeedFinish: (mods: unknown[]) => void;
   restore: (o: unknown) => void;
   selectTier: (tier: string) => void;
   tierDisplayLabel: (t: { value: string; label?: string; blurb?: string }) => string;
@@ -465,5 +467,58 @@ describe("selectTier with the projection ALREADY loaded (cf#62 Lane C)", () => {
     expect(sel.dataset.pendingValue).toBe("draft");
     mod.renderTierPicker(PROJECTION);
     expect(sel.value).toBe("draft");
+  });
+});
+
+describe("collectFinishSelect (cf#690)", () => {
+  function finishDoc(opts: { lipsync: boolean; upscale: boolean; blender: boolean }) {
+    const ids: Record<string, El> = {};
+    for (const [id, checked] of [
+      ["planner-finish-lipsync", opts.lipsync],
+      ["planner-finish-upscale", opts.upscale],
+      ["planner-finish-blender", opts.blender],
+    ] as const) {
+      const el = new El("input");
+      el.id = id;
+      el.checked = checked;
+      ids[id] = el;
+    }
+    (globalThis as Record<string, unknown>).document = {
+      createElement: (t: string) => new El(t),
+      getElementById: (id: string) => ids[id] || null,
+      querySelector: () => null,
+      querySelectorAll: () => [] as El[],
+    };
+  }
+
+  const installed = [
+    { name: "finish-lipsync", participation: "default" },
+    { name: "finish-upscale", participation: "default" },
+    { name: "finish-blender", participation: "opt_in" },
+    { name: "finish-rife", participation: "default" },
+  ];
+
+  it("default checks emit mode default (lipsync+upscale on, blender off)", () => {
+    finishDoc({ lipsync: true, upscale: true, blender: false });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
+  });
+
+  it("naming blender emits the default modules plus finish-blender", () => {
+    finishDoc({ lipsync: true, upscale: true, blender: true });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({
+      mode: "named",
+      modules: ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"],
+    });
+  });
+
+  it("turning lipsync off drops it from the named list", () => {
+    finishDoc({ lipsync: false, upscale: true, blender: false });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({
+      mode: "named",
+      modules: ["finish-upscale", "finish-rife"],
+    });
   });
 });
