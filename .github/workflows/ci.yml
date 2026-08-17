@@ -132,10 +132,11 @@ jobs:
   # `test_inspect.py` and `test_photometric_gate.py` (both stdlib only -- the latter is cf#532's
   # pixel-identity gate, proving the RATIO MATH via an injected decoder rather than real ffmpeg;
   # its real-ffmpeg proof, test_local.py, is NOT run here for the same runner-availability
-  # reason test_local.py is not run for the two audio containers below) and `test_async.py` /
+  # reason test_local.py is not run for the two audio containers below), `test_async.py` /
   # `test_meta_sidecar.py` (need aiohttp, pinned from video-finish's own requirements.txt so a
   # version bump there is picked up automatically instead of drifting from what the built image
-  # runs).
+  # runs), and `test_ffmpeg_timeout.py` in video-finish / audio-mix / audio-master (cf#571:
+  # a real sleep child, named FfmpegTimeout, no ffmpeg binary required).
   #
   # NOT run here, deliberately, and left open on cf#325 rather than silently skipped:
   # `containers/audio-master/test_local.py` and `containers/audio-mix/test_local.py`. Both drive
@@ -170,6 +171,9 @@ jobs:
           containers/video-finish/test_photometric_gate.py
           containers/video-finish/test_async.py
           containers/video-finish/test_meta_sidecar.py
+          containers/video-finish/test_ffmpeg_timeout.py
+          containers/audio-mix/test_ffmpeg_timeout.py
+          containers/audio-master/test_ffmpeg_timeout.py
           "
           ran=0
           for script in $scripts; do
@@ -187,8 +191,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 8 ]; then
-            echo "::error::expected exactly 8 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 11 ]; then
+            echo "::error::expected exactly 11 container test scripts to run, ran ${ran}"
             exit 1
           fi
 

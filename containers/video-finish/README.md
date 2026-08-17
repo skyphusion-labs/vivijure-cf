@@ -106,6 +106,9 @@ pod produced.
   (the `film.finish` routes). Service host name MUST match the compose service name.
 - Deploy on your container host: `docker compose -p vivijure-media -f containers/compose.yaml up -d --build video-finish`;
   health: `curl http://127.0.0.1:8780/health`.
+- Every ffmpeg/ffprobe child has a wall-clock bound (cf#571): `FFMPEG_TIMEOUT` (default 1200s)
+  for encodes, `FFPROBE_TIMEOUT` (default 60s) for probes. A hang kills the process group and
+  returns `{ok:false, error:"ffmpeg timeout after Ns"}` (assemble fails loud; it is the film).
 
 ## Soft-degrade
 
