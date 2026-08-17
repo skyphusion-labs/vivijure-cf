@@ -11,6 +11,14 @@ The rail locked Cast until a storyboard existed, so the planner wrote
 shots with nobody chosen. Cast is first and always open. Plan still
 sends those people in the brief.
 
+## v1.32.4 -- 2026-08-17
+
+### fix(finish): gather is async so a 20-shot film does not 524
+
+Pin `@skyphusion-labs/vivijure-core` 1.21.2. Assemble/mux POST
+`/async/finish` and poll. `video-finish` runs that concat in the
+background so a long film is not killed by the Worker fetch budget.
+
 ## v1.32.3 -- 2026-08-16
 
 Planner first sitting so a stranger can finish a film, plus finish-chain honesty.
