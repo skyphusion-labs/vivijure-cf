@@ -389,12 +389,16 @@ async function makeKeyframeEnv(yaml: string = STORYBOARD_YAML, withPortraits = t
   return { RUNPOD_API_KEY: "test-runpod", R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
 }
 
-async function invokeKeyframe(env: Parameters<typeof worker.fetch>[1], config: Record<string, unknown>) {
+async function invokeKeyframe(
+  env: Parameters<typeof worker.fetch>[1],
+  config: Record<string, unknown>,
+  shotIds?: string[],
+) {
   const req = new Request("http://m/invoke", {
     method: "POST",
     body: JSON.stringify({
       hook: "keyframe",
-      input: { project: "neon_film", bundle_key: "bundles/neon.tar.gz" },
+      input: { project: "neon_film", bundle_key: "bundles/neon.tar.gz", shot_ids: shotIds },
       config,
       context: { project: "neon_film", job_id: "j" },
     }),
@@ -494,6 +498,17 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
     const shot3 = genCalls.find((c) => c.prompt.includes("empty landscape"));
     expect(shot3, "shot_03 was rendered").toBeDefined();
     expect(shot3!.refCount).toBe(1);
+  });
+
+  it("a scatter shard with only an empty-slot shot still stages bundle portraits", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, { film_ref: "none" }, ["shot_03"]);
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    expect(genCalls.length).toBe(1);
+    expect(genCalls[0].refCount).toBeGreaterThan(0);
   });
 
   it("a character-less shot still gets staged portraits (RunPod edit needs images[])", async () => {
