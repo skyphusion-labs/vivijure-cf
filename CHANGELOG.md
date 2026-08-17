@@ -5,6 +5,12 @@ for new features). Newest first.
 
 ## Unreleased
 
+### docs(local-gpu): door-fatmike is gone
+
+Fleet named tunnel `door-fatmike` / `door-propagandhi` was deleted
+(fleet-chezmoi #2042). Local-gpu is on-box; do not seed
+`LOCAL_BACKEND_URL` to that hostname.
+
 ## v1.33.8 -- 2026-08-19
 
 ### fix(motion): delete Cloudflare Wan 2.7
@@ -236,7 +242,6 @@ safety defaults off. Kling 2.1 and Wan 2.6 stay on disk, unbound.
 Next shot's still is the end frame on Flux 3 and HH1. Seedance / Flux /
 Veo / Vidu keep model audio. MuseTalk is opt-in replace-mouth. Pins
 core 1.21.3.
-
 
 ### fix(planner): pick cast before you write the shots
 
