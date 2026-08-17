@@ -761,7 +761,4 @@ jobs:
       group: studio-release-${{ github.ref }}
       cancel-in-progress: false
     uses: ./.github/workflows/studio-release.yml
-    with:
-      # Called workflows cannot read secrets in if:. Test presence here.
-      mirror_r2: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     secrets: inherit

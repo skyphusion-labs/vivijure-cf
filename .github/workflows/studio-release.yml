@@ -45,14 +45,13 @@ name: Studio release artifact
 
 on:
   workflow_call:
-    inputs:
-      # secrets.* is illegal in a called workflow's if:. The caller (ci.yml) owns
-      # that test and passes the boolean. Empty on forks so the R2 mirror stays skip.
-      mirror_r2:
-        description: "Caller has CLOUDFLARE_API_TOKEN (this repo). Forks do not."
-        type: boolean
+    secrets:
+      CLOUDFLARE_API_TOKEN:
         required: false
-        default: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      STUDIO_PIN_VARIABLE_TOKEN:
+        required: false
 
 permissions:
   contents: write # uploads the release asset; nothing else
@@ -325,13 +324,17 @@ jobs:
       # R2 is a CACHE/MIRROR only, never the source of truth. Skipped entirely when the account
       # secrets are absent, so a fork's build still succeeds and still produces the same artifact.
       - name: Mirror to R2 (cache only; skipped on forks)
-        if: ${{ inputs.mirror_r2 }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_RELEASES_BUCKET: ${{ vars.R2_RELEASES_BUCKET }}
         run: |
           set -euo pipefail
+          # secrets.* is illegal in a called workflow's if:. Skip here instead.
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "no CLOUDFLARE_API_TOKEN; skip R2 mirror (fork/self-host)"
+            exit 0
+          fi
           TAG="${{ github.ref_name }}"
           BUCKET="${R2_RELEASES_BUCKET:-vivijure-studio-releases}"
           npx wrangler r2 object put "$BUCKET/studio-releases/$TAG/manifest.json" --file dist-release/manifest.json --remote
