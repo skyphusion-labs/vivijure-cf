@@ -13,37 +13,40 @@ function doneShot(id: string, over: Partial<ClipShot> = {}): ClipShot {
 function job(shots: ClipShot[]): ClipJob {
   return { job_id: "clips-x", project: "p", motion_backend: "own-gpu", binding: "MODULE_OWN_GPU", created_at: 0, shots };
 }
-const withVpc = (fetch: (url: string, init: RequestInit) => Promise<Response>): Env =>
-  ({ VIDEO_FINISH_VPC: { fetch: (u: string, i: RequestInit) => fetch(u, i) } } as unknown as Env);
-const noVpc = (): Env => ({} as unknown as Env);
+const withDoor = (fetch: (url: string, init: RequestInit) => Promise<Response>): Env =>
+  ({
+    VIDEO_FINISH_URL: "https://video-finish.test",
+    MEDIA_DOOR_FETCH: { fetch: (u: string, i: RequestInit) => fetch(u, i) },
+  } as unknown as Env);
+const noDoor = (): Env => ({} as unknown as Env);
 
 describe("callVideoFinishInspect (container round-trip)", () => {
   it("returns null when the tier is not installed (self-host): never fails a render", async () => {
-    const r = await callVideoFinishInspect(orch(noVpc()), { clipUrl: "https://r2/clip" });
+    const r = await callVideoFinishInspect(orch(noDoor()), { clipUrl: "https://r2/clip" });
     expect(r).toBeNull();
   });
   it("parses a verdict from the container", async () => {
-    const r = await callVideoFinishInspect(orch(withVpc(async () => jr({ ok: true, verdict: "corrupt", reason: "no keyframe match" }))), { clipUrl: "https://r2/clip" });
+    const r = await callVideoFinishInspect(orch(withDoor(async () => jr({ ok: true, verdict: "corrupt", reason: "no keyframe match" }))), { clipUrl: "https://r2/clip" });
     expect(r).toMatchObject({ ok: true, verdict: "corrupt" });
   });
   it("returns null on an unreachable container (fetch throws)", async () => {
-    const r = await callVideoFinishInspect(orch(withVpc(async () => { throw new Error("down"); })), { clipUrl: "u" }, { retries: 2, backoffMs: 0 });
+    const r = await callVideoFinishInspect(orch(withDoor(async () => { throw new Error("down"); })), { clipUrl: "u" }, { retries: 2, backoffMs: 0 });
     expect(r).toBeNull();
   });
   it("retries the transient 503 then succeeds", async () => {
     let n = 0;
-    const r = await callVideoFinishInspect(orch(withVpc(async () => (++n < 2 ? jr({}, 503) : jr({ ok: true, verdict: "ok" })))), { clipUrl: "u" }, { retries: 3, backoffMs: 0 });
+    const r = await callVideoFinishInspect(orch(withDoor(async () => (++n < 2 ? jr({}, 503) : jr({ ok: true, verdict: "ok" })))), { clipUrl: "u" }, { retries: 3, backoffMs: 0 });
     expect(n).toBe(2);
     expect(r).toMatchObject({ verdict: "ok" });
   });
 });
 
 describe("contentValidateDoneClips (Layer 2 verdict application at the finish gate)", () => {
-  const env = withVpc(async () => jr({ ok: true, verdict: "ok" })); // binding present; inspect is injected below
+  const env = withDoor(async () => jr({ ok: true, verdict: "ok" })); // binding present; inspect is injected below
 
   it("no-op (false) when the video-finish tier is not installed", async () => {
     const j = job([doneShot("s1")]);
-    const changed = await contentValidateDoneClips(orch(noVpc()), j);
+    const changed = await contentValidateDoneClips(orch(noDoor()), j);
     expect(changed).toBe(false);
     expect(j.shots[0].status).toBe("done");
   });

@@ -21,7 +21,7 @@ function muxEnv(job: object, containerBody: unknown) {
       head: async () => null,
       put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
     },
-    VIDEO_FINISH_VPC: { fetch: async () => jsonResp(containerBody) },
+    VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => jsonResp(containerBody) },
     R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
     R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
   };

@@ -4,8 +4,10 @@ import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
 
 // Issue #231: wire the audio-mix container (/mix: multi-track duck + loudnorm) into the mux phase.
-// shouldMultiTrackMix gates it (dialogue + music bed + the VPC bound); callAudioMix is the VPC caller
-// that degrades to null when the binding is absent so the mux falls back to the single-track remux.
+// shouldMultiTrackMix gates it (dialogue + music bed + AUDIO_MIX_URL set); callAudioMix is the door
+// caller that degrades to null when the URL is unset so the mux falls back to the single-track remux.
+// Fixtures still set AUDIO_MIX_VPC because published core 1.18.1 reads that name; core-purge-vpc
+// switches the gate to AUDIO_MIX_URL.
 
 const baseJob = (over: Partial<FilmJob> = {}): FilmJob => ({
   film_id: "f", project: "p", bundle_key: "b", scenes: [],
@@ -17,7 +19,7 @@ describe("shouldMultiTrackMix (#231 gate)", () => {
   const withVpc = { AUDIO_MIX_VPC: {} } as unknown as Env;
   const noVpc = {} as unknown as Env;
 
-  it("true only when dialogue + music bed + VPC are all present", () => {
+  it("true only when dialogue + music bed + the audio-mix door are all present", () => {
     const job = baseJob({ dialogue_audio: { shot_01: "a.wav" }, audio_key: "bed.m4a", silent_film_key: "film.mp4" });
     expect(shouldMultiTrackMix(job, orch(withVpc))).toBe(true);
   });
@@ -29,13 +31,13 @@ describe("shouldMultiTrackMix (#231 gate)", () => {
     const job = baseJob({ dialogue_audio: { shot_01: "a.wav" }, silent_film_key: "film.mp4" });
     expect(shouldMultiTrackMix(job, orch(withVpc))).toBe(false);
   });
-  it("false when the audio-mix VPC is not bound (degrade to single-track)", () => {
+  it("false when the audio-mix door is not bound (degrade to single-track)", () => {
     const job = baseJob({ dialogue_audio: { shot_01: "a.wav" }, audio_key: "bed.m4a", silent_film_key: "film.mp4" });
     expect(shouldMultiTrackMix(job, orch(noVpc))).toBe(false);
   });
 });
 
-describe("callAudioMix (#231 VPC caller)", () => {
+describe("callAudioMix (#231 door caller)", () => {
   it("returns null when AUDIO_MIX_VPC is not bound (caller degrades to single-track)", async () => {
     const r = await callAudioMix(orch({} as unknown as Env), { tracks: [], outputUrl: "u", outputKey: "k" });
     expect(r).toBeNull();

@@ -70,7 +70,7 @@ describe("logVpcCall", () => {
     logVpcCall({
       module: "audio-master",
       service: "audio-master",
-      binding: "AUDIO_MASTER_VPC",
+      binding: "AUDIO_MASTER_URL",
       route: "/master",
       mode: "sync",
       outcome: "ok",
@@ -87,7 +87,7 @@ describe("logVpcCall", () => {
       ev: "vpc.call",
       module: "audio-master",
       service: "audio-master",
-      binding: "AUDIO_MASTER_VPC",
+      binding: "AUDIO_MASTER_URL",
       route: "/master",
       mode: "sync",
       outcome: "ok",
@@ -108,7 +108,7 @@ describe("logVpcCall", () => {
       logVpcCall({
         module: "beat-sync",
         service: "audio-beat-sync",
-        binding: "AUDIO_BEAT_SYNC_VPC",
+        binding: "AUDIO_BEAT_SYNC_URL",
         route: "/analyze",
         mode: "sync",
         outcome: "ok",
@@ -126,8 +126,8 @@ describe("timedVpcFetch", () => {
     const result = await timedVpcFetch(fetchFn, { method: "POST" }, {
       module: "beat-sync",
       service: "audio-beat-sync",
-      binding: "AUDIO_BEAT_SYNC_VPC",
-      url: "http://audio-beat-sync/analyze",
+      binding: "AUDIO_BEAT_SYNC_URL",
+      url: "https://audio-beat-sync.test/analyze",
       mode: "sync",
       filmKey: "film-1",
     });
@@ -148,8 +148,8 @@ describe("timedVpcFetch", () => {
     const result = await timedVpcFetch(fetchFn, undefined, {
       module: "subtitle",
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
-      url: "http://video-finish/subtitle",
+      binding: "VIDEO_FINISH_URL",
+      url: "https://video-finish.test/subtitle",
       mode: "sync",
     });
     expect(result.resp).toBeUndefined();
@@ -167,8 +167,8 @@ describe("timedVpcFetch", () => {
     const result = await timedVpcFetch(fetchFn, { method: "POST" }, {
       module: "film-titles",
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
-      url: "http://video-finish/async/film-titles",
+      binding: "VIDEO_FINISH_URL",
+      url: "https://video-finish.test/async/film-titles",
       mode: "async_submit",
     });
     expect(result.outcome).toBe("submitted");
@@ -184,8 +184,8 @@ describe("timedVpcFetch", () => {
     await timedVpcFetch(fetchFn, undefined, {
       module: "film-titles",
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
-      url: "http://video-finish/async/status/j1",
+      binding: "VIDEO_FINISH_URL",
+      url: "https://video-finish.test/async/status/j1",
       mode: "async_poll",
       silent: true,
     });
@@ -201,7 +201,7 @@ describe("logVpcAsyncTerminal", () => {
     const jobMs = logVpcAsyncTerminal({
       module: "film-titles",
       service: "video-finish",
-      binding: "VIDEO_FINISH_VPC",
+      binding: "VIDEO_FINISH_URL",
       route: "/async/status/job-abc",
       outcome: "completed",
       submittedAtMs,
