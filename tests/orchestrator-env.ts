@@ -35,20 +35,20 @@ type DoorFetch = { fetch?: (u: RequestInfo, i?: RequestInit) => Promise<Response
 export function orch<T extends Env>(env: T): T & OrchestratorEnv {
   const rec = env as {
     VIDEO_FINISH_URL?: string;
+    AUDIO_MIX_URL?: string;
+    AUDIO_BEAT_SYNC_URL?: string;
+    IMAGE_PREP_URL?: string;
     MEDIA_DOOR_FETCH?: DoorFetch;
-    VIDEO_FINISH_VPC?: DoorFetch;
   };
-  // MEDIA_DOOR_FETCH is the test injector. VIDEO_FINISH_VPC is still accepted so unscoped
-  // suites keep compiling against the transitional helper until those files are rewritten.
-  const door = rec.MEDIA_DOOR_FETCH?.fetch ? rec.MEDIA_DOOR_FETCH : rec.VIDEO_FINISH_VPC;
+  const door = rec.MEDIA_DOOR_FETCH?.fetch ? rec.MEDIA_DOOR_FETCH : undefined;
   if (door?.fetch) {
-    if (rec.VIDEO_FINISH_URL === undefined) {
-      rec.VIDEO_FINISH_URL = "https://video-finish.test";
-    }
+    if (rec.VIDEO_FINISH_URL === undefined) rec.VIDEO_FINISH_URL = "https://video-finish.test";
     const prev = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (u.includes("video-finish")) return door.fetch!(input as RequestInfo, init);
+      if (/video-finish|audio-mix|audio-beat-sync|image-prep/.test(u)) {
+        return door.fetch!(input as RequestInfo, init);
+      }
       return prev.call(globalThis, input as never, init);
     }) as typeof fetch;
     undoFetch = () => {
