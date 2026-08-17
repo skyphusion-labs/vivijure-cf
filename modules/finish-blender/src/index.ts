@@ -65,6 +65,7 @@ export const MANIFEST: ModuleManifest = {
   version: "0.1.0",
   api: MODULE_API,
   hooks: ["finish"],
+  max_invocation_seconds: 900,
   provides: [
     { id: "blender-grade", label: "Color grade (Blender compositor)" },
   ],

@@ -65,6 +65,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.2.0",
   api: MODULE_API,
   hooks: ["speech"],
+  max_invocation_seconds: 300,
   provides: [
     { id: "speech-upscale", label: "Clean dialogue audio (resemble-enhance)" },
   ],

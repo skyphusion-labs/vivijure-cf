@@ -55,6 +55,7 @@ export const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["finish"],
+  max_invocation_seconds: 900,
   provides: [
     { id: "interpolate", label: "Smooth motion (RIFE frame interpolation)" },
     { id: "face_restore", label: "Relock faces (GFPGAN)" },
