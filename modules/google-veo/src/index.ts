@@ -47,11 +47,33 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Google Veo 3.1 Fast (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Veo)" }],
   config_schema: {
-    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
   },
-  ui: { section: "motion", order: 50, locality: "cloud", cost: "Pay per render", blurb: "Photoreal talking clips. Slower and more expensive." },
+  ui: {
+    section: "motion",
+    order: 50,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Photoreal talking clips. Only 4, 6, or 8 seconds. Slow and spendy.",
+    limits: [
+      "4, 6, or 8 second clips",
+      "Same voice lock on every shot",
+      "One film, no scatter",
+      "No first+last still on this door",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 4,
+    max_seconds: 8,
+    duration_steps: [4, 6, 8],
+    first_last: false,
+    seed: false,
+  },
 };
 
 function json(body: unknown, status = 200): Response {

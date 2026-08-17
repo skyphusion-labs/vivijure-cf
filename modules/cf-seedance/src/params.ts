@@ -60,7 +60,7 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
 }
 
 export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
-  return {
+  const params: Record<string, unknown> = {
     image: input.keyframe_url,
     prompt: input.prompt,
     aspect_ratio: config.aspect_ratio,
@@ -73,6 +73,9 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
     seed: config.seed,
     use_virtual_avatar: true,
   };
+  // Visual continuity: next shot's start still becomes this clip's last frame.
+  if (input.last_keyframe_url) params.last_frame_image = input.last_keyframe_url;
+  return params;
 }
 
 // Override MODEL at call site: index uses config.model via buildParams only; AI.run needs the model id.

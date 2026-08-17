@@ -388,6 +388,8 @@ function collectRenderStageState() {
     filmCredits: readVal("#planner-film-credits"),
     finishLipsync: readCheck("#planner-finish-lipsync"),
     finishBlender: readCheck("#planner-finish-blender"),
+    styleLock: readVal("#planner-style-lock"),
+    voiceLock: readVal("#planner-voice-lock"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-
     // flight render observed yet"; the updater anchors it lazily.

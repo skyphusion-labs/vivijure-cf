@@ -24,5 +24,26 @@ export const MANIFEST: ModuleManifest = {
     negative_prompt: { type: "string", default: "", label: "negative prompt (additive)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
   },
-  ui: { section: "motion", order: 5, locality: "byo", cost: "Highest quality, slower", blurb: "Our studio GPU. Best look. Cloud doors finish faster." },
+  ui: {
+    section: "motion",
+    order: 5,
+    locality: "byo",
+    cost: "Highest quality, slower",
+    blurb: "Best look, slower, silent. Cloud talking doors finish faster.",
+    limits: [
+      "About 2-8 second clips (no hard grid)",
+      "Silent motion, best look",
+      "Speaking is Cast voice plus MuseTalk",
+      "One film, no scatter (look door)",
+      "Slower than a cloud talking door",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: false,
+    min_seconds: 2,
+    max_seconds: 8,
+    seed: true,
+  },
 };

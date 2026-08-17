@@ -93,6 +93,7 @@ import {
   isScatterJobId,
 } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
 import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
+import { generateAudioOn, talkingScatterAllowed } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { enrichScatterPollView } from "./scatter-progress";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
@@ -903,7 +904,9 @@ const hSubmitRender: Handler = async (req, env) => {
     panelShots.length,
     shardMaxFromEnv(env.RENDER_SHARD_MAX),
   );
-  if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2) {
+  const panelMotionMod = modules.find((m) => m.name === motionBackend);
+  if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2
+      && talkingScatterAllowed(panelMotionMod, generateAudioOn(mapped.motion_config))) {
     if (shouldProjectWanLoras(motionBackend, wanPretrained)) {
       const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
       b.renderOverrides = injected.overrides;
@@ -1315,6 +1318,12 @@ const hScatterRender: Handler = async (req, env) => {
     b.renderOverrides = injected.overrides;
     scatterWanProj = await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
   }
+  if (!talkingScatterAllowed(
+    scatterModules.find((m) => m.name === scatterBackend),
+    generateAudioOn(scatterMapped.motion_config),
+  )) {
+    throw badRequest("Talking clips and the look door stay on one film so voice and face hold. Use the main render button, not a split render.");
+  }
   try {
     const job = await startScatterRender(env, {
       project,
@@ -1719,7 +1728,9 @@ const hStartFilm: Handler = async (req, env) => {
     filmScenes.length,
     shardMaxFromEnv(env.RENDER_SHARD_MAX),
   );
-  if (filmShards >= 2 && filmScenes.length >= 2) {
+  const filmMotionMod = filmModules.find((m) => m.name === a.motion_backend);
+  if (filmShards >= 2 && filmScenes.length >= 2
+      && talkingScatterAllowed(filmMotionMod, generateAudioOn(a.motion_config))) {
     const bagConfig: Record<string, Record<string, unknown>> = {
       ...(a.finish_config ?? {}),
       ...(a.speech_config ?? {}),

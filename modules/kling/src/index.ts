@@ -40,13 +40,32 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Kling V2.1 Pro (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Silent cinematic (Kling)" }],
   config_schema: {
     guidance_scale: { type: "float", default: 0.5, min: 0, max: 1, label: "guidance scale" },
     negative_prompt: { type: "string", default: "", label: "negative prompt" },
     enable_safety_checker: { type: "bool", default: true, label: "safety checker" },
   },
-  ui: { section: "motion", order: 20, locality: "cloud", cost: "Pay per render", blurb: "Smoother motion, more cinematic camera." },
+  ui: {
+    section: "motion",
+    order: 20,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Cinematic camera, silent clips. 5 or 10 seconds. Cast voice + MuseTalk if they speak.",
+    limits: [
+      "5 or 10 second clips",
+      "Silent motion",
+      "Speaking is Cast voice plus MuseTalk",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: true,
+    min_seconds: 5,
+    max_seconds: 10,
+    duration_steps: [5, 10],
+  },
 };
 
 function json(body: unknown, status = 200): Response {

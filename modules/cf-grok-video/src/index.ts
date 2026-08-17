@@ -82,7 +82,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Grok Imagine Video (CF AI)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking drafts (Grok)" }],
   config_schema: {
     resolution: { type: "enum", values: ["480p", "720p"], default: "720p", label: "resolution" },
     aspect_ratio: { type: "enum", values: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"], default: "16:9", label: "aspect ratio" },
@@ -92,7 +92,19 @@ const MANIFEST: ModuleManifest = {
     order: 80,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Grok Imagine motion. Quick drafts from a still.",
+    blurb: "Quick talking drafts from a still. 1-15 seconds.",
+    limits: [
+      "1-15 second clips",
+      "Same voice lock on every shot",
+      "One film, no scatter",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 1,
+    max_seconds: 15,
   },
 };
 

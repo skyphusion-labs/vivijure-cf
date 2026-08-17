@@ -77,7 +77,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Seedance 2.0 (CF AI)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Seedance)" }],
   config_schema: {
     model: {
       type: "enum",
@@ -88,7 +88,7 @@ const MANIFEST: ModuleManifest = {
     resolution: { type: "enum", values: ["480p", "720p", "1080p", "4k"], default: "720p", label: "resolution" },
     aspect_ratio: { type: "enum", values: ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"], default: "16:9", label: "aspect ratio" },
     camera_fixed: { type: "bool", default: false, label: "lock camera" },
-    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
   },
   ui: {
@@ -96,7 +96,23 @@ const MANIFEST: ModuleManifest = {
     order: 70,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Fast talking clips. Good first pass when you want the stills to speak.",
+    blurb: "Fast talking clips. Same seed keeps the voice closer. 4-12 seconds.",
+    limits: [
+      "4-12 second clips",
+      "Same seed and same voice lock",
+      "Last still is the next start",
+      "One film, no scatter",
+      "Cannot lock the voice from a previous clip",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "seed_and_prompt",
+    scatter_native_audio: false,
+    min_seconds: 4,
+    max_seconds: 12,
+    first_last: true,
+    seed: true,
   },
 };
 

@@ -24,6 +24,19 @@ export interface ModuleUi {
   limits?: string[];
 }
 
+/** How we actually call this motion door (same shape as core MotionUsageDecl). */
+export type MotionVoiceMode = "prompt_lock" | "seed_and_prompt" | "cast_tts" | "prev_clip";
+export interface MotionUsageDecl {
+  native_audio: boolean;
+  voice: MotionVoiceMode;
+  scatter_native_audio: boolean;
+  min_seconds: number;
+  max_seconds: number;
+  duration_steps?: number[];
+  first_last?: boolean;
+  seed?: boolean;
+}
+
 export interface ModuleManifest {
   name: string;
   version: string;
@@ -32,6 +45,7 @@ export interface ModuleManifest {
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
+  usage?: MotionUsageDecl;
 }
 
 export interface InvokeContext {
@@ -63,6 +77,8 @@ export interface MotionBackendInput {
   shot_id: string;
   keyframe_url: string;
   keyframe_key?: string;
+  last_keyframe_url?: string;
+  last_keyframe_key?: string;
   prompt: string;
   seconds: number;
 }

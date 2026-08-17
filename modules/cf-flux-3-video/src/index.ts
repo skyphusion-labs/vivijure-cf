@@ -74,20 +74,37 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-flux-3-video",
-  version: "0.1.3",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "FLUX 3 Video (CF AI)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Flux)" }],
   config_schema: {
     resolution: { type: "enum", values: ["hd", "fhd"], default: "hd", label: "resolution" },
-    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
   },
   ui: {
     section: "motion",
     order: 90,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Stylized motion from your stills. Strong look, weaker on faces.",
+    blurb: "Stylized talking clips from your stills. Faces drift. 5-20 seconds.",
+    limits: [
+      "5, 10, 15, or 20 second clips",
+      "Same voice lock on every shot",
+      "Talking films stay on one film (no scatter) so the speaker can stay consistent",
+      "First and last stills hold the cut",
+      "Faces drift",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 5,
+    max_seconds: 20,
+    duration_steps: [5, 10, 15, 20],
+    first_last: true,
+    seed: false,
   },
 };
 

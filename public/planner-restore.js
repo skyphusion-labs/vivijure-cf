@@ -280,6 +280,8 @@ function restoreRenderStagePanel(saved) {
   setFilmField("#planner-film-title", saved.filmTitle);
   setFilmField("#planner-film-subtitle", saved.filmSubtitle);
   setFilmField("#planner-film-credits", saved.filmCredits);
+  setFilmField("#planner-style-lock", saved.styleLock);
+  setFilmField("#planner-voice-lock", saved.voiceLock);
   const setCheck = (sel, v) => {
     if (v == null) return;
     const el = $(sel);

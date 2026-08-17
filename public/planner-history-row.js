@@ -198,7 +198,7 @@ function buildHistoryRow(r, childrenByParent) {
     // v0.154.0 (slice-3 #1): a hybrid run carries per-lane gpu/cloud counts.
     pBadge.title =
       prog && (prog.gpu || prog.cloud)
-        ? "hybrid animation in progress (GPU finalize + cloud i2v)"
+        ? "hybrid animation in progress (studio GPU + cloud motion)"
         : "cloud animation in progress (one clip per shot)";
     meta.appendChild(pBadge);
   }
@@ -759,7 +759,7 @@ function buildHistoryRow(r, childrenByParent) {
         const modelSel = document.createElement("select");
         modelSel.className = "planner-keyframe-cloud-model";
         modelSel.dataset.shotId = kf.shot_id;
-        modelSel.title = "cloud i2v model for " + kf.shot_id + " (default uses the row model)";
+        modelSel.title = "cloud motion door for " + kf.shot_id + " (default uses the row model)";
         modelSel.style.display = "none";
         const def = document.createElement("option");
         def.value = "";
@@ -882,11 +882,11 @@ function buildHistoryRow(r, childrenByParent) {
       summary.textContent += " (no motion.backend modules installed)";
     } else {
     const GPU_LABEL = "finalize (" + gpuLbl + " + assemble)";
-    const CLOUD_LABEL = "animate (cloud i2v)";
+    const CLOUD_LABEL = "animate (cloud)";
     const HYBRID_LABEL = "animate (hybrid)";
     const GPU_TITLE = "run " + gpuLbl + " on every keyframe + put the film together (about 20 to 30 minutes)";
     const CLOUD_TITLE = "animate each keyframe with the selected cloud module + put the film together";
-    const HYBRID_TITLE = "animate per-shot across BOTH backends (" + gpuLbl + " + cloud i2v) and put one film together";
+    const HYBRID_TITLE = "animate per-shot across BOTH backends (" + gpuLbl + " + cloud) and put one film together";
 
     const motion = document.createElement("div");
     motion.className = "planner-motion-backend";
@@ -1442,14 +1442,14 @@ async function animateCloudRender(row, btnEl, model, perShot) {
     data = await resp.json();
   } catch (err) {
     btnEl.disabled = false;
-    btnEl.textContent = "animate (cloud i2v)";
+    btnEl.textContent = CLOUD_LABEL;
     window.alert("cloud animate submit failed: " + err.message);
     return;
   }
   if (!resp.ok || !data || !data.ok) {
     btnEl.disabled = false;
-    btnEl.textContent = "animate (cloud i2v)";
-    const msg = (data && (data.error
+    btnEl.textContent = CLOUD_LABEL;
+    const msg = (data && (data.error)
       || (Array.isArray(data.errors) && data.errors.join(", "))))
       || ("HTTP " + (resp ? resp.status : "?"));
     window.alert("cloud animate submit failed: " + msg);
@@ -1491,7 +1491,7 @@ async function animateHybridRender(row, btnEl, backends) {
     : "";
   const confirmMsg =
     "animate this preview as a HYBRID film?\n\n"
-    + gpuTotal + " shot(s) on " + gpuMotionLabel() + ", " + cloudN + " on cloud i2v"
+    + gpuTotal + " shot(s) on " + gpuMotionLabel() + ", " + cloudN + " on cloud"
     + (explicitGpuN ? " (" + explicitGpuN + " GPU set explicitly)" : "")
     + ", assembled into one SILENT MP4. add a score afterward with the add-audio "
     + "action.\n\n" + (cloudN === 0

@@ -47,12 +47,31 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Vidu Q3 (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Vidu)" }],
   config_schema: {
-    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     bgm: { type: "bool", default: false, label: "background music (off by default)" },
   },
-  ui: { section: "motion", order: 60, locality: "cloud", cost: "Pay per render", blurb: "Multi-ref motion. Good when you have several stills." },
+  ui: {
+    section: "motion",
+    order: 60,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Talking clips when you have several stills. 3-10 seconds.",
+    limits: [
+      "3-10 second clips",
+      "Same voice lock on every shot",
+      "One film, no scatter",
+      "Best when you have several stills",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 3,
+    max_seconds: 10,
+  },
 };
 
 function json(body: unknown, status = 200): Response {

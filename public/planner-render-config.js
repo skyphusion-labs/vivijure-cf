@@ -721,6 +721,9 @@
       && global.planState.storyboard.style_prefix.trim()) {
       styleEl.value = global.planState.storyboard.style_prefix.trim();
     }
+    if (typeof global.ensureVoiceLockFilled === "function") {
+      global.ensureVoiceLockFilled();
+    }
   }
 
   function finishCache() {
