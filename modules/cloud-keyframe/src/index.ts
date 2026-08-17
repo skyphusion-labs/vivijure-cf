@@ -50,6 +50,7 @@ import {
   clampDim,
   clampRefsPerSlot,
   composePrompt,
+  composeEditPrompt,
   keyframeKey,
   stageRefKey,
   stateKey,
@@ -102,7 +103,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.4",
+  version: "0.1.5",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -270,6 +271,17 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   if (filmPlan.mode === "cast" && filmPlan.slot) {
     slot_refs[FILM_REF_SLOT] = [slot_refs[filmPlan.slot][0]];
   }
+  // RunPod edit requires images[]. A shot with empty character_slots would
+  // otherwise send none even when the bundle has portraits. Borrow every
+  // staged canonical portrait as the film-wide lock.
+  if (!slot_refs[FILM_REF_SLOT]?.length) {
+    const borrowed: string[] = [];
+    for (const [slot, keys] of Object.entries(slot_refs)) {
+      if (slot === FILM_REF_SLOT) continue;
+      if (keys[0]) borrowed.push(keys[0]);
+    }
+    if (borrowed.length) slot_refs[FILM_REF_SLOT] = borrowed;
+  }
 
   const shots: ShotPlan[] = selected.map((s) => ({
     shot_id: s.shot_id,
@@ -333,6 +345,16 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       const r = await env.R2_RENDERS.get(key);
       if (r) refBlobs.push(await r.blob());
     }
+    if (!refBlobs.length) {
+      for (const [slot, keys] of Object.entries(state.slot_refs)) {
+        if (slot === FILM_REF_SLOT) continue;
+        for (const key of keys) {
+          const r = await env.R2_RENDERS.get(key);
+          if (r) refBlobs.push(await r.blob());
+        }
+        if (refBlobs.length) break;
+      }
+    }
 
     let gen: { bytes: ArrayBuffer; mime: string } | undefined;
     let lastFlag: Error | undefined;
@@ -348,7 +370,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
             if (!r.ok) throw new Error("runpod /runsync -> " + r.status);
             return r.json();
           },
-          rephraseForFlagRetry(shot.prompt, attempt),
+          rephraseForFlagRetry(composeEditPrompt(shot.prompt), attempt),
           refBlobs,
           state.width,
           state.height,

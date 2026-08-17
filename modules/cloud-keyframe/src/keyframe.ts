@@ -59,6 +59,18 @@ export function composePrompt(
   return `${lead}${scenePrompt.trim()}${idText}`;
 }
 
+/** RunPod Nano Banana 2 is an EDIT door. The storyboard line is the still we want;
+ *  the portraits in images[] are identity, not the frame to retouch. */
+export function composeEditPrompt(scenePrompt: string): string {
+  const scene = scenePrompt.trim();
+  return (
+    "Create a new cinematic film still from this description. "
+    + "Keep the face, hair, skin, and wardrobe of the people in the reference images. "
+    + "Do not copy the reference framing. "
+    + scene
+  );
+}
+
 // --- film-wide reference conditioning (cp#32) --------------------------------------------------
 //
 // The problem this closes: the ONLY film-wide element conditioning keyframes was the text style_prefix.

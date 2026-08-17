@@ -9,6 +9,7 @@ import {
   clampDim,
   clampRefsPerSlot,
   composePrompt,
+  composeEditPrompt,
   keyframeKey,
   stageRefKey,
   stateKey,
@@ -88,6 +89,13 @@ describe("cloud-keyframe pure logic", () => {
     expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("google/nano-banana-2");
     expect(clampModel("nano-pro-2")).toBe("google/nano-banana-2");
     expect(clampModel(undefined)).toBe(MODELS[0]);
+  });
+
+  it("composeEditPrompt tells the edit door to make a new still, not retouch the portrait", () => {
+    const p = composeEditPrompt("Wren runs down a wet alley");
+    expect(p).toMatch(/Create a new cinematic film still/);
+    expect(p).toMatch(/Wren runs down a wet alley/);
+    expect(p).toMatch(/Keep the face/);
   });
 
   it("clampDim clamps to [512,1536], rounds, and falls back on junk", () => {
@@ -488,7 +496,7 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
     expect(shot3!.refCount).toBe(1);
   });
 
-  it("film_ref=none is a true no-op: the character-less shot still draws from text alone", async () => {
+  it("a character-less shot still gets staged portraits (RunPod edit needs images[])", async () => {
     genCalls.length = 0;
     const env = await makeKeyframeEnv();
     const sub = await invokeKeyframe(env, { film_ref: "none" });
@@ -496,7 +504,9 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
     const done = await drainPolls(env, sub.poll!);
     expect(done.ok, done.error).toBe(true);
     const shot3 = genCalls.find((c) => c.prompt.includes("empty landscape"));
-    expect(shot3!.refCount).toBe(0);
+    expect(shot3, "shot_03 was rendered").toBeDefined();
+    expect(shot3!.refCount).toBeGreaterThan(0);
+    expect(shot3!.prompt).toMatch(/Keep the face/);
   });
 
   it("first_keyframe: the first shot is the source (no film ref), a later character-less shot gets it", async () => {
