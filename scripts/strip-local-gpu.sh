@@ -87,8 +87,20 @@ if grep -q 'MODULE_LOCAL_GPU' "$OUT"; then
   echo "::error::cf#560: LOCAL-GPU block survived the strip -- refusing to deploy the hosted studio with local-gpu bound" >&2
   exit 1
 fi
-if [ "$((before_mod - after_mod))" -ne 1 ]; then
-  echo "::error::cf#560: the LOCAL-GPU strip removed $((before_mod - after_mod)) MODULE_ lines, expected exactly 1 (before=$before_mod after=$after_mod) -- a marker is probably malformed and the strip ran past the block" >&2
+delta=$((before_mod - after_mod))
+# Hosted template is already clean (markers only, no MODULE_LOCAL_GPU). Delta 0 is
+# success when the input also had no binding. Delta 1 is the old "strip the line
+# out" case. Anything else is a malformed marker.
+if [ "$delta" -eq 0 ]; then
+  if grep -q 'MODULE_LOCAL_GPU' "$IN"; then
+    echo "::error::cf#560: MODULE_LOCAL_GPU was in the input but the strip removed 0 MODULE_ lines -- markers missed the binding" >&2
+    exit 1
+  fi
+  echo "LOCAL-GPU already absent: MODULE_ lines ${before_mod} (delta 0, hosted-clean)"
+  exit 0
+fi
+if [ "$delta" -ne 1 ]; then
+  echo "::error::cf#560: the LOCAL-GPU strip removed $delta MODULE_ lines, expected 0 (already clean) or 1 (before=$before_mod after=$after_mod) -- a marker is probably malformed and the strip ran past the block" >&2
   exit 1
 fi
 

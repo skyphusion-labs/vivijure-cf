@@ -163,7 +163,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
     // nothing, so publishing is inert until the plane adds rows; it exists to remove the
     // cross-repo serialisation, not to change behaviour.
-    expect(publishedToTenants().length).toBe(20);
+    expect(publishedToTenants().length).toBe(24);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are

@@ -3,6 +3,7 @@ import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinal
 import type { ConfigSchema } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
+import { vfAsyncFinish, vfAsyncDoor } from "./install-vf-fetch.js";
 import { filmJobToPollView } from "../src/film-render-bridge";
 import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { finishStepInputHash } from "@skyphusion-labs/vivijure-core/finish-hash";
@@ -761,7 +762,7 @@ function assembleEnv(opts: { jobInR2: object; filmOutputExists: boolean }) {
         opts.filmOutputExists && key === `renders/${(opts.jobInR2 as { film_id: string }).film_id}/film.mp4` ? {} : null,
       put: async (key: string) => { puts.push(key); },
     },
-    VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async (input: Request | string) => { doorCalls.push(typeof input === "string" ? input : input.url); return new Response(JSON.stringify({ ok: true, key: "renders/film-selfheal-1/film.mp4" }), { status: 200, headers: { "content-type": "application/json" } }); } },
+    VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async (input: Request | string) => { doorCalls.push(typeof input === "string" ? input : input.url); return vfAsyncFinish({ ok: true, key: "renders/film-selfheal-1/film.mp4" })(input); } },
     // presign creds: only the fall-through path reaches presignR2Get/Put (the short-circuit
     // returns before them), but they must be present so that path does not throw.
     R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
@@ -792,7 +793,7 @@ describe("advanceFilmJob assemble self-heal from R2 presence (issue #122)", () =
   it("falls through to the container when the film.mp4 is not yet in R2", async () => {
     const { env, doorCalls } = assembleEnv({ jobInR2: baseJob, filmOutputExists: false });
     await advanceFilmJob(env, "film-selfheal-1");
-    expect(doorCalls.length).toBe(1); // no short-circuit -> normal assemble path ran
+    expect(doorCalls.length).toBe(2); // /async/finish + /async/status
   });
 });
 
@@ -1697,7 +1698,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
         put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
       },
       // mux container (callVideoFinish) -- returns the muxed film key
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => jsonResp({ ok: true, key: `renders/${filmId}/film-audio.mp4` }) },
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: `renders/${filmId}/film-audio.mp4` }),
       R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
       R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
     };
@@ -1825,7 +1826,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
         head: async () => null, // no pre-existing artifacts
         put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
       },
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => jsonResp({ ok: true, key: assembled }) },
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: assembled }),
       R2_S3_ACCESS_KEY_ID: "t", R2_S3_SECRET_ACCESS_KEY: "t",
       R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
       MODULE_SUBTITLE: { fetch: moduleFetch({ name: "subtitle" }, { ok: true, output: { film_key: assembled, applied: ["noop:no-cards"] } }) },
@@ -1894,7 +1895,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
         head: async (key: string) => (key === rawSidecar ? ({ size: rawSrt.length } as unknown) : null),
         put: async (key: string, val: string) => { puts[key] = val; if (key === filmJobDocKey(filmId)) stored = val; },
       },
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => jsonResp({ ok: true, key: assembled }) },
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: assembled }),
       R2_S3_ACCESS_KEY_ID: "t", R2_S3_SECRET_ACCESS_KEY: "t",
       R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
       // subtitle burns + writes a sidecar; film-titles applies a 3s title card and REPORTS prepend_seconds.
@@ -1959,7 +1960,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
         head: async (key: string) => (key === rawSidecar ? ({ size: rawSrt.length } as unknown) : null),
         put: async (key: string, val: string) => { puts[key] = val; if (key === filmJobDocKey(filmId)) stored = val; },
       },
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => jsonResp({ ok: true, key: assembled }) },
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: assembled }),
       R2_S3_ACCESS_KEY_ID: "t", R2_S3_SECRET_ACCESS_KEY: "t",
       R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
       MODULE_SUBTITLE: { fetch: moduleFetch("subtitle", { ok: true, output: { film_key: ff0, applied: ["subtitle", "subtitle:sidecar"] } }) },
@@ -2037,7 +2038,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
         head: async () => null, // FF0 never appears in R2: completion is driven by the POLL, not adoption
         put: async (key: string, val: string) => { if (key === filmJobDocKey(FILM_ID)) stored = val; },
       },
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => j({ ok: true, key: MUX_KEY }) }, // mux container
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: MUX_KEY }), // mux container
       MODULE_FILM_TITLES: {
         fetch: async (input: Request | string) => {
           const url = typeof input === "string" ? input : input.url;
@@ -2099,7 +2100,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
         head: async () => null,
         put: async (key: string, val: string) => { if (key === filmJobDocKey(FILM_ID)) stored = val; },
       },
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => j({ ok: true, key: MUX_KEY }) },
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: MUX_KEY }),
       MODULE_FILM_TITLES: {
         fetch: async (input: Request | string) => {
           const url = typeof input === "string" ? input : input.url;
@@ -2302,7 +2303,7 @@ function masterEnv(
         return new Response("{}", { status: 404 });
       },
     },
-    VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async (input: Request | string) => { doorCalls.push(typeof input === "string" ? input : input.url); return new Response(JSON.stringify({ ok: true, key: "renders/film-master/muxed.mp4" }), { status: 200, headers: { "content-type": "application/json" } }); } },
+    VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async (input: Request | string) => { doorCalls.push(typeof input === "string" ? input : input.url); return vfAsyncFinish({ ok: true, key: "renders/film-master/muxed.mp4" })(input); } },
     R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
     R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
   } as unknown as Env;
@@ -2330,7 +2331,7 @@ describe("advanceFilmJob master phase (pre-mux audio mastering)", () => {
     expect(job.audio_key).toBe("renders/neon/audio/bed_mastered.wav"); // the MASTERED bed is what gets muxed
     expect(job.master?.applied).toEqual(["music-upscale:soxr48k", "loudnorm:-14LUFS"]);
     expect(job.master?.degraded).toEqual([]);
-    expect(doorCalls.length).toBe(1);     // the mux ran (with the mastered bed)
+    expect(doorCalls.length).toBe(2);     // mux /async/finish + /async/status
     expect(r?.job.phase).toBe("done");
   });
 
@@ -2349,7 +2350,7 @@ describe("advanceFilmJob master phase (pre-mux audio mastering)", () => {
     const r2 = await advanceFilmJob(orch(env), "film-master");
     const done = read();
     expect(done.audio_key).toBe("renders/neon/audio/bed_mastered.wav");
-    expect(doorCalls.length).toBe(1);
+    expect(doorCalls.length).toBe(2);
     expect(r2?.job.phase).toBe("done");
   });
 
@@ -2361,7 +2362,7 @@ describe("advanceFilmJob master phase (pre-mux audio mastering)", () => {
     const job = read();
     expect(job.audio_key).toBe("renders/neon/audio/bed.wav");          // UNCHANGED original bed
     expect(job.master?.degraded).toEqual(["MODULE_AUDIO_MASTER: no-runpod-secrets"]);
-    expect(doorCalls.length).toBe(1);                                   // STILL muxed (never dropped)
+    expect(doorCalls.length).toBe(2);                                   // STILL muxed (never dropped)
     expect(r?.job.phase).toBe("done");                                 // NOT failed
   });
 
@@ -2373,7 +2374,7 @@ describe("advanceFilmJob master phase (pre-mux audio mastering)", () => {
     const job = read();
     expect(job.audio_key).toBe("renders/neon/audio/bed.wav");          // original bed muxed
     expect(job.master?.degraded?.[0]).toMatch(/invoke failed/);
-    expect(doorCalls.length).toBe(1);
+    expect(doorCalls.length).toBe(2);
     expect(r?.job.phase).toBe("done");
     expect(r?.job.phase).not.toBe("failed");
   });
@@ -2795,7 +2796,9 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     if (opts.door) {
       const { status = 200, body = { ok: true } } = opts.door;
       env.VIDEO_FINISH_URL = "https://video-finish.test";
-      env.MEDIA_DOOR_FETCH = { fetch: async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }) };
+      env.MEDIA_DOOR_FETCH = (status >= 400 || (body as { ok?: boolean }).ok === false)
+        ? vfAsyncDoor(body, { fail: status === 502 || status === 503 || status === 504 ? "submit" : "job", error: `${status} ${String((body as { error?: string }).error || "")}`.trim() })
+        : vfAsyncDoor(body);
     }
     return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob };
   }
@@ -2862,10 +2865,9 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     // assemble_attempts at the cap-1 so this tick exhausts (502 is a transient gateway status, no backoff).
     const { env } = degradeEnv(asmJob({ assemble_attempts: 5 }), { door: { status: 502 } });
     const r = await advanceFilmJob(orch(env), "film-519-asm");
-    expect(r?.job.phase).toBe("done");
-    expect(r?.job.finish_unavailable?.at).toBe("assemble");
-    expect(r?.job.finish_unavailable?.delivered).toBe("clips");
-    expect(r?.job.finish_unavailable?.clips?.length).toBe(2);
+    // Async submit that never returns a jobId is a failed assemble in core 1.21.2.
+    expect(r?.job.phase).toBe("failed");
+    expect(r?.job.error).toMatch(/async submit|502/);
   });
 
   it("assemble + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
@@ -2891,9 +2893,10 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
   it("mux + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
     const { env } = degradeEnv(muxJob(), { door: { status: 500, body: { ok: false, error: "remux boom" } } });
     const r = await advanceFilmJob(orch(env), "film-519-mux");
-    expect(r?.job.phase).toBe("failed");
-    expect(r?.job.error).toContain("500");
-    expect(r?.job.finish_unavailable).toBeUndefined();
+    // core 1.21.2: mux failure degrades to the silent film rather than failing the render.
+    expect(r?.job.phase).toBe("done");
+    expect(r?.job.finish_unavailable?.at).toBe("mux");
+    expect(r?.job.film_key).toBe("renders/film-519-mux/film-silent.mp4");
   });
 
   it("summarizeFilm + filmJobToPollView surface the degrade + clip keys for the UI", () => {
@@ -2940,7 +2943,7 @@ describe("#521 discovery threaded once per tick (no per-leg module.json fan-out)
         head: async () => null,
         put: async (k: string, v: string) => { if (k === filmJobDocKey(filmId)) stored = v; },
       },
-      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async () => jsonResp({ ok: true, key: `renders/${filmId}/film-audio.mp4` }) },
+      VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: `renders/${filmId}/film-audio.mp4` }),
       MODULE_FILM_TITLES: {
         fetch: async (input: Request | string) => {
           const url = typeof input === "string" ? input : input.url;
@@ -2991,9 +2994,7 @@ function durationGateEnv(job: object, clipDurations: number[] | undefined) {
       put: async (key: string) => { putCalls.push(key); },
     },
     VIDEO_FINISH_URL: "https://video-finish.test",
-    MEDIA_DOOR_FETCH: {
-      fetch: async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }),
-    },
+    MEDIA_DOOR_FETCH: vfAsyncDoor(body),
     R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
     R2_S3_ENDPOINT: "https://acct.r2.cloudflarestorage.com", R2_S3_BUCKET: "vivijure",
   } as unknown as Env;

@@ -127,6 +127,8 @@ const env = {
   ALLOW_UNAUTHENTICATED: "true",
   ASSETS: { fetch: async () => new Response("ASSET") },
   SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
+  DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
+  R2_RENDERS: { get: async () => null, put: async () => {}, head: async () => null },
   MODULE_KEYFRAME: moduleBinding("keyframe-sdxl", ["keyframe"], "cloud"),
   MODULE_ALIBABA_WAN: moduleBinding("alibaba-wan", ["motion.backend"], "byo"),
   // A cloud motion door, so animate-cloud / animate-hybrid are DRIVEABLE. Without it those two are
