@@ -178,6 +178,8 @@ function restorePlanResultPanel(saved) {
   planState.audioKey = typeof saved.audioKey === "string" ? saved.audioKey : null;
   planState.audioMime = typeof saved.audioMime === "string" ? saved.audioMime : null;
   planState.audioSourceLabel = typeof saved.audioSourceLabel === "string" ? saved.audioSourceLabel : null;
+  planState.audioDurationSeconds = typeof saved.audioDurationSeconds === "number" && saved.audioDurationSeconds > 0
+    ? saved.audioDurationSeconds : null;
   planState.bpm = typeof saved.bpm === "number" && saved.bpm > 0 ? saved.bpm : 120;
   planState.beatsPerShot = typeof saved.beatsPerShot === "number" && saved.beatsPerShot > 0
     ? saved.beatsPerShot : 4;

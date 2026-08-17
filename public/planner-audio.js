@@ -265,12 +265,44 @@ function renderAudioCurrent() {
     return;
   }
   wrap.hidden = false;
+  const known = typeof planState.audioDurationSeconds === "number" && planState.audioDurationSeconds > 0
+    ? " · " + planState.audioDurationSeconds.toFixed(1) + "s"
+    : "";
   $("#planner-audio-meta").textContent =
-    (planState.audioSourceLabel || "audio") + " · " + planState.audioKey;
+    (planState.audioSourceLabel || "audio") + " · " + planState.audioKey + known;
   const audio = $("#planner-audio-player");
-  if (audio) {
-    audio.preload = "metadata";
-    audio.src = "/api/artifact/" + planState.audioKey;
+  if (audio) bindPlannerAudioPlayer(audio, planState.audioKey);
+}
+
+/** MiniMax / Workers AI MP3 often has no Xing header. Streaming /api/artifact
+ *  then leaves <audio>.duration as NaN. Fetch the file, play from a blob URL. */
+async function bindPlannerAudioPlayer(audio, key) {
+  if (!audio || !key) return;
+  if (audio._boundKey === key && audio.src && audio.src.indexOf("blob:") === 0) return;
+  audio._boundKey = key;
+  try {
+    const resp = await fetch("/api/artifact/" + key);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const blob = await resp.blob();
+    if (audio._objectUrl) URL.revokeObjectURL(audio._objectUrl);
+    audio._objectUrl = URL.createObjectURL(blob);
+    audio.preload = "auto";
+    audio.src = audio._objectUrl;
+    if (typeof audio.load === "function") audio.load();
+    const stamp = () => {
+      if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      planState.audioDurationSeconds = audio.duration;
+      const meta = $("#planner-audio-meta");
+      if (meta && planState.audioKey) {
+        meta.textContent = (planState.audioSourceLabel || "audio") + " · " + planState.audioKey
+          + " · " + audio.duration.toFixed(1) + "s";
+      }
+    };
+    audio.addEventListener("loadedmetadata", stamp, { once: true });
+    audio.addEventListener("durationchange", stamp, { once: true });
+  } catch (err) {
+    audio.preload = "auto";
+    audio.src = "/api/artifact/" + key;
     if (typeof audio.load === "function") audio.load();
   }
 }
@@ -280,6 +312,7 @@ function clearAudio() {
   if (!window.confirm("clear the audio bed? the file stays in R2; this just unlinks it from this plan.")) return;
   planState.audioKey = null;
   planState.audioMime = null;
+  planState.audioDurationSeconds = null;
   planState.audioSourceLabel = null;
   renderAudioCurrent();
   persistSoon();
@@ -299,6 +332,7 @@ async function uploadAudioFile(file) {
     if (!resp.ok) throw new Error(data.error || "HTTP " + resp.status);
     planState.audioKey = data.key;
     planState.audioMime = data.mime;
+    planState.audioDurationSeconds = null;
     planState.audioSourceLabel = "uploaded " + file.name;
     renderAudioCurrent();
     persistSoon();
@@ -501,6 +535,9 @@ async function pollScoreBedJob() {
     if (data.status === "done" && data.output_artifact && data.output_artifact.key) {
       planState.audioKey = data.output_artifact.key;
       planState.audioMime = data.output_artifact.mime || "audio/mpeg";
+      planState.audioDurationSeconds = typeof data.output_artifact.duration_seconds === "number"
+        ? data.output_artifact.duration_seconds
+        : null;
       planState.audioSourceLabel = planState.pendingScoreBedLabel
         || (kind === "narration" ? activeScoreNarrationLabel() : activeScoreMusicLabel());
       planState.pendingMusicChatId = null;

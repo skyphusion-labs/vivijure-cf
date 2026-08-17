@@ -715,6 +715,12 @@
       motionWrap.hidden = true;
     }
     renderFinishPicks();
+    const styleEl = document.getElementById("planner-style-lock");
+    if (styleEl && !styleEl.value && global.planState && global.planState.storyboard
+      && typeof global.planState.storyboard.style_prefix === "string"
+      && global.planState.storyboard.style_prefix.trim()) {
+      styleEl.value = global.planState.storyboard.style_prefix.trim();
+    }
   }
 
   function finishCache() {

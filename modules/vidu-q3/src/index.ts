@@ -52,7 +52,7 @@ const MANIFEST: ModuleManifest = {
     generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
     bgm: { type: "bool", default: false, label: "background music (off by default)" },
   },
-  ui: { section: "motion", order: 60, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: { section: "motion", order: 60, locality: "cloud", cost: "Pay per render", blurb: "Multi-ref motion. Good when you have several stills." },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -205,7 +205,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
 }
 
 export default {

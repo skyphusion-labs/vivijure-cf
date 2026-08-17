@@ -91,8 +91,8 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 80,
     locality: "cloud",
-    cost: "Pay per render (CF Unified Billing)",
-    blurb: "Cloudflare AI Gateway i2v -- no RunPod queue; billed through Unified Billing. Blocking gen runs in a durable Workflow (#155).",
+    cost: "Pay per render",
+    blurb: "Grok Imagine motion. Quick drafts from a still.",
   },
 };
 
@@ -166,6 +166,7 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
       shot_id: params.shot_id,
       seconds: params.seconds,
       clip_key: key,
+      has_audio: true,
     });
     return;
   }
@@ -183,6 +184,7 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
     shot_id: params.shot_id,
     seconds: params.seconds,
     clip_key: key,
+    has_audio: true,
   });
 }
 
@@ -275,6 +277,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
         clip_key: state.clip_key,
         fps: OUT_FPS,
         frames: state.seconds * OUT_FPS,
+        has_audio: true,
       },
     };
   }

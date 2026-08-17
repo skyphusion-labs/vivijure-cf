@@ -88,8 +88,8 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 60,
     locality: "cloud",
-    cost: "Pay per render (CF Unified Billing)",
-    blurb: "Cloudflare AI Gateway i2v -- no RunPod queue; billed through Unified Billing. Blocking gen runs in a durable Workflow (#155).",
+    cost: "Pay per render",
+    blurb: "Reference-to-video. Holds a look across the shot.",
   },
 };
 

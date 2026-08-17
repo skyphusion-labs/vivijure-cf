@@ -75,7 +75,7 @@ const MANIFEST: ModuleManifest = {
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
     enable_safety_checker: { type: "bool", default: true, label: "safety checker" },
   },
-  ui: { section: "motion", order: 75, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: { section: "motion", order: 75, locality: "cloud", cost: "Pay per render", blurb: "Wan with your cast LoRA. Best face lock on motion." },
 };
 
 function json(body: unknown, status = 200): Response {

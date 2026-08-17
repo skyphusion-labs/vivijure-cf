@@ -819,6 +819,8 @@ const hSubmitRender: Handler = async (req, env) => {
     scenes?: unknown; motion_backend?: string;
     castLoras?: Record<string, unknown>;
     film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
+    style_prefix?: string;
+    voice_lock?: string;
     shardCount?: number; shard_count?: number;
   }>(req);
   // cf#334: the guards below are the SHARED pre-flight, not this door's private copy. What stays
@@ -919,6 +921,8 @@ const hSubmitRender: Handler = async (req, env) => {
       motion_backend: motionBackend,
       audio_key: b.audioKey,
       film_titles: b.film_titles,
+      style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
+      voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
       project_id: await resolveProjectRef(env, b.projectId),
     });
     return json(await enrichScatterPollView(env, scatterJobToPollView(scatterJob)), 201);
@@ -948,6 +952,8 @@ const hSubmitRender: Handler = async (req, env) => {
     pretrained_loras: Object.keys(pretrained).length ? pretrained : undefined,
     cast_loras: Object.keys(castIds).length ? castIds : undefined,
     dialogue_lines: panelDialogue,
+    style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
+    voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
   }, modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.

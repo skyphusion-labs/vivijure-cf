@@ -71,4 +71,5 @@ export interface MotionBackendOutput {
   clip_key: string;
   fps: number;
   frames: number;
+  has_audio?: boolean;
 }

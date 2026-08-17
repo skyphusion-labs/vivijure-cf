@@ -51,7 +51,7 @@ const MANIFEST: ModuleManifest = {
     enable_prompt_expansion: { type: "bool", default: true, label: "expand prompt" },
     go_fast: { type: "bool", default: true, label: "fast mode" },
   },
-  ui: { section: "motion", order: 40, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: { section: "motion", order: 40, locality: "cloud", cost: "Pay per render", blurb: "Physical motion. Silent clips; use MuseTalk if they need to speak." },
 };
 
 function json(body: unknown, status = 200): Response {

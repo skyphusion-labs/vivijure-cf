@@ -292,6 +292,10 @@ async function submitRender() {
   // audio_key from the job input, downloads, and muxes via
   // export_film(with_audio=True).
   if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  const styleLock = (($("#planner-style-lock") && $("#planner-style-lock").value) || (planState.storyboard && planState.storyboard.style_prefix) || "").trim();
+  const voiceLock = (($("#planner-voice-lock") && $("#planner-voice-lock").value) || "").trim();
+  if (styleLock) reqBody.style_prefix = styleLock;
+  if (voiceLock) reqBody.voice_lock = voiceLock;
   // Forward the title / credit-card TEXT. The film.finish chain (film-titles) reads it off the job
   // (job.film_titles -> FilmFinishInput.title/credits); without this the cards never rendered from the
   // planner. Omitted when empty, and the core ignores it on a keyframes-only preview (no assembled film
@@ -574,6 +578,10 @@ async function submitScatterRender() {
   if (qualityTier) reqBody.qualityTier = qualityTier;
   if (renderOverrides) reqBody.renderOverrides = renderOverrides;
   if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  const styleLock = (($("#planner-style-lock") && $("#planner-style-lock").value) || (planState.storyboard && planState.storyboard.style_prefix) || "").trim();
+  const voiceLock = (($("#planner-voice-lock") && $("#planner-voice-lock").value) || "").trim();
+  if (styleLock) reqBody.style_prefix = styleLock;
+  if (voiceLock) reqBody.voice_lock = voiceLock;
   if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
 
   let resp = null;
