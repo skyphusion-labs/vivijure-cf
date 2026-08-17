@@ -4,6 +4,7 @@ import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudM
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
+import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
@@ -2000,11 +2001,10 @@ const hInstallModule: Handler = async (req, env) => {
     throw badRequest(`script "${script}" is not resident in the namespace: ${(e as Error).message}`);
   }
   // Capture the exact manifest that gets gated + stored (so the row never drifts from what passed).
+  // Timeout + retry mirrors core readManifest; this helper keeps the RAW text and fails loud (cf#600).
   let manifestText: string;
   try {
-    const res = await fetcher.fetch("https://module/module.json");
-    if (!res.ok) throw badRequest(`GET /module.json -> ${res.status}`);
-    manifestText = await res.text();
+    manifestText = await fetchInstallManifestText(fetcher);
   } catch (e) {
     if (e instanceof HttpError) throw e;
     throw badRequest(`module unreachable: ${(e as Error).message}`);

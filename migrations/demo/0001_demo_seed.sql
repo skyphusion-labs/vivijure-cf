@@ -8,7 +8,7 @@
 --   wrangler d1 execute <demo-db> --file=migrations/demo/0001_demo_seed.sql
 --
 -- What it seeds:
---   1. installed_modules: the 26 in-repo module manifests, captured VERBATIM from each module worker
+--   1. installed_modules: the captured in-repo module manifests, captured VERBATIM from each module worker
 --      GET /module.json. DISPLAY-ONLY by construction -- the script_name is demo-seed-<name>, which no
 --      dispatch namespace serves (the demo binds none), and AUTH_MODE=demo denies every mutation at the
 --      gate, so nothing here is invocable. The registry reads these rows in demo mode (#625 exception in

@@ -21,23 +21,28 @@ import type { Database } from "@skyphusion-labs/vivijure-core/platform";
 
 function ledgerDb(): Database & { rows: Map<string, number> } {
   const rows = new Map<string, number>();
-  const make = (sql: string, bound: unknown[]) => ({
-    bind: (...values: unknown[]) => make(sql, values),
-    async first<T>() {
-      let total = 0;
-      for (const v of rows.values()) total += v;
-      return { total, objects: rows.size } as T;
-    },
-    async run() {
-      if (sql.includes("INSERT INTO storage_usage")) rows.set(String(bound[0]), Number(bound[1]));
-      else if (sql.includes("DELETE FROM storage_usage WHERE object_key = ?")) rows.delete(String(bound[0]));
-      else rows.clear();
-      return { success: true };
-    },
-    async all<T>() {
-      return { results: [] as T[] };
-    },
-  });
+  const make = (sql: string, bound: unknown[]) => {
+    const norm = sql.replace(/\s+/g, " ").trim();
+    return {
+      bind: (...values: unknown[]) => make(sql, values),
+      async first<T>() {
+        let total = 0;
+        for (const v of rows.values()) total += v;
+        return { total, objects: rows.size } as T;
+      },
+      async run() {
+        // Table-boundary matchers: "INSERT INTO storage_usage (" must not also match
+        // storage_usage_meta (cf#555). Unknown SQL throws rather than wiping.
+        if (norm.startsWith("INSERT INTO storage_usage (")) rows.set(String(bound[0]), Number(bound[1]));
+        else if (norm.startsWith("DELETE FROM storage_usage WHERE object_key = ?")) rows.delete(String(bound[0]));
+        else throw new Error(`ledgerDb does not understand: ${norm}`);
+        return { success: true };
+      },
+      async all<T>() {
+        return { results: [] as T[] };
+      },
+    };
+  };
   return { rows, prepare: (sql: string) => make(sql, []) } as unknown as Database & { rows: Map<string, number> };
 }
 
@@ -69,6 +74,28 @@ function rawEnv(): Env & { R2_RENDERS: { puts: string[]; deletes: string[] } } {
     R2_RENDERS: { puts: string[]; deletes: string[] };
   };
 }
+
+describe("ledgerDb fake itself (cf#555)", () => {
+  it("unknown SQL throws instead of wiping the ledger", async () => {
+    const db = ledgerDb();
+    await db.prepare(
+      "INSERT INTO storage_usage (object_key, bytes, updated_at) VALUES (?, ?, ?)",
+    ).bind("renders/a.mp4", 1024, 1).run();
+    expect(db.rows.size).toBe(1);
+    await expect(
+      db.prepare("CREATE TABLE IF NOT EXISTS storage_usage_meta (key TEXT, value TEXT)").run(),
+    ).rejects.toThrow(/does not understand/);
+    expect(db.rows.size, "catch-all must not wipe").toBe(1);
+  });
+
+  it("INSERT INTO storage_usage_meta is not routed as an object row", async () => {
+    const db = ledgerDb();
+    await expect(
+      db.prepare("INSERT INTO storage_usage_meta (key, value) VALUES (?, ?)").bind("ledger_true_since", "1786000000000").run(),
+    ).rejects.toThrow(/does not understand/);
+    expect(db.rows.size).toBe(0);
+  });
+});
 
 describe("the studioEnv write seam (production wiring, core#52)", () => {
   it("METERS the real R2 binding every request env is built from", async () => {

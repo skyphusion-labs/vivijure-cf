@@ -452,7 +452,7 @@ function refreshCastLoraWarning() {
     return;
   }
   const unready = window.loraPreflight.unreadyBoundLoraSlots(bindings, planState.castCatalog, {
-    motionBackend: "",
+    wanLora: false,
   });
   if (unready.length === 0) {
     el.hidden = true;

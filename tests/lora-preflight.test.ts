@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   isCastLoraReady,
   unreadyBoundLoraSlots,
   loraSlotSignature,
-  WAN_LORA_BACKEND,
   type CastMember,
 } from "../public/lora-preflight.js";
 
@@ -40,19 +41,19 @@ describe("isCastLoraReady (mirrors the server reuse gate)", () => {
   it("is false when status is ready but the SDXL key is missing (non-Wan backend)", () => {
     expect(isCastLoraReady({ id: ADA, name: "wren", lora_status: "ready" })).toBe(false);
   });
-  it("accepts Wan dual keys when motion backend is alibaba-wan-lora", () => {
-    expect(isCastLoraReady(wanReady(ADA, "mara"), { motionBackend: WAN_LORA_BACKEND })).toBe(true);
+  it("accepts Wan dual keys when the caller marks the render as Wan LoRA", () => {
+    expect(isCastLoraReady(wanReady(ADA, "mara"), { wanLora: true })).toBe(true);
   });
-  it("rejects Wan-only keys when motion backend is not Wan", () => {
+  it("rejects Wan-only keys when the render is not Wan LoRA", () => {
     expect(isCastLoraReady(wanReady(ADA, "mara"))).toBe(false);
-    expect(isCastLoraReady(wanReady(ADA, "mara"), { motionBackend: "own-gpu" })).toBe(false);
+    expect(isCastLoraReady(wanReady(ADA, "mara"), { wanLora: false })).toBe(false);
   });
-  it("SDXL key wins on Wan backend (core cast-loras.ts)", () => {
+  it("SDXL key wins on Wan LoRA renders (core cast-loras.ts)", () => {
     const both: CastMember = {
       ...wanReady(ADA, "mara"),
       lora_key: "loras/mara.safetensors",
     };
-    expect(isCastLoraReady(both, { motionBackend: WAN_LORA_BACKEND })).toBe(true);
+    expect(isCastLoraReady(both, { wanLora: true })).toBe(true);
   });
   it("prefers sdxl_lora_ready / wan_lora_ready when present (cf#383)", () => {
     // Explicit false even if a stale key is on the row (API is source of truth)
@@ -74,7 +75,7 @@ describe("isCastLoraReady (mirrors the server reuse gate)", () => {
           sdxl_lora_ready: false,
           wan_lora_ready: true,
         },
-        { motionBackend: WAN_LORA_BACKEND },
+        { wanLora: true },
       ),
     ).toBe(true);
   });
@@ -108,10 +109,10 @@ describe("unreadyBoundLoraSlots (which bound slots will be retrained inline)", (
     expect(out[0].castId).toBe(WREN);
   });
 
-  it("does not flag Wan-ready cast on alibaba-wan-lora renders", () => {
+  it("does not flag Wan-ready cast on Wan LoRA renders", () => {
     const catalog = [wanReady(ADA, "mara")];
     expect(
-      unreadyBoundLoraSlots({ A: ADA }, catalog, { motionBackend: WAN_LORA_BACKEND }),
+      unreadyBoundLoraSlots({ A: ADA }, catalog, { wanLora: true }),
     ).toEqual([]);
   });
 
@@ -153,6 +154,15 @@ describe("unreadyBoundLoraSlots (which bound slots will be retrained inline)", (
   it("tolerates empty / nullish inputs", () => {
     expect(unreadyBoundLoraSlots({}, [])).toEqual([]);
     expect(unreadyBoundLoraSlots(null, null)).toEqual([]);
+  });
+});
+
+describe("cf#474 no compiled cost-door module name", () => {
+  it("lora-preflight.js CODE does not contain a quoted module name", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "public", "lora-preflight.js"), "utf8");
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/["']alibaba-wan-lora["']/);
+    expect(code).not.toMatch(/WAN_LORA_BACKEND/);
   });
 });
 

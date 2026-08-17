@@ -85,6 +85,13 @@
     return hookModules("motion.backend");
   }
 
+  // Wan LoRA motion is the module whose schema carries the dual expert LoRA lists.
+  // Keyed on capability (config_schema), never on a compiled module name (cf#474).
+  function isWanLoraMotion(mod) {
+    const schema = mod && mod.config_schema;
+    return !!(schema && schema.high_noise_loras && schema.low_noise_loras);
+  }
+
   // Classify a motion.backend module's locality from its manifest ui.locality hint. Three values:
   //   "local" -- a genuinely local consumer GPU (a homelab card).
   //   "byo"   -- your-own-RunPod-endpoint (BYO keys); the own-gpu module, which backs the
@@ -202,6 +209,7 @@
     narrationScoreModules,
     beatSyncScoreModules,
     motionBackendModules,
+    isWanLoraMotion,
     ownGpuModule,
     gpuDoorMotionModules,
     defaultGpuDoorModule,
