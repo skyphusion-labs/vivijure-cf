@@ -284,6 +284,17 @@ document.addEventListener("DOMContentLoaded", () => {
       schedulePreflight();
     }
   });
+  // Spoken lines restrict the motion picker to talking doors. Debounced
+  // because renderPanel rebuilds the whole config block.
+  let doorFilterTimer = 0;
+  document.addEventListener("planner:storyboard-change", () => {
+    if (doorFilterTimer) clearTimeout(doorFilterTimer);
+    doorFilterTimer = setTimeout(() => {
+      if (window.plannerRenderConfig && typeof window.plannerRenderConfig.renderPanel === "function") {
+        window.plannerRenderConfig.renderPanel();
+      }
+    }, 200);
+  });
   const bpmEl = $("#planner-bpm");
   if (bpmEl) bpmEl.addEventListener("change", () => {
     const v = Number(bpmEl.value);

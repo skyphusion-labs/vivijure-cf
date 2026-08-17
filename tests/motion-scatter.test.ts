@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateAudioOn, isTalkingClip, talkingScatterAllowed } from "../src/motion-scatter";
+import { generateAudioOn, isTalkingClip, talkingScatterAllowed, spokenLinesPresent, doorCanSpeakLines } from "../src/motion-scatter";
 
 describe("talkingScatterAllowed", () => {
   it("never scatters talking clips", () => {
@@ -46,6 +46,20 @@ describe("isTalkingClip", () => {
   it("native_audio + generate_audio is talking", () => {
     expect(isTalkingClip({ usage: { native_audio: true } }, true)).toBe(true);
     expect(isTalkingClip({ usage: { native_audio: true } }, false)).toBe(false);
+  });
+});
+
+describe("spokenLinesPresent / doorCanSpeakLines", () => {
+  it("detects a storyboard line", () => {
+    expect(spokenLinesPresent(undefined)).toBe(false);
+    expect(spokenLinesPresent([])).toBe(false);
+    expect(spokenLinesPresent([{ text: "  " }])).toBe(false);
+    expect(spokenLinesPresent([{ text: "Don't open that." }])).toBe(true);
+  });
+  it("only native_audio doors can speak the line", () => {
+    expect(doorCanSpeakLines({ usage: { native_audio: true } })).toBe(true);
+    expect(doorCanSpeakLines({ usage: { native_audio: false } })).toBe(false);
+    expect(doorCanSpeakLines(undefined)).toBe(false);
   });
 });
 
