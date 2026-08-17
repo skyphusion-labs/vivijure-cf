@@ -35,6 +35,11 @@ decode/composite/encode path. A different codec, crf, or resolution needs its ow
 caller that reuses RATIO_TOLERANCE against a different pipeline without re-measuring is the next
 instance of this issue's own class (a check whose basis nobody re-derived).
 
+SEMANTIC PRECONDITION (cf#567): this 2% luma check is only valid when the operation is supposed to
+preserve level. Identity-preset grade: preset=neutral at strength 1, or strength 0. A creative grade
+that darkens on purpose would read wrecked. The named token is SEMANTIC_PRECONDITION;
+/photometric-check relays it as applies_when so a caller can refuse the gate on a non-identity op.
+
 FAILS LOUD ON COULD-NOT-DECODE. An unread frame is not a passing frame -- the same
 could-not-determine-is-not-a-determination rule that decided cp#335. `check_pair` and `check_shots`
 raise DecodeFailure rather than returning a skip/unknown verdict when a side yields zero frames or a
@@ -54,6 +59,11 @@ import inspect_core as ic
 # the three measured ratios this is calibrated against; 0.02 is fifteen times narrower than the gap
 # to the known-bad case (0.298) and wider than both good arms (0.9926, 1.0038).
 RATIO_TOLERANCE = 0.02
+
+# cf#567: the 2% luma check is only a valid question when the operation is supposed to preserve
+# level. A creative grade that darkens on purpose would read wrecked. POST /photometric-check
+# relays this as applies_when.
+SEMANTIC_PRECONDITION = "identity_preserving"
 
 
 class DecodeFailure(Exception):

@@ -33,6 +33,15 @@ def close(a, b, eps=0.001):
     return abs(a - b) < eps
 
 
+# --- cf#567: the 2% luma check is only valid for identity-preserving operations ---
+check("SEMANTIC_PRECONDITION exists and is identity_preserving",
+      getattr(pg, "SEMANTIC_PRECONDITION", None) == "identity_preserving")
+check("module docstring names the identity-preserving precondition",
+      "identity" in (pg.__doc__ or "").lower())
+check("SEMANTIC_PRECONDITION itself mentions identity",
+      "identity" in pg.SEMANTIC_PRECONDITION)
+
+
 # --- frame_luma_mean: pure per-frame math. Epsilon comparisons throughout: 0.299+0.587+0.114 is
 # not exactly 1.0 in binary floating point, so an exact `==` on a derived luma value is testing
 # float representation, not the function. ---

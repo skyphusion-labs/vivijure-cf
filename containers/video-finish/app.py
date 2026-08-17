@@ -1156,6 +1156,9 @@ async def inspect(req):
 # could-not-decode FAILS LOUD as a 500, not a 200 with a skip/unknown verdict folded in --
 # photometric_gate.DecodeFailure is reported as its own error rather than silently becoming an "ok"
 # or a "wrecked" that never happened (cp#335's could-not-determine-is-not-a-determination rule).
+#
+# applies_when (cf#567) is the named semantic precondition. The 2% luma check is only valid for
+# identity-preserving ops; a caller that darkens on purpose must not treat wrecked as a defect.
 # ---------------------------------------------------------------------------
 async def photometric_check(req):
     try:
@@ -1190,7 +1193,11 @@ async def photometric_check(req):
             return web.json_response({"ok": False, "error": f"photometric-check failed: {e}"}, status=500)
         log.info("/photometric-check verdict=%s ratio=%.4f src_frames=%d output_frames=%d",
                  result["verdict"], result["ratio"], result["src_frames"], result["output_frames"])
-        return web.json_response({"ok": True, **result})
+        return web.json_response({
+            "ok": True,
+            **result,
+            "applies_when": photometric_gate.SEMANTIC_PRECONDITION,
+        })
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
