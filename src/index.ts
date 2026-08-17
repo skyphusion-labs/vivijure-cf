@@ -446,7 +446,11 @@ function artifactHeaders(contentType: string, key?: string): Headers {
   h.set("x-content-type-options", "nosniff");
   const base = (key || "artifact").split("/").pop() || "artifact";
   const safeName = base.replace(/[^\w.\-]+/g, "_").slice(0, 180) || "artifact";
-  h.set("content-disposition", `attachment; filename="${safeName}"`);
+  // <audio> honors attachment and then never learns duration (00:00 / 00:00).
+  // img/video ignore it; keep attachment for non-media so a direct nav still downloads.
+  const ct = safeArtifactContentType(contentType);
+  const inline = /^(audio|video|image)\//i.test(ct);
+  h.set("content-disposition", `${inline ? "inline" : "attachment"}; filename="${safeName}"`);
   return h;
 }
 // #416: serve an artifact with HTTP byte-range support so browsers (Safari/iOS refuse to play media

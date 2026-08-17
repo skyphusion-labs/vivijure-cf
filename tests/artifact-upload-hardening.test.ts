@@ -39,8 +39,18 @@ describe("F4: /api/artifact serve scoping", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("content-disposition")).toMatch(/attachment/);
+    expect(res.headers.get("content-disposition")).toMatch(/inline/);
     expect(res.headers.get("content-disposition")).toContain("abc.png");
+  });
+
+  it("serves audio inline so the planner player can read duration", async () => {
+    const { env, r2 } = makeEnv();
+    r2.set("out/bed.mp3", { bytes: new Uint8Array([1, 2, 3, 4]), mime: "audio/mpeg" });
+    const res = await worker.fetch(new Request(url("/api/artifact/out/bed.mp3")), env, ctx);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("audio/mpeg");
+    expect(res.headers.get("content-disposition")).toMatch(/inline/);
+    expect(res.headers.get("content-disposition")).toContain("bed.mp3");
   });
 
   it("forces a safe content-type for a legacy text/html object (never serves HTML)", async () => {

@@ -268,7 +268,11 @@ function renderAudioCurrent() {
   $("#planner-audio-meta").textContent =
     (planState.audioSourceLabel || "audio") + " · " + planState.audioKey;
   const audio = $("#planner-audio-player");
-  if (audio) audio.src = "/api/artifact/" + planState.audioKey;
+  if (audio) {
+    audio.preload = "metadata";
+    audio.src = "/api/artifact/" + planState.audioKey;
+    if (typeof audio.load === "function") audio.load();
+  }
 }
 
 function clearAudio() {
