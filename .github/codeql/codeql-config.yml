@@ -1,4 +1,7 @@
 name: vivijure-cf
+# url_guard._safe_fetch_url is a full-ssrf barrier (allowlist).
+packs:
+  - ./.github/codeql
 paths:
   - src
   - tests
@@ -10,3 +13,4 @@ paths-ignore:
   - deploy
   - docs
   - scripts
+
