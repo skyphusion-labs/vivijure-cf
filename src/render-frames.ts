@@ -138,7 +138,7 @@ const FAILURES: Record<FramesFailureState, { status: number; reason: string }> =
   "container-unreachable": {
     status: 502,
     reason:
-      "the video-finish container did not answer (transport failure, or 503/504 after retries). The tier is bound and the route may well exist; the service itself is down or unreachable over the VPC.",
+      "the video-finish container did not answer (transport failure, or 503/504 after retries). The tier is bound and the route may well exist; the service itself is down or unreachable at VIDEO_FINISH_URL.",
   },
   "container-error": {
     status: 502,
