@@ -533,6 +533,13 @@ body.sw-open .planner-layout { overflow-x: hidden; }
 .cast-name-input:focus { outline: none; }
 .planner-field-check { display: flex; gap: 10px; align-items: flex-start; color: var(--ink); font-size: 14px; }
 .planner-field-check input, .account-pref input { width: auto; }
+.planner-finish-picks {
+  display: flex; flex-direction: column; gap: 10px;
+  margin: 12px 0 16px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2);
+}
+.planner-finish-picks[hidden] { display: none; }
+.planner-finish-picks-lede { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
 
 /* buttons */
 .planner-primary, .planner-secondary, .planner-danger, .planner-accent-btn,

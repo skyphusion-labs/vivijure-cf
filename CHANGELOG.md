@@ -11,6 +11,14 @@ The rail locked Cast until a storyboard existed, so the planner wrote
 shots with nobody chosen. Cast is first and always open. Plan still
 sends those people in the brief.
 
+## v1.32.7 -- 2026-08-17
+
+### fix(planner): first-class Lip-sync (MuseTalk) on Render
+
+Hosted filmmaker chrome hid Advanced, which was the only MuseTalk
+control. Render now has Lip-sync on spoken shots (default on) and
+optional Blender grade. Lip-sync still forces speech-upscale.
+
 ## v1.32.6 -- 2026-08-17
 
 ### fix(ci): pass door URL vars into the tag deploy render

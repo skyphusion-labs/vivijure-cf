@@ -148,7 +148,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const stash = loadPersistedState();
   let appliedStash = null;
   if (stash && hasPersistedWork(stash)) {
-    if (isSameTabReload()) {
+    if (shouldAutoResumeStash()) {
       appliedStash = applyPersistedStash(stash);
     } else {
       showResumeBanner(stash);
@@ -180,6 +180,19 @@ document.addEventListener("DOMContentLoaded", () => {
   if (discardBtn) discardBtn.addEventListener("click", () => startNewSession({ skipConfirm: true }));
   const newSessionBtn = $("#planner-new-session");
   if (newSessionBtn) newSessionBtn.addEventListener("click", () => startNewSession());
+
+  window.addEventListener("pagehide", () => {
+    savePersistedState();
+    markPlannerHop();
+  });
+  document.addEventListener("click", (ev) => {
+    const a = ev.target && ev.target.closest && ev.target.closest("a[href]");
+    if (!a) return;
+    const href = a.getAttribute("href") || "";
+    if (!href || href.charAt(0) === "#") return;
+    savePersistedState();
+    markPlannerHop();
+  }, true);
 
   loadHistory();
   initNotifications();
