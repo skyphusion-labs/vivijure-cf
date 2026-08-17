@@ -24,9 +24,9 @@ function showBundleStage(storyboard, characters, initialUploads, initialSceneSta
   renderSceneKeyframes(storyboard);
 
   const stage = $("#planner-bundle");
-  stage.hidden = false;
-  stage.scrollIntoView({ behavior: "smooth", block: "start" });
-  $("#planner-bundle-result").hidden = true;
+  if (stage) stage.hidden = true;
+  const result = $("#planner-bundle-result");
+  if (result) result.hidden = true;
   setBundleStatus("", "");
   setBundleMeta("");
 }
