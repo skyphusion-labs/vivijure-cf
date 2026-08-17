@@ -245,7 +245,7 @@ the same deny reason as any other bad token so a prober learns nothing, and a
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**87 route entries** (distinct `method` + `pattern`) over **71 distinct path patterns**. Those two
+**88 route entries** (distinct `method` + `pattern`) over **72 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -287,6 +287,7 @@ unchanged.
 | 23 | POST | `/api/cast/:id/train-lora` | 2.9 |
 | 24 | GET | `/api/cast/:id/lora-status` | 2.9 |
 | 25 | POST | `/api/upload` | 2.10 |
+| 25a | POST | `/api/report` | 2.10.1 |
 | 26 | GET | `/api/artifact/*key` | 2.11 |
 | 26a | GET | `/api/artifact-url/*key` | 2.11.1 |
 | 26b | POST | `/api/render/frames` | 2.11.2 |
@@ -596,6 +597,14 @@ refusal, not a `.bin` object.
 
 The returned `key` is then registered (e.g. onto a cast member via 2.7, or passed as `audioKey` to a
 render route).
+
+### 2.10.1 Abuse report (actual knowledge)
+
+`POST /api/report` `{ "project": string, "reason"?: string, "keys"?: string[] }`.
+
+Token-gated. Not a scanner. Copies named keys into `quarantine/<stamp>/<hold-id>/` and writes
+`HOLD.json`. `GET /api/artifact` refuses `quarantine/` (404). Max 32 keys. This is the
+actual-knowledge preserve path: a human flags it, we keep a copy, we do not auto-classify.
 
 **The image routes differ ONLY in the key namespace, and the namespaces are interchangeable.**
 `/api/upload` and `/api/storyboard/character-ref` run the same logic (same mime table, same 25 MB
