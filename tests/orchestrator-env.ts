@@ -38,8 +38,11 @@ export function orch<T extends Env>(env: T): T & OrchestratorEnv {
     AUDIO_MIX_URL?: string;
     AUDIO_BEAT_SYNC_URL?: string;
     IMAGE_PREP_URL?: string;
+    MEDIA_FINISH_TOKEN?: string;
     MEDIA_DOOR_FETCH?: DoorFetch;
   };
+  // core 1.21.6+: door URL with empty token is fail-closed.
+  if (rec.VIDEO_FINISH_URL && !rec.MEDIA_FINISH_TOKEN) rec.MEDIA_FINISH_TOKEN = "test-finish-token";
   const door = rec.MEDIA_DOOR_FETCH?.fetch ? rec.MEDIA_DOOR_FETCH : undefined;
   if (door?.fetch) {
     if (rec.VIDEO_FINISH_URL === undefined) rec.VIDEO_FINISH_URL = "https://video-finish.test";

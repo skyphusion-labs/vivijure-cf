@@ -54,37 +54,37 @@ describe("applyPoll", () => {
   const shot = (): ClipShot => ({ shot_id: "s", keyframe_url: "u", prompt: "x", seconds: 5, status: "pending", poll: "t" });
   it("marks done with the clip key on output", () => {
     const s = shot();
-    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 120 } });
+    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 120 } }, "p");
     expect(s).toMatchObject({ status: "done", clip_key: "renders/p/clips/s.mp4" });
   });
   it("leaves pending while the job runs", () => {
     const s = shot();
-    applyPoll(s, { ok: true, pending: true });
+    applyPoll(s, { ok: true, pending: true }, "p");
     expect(s.status).toBe("pending");
   });
   it("marks failed with the error", () => {
     const s = shot();
-    applyPoll(s, { ok: false, error: "boom" });
+    applyPoll(s, { ok: false, error: "boom" }, "p");
     expect(s).toMatchObject({ status: "failed", error: "boom" });
   });
   it("retains the DELIVERED fps+frames on the shot (#707: delivered-vs-planned surfacing)", () => {
     const s = shot(); // planned 5s
     // a fixed-grid backend honestly clamped: 25 frames at a pinned 8fps = a 3.125s clip
-    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 8, frames: 25 } });
+    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 8, frames: 25 } }, "p");
     expect(s).toMatchObject({ status: "done", delivered_fps: 8, delivered_frames: 25 });
   });
   it("retains the backend's distilled tier-honesty flag, and only when reported (#705)", () => {
     const s = shot();
-    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 120, distilled: true } });
+    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 120, distilled: true } }, "p");
     expect(s.distilled).toBe(true);
 
     const s2 = shot();
-    applyPoll(s2, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 120 } });
+    applyPoll(s2, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 120 } }, "p");
     expect(s2.distilled).toBeUndefined(); // absence stays absent, never a fabricated false
   });
   it("treats the frames=0 nothing-to-report sentinel as ABSENT delivery data, never a 0-frame record (#707)", () => {
     const s = shot();
-    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 0 } });
+    applyPoll(s, { ok: true, output: { shot_id: "s", clip_key: "renders/p/clips/s.mp4", fps: 24, frames: 0 } }, "p");
     expect(s.status).toBe("done");
     expect(s.delivered_fps).toBeUndefined();
     expect(s.delivered_frames).toBeUndefined();
@@ -94,13 +94,13 @@ describe("applyPoll", () => {
   // render on the FIRST blip (film-d9214549 died at ~2min with the GPU at 8/40 steps).
   it("tolerates transient poll errors up to the budget, then fails loud (#719)", () => {
     const s = shot();
-    applyPoll(s, { ok: false, error: "module /poll -> 502" });
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p");
     expect(s.status).toBe("pending"); // blip 1: held, not failed
     expect(s.poll_attempts).toBe(1);
-    applyPoll(s, { ok: false, error: "module unreachable: connection reset" });
+    applyPoll(s, { ok: false, error: "module unreachable: connection reset" }, "p");
     expect(s.status).toBe("pending"); // blip 2: still held
     expect(s.poll_attempts).toBe(2);
-    applyPoll(s, { ok: false, error: "module /poll -> 504" });
+    applyPoll(s, { ok: false, error: "module /poll -> 504" }, "p");
     expect(s.status).toBe("failed");  // budget exhausted -> loud, with the real error
     expect(s.error).toContain("504");
     expect(s.error).toContain("#719");
@@ -108,19 +108,19 @@ describe("applyPoll", () => {
 
   it("a successful poll round-trip RESETS the transient budget (#719: consecutive, not cumulative)", () => {
     const s = shot();
-    applyPoll(s, { ok: false, error: "module /poll -> 502" });
-    applyPoll(s, { ok: false, error: "module /poll -> 502" });
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p");
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p");
     expect(s.poll_attempts).toBe(2);
-    applyPoll(s, { ok: true, pending: true }); // healthy round-trip
+    applyPoll(s, { ok: true, pending: true }, "p"); // healthy round-trip
     expect(s.poll_attempts).toBe(0);
-    applyPoll(s, { ok: false, error: "module /poll -> 502" });
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p");
     expect(s.status).toBe("pending"); // fresh budget: a later isolated blip does not fail the shot
     expect(s.poll_attempts).toBe(1);
   });
 
   it("a DETERMINISTIC module-reported failure still fails immediately (#719 keeps honesty undelayed)", () => {
     const s = shot();
-    applyPoll(s, { ok: false, error: "own-gpu job not found on RunPod (#141)" });
+    applyPoll(s, { ok: false, error: "own-gpu job not found on RunPod (#141)" }, "p");
     expect(s.status).toBe("failed"); // no retry budget for a real reject
     expect(s.error).toContain("#141");
   });
@@ -139,7 +139,7 @@ describe("applyPoll", () => {
     const s = shot();
     s.motion_backend = "seedance";
     // ok:true + output, but missing clip_key/fps/frames -- the size cap would pass this; the contract must not.
-    applyPoll(s, { ok: true, output: { shot_id: "s" } as never });
+    applyPoll(s, { ok: true, output: { shot_id: "s" } as never }, "p");
     expect(s.status).toBe("failed");
     expect(s.clip_key).toBeUndefined();       // no garbage clip key threaded downstream
     expect(s.error).toContain("seedance");    // traceable: names the module
