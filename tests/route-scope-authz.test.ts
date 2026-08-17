@@ -4,6 +4,7 @@ import worker from "../src/index";
 import { API_ROUTES } from "../src/index";
 import { sha256Hex } from "../src/auth-gate";
 import { authorizeRoute, isScope, SCOPES, AUTHZ_DENY_REASON, type Scope } from "../src/authz";
+import { PINNED_ROUTE_COUNT } from "./route-scope-pins";
 import type { Env } from "../src/env";
 
 // cf#520 -- per-route authorization.
@@ -133,8 +134,9 @@ describe("cf#520 the authz refusal is not mistaken for an AUTHENTICATION failure
 describe("cf#520 every table route is under the gated prefix", () => {
   it("all API_ROUTES patterns start with /api/ (so a table hit always has a gate decision)", () => {
     const outside = API_ROUTES.filter((r) => !r.pattern.startsWith("/api/"));
-    // Denominator beside the result: a zero from an empty table would read the same as a real zero.
-    expect(API_ROUTES.length, "route table parsed empty").toBeGreaterThan(80);
+    // Exact count, not `> 80`: a lower bound on a monotonically-growing list cannot fail on the
+    // input it is meant to police (cf#569). The value lives next to the per-route pin table.
+    expect(API_ROUTES.length, "route table parsed empty or drifted").toBe(PINNED_ROUTE_COUNT);
     expect(outside.map((r) => `${r.method} ${r.pattern}`)).toEqual([]);
   });
 
