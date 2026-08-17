@@ -1190,7 +1190,11 @@ async def photometric_check(req):
             return web.json_response({"ok": False, "error": f"photometric-check failed: {e}"}, status=500)
         log.info("/photometric-check verdict=%s ratio=%.4f src_frames=%d output_frames=%d",
                  result["verdict"], result["ratio"], result["src_frames"], result["output_frames"])
-        return web.json_response({"ok": True, **result})
+        return web.json_response({
+            "ok": True,
+            "applies_when": photometric_gate.SEMANTIC_PRECONDITION,
+            **result,
+        })
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
