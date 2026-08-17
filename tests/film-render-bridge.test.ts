@@ -78,7 +78,7 @@ describe("mapRenderOverridesToModuleConfigs", () => {
     expect(mapped.motion_backend).toBe("own-gpu");
   });
 
-  it("defaults omitted keyframe_backend to cloud-keyframe when that module is installed", () => {
+  it("defaults omitted keyframe_backend to GPU keyframe when that module is installed", () => {
     const withCloud = [
       ...modules,
       {
@@ -95,7 +95,7 @@ describe("mapRenderOverridesToModuleConfigs", () => {
       },
     ] as RegisteredModule[];
     const mapped = mapRenderOverridesToModuleConfigs({ motion_backend: "own-gpu" }, "standard", withCloud);
-    expect(mapped.keyframe_backend).toBe("cloud-keyframe");
+    expect(mapped.keyframe_backend).toBe("keyframe");
   });
 });
 

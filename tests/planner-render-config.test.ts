@@ -225,7 +225,7 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
     // collect against the rendered single-backend state emits the explicit backend, never blocks
     expect(mod.collectForSubmit("")).toEqual({
       motion_backend: "solo",
-      keyframe_backend: "cloud-keyframe",
+      keyframe_backend: "keyframe",
     });
   });
 
@@ -270,24 +270,24 @@ describe("collectForSubmit (vivijure#501: block submit until a door is chosen)",
     selectDoc("a");
     const out = mod.collectForSubmit("") as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("a");
-    expect(out.keyframe_backend).toBe("cloud-keyframe");
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
   it("does NOT throw when the pick arrives via expert JSON", () => {
     selectDoc("");
     const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("b");
-    expect(out.keyframe_backend).toBe("cloud-keyframe");
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
-  it("defaults own-gpu motion to cloud-keyframe stills (fastest path)", () => {
+  it("defaults own-gpu motion to GPU keyframe stills", () => {
     selectDoc("");
     const out = mod.collectForSubmit('{"motion_backend":"own-gpu"}') as {
       motion_backend?: string;
       keyframe_backend?: string;
     };
     expect(out.motion_backend).toBe("own-gpu");
-    expect(out.keyframe_backend).toBe("cloud-keyframe");
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
   it("keeps an explicit keyframe_backend", () => {
