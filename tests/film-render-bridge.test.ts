@@ -77,6 +77,26 @@ describe("mapRenderOverridesToModuleConfigs", () => {
     expect(mapped.motion_config).toEqual({ quality: "standard", fps: 24, flow_shift: 4.5, seed: -1 });
     expect(mapped.motion_backend).toBe("own-gpu");
   });
+
+  it("defaults omitted keyframe_backend to cloud-keyframe when that module is installed", () => {
+    const withCloud = [
+      ...modules,
+      {
+        name: "cloud-keyframe",
+        version: "0.1.3",
+        api: "vivijure-module/2" as const,
+        binding: "MODULE_CLOUD_KEYFRAME",
+        hooks: ["keyframe" as const],
+        config_schema: {
+          model: { type: "enum" as const, values: ["flux-2", "nano-banana-pro"], default: "flux-2" },
+          width: { type: "int" as const, default: 1344, min: 512, max: 1536 },
+        },
+        ui: { section: "keyframe", order: 5 },
+      },
+    ] as RegisteredModule[];
+    const mapped = mapRenderOverridesToModuleConfigs({ motion_backend: "own-gpu" }, "standard", withCloud);
+    expect(mapped.keyframe_backend).toBe("cloud-keyframe");
+  });
 });
 
 describe("normalizeFilmScenes", () => {

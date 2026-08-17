@@ -97,7 +97,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -119,7 +119,7 @@ export const MANIFEST: ModuleManifest = {
     // static enum cannot carry it. Grammar: none | first_keyframe | cast:<slot>. Default none = no-op.
     film_ref: { type: "string", default: "none", label: "film-wide reference lock (none | first_keyframe | cast:<slot>)" },
   },
-  ui: { section: "keyframe", order: 20 },
+  ui: { section: "keyframe", order: 5 },
 };
 
 // One shot rendered per /poll cycle: keeps each poll inside the Worker time budget while finishing the

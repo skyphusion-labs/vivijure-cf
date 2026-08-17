@@ -180,7 +180,10 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     expect(sel.value).toBe("solo"); // explicit default preserved: only one serving backend
     expect(wrap.querySelectorAll(".planner-backend-radio").length).toBe(0); // nothing to pick
     // collect against the rendered single-backend state emits the explicit backend, never blocks
-    expect(mod.collectForSubmit("")).toEqual({ motion_backend: "solo" });
+    expect(mod.collectForSubmit("")).toEqual({
+      motion_backend: "solo",
+      keyframe_backend: "cloud-keyframe",
+    });
   });
 
   it("2+ doors: caption carries a 'required' cue until a door is picked, then clears", () => {
@@ -222,14 +225,32 @@ describe("collectForSubmit (vivijure#501: block submit until a door is chosen)",
 
   it("does NOT throw once a door is picked; carries the choice through", () => {
     selectDoc("a");
-    const out = mod.collectForSubmit("") as { motion_backend?: string };
+    const out = mod.collectForSubmit("") as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("a");
+    expect(out.keyframe_backend).toBe("cloud-keyframe");
   });
 
   it("does NOT throw when the pick arrives via expert JSON", () => {
     selectDoc("");
-    const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string };
+    const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("b");
+    expect(out.keyframe_backend).toBe("cloud-keyframe");
+  });
+
+  it("defaults own-gpu motion to cloud-keyframe stills (fastest path)", () => {
+    selectDoc("");
+    const out = mod.collectForSubmit('{"motion_backend":"own-gpu"}') as {
+      motion_backend?: string;
+      keyframe_backend?: string;
+    };
+    expect(out.motion_backend).toBe("own-gpu");
+    expect(out.keyframe_backend).toBe("cloud-keyframe");
+  });
+
+  it("keeps an explicit keyframe_backend", () => {
+    selectDoc("a");
+    const out = mod.collectForSubmit('{"keyframe_backend":"keyframe"}') as { keyframe_backend?: string };
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
   it("never blocks when zero backends are installed (no select rendered)", () => {

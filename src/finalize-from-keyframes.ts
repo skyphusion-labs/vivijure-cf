@@ -15,10 +15,8 @@ import {
   type FilmScene,
   type FilmKeyframeRef,
 } from "@skyphusion-labs/vivijure-core/film-orchestrator";
-import {
-  filmJobToPollView,
-  mapRenderOverridesToModuleConfigs,
-} from "@skyphusion-labs/vivijure-core/film-render-bridge";
+import { filmJobToPollView } from "@skyphusion-labs/vivijure-core/film-render-bridge";
+import { mapRenderOverridesToModuleConfigs } from "./film-render-bridge";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import {
   insertRender,

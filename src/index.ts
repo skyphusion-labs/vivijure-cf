@@ -93,6 +93,7 @@ import {
   isScatterJobId,
 } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
 import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
+import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
@@ -844,6 +845,7 @@ const hSubmitRender: Handler = async (req, env) => {
   const project = resolveProjectForBundle(bundleKey, b.project);
 
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
+  b.renderOverrides = withFastestKeyframeDefault(b.renderOverrides, modules) as typeof b.renderOverrides;
   const parsedOverrides = parseModuleRenderOverrides(b.renderOverrides);
   const explicitMotionBackend = b.motion_backend ?? parsedOverrides.motion_backend;
   const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
@@ -1017,6 +1019,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     return json({ error: "bundle has no injected keyframes (clips/<id>_keyframe.png)" }, 400);
   }
 
+  b.renderOverrides = withFastestKeyframeDefault(b.renderOverrides, modules) as typeof b.renderOverrides;
   const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
   const motionBackend = b.motion_backend ?? mapped.motion_backend ?? defaultGpuDoorModule(modules)?.name;
   if (!motionBackend) {
@@ -1267,6 +1270,7 @@ const hScatterRender: Handler = async (req, env) => {
   const project = resolveProjectForBundle(scatterBundleKey, b.project);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
   const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
+  b.renderOverrides = withFastestKeyframeDefault(b.renderOverrides, scatterModules) as typeof b.renderOverrides;
   const scatterOverrides = parseModuleRenderOverrides(b.renderOverrides);
   const scatterBackend = b.motion_backend ?? scatterOverrides.motion_backend;
   const scatterMapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, scatterModules);
@@ -1630,6 +1634,7 @@ const hStartFilm: Handler = async (req, env) => {
   // unconditional. The explicit choice is the top-level motion_backend (this endpoint carries no
   // render_overrides bag); NEVER the serving[0] default. Bounces BEFORE any keyframe dispatch.
   const filmModules = await discoverModules(env as unknown as Record<string, unknown>);
+  a.keyframe_backend = defaultKeyframeBackendName(a.keyframe_backend, a.motion_backend, filmModules);
   // cf#386: omit finish_config (and finish_select) = no finish. Do this BEFORE preflight so a
   // named-but-not-serving key 400s here (cf#593) instead of after keyframe spend.
   const filmFinishSelect = resolveAgentFinishSelect(a.finish_select, a.finish_config);
