@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **85 of 88** route
+`studio_request` sends any method to any path with the studio bearer, so for **84 of 88** route
 entries there is nothing an agent cannot invoke. Curated coverage is 41 of 88 (48%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 84 a low number costs discoverability, not reach, and 46
+contract to find the route. For those 84 a low number costs discoverability, not reach, and 47
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
