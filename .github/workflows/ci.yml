@@ -514,6 +514,17 @@ jobs:
           # falls back to `vivijure` (the R2_RENDERS bucket_name) in the render shell below.
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_S3_BUCKET: ${{ vars.R2_S3_BUCKET }}
+          # Public HTTPS door origins (repo VARIABLES, not secrets). Empty = that door is off.
+          # These are the vars envsubst must see or wrangler.toml keeps ${VIDEO_FINISH_URL}
+          # and the fail-closed placeholder check aborts (v1.32.5).
+          VIDEO_FINISH_URL: ${{ vars.VIDEO_FINISH_URL }}
+          IMAGE_PREP_URL: ${{ vars.IMAGE_PREP_URL }}
+          AUDIO_BEAT_SYNC_URL: ${{ vars.AUDIO_BEAT_SYNC_URL }}
+          AUDIO_MIX_URL: ${{ vars.AUDIO_MIX_URL }}
+          AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
+          FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
+          SPEECH_UPSCALE_DOORS: ${{ vars.SPEECH_UPSCALE_DOORS }}
+          FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
         run: |
           set -eu
           apk add --no-cache gettext >/dev/null
@@ -529,7 +540,7 @@ jobs:
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "::error::CLOUDFLARE_ACCOUNT_ID unset -- cannot render R2_S3_ENDPOINT"; exit 1; fi
           R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
           R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
-          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET'
+          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
           # cf#560: STRIP THE LOCAL-GPU BLOCK. The hosted studio must never bind local-gpu.
           #
           # The door's own manifest blurb says "Self-host only ... Commercial use of Vivijure is
