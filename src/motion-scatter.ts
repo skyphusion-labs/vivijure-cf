@@ -18,6 +18,21 @@ export function isTalkingClip(
   return true;
 }
 
+/** True when the storyboard (or explicit dialogue_lines) has at least one spoken line. */
+export function spokenLinesPresent(
+  lines: { text?: string }[] | undefined | null,
+): boolean {
+  if (!Array.isArray(lines)) return false;
+  return lines.some((l) => l && typeof l.text === "string" && l.text.trim().length > 0);
+}
+
+/** Native-AV door: it can speak our keyframe using the storyboard script. */
+export function doorCanSpeakLines(
+  mod: { usage?: { native_audio?: boolean } } | undefined,
+): boolean {
+  return !!(mod && mod.usage && mod.usage.native_audio === true);
+}
+
 export function talkingScatterAllowed(
   mod: { name?: string; usage?: { native_audio?: boolean; scatter_native_audio?: boolean } } | undefined,
   generateAudio: boolean,

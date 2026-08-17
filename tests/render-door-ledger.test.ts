@@ -118,9 +118,16 @@ const PARENT_ROW = {
 };
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
-const moduleBinding = (name: string, hooks: string[], locality: string) => ({
+const TALKING_USAGE = {
+  native_audio: true, voice: "prompt_lock" as const,
+  scatter_native_audio: false, min_seconds: 4, max_seconds: 12,
+};
+const moduleBinding = (name: string, hooks: string[], locality: string, usage?: typeof TALKING_USAGE) => ({
   fetch: async () =>
-    new Response(JSON.stringify({ name, version: "0.1.0", api: MODULE_API, hooks, ui: { order: 10, locality } }),
+    new Response(JSON.stringify({
+      name, version: "0.1.0", api: MODULE_API, hooks, ui: { order: 10, locality },
+      ...(usage ? { usage } : {}),
+    }),
       { status: 200, headers: { "content-type": "application/json" } }),
 });
 const env = {
@@ -131,9 +138,10 @@ const env = {
   R2_RENDERS: { get: async () => null, put: async () => {}, head: async () => null },
   MODULE_KEYFRAME: moduleBinding("keyframe-sdxl", ["keyframe"], "cloud"),
   MODULE_ALIBABA_WAN: moduleBinding("alibaba-wan", ["motion.backend"], "byo"),
+  MODULE_SEEDANCE: moduleBinding("seedance", ["motion.backend"], "cloud", TALKING_USAGE),
   // A cloud motion door, so animate-cloud / animate-hybrid are DRIVEABLE. Without it those two are
   // untestable here, and an untestable door quietly becomes an undeclared one.
-  MODULE_CLOUD_I2V: moduleBinding("cloud-i2v", ["motion.backend"], "cloud"),
+  MODULE_CLOUD_I2V: moduleBinding("cloud-i2v", ["motion.backend"], "cloud", TALKING_USAGE),
   MODULE_OWN_GPU: moduleBinding("own-gpu", ["motion.backend"], "byo"),
 } as unknown as Env;
 
@@ -188,7 +196,7 @@ const FROM_KF_NA = {
 const DOORS: DoorDecl[] = [
   {
     id: "1 panel MAIN render", route: "/api/storyboard/render", path: "/api/storyboard/render", seam: "film",
-    body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
+    body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "seedance", qualityTier: "draft",
             shardCount: 1,
             audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
@@ -207,7 +215,7 @@ const DOORS: DoorDecl[] = [
   {
     id: "3 panel render-from-keyframes", route: "/api/storyboard/render-from-keyframes",
     path: "/api/storyboard/render-from-keyframes", seam: "fromKeyframes",
-    body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "alibaba-wan", audioKey: "audio/bed.mp3",
+    body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "seedance", audioKey: "audio/bed.mp3",
             film_titles: { title: { text: "T" } } },
     caps: { dialogue: "internal", quality_tier: "no", audio_key: "yes", film_titles: "no" },
     // C2 landed here with the shared pre-flight. #500 did NOT and the gap is declared, not hidden.
@@ -265,7 +273,7 @@ const DOORS: DoorDecl[] = [
   },
   {
     id: "6 agent / MCP / Slate", route: "/api/render/film", path: "/api/render/film", seam: "film",
-    body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
+    body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "seedance", qualityTier: "draft",
             shardCount: 1,
             audio_key: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
@@ -496,7 +504,7 @@ describe("cf#334 render door ledger", () => {
       // the cloud door, the rest a byo door), and a bogus key filed under the wrong name is invisible
       // to that door. Encoding each door's resolution rule here is how a probe silently stops
       // reaching its subject, which reads as "no guard" rather than "no measurement".
-      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
+      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "seedance": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
       const bad = { ...d.body } as Record<string, unknown>;
       if (d.seam === "fromKeyframes" && !("bundleKey" in bad)) {
         PARENT_ROW.render_overrides = { config: BOGUS };

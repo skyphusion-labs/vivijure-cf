@@ -205,6 +205,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       "audio-master",
       "beat-sync",
       "film-titles",
+      "finish-lipsync",
       "image-generate",
       "subtitle",
     ]);

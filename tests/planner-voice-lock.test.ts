@@ -103,13 +103,13 @@ describe("planner voice lock from Cast", () => {
 });
 
 describe("planner voice lock wiring", () => {
-  it("notes under the textarea that native audio invents a speaker unless filled", () => {
+  it("notes under the textarea that voice is chosen once on Cast", () => {
     const noteIdx = html.indexOf('id="planner-voice-lock-note"');
     const taIdx = html.indexOf('id="planner-voice-lock"');
     expect(taIdx).toBeGreaterThan(0);
     expect(noteIdx).toBeGreaterThan(taIdx);
-    expect(html).toMatch(/Native audio invents a new speaker every shot unless this is filled/);
-    expect(html).toMatch(/We fill it from Cast/);
+    expect(html).toMatch(/Voice is chosen once on Cast/);
+    expect(html).toMatch(/same speaker/);
     expect(html).not.toMatch(/[\u2013\u2014]/);
   });
 
@@ -125,6 +125,8 @@ describe("planner voice lock wiring", () => {
     expect(renderJs).toMatch(/reqBody\.voice_lock = scatterVoiceLock/);
     expect(renderJs).toMatch(/Lock a speaking voice or pick Cast first/);
     expect(renderJs).toMatch(/data-field="generate_audio"/);
+    expect(configJs).toMatch(/storyboardHasSpokenLines/);
+    expect(readFileSync("public/planner-scenes.js", "utf8")).toMatch(/slotSpeakerLabel/);
   });
 
   it("persists and restores style lock + voice lock", () => {

@@ -28,12 +28,11 @@
 # such occurrences and only 15 are inside the array), edit this list, update the provenance below,
 # and correct the population-4 numbers in docs/module-readiness-coverage.md.
 #
-# provenance: skyphusion-labs/vivijure-control-plane @ main, src/tenant-modules.ts:155-197
-# read-at: 2026-08-07, plane origin/main
-# count: 19
+# provenance: skyphusion-labs/vivijure-control-plane @ main, src/tenant-modules.ts
+# read-at: 2026-08-17, plane origin/main (MuseTalk dropped from hosted)
+# count: 18
 alibaba-wan
 alibaba-wan-lora
-finish-lipsync
 finish-rife
 finish-upscale
 google-veo

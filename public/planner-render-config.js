@@ -570,6 +570,19 @@
   // Render the backend selector into motionWrap. Returns true if a real CHOICE (>= 2
   // backends) was rendered (so the caller can mark the motion slot shown). One backend
   // renders an informational door; zero renders nothing.
+  function storyboardHasSpokenLines() {
+    const scenes = (global.planState && global.planState.storyboard && global.planState.storyboard.scenes) || [];
+    return scenes.some((s) => s && s.dialogue && String(s.dialogue.text || "").trim());
+  }
+
+  function doorCanSpeak(mod) {
+    return !!(mod && mod.usage && mod.usage.native_audio === true);
+  }
+
+  function talkingMotionMods(mods) {
+    return (mods || []).filter(doorCanSpeak);
+  }
+
   function renderBackendSelector(mods, motionWrap) {
     if (!motionWrap || !mods || !mods.length) return false;
 
@@ -584,9 +597,12 @@
     cap.appendChild(capTitle);
     const capHint = document.createElement("span");
     capHint.className = "planner-backend-caption-hint";
-    capHint.textContent = mods.length > 1
-      ? "Faster is the default. Best look is our GPU. Any door is fine."
-      : "This backend renders the motion (image-to-video) step.";
+    const linesOn = storyboardHasSpokenLines();
+    capHint.textContent = linesOn
+      ? "This storyboard has spoken lines. Only doors that can say them (they keep audio on our stills)."
+      : (mods.length > 1
+        ? "Faster is the default. Best look is our GPU. Any door is fine."
+        : "This backend renders the motion (image-to-video) step.");
     cap.appendChild(capHint);
     section.appendChild(cap);
 
@@ -703,7 +719,17 @@
     for (const h of hooks) {
       const mods = cache[h.hook] || [];
       if (h.hook === "motion.backend") {
-        if (renderBackendSelector(mods, motionWrap)) motionShown = true;
+        const doors = storyboardHasSpokenLines() ? talkingMotionMods(mods) : mods;
+        if (storyboardHasSpokenLines() && !doors.length) {
+          if (motionWrap) {
+            motionWrap.innerHTML = "";
+            motionWrap.hidden = false;
+            const empty = document.createElement("p");
+            empty.className = "planner-backend-caption-hint";
+            empty.textContent = "This storyboard has spoken lines, but no talking door is installed. Bind Seedance, Veo, Flux, Vidu, or Grok.";
+            motionWrap.appendChild(empty);
+          }
+        } else if (renderBackendSelector(doors, motionWrap)) motionShown = true;
       }
       for (const mod of mods) root.appendChild(renderModuleSection(mod, h.hook));
     }

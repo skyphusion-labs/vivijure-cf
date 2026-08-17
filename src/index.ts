@@ -96,7 +96,7 @@ import {
   isScatterJobId,
 } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
 import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
-import { generateAudioOn, talkingScatterAllowed } from "./motion-scatter";
+import { generateAudioOn, talkingScatterAllowed, spokenLinesPresent, doorCanSpeakLines } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { enrichScatterPollView } from "./scatter-progress";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
@@ -923,6 +923,13 @@ const hSubmitRender: Handler = async (req, env) => {
     shardMaxFromEnv(env.RENDER_SHARD_MAX),
   );
   const panelMotionMod = modules.find((m) => m.name === motionBackend);
+  if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
+    if (!doorCanSpeakLines(panelMotionMod) || !generateAudioOn(mapped.motion_config)) {
+      throw badRequest(
+        "This storyboard has spoken lines. Pick a talking door (Seedance, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+      );
+    }
+  }
   if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2
       && talkingScatterAllowed(panelMotionMod, generateAudioOn(mapped.motion_config))) {
     if (shouldProjectWanLoras(motionBackend, wanPretrained)) {
@@ -1093,6 +1100,15 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
       fromKfDialogue = lines;
     }
   } catch { /* best-effort */ }
+
+  const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
+  if (spokenLinesPresent(fromKfDialogue)) {
+    if (!doorCanSpeakLines(fromKfMotionMod) || !generateAudioOn(mapped.motion_config)) {
+      throw badRequest(
+        "This storyboard has spoken lines. Pick a talking door (Seedance, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+      );
+    }
+  }
 
   const job = await startFilmFromKeyframes(env, {
     project,
@@ -1751,6 +1767,13 @@ const hStartFilm: Handler = async (req, env) => {
     shardMaxFromEnv(env.RENDER_SHARD_MAX),
   );
   const filmMotionMod = filmModules.find((m) => m.name === a.motion_backend);
+  if (spokenLinesPresent(dialogue_lines)) {
+    if (!doorCanSpeakLines(filmMotionMod) || !generateAudioOn(a.motion_config as Record<string, unknown> | undefined)) {
+      throw badRequest(
+        "This storyboard has spoken lines. Pick a talking door (Seedance, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+      );
+    }
+  }
   if (filmShards >= 2 && filmScenes.length >= 2
       && talkingScatterAllowed(filmMotionMod, generateAudioOn(a.motion_config))) {
     const bagConfig: Record<string, Record<string, unknown>> = {
