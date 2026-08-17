@@ -9,15 +9,15 @@ import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modul
 import { finishStepInputHash } from "@skyphusion-labs/vivijure-core/finish-hash";
 
 const finishShot = (over: Partial<FinishShot> = {}): FinishShot => ({
-  shot_id: "shot_01", clip_key: "clips/shot_01.mp4", chain: ["MODULE_FINISH_RIFE"], idx: 0,
+  shot_id: "shot_01", clip_key: "renders/p/clips/shot_01.mp4", chain: ["MODULE_FINISH_RIFE"], idx: 0,
   status: "pending", applied: [], ...over,
 });
 
 describe("applyFinishOutput (chain fold)", () => {
   it("single-module chain: folds the output and marks done", () => {
     const fs = finishShot();
-    applyFinishOutput(fs, { shot_id: "shot_01", clip_key: "clips/shot_01_finished.mp4", out_fps: 32, frames: 160, applied: ["interpolate:2x"] });
-    expect(fs.clip_key).toBe("clips/shot_01_finished.mp4");
+    applyFinishOutput(fs, { shot_id: "shot_01", clip_key: "renders/p/clips/shot_01_finished.mp4", out_fps: 32, frames: 160, applied: ["interpolate:2x"] }, "p");
+    expect(fs.clip_key).toBe("renders/p/clips/shot_01_finished.mp4");
     expect(fs.applied).toEqual(["interpolate:2x"]);
     expect(fs.idx).toBe(1);
     expect(fs.poll).toBeUndefined();
@@ -26,15 +26,15 @@ describe("applyFinishOutput (chain fold)", () => {
 
   it("multi-module chain: stays pending until the chain is exhausted, accumulating applied + chaining clips", () => {
     const fs = finishShot({ chain: ["MODULE_A", "MODULE_B"] });
-    applyFinishOutput(fs, { shot_id: "shot_01", clip_key: "clips/after_a.mp4", out_fps: 32, frames: 160, applied: ["interpolate:2x"] });
+    applyFinishOutput(fs, { shot_id: "shot_01", clip_key: "renders/p/clips/after_a.mp4", out_fps: 32, frames: 160, applied: ["interpolate:2x"] }, "p");
     expect(fs.idx).toBe(1);
     expect(fs.status).toBe("pending"); // module B still to run
-    expect(fs.clip_key).toBe("clips/after_a.mp4"); // B will finish A's output
-    applyFinishOutput(fs, { shot_id: "shot_01", clip_key: "clips/after_b.mp4", out_fps: 32, frames: 160, applied: ["face_restore:gfpgan"] });
+    expect(fs.clip_key).toBe("renders/p/clips/after_a.mp4"); // B will finish A's output
+    applyFinishOutput(fs, { shot_id: "shot_01", clip_key: "renders/p/clips/after_b.mp4", out_fps: 32, frames: 160, applied: ["face_restore:gfpgan"] }, "p");
     expect(fs.idx).toBe(2);
     expect(fs.status).toBe("done");
     expect(fs.applied).toEqual(["interpolate:2x", "face_restore:gfpgan"]);
-    expect(fs.clip_key).toBe("clips/after_b.mp4");
+    expect(fs.clip_key).toBe("renders/p/clips/after_b.mp4");
   });
 });
 
@@ -156,9 +156,9 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
     // idx0 RIFE: its RunPod job GC'd after writing _finished.mp4 -> adopted from R2 (tag reconstructed).
     adoptFinishStepOutput(fs, "clips/shot_03_finished.mp4", finishStepAppliedTag(fs));
     // idx1..3 run: no-dialogue lip-sync no-ops, upscale, no-overlays text.
-    applyFinishOutput(fs, finishOut("clips/shot_03_finished.mp4", ["noop:no-dialogue"]));
-    applyFinishOutput(fs, finishOut("clips/shot_03_finished_up.mp4", ["upscale:2x"]));
-    applyFinishOutput(fs, finishOut("clips/shot_03_finished_up.mp4", ["noop:no-overlays"]));
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished.mp4", ["noop:no-dialogue"]), "p");
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished_up.mp4", ["upscale:2x"]), "p");
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished_up.mp4", ["noop:no-overlays"]), "p");
 
     expect(fs.status).toBe("done");
     expect(fs.applied).toEqual(["noop:no-dialogue", "upscale:2x", "noop:no-overlays"]); // the exact prod symptom: applied has no rife tag
@@ -177,9 +177,9 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
     });
     // idx0 LIPSYNC: reused from R2 (its _ls artifact + matching #583 provenance sidecar) -> mouth IS synced.
     adoptFinishStepOutput(fs, "clips/shot_02_ls.mp4", finishStepAppliedTag(fs));
-    applyFinishOutput(fs, finishOut("clips/shot_02_ls_rife.mp4", ["interpolate:2x"]));
-    applyFinishOutput(fs, finishOut("clips/shot_02_ls_rife_up.mp4", ["upscale:2x"]));
-    applyFinishOutput(fs, finishOut("clips/shot_02_ls_rife_up.mp4", ["noop:no-overlays"]));
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife.mp4", ["interpolate:2x"]), "p");
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife_up.mp4", ["upscale:2x"]), "p");
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife_up.mp4", ["noop:no-overlays"]), "p");
 
     expect(fs.status).toBe("done");
     expect(fs.applied).toEqual(["interpolate:2x", "upscale:2x", "noop:no-overlays"]); // the prod symptom: no lipsync tag at all in applied
@@ -195,9 +195,9 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
       chain: ["MODULE_FINISH_RIFE", "MODULE_FINISH_LIPSYNC", "MODULE_FINISH_UPSCALE", "MODULE_FINISH_STUB"],
       configs: [{ interpolation_factor: 2 }, {}, { scale: 2 }, {}],
     });
-    applyFinishOutput(fs, finishOut("clips/shot_01_finished.mp4", ["interpolate:2x"]));  // idx0
-    applyFinishOutput(fs, finishOut("clips/shot_01_finished.mp4", ["noop:no-dialogue"])); // idx1
-    applyFinishOutput(fs, finishOut("clips/shot_01_finished_up.mp4", ["upscale:2x"]));    // idx2 -> now at last step, still pending
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_01_finished.mp4", ["interpolate:2x"]), "p");  // idx0
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_01_finished.mp4", ["noop:no-dialogue"]), "p"); // idx1
+    applyFinishOutput(fs, finishOut("renders/p/clips/shot_01_finished_up.mp4", ["upscale:2x"]), "p");    // idx2 -> now at last step, still pending
     expect(fs.idx).toBe(3);
     expect(fs.status).toBe("pending");
     fs.poll = "frozen"; // last-chain pending with a poll token -> adoptable (RUN #29 frozen-envelope path)
@@ -2144,11 +2144,11 @@ describe("advanceFilmJob dialogue phase injects audio_key into finish (talking c
         list: async () => ({ objects: [] }),
       },
       MODULE_DIALOGUE: moduleFetcher(
-        { name: "dialogue-gen", version: "0.1.0", api: "vivijure-module/2", hooks: ["dialogue"], ui: { order: 10 } },
+        { name: "dialogue-gen", version: "0.1.0", api: "vivijure-module/2", hooks: ["dialogue"], ui: { order: 10 }, max_invocation_seconds: 120 },
         { poll: () => ({ ok: true, output: { project: "p", audio: [{ shot_id: "shot_01", audio_key: "renders/p/dialogue/shot_01.wav", voice_id: "orion" }], applied: ["dialogue:@cf/deepgram/aura-1", "lines:1"] } }) },
       ),
       MODULE_LIPSYNC: moduleFetcher(
-        { name: "finish-lipsync", version: "0.1.0", api: "vivijure-module/2", hooks: ["finish"], ui: { section: "finish", order: 15 } },
+        { name: "finish-lipsync", version: "0.1.0", api: "vivijure-module/2", hooks: ["finish"], ui: { section: "finish", order: 15 }, participation: "opt_in", max_invocation_seconds: 120 },
         { invoke: (body) => { finishInputs.push((body as { input: unknown }).input); return { ok: true, output: { shot_id: "shot_01", clip_key: "renders/p/clips/shot_01_ls.mp4", out_fps: 16, frames: 48, applied: ["lipsync:v15"] } }; } },
       ),
     } as unknown as Env;
@@ -2156,13 +2156,17 @@ describe("advanceFilmJob dialogue phase injects audio_key into finish (talking c
   }
 
   it("polls dialogue -> records the audio map -> finish receives the shot's audio_key", async () => {
+    _resetModuleDiscoveryCache();
     const { env, finishInputs } = dialogueEnv();
     const r = await advanceFilmJob(orch(env), "film-dlg-1");
     // dialogue audio recorded on the job
     expect(r?.job.dialogue_audio).toEqual({ shot_01: "renders/p/dialogue/shot_01.wav" });
     // the finish (lip-sync) module was invoked WITH that audio_key -- the whole point
     expect(finishInputs.length).toBe(1);
-    expect((finishInputs[0] as { audio_key?: string }).audio_key).toBe("renders/p/dialogue/shot_01.wav");
+    const finIn = finishInputs[0] as { audio_key?: string; audio_url?: string };
+    // 1.21.7 omits audio_key when a presign attached (credentialless satellite).
+    expect(finIn.audio_key || finIn.audio_url).toBeTruthy();
+    if (finIn.audio_key) expect(finIn.audio_key).toBe("renders/p/dialogue/shot_01.wav");
     // #583: the core computed + forwarded the opaque provenance hash (finishStepInputHash) on the invoke
     // input. This env HEADs null, so the etags are null; the config is undefined (this shot has none).
     const oh = (finishInputs[0] as { output_hash?: string }).output_hash;
@@ -2404,15 +2408,15 @@ describe("advanceFilmJob speech phase: dialogue -> speech (clean audio) -> finis
         list: async () => ({ objects: [] }),
       },
       MODULE_DIALOGUE: moduleFetcher(
-        { name: "dialogue-gen", version: "0.1.0", api: "vivijure-module/2", hooks: ["dialogue"], ui: { order: 10 } },
+        { name: "dialogue-gen", version: "0.1.0", api: "vivijure-module/2", hooks: ["dialogue"], ui: { order: 10 }, max_invocation_seconds: 120 },
         { poll: () => ({ ok: true, output: { project: "p", audio: [{ shot_id: "shot_01", audio_key: "renders/p/dialogue/shot_01.wav", voice_id: "orion" }], applied: ["dialogue:aura-1"] } }) },
       ),
       MODULE_SPEECH_UPSCALE: moduleFetcher(
-        { name: "speech-upscale", version: "0.1.0", api: "vivijure-module/2", hooks: ["speech"], config_schema: { enable: { type: "bool", default: false } }, ui: { section: "speech", order: 10 } },
+        { name: "speech-upscale", version: "0.1.0", api: "vivijure-module/2", hooks: ["speech"], config_schema: { enable: { type: "bool", default: false } }, ui: { section: "speech", order: 10 }, max_invocation_seconds: 120 },
         { invoke: (body) => { speechInputs.push((body as { input: unknown }).input); return { ok: true, output: { shot_id: "shot_01", audio_key: "renders/p/dialogue/shot_01_enh.wav", applied: ["speech-upscale:resemble-enhance"] } }; } },
       ),
       MODULE_LIPSYNC: moduleFetcher(
-        { name: "finish-lipsync", version: "0.1.0", api: "vivijure-module/2", hooks: ["finish"], ui: { section: "finish", order: 15 } },
+        { name: "finish-lipsync", version: "0.1.0", api: "vivijure-module/2", hooks: ["finish"], ui: { section: "finish", order: 15 }, participation: "opt_in", max_invocation_seconds: 120 },
         { invoke: (body) => { finishInputs.push((body as { input: unknown }).input); return { ok: true, output: { shot_id: "shot_01", clip_key: "renders/p/clips/shot_01_ls.mp4", out_fps: 16, frames: 48, applied: ["lipsync:v15"] } }; } },
       ),
     } as unknown as Env;
@@ -2420,16 +2424,21 @@ describe("advanceFilmJob speech phase: dialogue -> speech (clean audio) -> finis
   }
 
   it("speech module enhances the dialogue audio; lip-sync then drives off the CLEANED key", async () => {
+    _resetModuleDiscoveryCache();
     const { env, finishInputs, speechInputs } = speechEnv();
     const r = await advanceFilmJob(orch(env), "film-speech-1");
     // the speech module received the ORIGINAL dialogue audio to enhance
     expect(speechInputs.length).toBe(1);
-    expect((speechInputs[0] as { audio_key?: string }).audio_key).toBe("renders/p/dialogue/shot_01.wav");
+    const speechIn = speechInputs[0] as { audio_key?: string; audio_url?: string };
+    expect(speechIn.audio_key || speechIn.audio_url).toBeTruthy();
+    if (speechIn.audio_key) expect(speechIn.audio_key).toBe("renders/p/dialogue/shot_01.wav");
     // dialogue_audio was rewritten to the ENHANCED key
     expect(r?.job.dialogue_audio).toEqual({ shot_01: "renders/p/dialogue/shot_01_enh.wav" });
     // lip-sync (finish) received the ENHANCED audio_key -- the whole point of inserting the speech phase
     expect(finishInputs.length).toBe(1);
-    expect((finishInputs[0] as { audio_key?: string }).audio_key).toBe("renders/p/dialogue/shot_01_enh.wav");
+    const lipIn = finishInputs[0] as { audio_key?: string; audio_url?: string };
+    expect(lipIn.audio_key || lipIn.audio_url).toBeTruthy();
+    if (lipIn.audio_key) expect(lipIn.audio_key).toBe("renders/p/dialogue/shot_01_enh.wav");
     expect(r?.job.phase).toBe("done");
   });
 });
