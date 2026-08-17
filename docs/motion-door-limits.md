@@ -275,5 +275,5 @@ Hosted Wan door. Newer weights than RunPod 2.6. Code for 2.6 stays unbound.
 |---|---|
 | `prompt_lock` | Same speaker description in every motion prompt. No speaker id on the door. |
 | `seed_and_prompt` | Same seed **and** the same prompt lock. Seedance. |
-| `cast_tts` | Silent motion. The speaking voice is the Cast voice (TTS), then MuseTalk. |
+| `cast_tts` | Silent motion. The speaking voice is the Cast voice (TTS). MuseTalk mouth-replace is homelab-only; hosted does not bind it. |
 | `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Not wired yet. |
