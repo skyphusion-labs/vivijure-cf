@@ -119,7 +119,8 @@ describe("cast-db array-column CAS (issue #12: no lost update)", () => {
     const row = await addRef(env, 1, ref("mine"));
     expect(calls.update).toBe(6); // maxAttempts
     expect(warn).toHaveBeenCalledOnce();
-    expect(row).not.toBeNull(); // returns the current row, never a silent clobber
+    // core 1.21.7: CAS give-up is falsy (core#234). Never a silent clobber of a stale row.
+    expect(row).toBeNull();
     warn.mockRestore();
   });
 });

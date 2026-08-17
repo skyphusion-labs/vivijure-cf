@@ -41,8 +41,9 @@ export function orch<T extends Env>(env: T): T & OrchestratorEnv {
     MEDIA_FINISH_TOKEN?: string;
     MEDIA_DOOR_FETCH?: DoorFetch;
   };
-  // core 1.21.6+: door URL with empty token is fail-closed.
-  if (rec.VIDEO_FINISH_URL && !rec.MEDIA_FINISH_TOKEN) rec.MEDIA_FINISH_TOKEN = "test-finish-token";
+  // core 1.21.6+: any finish door URL with empty token is fail-closed.
+  const doorUrl = rec.VIDEO_FINISH_URL || rec.AUDIO_MIX_URL || rec.AUDIO_BEAT_SYNC_URL || rec.IMAGE_PREP_URL;
+  if (doorUrl && !rec.MEDIA_FINISH_TOKEN) rec.MEDIA_FINISH_TOKEN = "test-finish-token";
   const door = rec.MEDIA_DOOR_FETCH?.fetch ? rec.MEDIA_DOOR_FETCH : undefined;
   if (door?.fetch) {
     if (rec.VIDEO_FINISH_URL === undefined) rec.VIDEO_FINISH_URL = "https://video-finish.test";
