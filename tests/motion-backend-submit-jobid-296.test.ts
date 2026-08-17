@@ -36,6 +36,11 @@ import cfHh1Worker from "../modules/cf-hh1-r2v/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
 import cfGrokWorker from "../modules/cf-grok-video/src/index";
 import cfFluxWorker from "../modules/cf-flux-3-video/src/index";
+import cfHailuoWorker from "../modules/cf-hailuo/src/index";
+import cfVeoWorker from "../modules/cf-veo/src/index";
+import cfWan27Worker from "../modules/cf-wan-27/src/index";
+import klingO1Worker from "../modules/kling-o1-r2v/src/index";
+import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -45,11 +50,13 @@ const STUB_JOB_ID = "b7c1f0e2-0000-4aaa-9bbb-5cd0e1f23456";
 const STUB_JOB_ID_ALNUM = "b7c1f0e200004aaa9bbb5cd0e1f23456";
 
 /** Every module below is a motion.backend. keyframe_url is ignored by the two that do not need it. */
-const INPUT = { shot_id: "shot_01", prompt: "a slow push in", keyframe_url: "https://example.invalid/kf.png", seconds: 5 };
+const INPUT = { shot_id: "shot_01", prompt: "a slow push in", keyframe_url: "https://example.invalid/kf.png", seconds: 5, audio_url: "https://example.invalid/line.wav" };
 
 const MODULES: { name: string; worker: Worker; env: Record<string, unknown>; jobId?: string }[] = [
   { name: "seedance", worker: seedanceWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "kling", worker: klingWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
+  { name: "kling-o1-r2v", worker: klingO1Worker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
+  { name: "infinitetalk", worker: infinitetalkWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "vidu-q3", worker: viduWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "google-veo", worker: veoWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "minimax-hailuo", worker: hailuoWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
@@ -100,6 +107,9 @@ const CF_MODULES: { name: string; worker: Worker }[] = [
   { name: "cf-seedance", worker: cfSeedanceWorker as unknown as Worker },
   { name: "cf-grok-video", worker: cfGrokWorker as unknown as Worker },
   { name: "cf-flux-3-video", worker: cfFluxWorker as unknown as Worker },
+  { name: "cf-hailuo", worker: cfHailuoWorker as unknown as Worker },
+  { name: "cf-veo", worker: cfVeoWorker as unknown as Worker },
+  { name: "cf-wan-27", worker: cfWan27Worker as unknown as Worker },
 ];
 
 /** Answers the vendor /run with a job id and everything else with something harmless. Records the

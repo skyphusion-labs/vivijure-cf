@@ -5,7 +5,9 @@
 
 import type { MotionBackendInput } from "./contract";
 
-export const MODEL = "xai/grok-imagine-video";
+export const MODELS = ["xai/grok-imagine-video-1.5-preview", "xai/grok-imagine-video"] as const;
+export const DEFAULT_MODEL = "xai/grok-imagine-video-1.5-preview";
+export const MODEL = DEFAULT_MODEL;
 export const OUT_FPS = 24;
 export const MIN_DURATION = 1;
 export const MAX_DURATION = 15;
@@ -15,13 +17,14 @@ export const ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]
 export const DEFAULT_ASPECT = "16:9";
 
 export type ModuleConfig = {
+  model: (typeof MODELS)[number];
   resolution: (typeof RESOLUTIONS)[number];
   aspect_ratio: (typeof ASPECT_RATIOS)[number];
 };
 
 export type RunState =
   | { status: "running"; started_at: number; project: string; shot_id: string; seconds: number; workflow_id?: string }
-  | { status: "done"; project: string; shot_id: string; seconds: number; clip_key: string }
+  | { status: "done"; project: string; shot_id: string; seconds: number; clip_key: string; has_audio?: boolean }
   | { status: "failed"; error: string };
 
 export interface PollToken { job_id: string; }
@@ -32,9 +35,11 @@ export function clampDuration(seconds: number): number {
 }
 
 export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
+  const model = String(raw.model ?? DEFAULT_MODEL);
   const res = String(raw.resolution ?? DEFAULT_RESOLUTION);
   const ar = String(raw.aspect_ratio ?? DEFAULT_ASPECT);
   return {
+    model: (MODELS as readonly string[]).includes(model) ? (model as ModuleConfig["model"]) : DEFAULT_MODEL,
     resolution: (RESOLUTIONS as readonly string[]).includes(res) ? (res as ModuleConfig["resolution"]) : DEFAULT_RESOLUTION,
     aspect_ratio: (ASPECT_RATIOS as readonly string[]).includes(ar) ? (ar as ModuleConfig["aspect_ratio"]) : DEFAULT_ASPECT,
   };

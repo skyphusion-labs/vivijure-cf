@@ -25,7 +25,7 @@ export function buildKlingBody(input: MotionBackendInput, cfg: Record<string, un
       negative_prompt: String(cfg.negative_prompt ?? ""),
       guidance_scale: typeof cfg.guidance_scale === "number" ? cfg.guidance_scale : 0.5,
       duration: clampDuration(input.seconds),
-      enable_safety_checker: cfg.enable_safety_checker !== false,
+      enable_safety_checker: cfg.enable_safety_checker === true,
     },
   };
 }

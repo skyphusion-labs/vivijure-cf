@@ -241,9 +241,22 @@ service = "vivijure-module-own-gpu"
 binding = "MODULE_SEEDANCE"
 service = "vivijure-module-seedance"
 
+# Kling 2.1 stays in modules/kling but is NOT bound on hosted.
+# [[services]]
+# binding = "MODULE_KLING"
+# service = "vivijure-module-kling"
+
 [[services]]
-binding = "MODULE_KLING"
-service = "vivijure-module-kling"
+binding = "MODULE_KLING_O1_R2V"
+service = "vivijure-module-kling-o1-r2v"
+
+[[services]]
+binding = "MODULE_INFINITETALK"
+service = "vivijure-module-infinitetalk"
+
+[[services]]
+binding = "MODULE_CHATTERBOX"
+service = "vivijure-module-chatterbox"
 
 [[services]]
 binding = "MODULE_KEYFRAME"
@@ -378,9 +391,22 @@ service = "vivijure-module-google-veo"
 binding = "MODULE_VIDU_Q3"
 service = "vivijure-module-vidu-q3"
 
+# Wan 2.6 RunPod stays in modules/alibaba-wan but is NOT bound on hosted.
+# [[services]]
+# binding = "MODULE_ALIBABA_WAN"
+# service = "vivijure-module-alibaba-wan"
+
 [[services]]
-binding = "MODULE_ALIBABA_WAN"
-service = "vivijure-module-alibaba-wan"
+binding = "MODULE_CF_WAN_27"
+service = "vivijure-module-cf-wan-27"
+
+[[services]]
+binding = "MODULE_CF_HAILUO"
+service = "vivijure-module-cf-hailuo"
+
+[[services]]
+binding = "MODULE_CF_VEO"
+service = "vivijure-module-cf-veo"
 
 # alibaba-wan-lora: Wan 2.2 i2v 720p on the RunPod PUBLIC managed endpoint wan-2-2-t2v-720-lora, with
 # CUSTOM operator LoRAs (the controllable, GPU-rental-free i2v lane; pairs with the cloud-keyframe

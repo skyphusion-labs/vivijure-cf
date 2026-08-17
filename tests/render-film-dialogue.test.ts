@@ -43,8 +43,8 @@ vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
     ...actual,
     resolveCastLoras: vi.fn(async (_env: unknown, castLoras: Record<string, unknown> | undefined) =>
       castLoras && Object.keys(castLoras).length
-        ? { pretrained: {}, voices: { A: "asteria" }, castIds: { A: 4 }, skipped: [], skippedDetail: [] }
-        : { pretrained: {}, voices: {}, castIds: {}, skipped: [], skippedDetail: [] },
+        ? { pretrained: {}, voices: { A: "asteria" }, speakerNames: { A: "Wren" }, castIds: { A: 4 }, skipped: [], skippedDetail: [] }
+        : { pretrained: {}, voices: {}, speakerNames: {}, castIds: {}, skipped: [], skippedDetail: [] },
     ),
   };
 });
@@ -239,6 +239,7 @@ describe("#738 hStartFilm rejects a bound-but-untrained cast_loras (symmetry wit
       pretrained: {},
       wanPretrained: {},
       voices: {},
+      speakerNames: {},
       castIds: { A: 4 },
       skipped: ["A"],
       skippedDetail: [{ slot: "A", name: "Wren", reason: "no trained LoRA" }],
@@ -275,6 +276,7 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
       pretrained: { A: "loras/wren.safetensors", B: "loras/salvage-robot.safetensors" },
       wanPretrained: {},
       voices: {},
+      speakerNames: {},
       castIds: { A: 4, B: 7 },
       skipped: [],
       skippedDetail: [],

@@ -143,7 +143,7 @@ function env(): Env {
       },
     },
     MODULE_KEYFRAME: fakeModule({ name: "cloud-keyframe", version: "0.1.0", api: MODULE_API, hooks: ["keyframe"] }),
-    MODULE_ALIBABA_WAN_LORA: fakeModule({ name: "alibaba-wan-lora", version: "0.1.1", api: MODULE_API, hooks: ["motion.backend"], config_schema: WAN_LORA_SCHEMA, ui: { order: 75, locality: "cloud" } }),
+    MODULE_ALIBABA_WAN_LORA: fakeModule({ name: "alibaba-wan-lora", version: "0.1.1", api: MODULE_API, hooks: ["motion.backend"], config_schema: WAN_LORA_SCHEMA, ui: { order: 75, locality: "cloud" }, usage: { native_audio: false, voice: "cast_tts", scatter_native_audio: false, min_seconds: 5, max_seconds: 8 } }),
   } as unknown as Env);
 }
 function post(path: string, body: unknown): Request {
@@ -276,22 +276,15 @@ describe("cross-wire control at ALL THREE render paths (Wan cast vs SDXL cast, b
     expect(mc.high_noise_loras).toBeUndefined();
   });
 
-  it("SCATTER: a Wan cast injects the Wan fields into render_overrides.config so every shard gets them", async () => {
+  it("SCATTER: wan-lora is a look door, so the scatter door refuses", async () => {
     const res = await worker.fetch(post("/api/storyboard/render/scatter", { bundleKey: "bundles/x.tar.gz", shotIds: ["shot_01", "shot_02"], motion_backend: WAN_LORA_BACKEND, castLoras: { A: "wan" } }), env(), ctx);
-    expect(res.status).toBe(201);
-    const args = cap.scatter[0];
-    const ro = args.render_overrides as { config?: Record<string, Record<string, unknown>> };
-    const wcfg = ro.config?.[WAN_LORA_BACKEND] ?? {};
-    expect(parseLoras(wcfg.high_noise_loras)[0].path).toContain(WAN_HIGH);
-    expect(parseLoras(wcfg.low_noise_loras)[0].scale).toBe(1.5);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error?: string };
+    expect(body.error || "").toMatch(/one film/i);
   });
-  it("SCATTER: an SDXL cast injects NO Wan fields (render_overrides stays free of the Wan config)", async () => {
+  it("SCATTER: an SDXL cast on wan-lora is also refused", async () => {
     const res = await worker.fetch(post("/api/storyboard/render/scatter", { bundleKey: "bundles/x.tar.gz", shotIds: ["shot_01", "shot_02"], motion_backend: WAN_LORA_BACKEND, castLoras: { A: "sdxl" } }), env(), ctx);
-    expect(res.status).toBe(201);
-    const args = cap.scatter[0];
-    const ro = (args.render_overrides ?? undefined) as { config?: Record<string, Record<string, unknown>> } | undefined;
-    const wcfg = ro?.config?.[WAN_LORA_BACKEND];
-    expect(wcfg?.high_noise_loras).toBeUndefined();
+    expect(res.status).toBe(400);
   });
 });
 
@@ -421,7 +414,7 @@ describe("cf#392 wan_lora_projection surface", () => {
     expect(body[WAN_LORA_PROJECTION_FIELD]).toEqual({ injected: 1, dropped: 0 });
   });
 
-  it("SCATTER: 201 carries wan_lora_projection when a Wan cast projected", async () => {
+  it("SCATTER: wan-lora look door refuses before a projection body can land", async () => {
     const res = await worker.fetch(
       post("/api/storyboard/render/scatter", {
         bundleKey: "bundles/x.tar.gz",
@@ -432,9 +425,7 @@ describe("cf#392 wan_lora_projection surface", () => {
       env(),
       ctx,
     );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body[WAN_LORA_PROJECTION_FIELD]).toEqual({ injected: 1, dropped: 0 });
+    expect(res.status).toBe(400);
   });
 });
 

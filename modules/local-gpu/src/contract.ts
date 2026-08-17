@@ -20,6 +20,19 @@ export interface Provides {
 }
 export interface ModuleUi { section?: string; icon?: string; order?: number; locality?: "local" | "byo" | "cloud"; cost?: string; blurb?: string; limits?: string[]; }
 
+/** How we actually call this motion door (same shape as core MotionUsageDecl). */
+export type MotionVoiceMode = "prompt_lock" | "seed_and_prompt" | "cast_tts" | "prev_clip";
+export interface MotionUsageDecl {
+  native_audio: boolean;
+  voice: MotionVoiceMode;
+  scatter_native_audio: boolean;
+  min_seconds: number;
+  max_seconds: number;
+  duration_steps?: number[];
+  first_last?: boolean;
+  seed?: boolean;
+}
+
 export interface ModuleManifest {
   name: string;
   version: string;
@@ -28,6 +41,7 @@ export interface ModuleManifest {
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
+  usage?: MotionUsageDecl;
   /** Advertise POST /cancel so the core can stop an in-flight job rather than orphan the GPU. */
   cancelable?: boolean;
   /** OPTIONAL, additive: compact keyframe-stage label for the planner (#454). */

@@ -77,7 +77,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "HappyHorse 1.1 R2V (CF AI)" }],
+  provides: [{ id: "i2v-cloud", label: "Silent look lock (reference stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["720P", "1080P"], default: "720P", label: "resolution" },
     ratio: { type: "enum", values: ["16:9", "9:16", "3:4", "4:3", "1:1", "21:9", "9:21", "5:4", "4:5"], default: "16:9", label: "aspect ratio" },
@@ -88,8 +88,24 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 60,
     locality: "cloud",
-    cost: "Pay per render (CF Unified Billing)",
-    blurb: "Cloudflare AI Gateway i2v -- no RunPod queue; billed through Unified Billing. Blocking gen runs in a durable Workflow (#155).",
+    cost: "Pay per render",
+    blurb: "Holds a look from reference stills. Silent.",
+    limits: [
+      "3-15 second clips",
+      "Silent motion",
+      "Holds a look from reference stills",
+      "One film, no scatter (look lock)",
+      "Speaking is Cast voice plus MuseTalk",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: false,
+    min_seconds: 3,
+    max_seconds: 15,
+    first_last: true,
+    seed: true,
   },
 };
 

@@ -82,8 +82,14 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Grok Imagine Video (CF AI)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking drafts (Grok)" }],
   config_schema: {
+    model: {
+      type: "enum",
+      values: ["xai/grok-imagine-video-1.5-preview", "xai/grok-imagine-video"],
+      default: "xai/grok-imagine-video-1.5-preview",
+      label: "Grok video model",
+    },
     resolution: { type: "enum", values: ["480p", "720p"], default: "720p", label: "resolution" },
     aspect_ratio: { type: "enum", values: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"], default: "16:9", label: "aspect ratio" },
   },
@@ -91,8 +97,20 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 80,
     locality: "cloud",
-    cost: "Pay per render (CF Unified Billing)",
-    blurb: "Cloudflare AI Gateway i2v -- no RunPod queue; billed through Unified Billing. Blocking gen runs in a durable Workflow (#155).",
+    cost: "Pay per render",
+    blurb: "Quick talking drafts from a still. 1-15 seconds.",
+    limits: [
+      "1-15 second clips",
+      "Same voice lock on every shot",
+      "One film, no scatter",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 1,
+    max_seconds: 15,
   },
 };
 
@@ -156,7 +174,7 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   const key = clipKey(params.project, params.shot_id);
   const uploadUrl = await mintUploadUrl(env, key);
   const modelParams = buildParams(params.input, params.config, uploadUrl);
-  const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+  const result = await env.AI.run(params.config.model || MODEL, modelParams, { gateway: { id: gatewayId } });
 
   const existing = await env.R2_RENDERS.get(key);
   if (existing) {
@@ -166,6 +184,7 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
       shot_id: params.shot_id,
       seconds: params.seconds,
       clip_key: key,
+      has_audio: true,
     });
     return;
   }
@@ -183,6 +202,7 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
     shot_id: params.shot_id,
     seconds: params.seconds,
     clip_key: key,
+    has_audio: true,
   });
 }
 
@@ -275,6 +295,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
         clip_key: state.clip_key,
         fps: OUT_FPS,
         frames: state.seconds * OUT_FPS,
+        has_audio: true,
       },
     };
   }

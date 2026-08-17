@@ -30,6 +30,7 @@ const planState = {
   audioKey: null,
   audioMime: null,
   audioSourceLabel: null,
+  audioDurationSeconds: null,
   bpm: 120,
   beatsPerShot: 4,
   // In-flight score-bed job (poll token + module name from registry).
@@ -271,6 +272,7 @@ function startNewSession(opts) {
   planState.audioKey = null;
   planState.audioMime = null;
   planState.audioSourceLabel = null;
+  planState.audioDurationSeconds = null;
   planState.bpm = 120;
   planState.beatsPerShot = 4;
   planState.pendingMusicChatId = null;
@@ -339,6 +341,7 @@ function collectPlanResultState() {
     audioKey: planState.audioKey,
     audioMime: planState.audioMime,
     audioSourceLabel: planState.audioSourceLabel,
+    audioDurationSeconds: planState.audioDurationSeconds,
     bpm: planState.bpm,
     beatsPerShot: planState.beatsPerShot,
     pendingMusicChatId: planState.pendingMusicChatId,
@@ -385,6 +388,8 @@ function collectRenderStageState() {
     filmCredits: readVal("#planner-film-credits"),
     finishLipsync: readCheck("#planner-finish-lipsync"),
     finishBlender: readCheck("#planner-finish-blender"),
+    styleLock: readVal("#planner-style-lock"),
+    voiceLock: readVal("#planner-voice-lock"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-
     // flight render observed yet"; the updater anchors it lazily.

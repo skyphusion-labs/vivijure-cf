@@ -45,7 +45,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.2.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Seedance V1.5 Pro (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Seedance)" }],
   config_schema: {
     // values MUST stay = what the provider accepts (RESOLUTIONS, single source of truth): an
     // over-promising enum passes the core clamp and fails every shot at the provider after the
@@ -53,10 +53,32 @@ const MANIFEST: ModuleManifest = {
     resolution: { type: "enum", values: RESOLUTIONS, default: DEFAULT_RESOLUTION, label: "resolution" },
     aspect_ratio: { type: "enum", values: ["16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
     camera_fixed: { type: "bool", default: false, label: "lock camera" },
-    generate_audio: { type: "bool", default: true, label: "keep the model's audio (off: silent i2v)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
   },
-  ui: { section: "motion", order: 10, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 10,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Fast talking clips. Hosted speed default. 4-12 seconds.",
+    limits: [
+      "4-12 second clips",
+      "Same seed and same voice lock",
+      "Last still is the next start",
+      "One film, no scatter",
+      "Cannot lock the voice from a previous clip",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "seed_and_prompt",
+    scatter_native_audio: false,
+    min_seconds: 4,
+    max_seconds: 12,
+    first_last: true,
+    seed: true,
+  },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -219,7 +241,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
 }
 
 export default {

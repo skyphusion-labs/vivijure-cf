@@ -46,12 +46,31 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "MiniMax Hailuo 2.3 Fast (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Silent physical (Hailuo)" }],
   config_schema: {
     enable_prompt_expansion: { type: "bool", default: true, label: "expand prompt" },
     go_fast: { type: "bool", default: true, label: "fast mode" },
   },
-  ui: { section: "motion", order: 40, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 40,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Physical motion, silent. 6 or 10 seconds. Cast voice + MuseTalk if they speak.",
+    limits: [
+      "6 or 10 second clips",
+      "Silent motion",
+      "Speaking is Cast voice plus MuseTalk",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: true,
+    min_seconds: 6,
+    max_seconds: 10,
+    duration_steps: [6, 10],
+  },
 };
 
 function json(body: unknown, status = 200): Response {

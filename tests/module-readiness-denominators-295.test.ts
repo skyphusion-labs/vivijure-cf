@@ -141,8 +141,8 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // cf#305: was 6. The eight cost-door submitters (seedance, kling, vidu-q3, google-veo,
     // minimax-hailuo, alibaba-wan, alibaba-wan-lora, narration-gen) wrote NO row at all, so a
     // census of the table showed six healthy lanes and could not mention the other eight.
-    expect(WRITES_JOB_LOG.length).toBe(15);
-    for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen"]) {
+    expect(WRITES_JOB_LOG.length).toBe(17);
+    for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "kling-o1-r2v", "infinitetalk"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
     }
   });
@@ -152,12 +152,12 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // (cf-hh1-r2v, cf-seedance, cf-grok-video, cf-flux-3-video). Recomputed against the
     // merged tree, not summed from either branch in isolation (the dispatch's own "26->30"
     // arithmetic missed main's independent finish-blender addition).
-    expect(ENTRIES.length).toBe(31);
+    expect(ENTRIES.length).toBe(37);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
     // population this counts is unchanged by this PR and 15 stands.
-    expect(WRITES_JOB_LOG.length).toBe(15);
+    expect(WRITES_JOB_LOG.length).toBe(17);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads

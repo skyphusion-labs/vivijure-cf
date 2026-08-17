@@ -34,7 +34,7 @@ describe("vidu-q3 pure logic", () => {
       generate_audio: true,
       bgm: true,
       seed: -1,
-      enable_safety_checker: true,
+      enable_safety_checker: false,
     });
   });
 

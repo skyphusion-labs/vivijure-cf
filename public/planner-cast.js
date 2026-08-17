@@ -135,6 +135,7 @@ function applyRestoredCastBindings() {
   if (dropped.length > 0) {
     console.info("planner: dropped cast bindings for slots (cast deleted):", dropped);
   }
+  ensureVoiceLockFilled();
 }
 
 // Build (or rebuild) the "from cast" dropdown's options. Called on
@@ -459,5 +460,67 @@ function refreshCastLoraWarning() {
     return;
   }
   paintLoraWarning(el, unready, "Portraits are enough for a first film.");
+}
+
+// Native AV lock. Planner cannot import core VOICE_LOCK_HINTS / buildVoiceLock;
+// keep this table in lockstep with vivijure-core/src/voices.ts VOICE_LOCK_HINTS.
+const PLANNER_VOICE_LOCK_HINTS = {
+  angus: "warm mid male, slight Irish lilt",
+  asteria: "clear mid female, American",
+  arcas: "steady mid male, American",
+  orion: "deeper male, American",
+  orpheus: "smooth mid male, American",
+  athena: "clear mid female, American",
+  luna: "light female, American",
+  zeus: "deep resonant male, American",
+  perseus: "firm mid male, American",
+  helios: "bright mid male, American",
+  hera: "warm mid female, American",
+  stella: "bright female, American",
+};
+
+function plannerVoiceLockHint(id) {
+  if (typeof id !== "string") return "";
+  const key = id.trim().toLowerCase();
+  return PLANNER_VOICE_LOCK_HINTS[key] || "";
+}
+
+function buildPlannerVoiceLock() {
+  const bindings = (typeof planState !== "undefined" && planState.castBindings) || {};
+  const catalog = (typeof planState !== "undefined" && planState.castCatalog) || [];
+  const slots = typeof SLOT_IDS !== "undefined" ? SLOT_IDS : Object.keys(bindings);
+  const lines = [];
+  const seen = new Set();
+  for (const slot of slots) {
+    const castId = bindings[slot];
+    if (!castId) continue;
+    const cast = catalog.find((c) => c.id === castId) || null;
+    if (!cast) continue;
+    const name = (cast.name || "").trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const hint = plannerVoiceLockHint(cast.voice_id);
+    lines.push(hint
+      ? name + ": " + hint + ". Same speaker every shot."
+      : name + ": same speaking voice every shot.");
+  }
+  if (seen.size > 1) {
+    lines.push("When a named character speaks, use only that character's locked voice. Never invent a new speaker.");
+  }
+  return lines.join(" ");
+}
+
+function ensureVoiceLockFilled() {
+  const el = typeof document !== "undefined" ? document.getElementById("planner-voice-lock") : null;
+  const current = el && typeof el.value === "string" ? el.value.trim() : "";
+  if (current) return current;
+  const built = buildPlannerVoiceLock();
+  if (el && built) {
+    el.value = built;
+    if (typeof persistSoon === "function") persistSoon();
+  }
+  return built;
 }
 

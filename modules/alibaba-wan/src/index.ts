@@ -47,11 +47,31 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Wan 2.6 (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Silent detailed (Wan)" }],
   config_schema: {
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
-  ui: { section: "motion", order: 70, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 70,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Detailed motion, stronger faces, silent. 5, 10, or 15 seconds.",
+    limits: [
+      "5, 10, or 15 second clips",
+      "Silent motion, stronger faces",
+      "Speaking is Cast voice plus MuseTalk",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: true,
+    min_seconds: 5,
+    max_seconds: 15,
+    duration_steps: [5, 10, 15],
+  },
 };
 
 function json(body: unknown, status = 200): Response {

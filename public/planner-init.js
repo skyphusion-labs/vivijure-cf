@@ -382,6 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (scatterChk) {
     scatterChk.addEventListener("change", updateScatterGate);
   }
+  document.addEventListener("planner:backend-change", updateScatterGate);
   $("#planner-render-cancel").addEventListener("click", cancelRender);
   const dismissBtn = $("#planner-render-dismiss");
   if (dismissBtn) dismissBtn.addEventListener("click", dismissRenderResult);

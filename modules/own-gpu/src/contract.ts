@@ -16,6 +16,19 @@ export type ConfigSchema = Record<string, ConfigField>;
 export interface Provides { id: string; label: string; }
 export interface ModuleUi { section?: string; icon?: string; order?: number; locality?: "local" | "byo" | "cloud"; cost?: string; blurb?: string; limits?: string[]; }
 
+/** How we actually call this motion door (same shape as core MotionUsageDecl). */
+export type MotionVoiceMode = "prompt_lock" | "seed_and_prompt" | "cast_tts" | "prev_clip";
+export interface MotionUsageDecl {
+  native_audio: boolean;
+  voice: MotionVoiceMode;
+  scatter_native_audio: boolean;
+  min_seconds: number;
+  max_seconds: number;
+  duration_steps?: number[];
+  first_last?: boolean;
+  seed?: boolean;
+}
+
 /**
  * cp#270: the TENANT's per-job R2 credential, as the invoke envelope carries it. Vendored to match
  * `@skyphusion-labs/vivijure-core` `modules/types.ts`, like every other shape in this file.
@@ -38,6 +51,7 @@ export interface ModuleManifest {
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
+  usage?: MotionUsageDecl;
   /** cp#270: this module submits to an endpoint that may be POOLED across tenants, so the core
    *  attaches the tenant's per-job R2 credential to its invoke envelope. OPTIONAL/additive,
    *  mirrors the core module contract. */

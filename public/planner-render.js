@@ -184,7 +184,59 @@ function selectedMotionBackend() {
   return sel && typeof sel.value === "string" ? sel.value : "";
 }
 
+// Native AV default is on. Prefer the selected door's generate_audio checkbox;
+// if none is projected, treat as on (the door invents a speaker unless we lock one).
+function plannerGenerateAudioOn() {
+  const selected = selectedMotionBackend();
+  if (selected) {
+    const escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(selected) : selected;
+    const scoped = document.querySelector('[data-module="' + escaped + '"][data-field="generate_audio"]');
+    if (scoped) return !!scoped.checked;
+  }
+  const el = document.querySelector('[data-field="generate_audio"]');
+  if (el) return !!el.checked;
+  return true;
+}
+
+function readPlannerVoiceLock() {
+  if (typeof ensureVoiceLockFilled === "function") return ensureVoiceLockFilled();
+  const el = $("#planner-voice-lock");
+  return el && typeof el.value === "string" ? el.value.trim() : "";
+}
+
+// Empty lock + native audio + motion = the door invents a new speaker every shot.
+// Returns the filled lock (may be "") or null when submit must stop.
+function requirePlannerVoiceLock(keyframesOnly) {
+  const voiceLock = readPlannerVoiceLock();
+  if (voiceLock) return voiceLock;
+  if (keyframesOnly || !plannerGenerateAudioOn()) return "";
+  setRenderStatus(
+    "Lock a speaking voice or pick Cast first. Without it, talking clips invent a new speaker every shot.",
+    "error",
+  );
+  const ta = $("#planner-voice-lock");
+  if (ta) ta.focus();
+  return null;
+}
+
+function plannerTalkingScatterAllowed() {
+  const name = selectedMotionBackend();
+  const talking = plannerGenerateAudioOn();
+  const cache = window.plannerRegistry && window.plannerRegistry._cacheForRenderConfig;
+  const mods = cache && cache["motion.backend"];
+  const mod = Array.isArray(mods) ? mods.find((m) => m && m.name === name) : null;
+  const usage = mod && mod.usage;
+  const isTalking = usage && usage.native_audio === false
+    ? false
+    : talking && (usage ? usage.native_audio === true : talking);
+  if (isTalking) return false;
+  if (name === "own-gpu" || name === "local-gpu") return false;
+  if (usage && usage.scatter_native_audio === false) return false;
+  return true;
+}
+
 function plannerShardCount(shotN) {
+  if (!plannerTalkingScatterAllowed()) return 1;
   const shots = Math.max(0, Math.floor(Number(shotN)) || 0);
   const implicit = shots === 0 ? 1 : Math.min(shots, 20);
   const input = $("#planner-scatter-shards");
@@ -254,6 +306,11 @@ async function submitRender() {
     renderState.submitting = false;
     return;
   }
+  const voiceLock = requirePlannerVoiceLock(keyframesOnly);
+  if (voiceLock === null) {
+    renderState.submitting = false;
+    return;
+  }
   // Stop any prior poll loop before starting a new render.
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
@@ -292,6 +349,9 @@ async function submitRender() {
   // audio_key from the job input, downloads, and muxes via
   // export_film(with_audio=True).
   if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  const styleLock = (($("#planner-style-lock") && $("#planner-style-lock").value) || (planState.storyboard && planState.storyboard.style_prefix) || "").trim();
+  if (styleLock) reqBody.style_prefix = styleLock;
+  if (voiceLock) reqBody.voice_lock = voiceLock;
   // Forward the title / credit-card TEXT. The film.finish chain (film-titles) reads it off the job
   // (job.film_titles -> FilmFinishInput.title/credits); without this the cards never rendered from the
   // planner. Omitted when empty, and the core ignores it on a keyframes-only preview (no assembled film
@@ -408,7 +468,9 @@ function updateScatterGate() {
   const hasLoras = Object.keys(castLoras).length > 0;
 
   let reason = "";
-  if (scenes.length < 2) reason = "needs >= 2 shots";
+  if (!plannerTalkingScatterAllowed()) {
+    reason = "Talking clips and the look door stay on one film so voice and face hold";
+  } else if (scenes.length < 2) reason = "needs >= 2 shots";
   else if (!hasLoras) reason = "every character needs a trained LoRA first";
 
   checkbox.disabled = !!reason;
@@ -418,7 +480,7 @@ function updateScatterGate() {
     reasonEl.textContent = reason;
     reasonEl.hidden = !reason;
   }
-  if (shardWrap) shardWrap.hidden = false;
+  if (shardWrap) shardWrap.hidden = !plannerTalkingScatterAllowed();
   plannerShardCount(scenes.length);
 }
 
@@ -553,6 +615,12 @@ async function submitScatterRender() {
     return;
   }
 
+  const scatterVoiceLock = requirePlannerVoiceLock(isStillsMode());
+  if (scatterVoiceLock === null) {
+    renderState.submitting = false;
+    return;
+  }
+
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
     renderState.pollTimer = null;
@@ -574,6 +642,9 @@ async function submitScatterRender() {
   if (qualityTier) reqBody.qualityTier = qualityTier;
   if (renderOverrides) reqBody.renderOverrides = renderOverrides;
   if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  const styleLock = (($("#planner-style-lock") && $("#planner-style-lock").value) || (planState.storyboard && planState.storyboard.style_prefix) || "").trim();
+  if (styleLock) reqBody.style_prefix = styleLock;
+  if (scatterVoiceLock) reqBody.voice_lock = scatterVoiceLock;
   if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
 
   let resp = null;

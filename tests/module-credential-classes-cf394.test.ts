@@ -95,6 +95,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   IMAGES: { path: "operator-only", note: "Cloudflare Images binding on the operator account" },
   EMAIL: { path: "operator-only", note: "send_email binding on the operator account" },
   DIALOGUE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
+  CHATTERBOX_WORKFLOW: { path: "operator-only", note: "Workflow binding; Chatterbox Turbo TTS class ships with the operator script" },
   SCORE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   // CF AI i2v modules (cf-hh1-r2v / cf-seedance / cf-grok-video / cf-flux-3-video): same class as
   // dialogue/score -- the Workflow class ships with the operator module script; plane has no
