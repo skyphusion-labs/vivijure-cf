@@ -84,6 +84,8 @@ export const MANIFEST: ModuleManifest = {
     output_key: { kind: "append_suffix", suffix: "_up" },
     applied: [{ tag: "upscale:{scale|2}x" }],
   },
+  // Door guard: upscale FFMPEG_TIMEOUT default. Hosted path is URL doors.
+  max_invocation_seconds: 1200,
 };
 
 function json(body: unknown, status = 200): Response {

@@ -78,6 +78,8 @@ export const MANIFEST: ModuleManifest = {
   // SOURCE frame rate, so the core must run it on the native-fps clip before any interpolation. This
   // flag (not the module name) is how the core hoists it ahead of RIFE for a shot that has a line.
   finish_consumes_audio: true,
+  // Door guard: musetalk MAX_INVOCATION_SECONDS default (handler.py).
+  max_invocation_seconds: 540,
 };
 
 function json(body: unknown, status = 200): Response {

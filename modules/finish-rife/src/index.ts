@@ -83,6 +83,8 @@ export const MANIFEST: ModuleManifest = {
       { tag: "interpolate:{interpolation_factor|2}x" },
     ],
   },
+  // Door guard: backend finish.py DEFAULT_MAX_SECONDS.
+  max_invocation_seconds: 420,
 };
 
 function json(body: unknown, status = 200): Response {

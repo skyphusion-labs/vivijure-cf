@@ -73,6 +73,8 @@ const MANIFEST: ModuleManifest = {
     denoise: { type: "bool", default: false, label: "extra denoise pass" },
   },
   ui: { section: "speech", icon: "wand", order: 10 },
+  // Speech-door default matching musetalk-style 540s invocation budget.
+  max_invocation_seconds: 540,
 };
 
 function json(body: unknown, status = 200): Response {
