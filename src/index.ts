@@ -921,10 +921,11 @@ const hSubmitRender: Handler = async (req, env) => {
       motion_backend: motionBackend,
       audio_key: b.audioKey,
       film_titles: b.film_titles,
+      // core 1.21.4: look + voice lock (same speaker on every native-AV shot)
       style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
       voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
       project_id: await resolveProjectRef(env, b.projectId),
-    });
+    } as Parameters<typeof startScatterRender>[1]);
     return json(await enrichScatterPollView(env, scatterJobToPollView(scatterJob)), 201);
   }
   const job = await startFilmJob(env, {
@@ -954,7 +955,7 @@ const hSubmitRender: Handler = async (req, env) => {
     dialogue_lines: panelDialogue,
     style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
     voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
-  }, modules);
+  } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
   await persistWanLoraProjectionOnFilm(env, job, wanProj);

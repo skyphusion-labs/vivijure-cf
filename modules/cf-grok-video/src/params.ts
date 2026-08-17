@@ -21,7 +21,7 @@ export type ModuleConfig = {
 
 export type RunState =
   | { status: "running"; started_at: number; project: string; shot_id: string; seconds: number; workflow_id?: string }
-  | { status: "done"; project: string; shot_id: string; seconds: number; clip_key: string }
+  | { status: "done"; project: string; shot_id: string; seconds: number; clip_key: string; has_audio?: boolean }
   | { status: "failed"; error: string };
 
 export interface PollToken { job_id: string; }
