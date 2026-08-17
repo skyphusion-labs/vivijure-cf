@@ -16,8 +16,8 @@
 #                empty, which is the honest off state (degrade / RunPod). Never a baked hostname.
 #
 # Workers VPC is gone from hosted module tomls. A leftover [[vpc_services]] or ${VPC_ is a
-# regression and this script REFUSES rather than filling it. setup-media-vpc.py stays on disk
-# for the self-host installer; hosted no longer uses those ids.
+# regression and this script REFUSES rather than filling it. Do not mint media VPC ids;
+# media is Traefik URL vars + MEDIA_FINISH_TOKEN.
 # ------------------------------------------------------------------------------------------------
 set -eu
 
@@ -50,13 +50,13 @@ done
 
 # Hosted no longer ships [[vpc_services]] or ${VPC_ on module tomls. Leftover is a regression.
 if grep -vE '^[[:space:]]*#' "$toml" | grep -q '^\[\[vpc_services\]\]'; then
-  echo "::error::${toml} still carries [[vpc_services]] -- hosted no longer uses Workers VPC; remove the block" >&2
+  echo "::error::${toml} still carries [[vpc_services]] -- hosted media is Traefik URLs + MEDIA_FINISH_TOKEN; remove the block" >&2
   exit 1
 fi
 leftover_vpc="$(grep -vE '^[[:space:]]*#' "$toml" | grep -oE '\$\{VPC_[A-Z0-9_]+\}|REPLACE_WITH_VPC_[A-Z0-9_]+' | sort -u || true)"
 if [ -n "$leftover_vpc" ]; then
   echo "::error::leftover VPC placeholder in ${toml}: $(echo "$leftover_vpc" | tr '\n' ' ')" >&2
-  echo "::error::hosted no longer fills REPLACE_WITH_VPC_* / \${VPC_ ; media is URL vars" >&2
+  echo "::error::do not mint REPLACE_WITH_VPC_* / \${VPC_ ; media is URL vars + MEDIA_FINISH_TOKEN" >&2
   exit 1
 fi
 
