@@ -5,6 +5,15 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.32.9 -- 2026-08-17
+
+### feat(motion): voice/look lock, new doors, no scatter on talking
+
+Pins `@skyphusion-labs/vivijure-core` 1.21.5. Talking clips and look
+doors stay on one film. Cast voice lock. Seedance 2.5 / Grok 1.5.
+InfiniteTalk, Chatterbox, Kling O1, CF Wan 2.7 / Hailuo / Veo. Provider
+safety defaults off. Kling 2.1 and Wan 2.6 stay on disk, unbound.
+
 ## v1.32.8 -- 2026-08-17
 
 ### feat(motion): first+last frame + native AV default

@@ -13,10 +13,9 @@ export function isTalkingClip(
   generateAudio: boolean,
 ): boolean {
   const usage = mod && mod.usage;
-  if (usage && usage.native_audio === false) return false;
+  if (!usage || usage.native_audio !== true) return false;
   if (!generateAudio) return false;
-  if (usage && usage.native_audio === true) return true;
-  return generateAudio;
+  return true;
 }
 
 export function talkingScatterAllowed(

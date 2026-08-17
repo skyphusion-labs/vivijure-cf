@@ -55,7 +55,7 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     worker: cfSeedanceWorker as unknown as Worker,
     usage: {
       native_audio: true, voice: "seed_and_prompt", scatter_native_audio: false,
-      min_seconds: 4, max_seconds: 12, first_last: true, seed: true,
+      min_seconds: 4, max_seconds: 30, first_last: true, seed: true,
     },
   },
   {

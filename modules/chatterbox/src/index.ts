@@ -40,7 +40,7 @@ import {
   type NormalizedLine,
 } from "./chatterbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
-import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName } from "../../_shared/runpod-route";
+import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, planeRefusalReason, planeRefusalError } from "../../_shared/runpod-route";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer | string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
@@ -131,6 +131,8 @@ async function synthLine(env: Env, project: string, line: NormalizedLine): Promi
     headers: { ...runpodHeaders(route, "chatterbox"), "content-type": "application/json" },
     body: JSON.stringify({ input: buildTtsParams(line.text, line.voice) }),
   });
+  const refusal = planeRefusalReason(route, r);
+  if (refusal) throw new Error(planeRefusalError(MANIFEST.name, refusal));
   if (!r.ok) throw new Error("chatterbox /runsync -> " + r.status);
   const body = (await r.json()) as { output?: { audio_url?: string }; status?: string; error?: unknown };
   const url = body.output?.audio_url;
