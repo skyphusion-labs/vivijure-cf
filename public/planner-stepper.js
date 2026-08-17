@@ -67,9 +67,12 @@ const stepState = {
 // planner can put them in shots. Render still needs a staged bundle (or a
 // film already in flight / loaded from history).
 function computeStepUnlocked() {
+  const hasPlan = !!(planState && planState.storyboard);
   const hasBundle =
     !!(bundleState && bundleState.bundleKey) || !!(renderState && renderState.jobId);
-  return { cast: true, plan: true, render: hasBundle, history: true };
+  // Render is reachable once there is a storyboard. Next must not dump
+  // people on Your films because the pack is still running.
+  return { cast: true, plan: true, render: hasPlan || hasBundle, history: true };
 }
 
 function buildStepper() {
@@ -182,6 +185,10 @@ function paintStepper() {
 function stepDelta(dir) {
   const curIdx = PLANNER_STEP_ORDER.indexOf(stepState.current);
   if (dir > 0) {
+    if (stepState.current === "plan") {
+      showStep("render");
+      return;
+    }
     const nextId = PLANNER_STEP_ORDER[curIdx + 1];
     if (nextId && stepState.unlocked[nextId]) showStep(nextId);
     return;

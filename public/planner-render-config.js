@@ -608,7 +608,7 @@
     const cache = {};
     for (const h of hooks) {
       const order = (data.hooks && data.hooks[h.hook]) || [];
-      cache[h.hook] = order.map((n) => byName[n]).filter(Boolean);
+      cache[h.hook] = order.map((n) => byName[n]).filter((m) => m && m.name !== "local-gpu");
     }
     global.plannerRegistry._cacheForRenderConfig = cache;
 
