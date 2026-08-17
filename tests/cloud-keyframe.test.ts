@@ -47,7 +47,7 @@ import {
   extractGenError,
   rephraseForFlagRetry,
   FLAG_RETRY_ATTEMPTS,
-  generateImageRunpod,
+  generateImage,
   runpodNano2Input,
   extractRunpodImageUrl,
 } from "../modules/cloud-keyframe/src/image-gen";
@@ -341,7 +341,7 @@ vi.mock("../modules/cloud-keyframe/src/image-gen", async (importActual) => {
   return {
     ...actual,
     // Record what refs reach the model per shot; return a tiny valid PNG so poll advances.
-    generateImageRunpod: vi.fn(async (_runsync: unknown, prompt: string, refBlobs: Blob[]) => {
+    generateImage: vi.fn(async (_ai: unknown, _gw: unknown, _model: string, prompt: string, refBlobs: Blob[]) => {
       genCalls.push({ prompt, refCount: refBlobs.length });
       return { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).buffer as ArrayBuffer, mime: "image/png" };
     }),
@@ -386,7 +386,7 @@ function fakeR2() {
 async function makeKeyframeEnv(yaml: string = STORYBOARD_YAML, withPortraits = true) {
   const R2 = fakeR2();
   await R2.put("bundles/neon.tar.gz", await bundleTarGz(yaml, withPortraits));
-  return { RUNPOD_API_KEY: "test-runpod", R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
+  return { AI: { run: async () => ({}) }, GATEWAY_ID: "gw", R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
 }
 
 async function invokeKeyframe(
@@ -418,7 +418,7 @@ async function drainPolls(env: Parameters<typeof worker.fetch>[1], poll: string)
 const tinyPng = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).buffer as ArrayBuffer, mime: "image/png" };
 
 function restoreGenOk() {
-  vi.mocked(generateImageRunpod).mockImplementation(async (_runsync, prompt, refBlobs) => {
+  vi.mocked(generateImage).mockImplementation(async (_ai, _gw, _model, prompt, refBlobs) => {
     genCalls.push({ prompt, refCount: refBlobs.length });
     return tinyPng;
   });
@@ -432,7 +432,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
 
   it("retries a flaky 3030 and succeeds on the later roll", async () => {
     let n = 0;
-    vi.mocked(generateImageRunpod).mockImplementation(async (_runsync, prompt, refBlobs) => {
+    vi.mocked(generateImage).mockImplementation(async (_ai, _gw, _model, prompt, refBlobs) => {
       genCalls.push({ prompt, refCount: refBlobs.length });
       n += 1;
       if (n < 3) throw new Error("error 3030: Your output has been flagged");
@@ -451,7 +451,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
   });
 
   it("does not swallow a persistent 3030", async () => {
-    vi.mocked(generateImageRunpod).mockImplementation(async () => {
+    vi.mocked(generateImage).mockImplementation(async () => {
       throw new Error("error 3030: Your output has been flagged");
     });
     const env = await makeKeyframeEnv(
@@ -467,7 +467,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
 
   it("does not retry a CSAM refusal even if the message also has 3030", async () => {
     let n = 0;
-    vi.mocked(generateImageRunpod).mockImplementation(async () => {
+    vi.mocked(generateImage).mockImplementation(async () => {
       n += 1;
       throw new Error("error 3030: CSAM child sexual content");
     });
@@ -521,7 +521,7 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
     const shot3 = genCalls.find((c) => c.prompt.includes("empty landscape"));
     expect(shot3, "shot_03 was rendered").toBeDefined();
     expect(shot3!.refCount).toBeGreaterThan(0);
-    expect(shot3!.prompt).toMatch(/Keep the face/);
+    expect(shot3!.prompt).toMatch(/empty landscape/);
   });
 
   it("first_keyframe: the first shot is the source (no film ref), a later character-less shot gets it", async () => {

@@ -804,7 +804,7 @@
     // stays omitted so core can couple it (vivijure-local#153).
     if (!overrides.keyframe_backend && overrides.motion_backend !== "local-gpu"
         && (overrides.motion_backend || overrides.config)) {
-      overrides.keyframe_backend = "cloud-keyframe";
+      overrides.keyframe_backend = "keyframe";
     }
     if (!keyframesOnly && backendSel && !overrides.motion_backend) {
       const names = Array.from(backendSel.options || [])

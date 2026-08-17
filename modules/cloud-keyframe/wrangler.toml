@@ -38,13 +38,7 @@ binding = "IMAGES"
 binding = "R2_RENDERS"
 bucket_name = "vivijure"
 
-# GATEWAY_ID kept for leftover proxied paths. Stills now go through RunPod Nano Banana 2.
 [[secrets_store_secrets]]
 binding = "GATEWAY_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "GATEWAY_ID"
-
-[[secrets_store_secrets]]
-binding = "RUNPOD_API_KEY"
-store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
-secret_name = "RUNPOD_API_KEY"
