@@ -45,7 +45,8 @@ async def main():
     async def crash_work(body):
         raise RuntimeError("kaboom")
 
-    app.ASYNC_WORKS = {"film-titles": ok_work, "subtitle": bad_work, "boom": crash_work}
+    check("finish is an async route", "finish" in app.ASYNC_WORKS)
+    app.ASYNC_WORKS = {"film-titles": ok_work, "subtitle": bad_work, "boom": crash_work, "finish": ok_work}
 
     client = TestClient(TestServer(app.app))
     await client.start_server()

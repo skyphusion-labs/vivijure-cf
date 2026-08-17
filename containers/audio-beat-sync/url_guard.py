@@ -95,8 +95,12 @@ def safe_log_value(val, max_len=200):
 # manager. `async def` here would return a coroutine, and `async with guarded_get(...)`
 # would then blow up with TypeError (never awaited) -- the 2026-07-15 assemble 500.
 def guarded_get(session, url, **kwargs):
-    return session.get(_safe_fetch_url(url), **kwargs)  # lgtm[py/full-ssrf]
+    # _safe_fetch_url already rejected anything off the https+R2 allowlist.
+    # codeql[py/full-ssrf]
+    return session.get(_safe_fetch_url(url), **kwargs)
 
 
 def guarded_put(session, url, **kwargs):
-    return session.put(_safe_fetch_url(url), **kwargs)  # lgtm[py/full-ssrf]
+    # _safe_fetch_url already rejected anything off the https+R2 allowlist.
+    # codeql[py/full-ssrf]
+    return session.put(_safe_fetch_url(url), **kwargs)
