@@ -215,6 +215,13 @@ panel and both mobile clients fail to load or save module config **with no re-au
 Every denial is a **403** -- this gate has no 401 path -- with
 `{"ev":"authz.deny",...,"required":"operator","held":"consumer"}` in the log.
 
+**A scope denial is distinguishable from a dead credential on the wire (cf#525).** Status stays 403
+either way. An `authorizeRoute` refusal carries `{ error: AUTHZ_DENY_REASON, code: "scope_denied" }`
+and header `X-Vivijure-Authz: scope_denied`. A missing or bad token 403 has a different `error`
+string (it mentions API token) and no `code`. Re-pasting cannot help a scope denial; re-issue the
+token with operator scope. The panel banner keys on `body.code === "scope_denied"` and does not
+pop paste-once. AUTH_MODE=demo does not store a token, so that banner does not fire there.
+
 **The deploy goes GREEN throughout.** No check fails, no alert fires, and the first symptom is a
 person reporting that the settings page stopped working. That is the entire reason this section
 exists.

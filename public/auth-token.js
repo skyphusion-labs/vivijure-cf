@@ -113,12 +113,44 @@
     else document.addEventListener("DOMContentLoaded", build);
   }
 
+  function showScopeDeniedNotice() {
+    if (document.getElementById("vivijure-scope-denied")) return;
+    var build = function () {
+      var bar = document.createElement("div");
+      bar.id = "vivijure-scope-denied";
+      bar.className = "scope-denied-banner";
+      bar.setAttribute("role", "status");
+      var text = document.createElement("span");
+      text.textContent =
+        "This credential is valid but not authorized for this route. Re-issue with operator scope.";
+      var dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.textContent = "dismiss";
+      dismiss.className = "scope-denied-dismiss";
+      dismiss.addEventListener("click", function () {
+        bar.remove();
+      });
+      bar.appendChild(text);
+      bar.appendChild(dismiss);
+      document.body.insertBefore(bar, document.body.firstChild);
+    };
+    if (document.body) build();
+    else document.addEventListener("DOMContentLoaded", build);
+  }
+
   function watchAuthFailure(res) {
     if (res && res.status === 403) {
       res
         .clone()
         .json()
         .then(function (body) {
+          // cf#525: a valid token with the wrong scope is not a dead credential.
+          // Do not pop paste-once. Only surface when a token is stored so AUTH_MODE=demo
+          // (anonymous consumer) does not change its UX.
+          if (body && body.code === "scope_denied") {
+            if (getToken()) showScopeDeniedNotice();
+            return;
+          }
           var reason = body && typeof body.error === "string" ? body.error : "";
           // Only token-mode denials prompt. A stored-but-stale token gets a fresh paste prompt too.
           if (/api token|STUDIO_API_TOKEN/i.test(reason)) {

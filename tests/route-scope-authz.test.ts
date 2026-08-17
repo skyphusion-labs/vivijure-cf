@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import worker from "../src/index";
 import { API_ROUTES } from "../src/index";
 import { sha256Hex } from "../src/auth-gate";
-import { authorizeRoute, isScope, SCOPES, AUTHZ_DENY_REASON, type Scope } from "../src/authz";
+import { authorizeRoute, isScope, SCOPES, AUTHZ_DENY_REASON, AUTHZ_DENY_CODE, type Scope } from "../src/authz";
 import { PINNED_ROUTE_COUNT } from "./route-scope-pins";
 import type { Env } from "../src/env";
 
@@ -67,13 +67,17 @@ const get = (path: string, headers: Record<string, string> = {}) =>
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
-async function errorOf(res: Response): Promise<string | null> {
+async function bodyOf(res: Response): Promise<{ error?: string; code?: string } | null> {
   const text = await res.text();
   try {
-    return (JSON.parse(text) as { error?: string }).error ?? null;
+    return JSON.parse(text) as { error?: string; code?: string };
   } catch {
     return null; // an asset/HTML body: not an error envelope, so not an authz refusal
   }
+}
+
+async function errorOf(res: Response): Promise<string | null> {
+  return (await bodyOf(res))?.error ?? null;
 }
 
 // ---- the comparison itself, before anything built on it (N318: control first) -----------------
@@ -127,6 +131,18 @@ describe("cf#520 the authz refusal is not mistaken for an AUTHENTICATION failure
   it("AUTHZ_DENY_REASON does NOT trip it (the caller's token is fine; do not ask them to re-paste it)", () => {
     expect(new RegExp(m![1], "i").test(AUTHZ_DENY_REASON)).toBe(false);
   });
+
+  it("AUTHZ_DENY_CODE does not trip it either (a code is not a paste-once reason)", () => {
+    expect(AUTHZ_DENY_CODE).toBe("scope_denied");
+    expect(new RegExp(m![1], "i").test(AUTHZ_DENY_CODE)).toBe(false);
+  });
+
+  it("the shim keys scope_denied on body.code, not the paste-once regex", () => {
+    // The panel surface must stay off the token prompt. If this shape moves, the
+    // notice dies silently and 403s look like a dead credential again (cf#525).
+    expect(SHIM).toMatch(/body\.code\s*===\s*["']scope_denied["']/);
+    expect(SHIM).toMatch(/re-issue with operator scope/i);
+  });
 });
 
 // ---- the structural precondition the null-credential branch rests on --------------------------
@@ -171,7 +187,30 @@ describe("cf#520 token mode -- a consumer token cannot reach an operator route",
   it("LOAD-BEARING: consumer token + operator route -> 403, refused BY AUTHORIZATION", async () => {
     const res = await worker.fetch(get(OPERATOR_ROUTE, auth(CONSUMER_TOKEN)), tokenEnv(await db()), ctx);
     expect(res.status).toBe(403);
-    expect(await errorOf(res)).toBe(AUTHZ_DENY_REASON);
+    const body = await bodyOf(res);
+    expect(body?.error).toBe(AUTHZ_DENY_REASON);
+    expect(body?.code).toBe(AUTHZ_DENY_CODE);
+    expect(res.headers.get("X-Vivijure-Authz")).toBe(AUTHZ_DENY_CODE);
+  });
+
+  it("missing token 403 is AUTHENTICATION: no scope_denied code", async () => {
+    const res = await worker.fetch(get(OPERATOR_ROUTE), tokenEnv(await db()), ctx);
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body?.error).toMatch(/api token/i);
+    expect(body?.code).not.toBe(AUTHZ_DENY_CODE);
+    expect(Object.prototype.hasOwnProperty.call(body ?? {}, "code")).toBe(false);
+    expect(res.headers.get("X-Vivijure-Authz")).toBeNull();
+  });
+
+  it("bad token 403 is AUTHENTICATION: no scope_denied code", async () => {
+    const res = await worker.fetch(get(OPERATOR_ROUTE, auth("z".repeat(64))), tokenEnv(await db()), ctx);
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body?.error).toBe("bad API token");
+    expect(body?.code).not.toBe(AUTHZ_DENY_CODE);
+    expect(Object.prototype.hasOwnProperty.call(body ?? {}, "code")).toBe(false);
+    expect(res.headers.get("X-Vivijure-Authz")).toBeNull();
   });
 
   it("operator-scoped NAMED token + operator route -> authorization passes", async () => {
@@ -243,7 +282,9 @@ describe("cf#520 the other auth modes", () => {
     } as unknown as Env;
     const res = await worker.fetch(get(OPERATOR_ROUTE), env, ctx);
     expect(res.status).toBe(403);
-    expect(await errorOf(res)).toBe(AUTHZ_DENY_REASON);
+    const body = await bodyOf(res);
+    expect(body?.error).toBe(AUTHZ_DENY_REASON);
+    expect(body?.code).toBe(AUTHZ_DENY_CODE);
   });
 
   it("DEMO still serves its own consumer routes (the read surface is untouched)", async () => {

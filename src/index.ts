@@ -46,7 +46,7 @@ import {
 } from "./cast-media";
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
-import { authorizeRoute, AUTHZ_DENY_REASON, type Scope } from "./authz";
+import { authorizeRoute, AUTHZ_DENY_REASON, AUTHZ_DENY_CODE, type Scope } from "./authz";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
 import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
@@ -145,8 +145,11 @@ import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
 // Container DOs -- exported so the runtime registers them (bound in wrangler.toml).
 
 // Local JSON response helper -- status as a plain number (shared.ts's json takes a ResponseInit).
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8" } });
+const json = (body: unknown, status = 200, extra?: Record<string, string>): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", ...extra },
+  });
 
 // --- error model ---------------------------------------------------------
 class HttpError extends Error {
@@ -2496,7 +2499,11 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
           required: hit.scope,
           held: credential,
         }));
-        return json({ error: AUTHZ_DENY_REASON }, 403);
+        return json(
+          { error: AUTHZ_DENY_REASON, code: AUTHZ_DENY_CODE },
+          403,
+          { "X-Vivijure-Authz": AUTHZ_DENY_CODE },
+        );
       }
       try {
         return await hit.handler(request, env, ctx, hit.params);
