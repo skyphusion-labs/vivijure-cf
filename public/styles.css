@@ -780,7 +780,8 @@ details.planner-bundle-consistent {
   border: 1px solid var(--line); background: var(--panel-2);
   font-size: 14px; line-height: 1.45; color: var(--ink);
 }
-#planner-motion-backend-wrap[data-stills="1"] { display: none; }
+/* Stills vs motion still switches the button label. The backend list
+   stays visible so every motion.backend module is a real choice. */
 .planner-preflight-inner {
   padding: 0; background: transparent; border: 0;
 }
