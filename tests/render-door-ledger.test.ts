@@ -132,6 +132,7 @@ const env = {
   // A cloud motion door, so animate-cloud / animate-hybrid are DRIVEABLE. Without it those two are
   // untestable here, and an untestable door quietly becomes an undeclared one.
   MODULE_CLOUD_I2V: moduleBinding("cloud-i2v", ["motion.backend"], "cloud"),
+  MODULE_OWN_GPU: moduleBinding("own-gpu", ["motion.backend"], "byo"),
 } as unknown as Env;
 
 const post = (path: string, body: unknown) =>
@@ -490,7 +491,7 @@ describe("cf#334 render door ledger", () => {
       // the cloud door, the rest a byo door), and a bogus key filed under the wrong name is invisible
       // to that door. Encoding each door's resolution rule here is how a probe silently stops
       // reaching its subject, which reads as "no guard" rather than "no measurement".
-      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
+      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
       const bad = { ...d.body } as Record<string, unknown>;
       if (d.seam === "fromKeyframes" && !("bundleKey" in bad)) {
         PARENT_ROW.render_overrides = { config: BOGUS };

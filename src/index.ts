@@ -1264,9 +1264,6 @@ const hScatterRender: Handler = async (req, env) => {
   const scatterShotIds = b.shotIds as string[];
   const shardCount = resolveShardCount(b.shardCount, scatterShotIds.length, shardMaxFromEnv(env.RENDER_SHARD_MAX));
   if (shardCount < 2) throw badRequest("shardCount 1 is a normal film; use POST /api/storyboard/render or POST /api/render/film");
-  if (!scatterEligibleMotion(b.motion_backend)) {
-    throw badRequest("scatter is own-gpu only; cloud i2v is one film job (provider rate limits)");
-  }
   const project = resolveProjectForBundle(scatterBundleKey, b.project);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
   const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
@@ -1286,6 +1283,9 @@ const hScatterRender: Handler = async (req, env) => {
   if (!scatterPre.ok) {
     if (scatterPre.refusal.status === 503) return json({ error: scatterPre.refusal.message }, 503);
     throw badRequest(scatterPre.refusal.message);
+  }
+  if (!scatterEligibleMotion(scatterBackend)) {
+    throw badRequest("scatter is own-gpu only; cloud i2v is one film job (provider rate limits)");
   }
   const scatterCast = scatterPre.cast;
   // SCATTER DIVERGENCE: unlike render/film, scatter builds NO motion_config at the door -- it forwards
