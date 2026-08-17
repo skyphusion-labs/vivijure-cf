@@ -13,7 +13,7 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **87** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Until cf#520, 85 were in the table and `GET /api/modules` was dispatched inline before it, so every consumer of this number had to compensate by hand; the route was moved into the table and the compensations deleted. cf#353 then added `POST /api/storyboard/renders/:id/retry`. |
+| Studio API route entries | **88** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Until cf#520, 85 were in the table and `GET /api/modules` was dispatched inline before it, so every consumer of this number had to compensate by hand; the route was moved into the table and the compensations deleted. cf#353 then added `POST /api/storyboard/renders/:id/retry`. |
 | Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
@@ -26,8 +26,8 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **84 of 87** route
-entries there is nothing an agent cannot invoke. Curated coverage is 41 of 87 (48%), and that number
+`studio_request` sends any method to any path with the studio bearer, so for **85 of 88** route
+entries there is nothing an agent cannot invoke. Curated coverage is 41 of 88 (48%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
 contract to find the route. For those 84 a low number costs discoverability, not reach, and 46
 routes require the agent to read `docs/CONTRACT.md` first.
@@ -168,7 +168,7 @@ the flattering direction, which is exactly why they survived.
 - **Reached by a curated tool (41) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
-- **Route entries (87) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+- **Route entries (88) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
   registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
   added explicitly; a second would be invisible.
 - **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.

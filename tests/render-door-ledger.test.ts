@@ -313,6 +313,7 @@ const NOT_DOORS = new Set<string>([
   "/api/storyboard/score-bed",
   "/api/storyboard/yaml",
   "/api/upload",
+  "/api/report",
 ]);
 
 const CAP_KEYS = ["dialogue", "quality_tier", "audio_key", "film_titles"] as const;
