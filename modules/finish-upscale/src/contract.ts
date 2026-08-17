@@ -99,6 +99,7 @@ export interface FinishInput {
   video_url?: string;
   output_url?: string;
   output_key?: string;
+  audio_url?: string;
   hash_url?: string;
 }
 
