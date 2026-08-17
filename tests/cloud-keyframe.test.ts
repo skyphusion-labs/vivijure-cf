@@ -46,7 +46,9 @@ import {
   extractGenError,
   rephraseForFlagRetry,
   FLAG_RETRY_ATTEMPTS,
-  generateImage,
+  generateImageRunpod,
+  runpodNano2Input,
+  extractRunpodImageUrl,
 } from "../modules/cloud-keyframe/src/image-gen";
 
 // A storyboard.yaml in the exact deterministic shape the core's serializeStoryboardYaml emits.
@@ -80,10 +82,11 @@ const REGISTRY_JSON = JSON.stringify({
 });
 
 describe("cloud-keyframe pure logic", () => {
-  it("clampModel accepts the known models and defaults to flux-2-klein-9b", () => {
-    expect(clampModel("google/nano-banana-pro")).toBe("google/nano-banana-pro");
-    expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("@cf/black-forest-labs/flux-2-dev");
-    expect(clampModel("made-up-model")).toBe(MODELS[0]);
+  it("clampModel always lands on RunPod Nano Banana 2", () => {
+    expect(clampModel("google/nano-banana-2")).toBe("google/nano-banana-2");
+    expect(clampModel("google/nano-banana-pro")).toBe("google/nano-banana-2");
+    expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("google/nano-banana-2");
+    expect(clampModel("nano-pro-2")).toBe("google/nano-banana-2");
     expect(clampModel(undefined)).toBe(MODELS[0]);
   });
 
@@ -240,6 +243,19 @@ describe("cloud-keyframe image-gen helpers", () => {
     expect(nearestAspectRatio(768, 1344)).toBe("9:16");
   });
 
+  it("runpodNano2Input sends images + 1k/2k + aspect", () => {
+    const p = runpodNano2Input("a prompt", ["data:image/png;base64,xx"], 1344, 768);
+    expect(p.aspect_ratio).toBe("16:9");
+    expect(p.resolution).toBe("1k");
+    expect(p.output_format).toBe("png");
+    expect(p.images).toEqual(["data:image/png;base64,xx"]);
+  });
+
+  it("extractRunpodImageUrl reads output.image_url", () => {
+    expect(extractRunpodImageUrl({ status: "COMPLETED", output: { image_url: "https://x/y.png" } })).toBe("https://x/y.png");
+    expect(extractRunpodImageUrl({})).toBeNull();
+  });
+
   it("proxiedParams sends image_input + aspect_ratio for google, capped to 3", () => {
     const p = proxiedParams("google/nano-banana-pro", "a prompt", ["a", "b", "c", "d"], 1344, 768);
     expect(p.aspect_ratio).toBe("16:9");
@@ -317,7 +333,7 @@ vi.mock("../modules/cloud-keyframe/src/image-gen", async (importActual) => {
   return {
     ...actual,
     // Record what refs reach the model per shot; return a tiny valid PNG so poll advances.
-    generateImage: vi.fn(async (_ai: unknown, _gw: unknown, _model: string, prompt: string, refBlobs: Blob[]) => {
+    generateImageRunpod: vi.fn(async (_runsync: unknown, prompt: string, refBlobs: Blob[]) => {
       genCalls.push({ prompt, refCount: refBlobs.length });
       return { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).buffer as ArrayBuffer, mime: "image/png" };
     }),
@@ -362,7 +378,7 @@ function fakeR2() {
 async function makeKeyframeEnv(yaml: string = STORYBOARD_YAML, withPortraits = true) {
   const R2 = fakeR2();
   await R2.put("bundles/neon.tar.gz", await bundleTarGz(yaml, withPortraits));
-  return { AI: { run: async () => ({}) }, R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
+  return { RUNPOD_API_KEY: "test-runpod", R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
 }
 
 async function invokeKeyframe(env: Parameters<typeof worker.fetch>[1], config: Record<string, unknown>) {
@@ -390,7 +406,7 @@ async function drainPolls(env: Parameters<typeof worker.fetch>[1], poll: string)
 const tinyPng = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).buffer as ArrayBuffer, mime: "image/png" };
 
 function restoreGenOk() {
-  vi.mocked(generateImage).mockImplementation(async (_ai, _gw, _model, prompt, refBlobs) => {
+  vi.mocked(generateImageRunpod).mockImplementation(async (_runsync, prompt, refBlobs) => {
     genCalls.push({ prompt, refCount: refBlobs.length });
     return tinyPng;
   });
@@ -404,7 +420,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
 
   it("retries a flaky 3030 and succeeds on the later roll", async () => {
     let n = 0;
-    vi.mocked(generateImage).mockImplementation(async (_ai, _gw, _model, prompt, refBlobs) => {
+    vi.mocked(generateImageRunpod).mockImplementation(async (_runsync, prompt, refBlobs) => {
       genCalls.push({ prompt, refCount: refBlobs.length });
       n += 1;
       if (n < 3) throw new Error("error 3030: Your output has been flagged");
@@ -423,7 +439,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
   });
 
   it("does not swallow a persistent 3030", async () => {
-    vi.mocked(generateImage).mockImplementation(async () => {
+    vi.mocked(generateImageRunpod).mockImplementation(async () => {
       throw new Error("error 3030: Your output has been flagged");
     });
     const env = await makeKeyframeEnv(
@@ -439,7 +455,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
 
   it("does not retry a CSAM refusal even if the message also has 3030", async () => {
     let n = 0;
-    vi.mocked(generateImage).mockImplementation(async () => {
+    vi.mocked(generateImageRunpod).mockImplementation(async () => {
       n += 1;
       throw new Error("error 3030: CSAM child sexual content");
     });

@@ -27,7 +27,7 @@ import {
   type KeyframeOutput,
 } from "./contract";
 import {
-  generateImage,
+  generateImageRunpod,
   maxRefsForModel,
   isRetryableFlag,
   rephraseForFlagRetry,
@@ -61,9 +61,11 @@ import {
   parseFilmRef,
   planShotRefs,
   FILM_REF_SLOT,
+  RUNPOD_NANO2_ENDPOINT,
   type CloudKeyframeState,
   type ShotPlan,
 } from "./keyframe";
+import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName } from "../../_shared/runpod-route";
 
 const REF_MAX_DIM = 512; // FLUX-2's hard per-image input cap; also bounds the nano-banana data URIs.
 
@@ -89,15 +91,18 @@ interface R2Bucket {
 }
 
 interface Env {
-  AI: AiRun;              // AI binding: FLUX-2 run direct (gateway-bypassed); proxied models via the gateway
-  GATEWAY_ID?: SecretsStoreSecret;    // AI Gateway slug (secret); needed only for the proxied / nano-banana path
-  R2_RENDERS: R2Bucket;   // the shared `vivijure` bucket: bundle, staged refs, run state, keyframes
-  IMAGES?: ImagesBinding; // Cloudflare Images: downscale refs to <=512px; normalize keyframes to WxH
+  RUNPOD_API_KEY?: SecretsStoreSecret;
+  RUNPOD_PROXY_BASE?: string;
+  RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;
+  R2_RENDERS: R2Bucket;
+  IMAGES?: ImagesBinding;
+  AI?: AiRun;
+  GATEWAY_ID?: SecretsStoreSecret;
 }
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.3",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -106,7 +111,7 @@ export const MANIFEST: ModuleManifest = {
       type: "enum",
       values: [...MODELS],
       default: MODELS[0],
-      label: "image model (FLUX-2 klein-9b cheap/fast; nano-banana-pro quality)",
+      label: "image model (RunPod Nano Banana 2)",
     },
     // Default to a 16:9 landscape keyframe (1344x768), matching the GPU keyframe module: image-to-video
     // backends conform the clip to the KEYFRAME's aspect ratio, so a square keyframe forces square
@@ -189,9 +194,9 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     return { ok: false, error: "cloud-keyframe: input needs project and bundle_key" };
   }
   const model = clampModel(req.config.model);
-  const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (model.startsWith("google/") && !gatewayId) {
-    return { ok: false, error: "cloud-keyframe: GATEWAY_ID not configured (required for the proxied model)" };
+  const route = await runpodRoute(env);
+  if (!route.credential) {
+    return { ok: false, error: "cloud-keyframe: " + runpodCredentialName(route) + " not configured" };
   }
   const width = clampDim(req.config.width, 1344);
   const height = clampDim(req.config.height, 768);
@@ -305,7 +310,10 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   if (!obj) return { ok: false, error: "cloud-keyframe: run state not found (expired or bad token)" };
   const state = JSON.parse(await obj.text()) as CloudKeyframeState;
   if (state.shots.length === 0) return { ok: true, output: readOutput(state) };
-  const gatewayId = await secretValue(env.GATEWAY_ID);
+  const route = await runpodRoute(env);
+  if (!route.credential) {
+    return { ok: false, error: "cloud-keyframe: " + runpodCredentialName(route) + " not configured" };
+  }
 
   for (let n = 0; n < PER_POLL && state.shots.length > 0; n++) {
     const shot = state.shots[0];
@@ -330,10 +338,16 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     let lastFlag: Error | undefined;
     for (let attempt = 0; attempt < FLAG_RETRY_ATTEMPTS; attempt++) {
       try {
-        gen = await generateImage(
-          env.AI,
-          gatewayId,
-          state.model,
+        gen = await generateImageRunpod(
+          async (input) => {
+            const r = await fetch(runpodEndpointUrl(route, RUNPOD_NANO2_ENDPOINT) + "/runsync", {
+              method: "POST",
+              headers: { ...runpodHeaders(route, "cloud-keyframe"), "content-type": "application/json" },
+              body: JSON.stringify({ input }),
+            });
+            if (!r.ok) throw new Error("runpod /runsync -> " + r.status);
+            return r.json();
+          },
           rephraseForFlagRetry(shot.prompt, attempt),
           refBlobs,
           state.width,
@@ -409,11 +423,11 @@ export default {
     // the google-model path specifically -- `ok` reflects the always-available default, never an
     // invented verdict for the config-dependent case it cannot check.
     if (request.method === "GET" && url.pathname === "/ready") {
-      const gatewayId = await secretValue(env.GATEWAY_ID);
+      const route = await runpodRoute(env);
       return json({
-        ok: true,
+        ok: Boolean(route.credential),
         module: MANIFEST.name,
-        credentials: { gateway_id: Boolean(gatewayId) },
+        credentials: { runpod_api_key: Boolean(route.credential) },
       });
     }
 

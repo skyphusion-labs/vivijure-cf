@@ -12,6 +12,7 @@ type ScatterPollView = {
   jobId: string;
   status: string;
   statusRaw?: string;
+  error?: string;
   output?: unknown;
 };
 
@@ -55,6 +56,28 @@ export function scatterProgressFields(
   };
 }
 
+const GATHER_GENERIC = /can never arrive|owning shard dead/i;
+
+export function preferredScatterError(parentError: string | undefined, childErrors: string[]): string | undefined {
+  const child = childErrors.map((e) => String(e || "").trim()).find(Boolean);
+  const parent = (parentError || "").trim();
+  if (child && (!parent || GATHER_GENERIC.test(parent))) return child;
+  return parent || child || undefined;
+}
+
+async function childRenderErrors(env: OrchestratorEnv, parentId: number): Promise<string[]> {
+  try {
+    const rs = await env.DB.prepare(
+      `SELECT error FROM renders WHERE parent_id = ? AND error IS NOT NULL AND TRIM(error) != '' ORDER BY id ASC`,
+    )
+      .bind(parentId)
+      .all<{ error: string }>();
+    return (rs.results ?? []).map((r) => String(r.error || "")).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 async function readScatterJobDoc(env: OrchestratorEnv, scatterId: string): Promise<{
   shard_film_ids?: string[];
   shard_shots?: string[][];
@@ -77,9 +100,18 @@ export async function enrichScatterPollView<T extends ScatterPollView>(
   env: OrchestratorEnv,
   view: T,
 ): Promise<T> {
-  if (view.status !== "IN_PROGRESS") return view;
   const jobId = view.jobId;
   if (!jobId || !String(jobId).startsWith("scatter-")) return view;
+
+  if (view.status === "FAILED") {
+    const parentId = await getRenderIdByJobId(env, jobId);
+    if (parentId == null) return view;
+    const childErrors = await childRenderErrors(env, parentId);
+    const error = preferredScatterError(view.error, childErrors);
+    return error && error !== view.error ? { ...view, error } : view;
+  }
+
+  if (view.status !== "IN_PROGRESS") return view;
 
   const parentId = await getRenderIdByJobId(env, jobId);
   const children = parentId != null ? await getScatterChildren(env, parentId) : [];

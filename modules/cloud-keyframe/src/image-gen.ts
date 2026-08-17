@@ -238,3 +238,63 @@ export async function generateImage(
   if (!v.ok) throw new Error("fetch proxied image -> " + v.status);
   return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
 }
+
+export function runpodNano2Input(
+  prompt: string,
+  imageDataUris: string[],
+  width: number,
+  height: number,
+): Record<string, unknown> {
+  const resolution = width * height >= 1_800_000 ? "2k" : "1k";
+  return {
+    images: imageDataUris,
+    prompt,
+    resolution,
+    aspect_ratio: nearestAspectRatio(width, height),
+    output_format: "png",
+  };
+}
+
+export function extractRunpodImageUrl(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const o = result as Record<string, unknown>;
+  const out = o.output;
+  if (typeof out === "string" && /^https?:\/\//.test(out)) return out;
+  if (out && typeof out === "object") {
+    const rec = out as Record<string, unknown>;
+    for (const k of ["image_url", "url", "image"]) {
+      if (typeof rec[k] === "string" && rec[k]) return rec[k] as string;
+    }
+  }
+  return extractProxiedImageUrl(result);
+}
+
+/** RunPod public Nano Banana 2 edit. images[] is required; refs are data URIs. */
+export async function generateImageRunpod(
+  runsync: (input: Record<string, unknown>) => Promise<unknown>,
+  prompt: string,
+  refBlobs: Blob[],
+  width: number,
+  height: number,
+): Promise<{ bytes: ArrayBuffer; mime: string }> {
+  if (!refBlobs.length) throw new Error("nano-banana-2 needs a reference portrait");
+  const images: string[] = [];
+  for (const blob of refBlobs.slice(0, 14)) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    images.push("data:image/png;base64," + bytesToBase64(bytes));
+  }
+  const result = await runsync(runpodNano2Input(prompt, images, width, height));
+  if (result && typeof result === "object") {
+    const status = String((result as { status?: unknown }).status || "");
+    if (status === "FAILED") {
+      throw new Error(extractGenError(result) || "runpod nano-banana-2 failed");
+    }
+  }
+  const flagged = extractGenError(result);
+  if (flagged && isFlaggedError(flagged)) throw new Error(flagged);
+  const url = extractRunpodImageUrl(result);
+  if (!url) throw new Error(flagged || "runpod nano-banana-2 returned no image");
+  const v = await fetch(url);
+  if (!v.ok) throw new Error("fetch runpod image -> " + v.status);
+  return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
+}

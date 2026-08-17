@@ -38,11 +38,13 @@ binding = "IMAGES"
 binding = "R2_RENDERS"
 bucket_name = "vivijure"
 
-# GATEWAY_ID (the AI Gateway slug) is bound from the account-level Cloudflare Secrets Store --
-# declarative config that every `wrangler deploy` re-establishes; seeded ONCE by the operator from the
-# crew secret store, never in CI/GitHub. Set store_id at cutover.
-# See docs/DEPLOYMENT.md "Module secrets via the Secrets Store".
+# GATEWAY_ID kept for leftover proxied paths. Stills now go through RunPod Nano Banana 2.
 [[secrets_store_secrets]]
 binding = "GATEWAY_ID"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "GATEWAY_ID"
+
+[[secrets_store_secrets]]
+binding = "RUNPOD_API_KEY"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "RUNPOD_API_KEY"

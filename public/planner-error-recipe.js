@@ -20,6 +20,8 @@
     "The image filter blocked this shot. Rewrite the prompt or swap the keyframe.";
   var FINISH_DOOR_MSG =
     "We could not finish this film (the finish door is down). Retry in a bit.";
+  var SHARD_DEAD_MSG =
+    "One shot failed. Rewrite that shot or swap the still, then retry.";
   var UNKNOWN_MSG = "This render failed.";
 
   function stringifyError(raw) {
@@ -57,6 +59,9 @@
     ) {
       return "finish_door";
     }
+    if (/can never arrive|owning shard dead/i.test(s)) {
+      return "shard_dead";
+    }
     return "unknown";
   }
 
@@ -92,6 +97,9 @@
     if (kind === "finish_door") {
       return { kind: kind, message: FINISH_DOOR_MSG, raw: text };
     }
+    if (kind === "shard_dead") {
+      return { kind: kind, message: SHARD_DEAD_MSG, raw: text };
+    }
     var human = firstHumanLine(text);
     return { kind: "unknown", message: human, raw: text };
   }
@@ -100,6 +108,7 @@
     KEYFRAMES_MSG: KEYFRAMES_MSG,
     FLAGGED_MSG: FLAGGED_MSG,
     FINISH_DOOR_MSG: FINISH_DOOR_MSG,
+    SHARD_DEAD_MSG: SHARD_DEAD_MSG,
     UNKNOWN_MSG: UNKNOWN_MSG,
     stringifyError: stringifyError,
     classifyError: classifyError,

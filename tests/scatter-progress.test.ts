@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scatterProgressFields } from "../src/scatter-progress";
+import { preferredScatterError, scatterProgressFields } from "../src/scatter-progress";
 
 describe("scatterProgressFields", () => {
   const ids = ["film-a", "film-b", "film-c"];
@@ -54,5 +54,22 @@ describe("scatterProgressFields", () => {
     expect(out.shards_done).toBe(2);
     expect(out.shots_done).toBe(2);
     expect(out.scene_total).toBe(3);
+  });
+});
+
+describe("preferredScatterError", () => {
+  it("promotes the shard's real error over the gather generic", () => {
+    expect(
+      preferredScatterError(
+        "1 shot(s) can never arrive (owning shard dead, completed-without-it, or unassigned): shot_02",
+        ["cloud-keyframe: shot shot_02 flagged 3 times (persistent 3030): 3030: flagged"],
+      ),
+    ).toMatch(/3030/);
+  });
+
+  it("keeps a specific parent error", () => {
+    expect(preferredScatterError("video-finish URL not configured", ["child"])).toBe(
+      "video-finish URL not configured",
+    );
   });
 });
