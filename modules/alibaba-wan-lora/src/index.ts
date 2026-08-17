@@ -73,7 +73,7 @@ const MANIFEST: ModuleManifest = {
     high_noise_loras: { type: "string", default: "[]", label: "high-noise LoRAs -- JSON [{path,scale}]" },
     low_noise_loras: { type: "string", default: "[]", label: "low-noise LoRAs -- JSON [{path,scale}]" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
-    enable_safety_checker: { type: "bool", default: true, label: "safety checker" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",

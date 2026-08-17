@@ -44,7 +44,7 @@ const MANIFEST: ModuleManifest = {
   config_schema: {
     guidance_scale: { type: "float", default: 0.5, min: 0, max: 1, label: "guidance scale" },
     negative_prompt: { type: "string", default: "", label: "negative prompt" },
-    enable_safety_checker: { type: "bool", default: true, label: "safety checker" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",

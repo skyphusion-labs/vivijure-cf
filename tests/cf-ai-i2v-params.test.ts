@@ -64,7 +64,7 @@ describe("cf-seedance params", () => {
     expect(seedance.clampDuration(99)).toBe(12);
   });
   it("falls back to default model on junk", () => {
-    expect(seedance.normalizeConfig({ model: "nope" }).model).toBe("bytedance/seedance-2.0");
+    expect(seedance.normalizeConfig({ model: "nope" }).model).toBe("bytedance/seedance-2.5");
   });
   it("omits last_frame_image when no last still", () => {
     const p = seedance.buildParams(shot, seedance.normalizeConfig({}));

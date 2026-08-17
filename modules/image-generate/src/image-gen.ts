@@ -9,7 +9,7 @@ export interface AiRun {
   run(model: string, params: unknown, opts?: unknown): Promise<unknown>;
 }
 
-export type Provider = "workers-ai" | "google" | "openai" | "recraft";
+export type Provider = "workers-ai" | "google" | "openai" | "recraft" | "bytedance" | "xai";
 
 export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
@@ -57,6 +57,9 @@ export function buildProxiedImageParams(provider: Provider | undefined, prompt: 
       return { prompt, quality: "high", size: "1024x1024" };
     case "recraft":
       return { prompt, size: "1024x1024", style: "digital_illustration" };
+    case "bytedance":
+    case "xai":
+      return { prompt };
     default:
       return { prompt };
   }
@@ -108,6 +111,8 @@ export function providerOf(modelId: string): Provider | undefined {
   if (modelId.startsWith("google/")) return "google";
   if (modelId.startsWith("openai/")) return "openai";
   if (modelId.startsWith("recraft/")) return "recraft";
+  if (modelId.startsWith("bytedance/")) return "bytedance";
+  if (modelId.startsWith("xai/")) return "xai";
   return undefined;
 }
 

@@ -81,8 +81,8 @@ const MANIFEST: ModuleManifest = {
   config_schema: {
     model: {
       type: "enum",
-      values: ["bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini"],
-      default: "bytedance/seedance-2.0",
+      values: ["bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini"],
+      default: "bytedance/seedance-2.5",
       label: "Seedance model",
     },
     resolution: { type: "enum", values: ["480p", "720p", "1080p", "4k"], default: "720p", label: "resolution" },
@@ -96,9 +96,9 @@ const MANIFEST: ModuleManifest = {
     order: 70,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Fast talking clips. Same seed keeps the voice closer. 4-12 seconds.",
+    blurb: "Fast talking clips. Seedance 2.5 goes to 30 seconds. Same seed keeps the voice closer.",
     limits: [
-      "4-12 second clips",
+      "4-12 second clips on 2.0; up to 30 seconds on 2.5",
       "Same seed and same voice lock",
       "Last still is the next start",
       "One film, no scatter",
@@ -110,7 +110,7 @@ const MANIFEST: ModuleManifest = {
     voice: "seed_and_prompt",
     scatter_native_audio: false,
     min_seconds: 4,
-    max_seconds: 12,
+    max_seconds: 30,
     first_last: true,
     seed: true,
   },

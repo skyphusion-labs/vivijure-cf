@@ -29,7 +29,7 @@ export function buildViduBody(input: MotionBackendInput, cfg: Record<string, unk
       generate_audio: cfg.generate_audio !== false,
       bgm: cfg.bgm === true,
       seed: -1,
-      enable_safety_checker: true,
+      enable_safety_checker: cfg.enable_safety_checker === true,
     },
   };
 }

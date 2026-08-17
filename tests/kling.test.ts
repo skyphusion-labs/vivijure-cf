@@ -18,7 +18,7 @@ describe("kling pure logic", () => {
   });
   it("buildKlingBody falls back to defaults", () => {
     const b = buildKlingBody({ shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 7 }, {});
-    expect(b.input).toMatchObject({ negative_prompt: "", guidance_scale: 0.5, duration: 10, enable_safety_checker: true });
+    expect(b.input).toMatchObject({ negative_prompt: "", guidance_scale: 0.5, duration: 10, enable_safety_checker: false });
   });
   it("extractVideoUrl finds the url across shapes", () => {
     expect(extractVideoUrl({ output: { video_url: "https://cdn/x.mp4" } })).toBe("https://cdn/x.mp4");

@@ -36,7 +36,7 @@ describe("alibaba-wan pure logic", () => {
       shot_type: "single",
       seed: -1,
       enable_prompt_expansion: true,
-      enable_safety_checker: true,
+      enable_safety_checker: false,
     });
   });
 

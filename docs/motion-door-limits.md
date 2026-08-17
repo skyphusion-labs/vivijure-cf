@@ -208,6 +208,67 @@ this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).
 | First+last? | No. |
 | Cannot | Native talking audio. Commercial self-host. Cloud API-free is the point, not datacenter parity. |
 
+## infinitetalk (RunPod)
+
+Portrait plus Cast audio. The speaker is ours.
+
+| | |
+|---|---|
+| Duration | Audio-driven, we clamp 2-15 seconds |
+| Talks? | Mouth is driven by our audio. Not native invented speech. |
+| Voice lock | `cast_tts`. Needs `audio_url` from Aura or Chatterbox. |
+| Scatter? | No. |
+| First+last? | No. |
+| Cannot | Invent speech. Run without a Cast audio clip. |
+
+## kling-o1-r2v (RunPod)
+
+Multi-ref silent. Cast, props, locations.
+
+| | |
+|---|---|
+| Duration | 3, 5, or 10 seconds |
+| Talks? | No. |
+| Voice lock | `cast_tts`. |
+| Scatter? | No. Look lock stays on one film. |
+| First+last? | Yes, as extra reference images. |
+| Cannot | Native talking audio. Kling 2.6 voice_id. |
+
+## cf-wan-27 (Cloudflare Wan 2.7)
+
+Hosted Wan door. Newer weights than RunPod 2.6. Code for 2.6 stays unbound.
+
+| | |
+|---|---|
+| Duration | 2-15 seconds |
+| Talks? | No. |
+| Voice lock | `cast_tts`. Seed pins the look. |
+| Scatter? | No. Look door. |
+| First+last? | No. |
+| Cannot | Native talking audio. |
+
+## cf-hailuo (Cloudflare Hailuo 2.3)
+
+| | |
+|---|---|
+| Duration | 6 or 10 seconds |
+| Talks? | No. |
+| Voice lock | `cast_tts`. |
+| Scatter? | Yes. Silent generic cloud. |
+| First+last? | No. |
+| Cannot | Native talking audio. |
+
+## cf-veo (Cloudflare Veo 3.1 Fast)
+
+| | |
+|---|---|
+| Duration | 4, 6, or 8 seconds |
+| Talks? | Yes. |
+| Voice lock | `prompt_lock`. |
+| Scatter? | No. |
+| First+last? | No. |
+| Cannot | Arbitrary lengths. A seed we control. |
+
 ## Voice modes (the four values)
 
 | `usage.voice` | What the filmmaker gets |
@@ -215,4 +276,4 @@ this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).
 | `prompt_lock` | Same speaker description in every motion prompt. No speaker id on the door. |
 | `seed_and_prompt` | Same seed **and** the same prompt lock. Seedance. |
 | `cast_tts` | Silent motion. The speaking voice is the Cast voice (TTS), then MuseTalk. |
-| `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Unused while we scatter. |
+| `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Not wired yet. |

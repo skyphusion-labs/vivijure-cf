@@ -35,6 +35,7 @@ export function buildSeedanceBody(input: MotionBackendInput, cfg: Record<string,
       camera_fixed: !!cfg.camera_fixed,
       generate_audio: cfg.generate_audio !== false,
       seed: typeof cfg.seed === "number" ? cfg.seed : -1,
+      use_virtual_avatar: true,
       ...(input.last_keyframe_url ? { last_frame_image: input.last_keyframe_url } : {}),
     },
   };

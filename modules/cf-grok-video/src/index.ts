@@ -84,6 +84,12 @@ const MANIFEST: ModuleManifest = {
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking drafts (Grok)" }],
   config_schema: {
+    model: {
+      type: "enum",
+      values: ["xai/grok-imagine-video-1.5-preview", "xai/grok-imagine-video"],
+      default: "xai/grok-imagine-video-1.5-preview",
+      label: "Grok video model",
+    },
     resolution: { type: "enum", values: ["480p", "720p"], default: "720p", label: "resolution" },
     aspect_ratio: { type: "enum", values: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"], default: "16:9", label: "aspect ratio" },
   },
@@ -168,7 +174,7 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   const key = clipKey(params.project, params.shot_id);
   const uploadUrl = await mintUploadUrl(env, key);
   const modelParams = buildParams(params.input, params.config, uploadUrl);
-  const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+  const result = await env.AI.run(params.config.model || MODEL, modelParams, { gateway: { id: gatewayId } });
 
   const existing = await env.R2_RENDERS.get(key);
   if (existing) {

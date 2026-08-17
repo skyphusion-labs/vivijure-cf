@@ -50,6 +50,7 @@ const MANIFEST: ModuleManifest = {
   provides: [{ id: "i2v-cloud", label: "Silent detailed (Wan)" }],
   config_schema: {
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",

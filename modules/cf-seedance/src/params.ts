@@ -9,16 +9,18 @@
 import type { MotionBackendInput } from "./contract";
 
 export const MODELS = [
+  "bytedance/seedance-2.5",
   "bytedance/seedance-2.0",
   "bytedance/seedance-2.0-fast",
   "bytedance/seedance-2.0-mini",
 ] as const;
-export const DEFAULT_MODEL = "bytedance/seedance-2.0";
+export const DEFAULT_MODEL = "bytedance/seedance-2.5";
 /** MODEL is the default; runtime uses config.model. Kept for tag parity with other modules. */
 export const MODEL = DEFAULT_MODEL;
 export const OUT_FPS = 24;
 export const MIN_DURATION = 4;
 export const MAX_DURATION = 12;
+export const MAX_DURATION_25 = 30;
 export const RESOLUTIONS = ["480p", "720p", "1080p", "4k"] as const;
 export const DEFAULT_RESOLUTION = "720p";
 export const ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"] as const;
@@ -40,9 +42,10 @@ export type RunState =
 
 export interface PollToken { job_id: string; }
 
-export function clampDuration(seconds: number): number {
+export function clampDuration(seconds: number, model?: string): number {
   const n = Math.round(Number(seconds) || 5);
-  return Math.max(MIN_DURATION, Math.min(MAX_DURATION, n));
+  const max = model === "bytedance/seedance-2.5" ? MAX_DURATION_25 : MAX_DURATION;
+  return Math.max(MIN_DURATION, Math.min(max, n));
 }
 
 export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
@@ -64,7 +67,7 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
     image: input.keyframe_url,
     prompt: input.prompt,
     aspect_ratio: config.aspect_ratio,
-    duration: clampDuration(input.seconds),
+    duration: clampDuration(input.seconds, config.model),
     resolution: config.resolution,
     fps: OUT_FPS,
     camera_fixed: config.camera_fixed,

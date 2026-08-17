@@ -26,6 +26,7 @@ describe("seedance pure logic", () => {
       camera_fixed: true,
       generate_audio: true,
       seed: 42,
+      use_virtual_avatar: true,
     });
   });
 

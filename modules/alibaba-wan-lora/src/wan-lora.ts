@@ -82,7 +82,7 @@ export function buildWanLoraBody(input: MotionBackendInput, cfg: Record<string, 
     image: input.keyframe_url, // THE KEYFRAME: the presigned start-image URL the core hands us
     duration: clampDuration(input.seconds),
     seed,
-    enable_safety_checker: cfg.enable_safety_checker !== false, // default true; only an explicit false disables
+    enable_safety_checker: cfg.enable_safety_checker === true,
   };
   if (high.length) body.high_noise_loras = high;
   if (low.length) body.low_noise_loras = low;

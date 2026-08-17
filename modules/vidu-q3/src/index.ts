@@ -51,6 +51,7 @@ const MANIFEST: ModuleManifest = {
   config_schema: {
     generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     bgm: { type: "bool", default: false, label: "background music (off by default)" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",
