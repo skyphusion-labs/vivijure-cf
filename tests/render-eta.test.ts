@@ -23,13 +23,26 @@ import {
 const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput => o as RenderProgressOutput;
 
 describe("progressFraction phase bands (#115)", () => {
-  it("bands are ordered, contiguous, and sum to 1", () => {
+  it("core film bands are ordered, contiguous, and sum to 1", () => {
+    const core = new Set(["keyframe", "i2v", "finish", "assemble", "mux"]);
     let cursor = 0;
-    for (const b of PIPELINE_PHASES) {
+    for (const b of PIPELINE_PHASES.filter((p) => core.has(p.key))) {
       expect(b.start).toBeCloseTo(cursor, 6);
       cursor += b.span;
     }
     expect(cursor).toBeCloseTo(1, 6);
+  });
+
+  it("scatter shards use shot progress across most of the bar", () => {
+    expect(progressFraction(out({ phase: "shards", progress: 0 }))).toBeCloseTo(0, 6);
+    expect(progressFraction(out({ phase: "shards", progress: 2 / 7 }))).toBeCloseTo(0.85 * (2 / 7), 5);
+    expect(phaseLabel("shards")).toBe("Animating shots");
+    expect(phaseLabel("gather")).toBe("Putting the film together");
+  });
+
+  it("scatter with no shots done is a startup window", () => {
+    expect(isStartupWindow(out({ phase: "shards", progress: 0, scene_index: 1 }))).toBe(true);
+    expect(isStartupWindow(out({ phase: "shards", progress: 0.3, scene_index: 3 }))).toBe(false);
   });
 
   it("keyframe sits at the band floor (no per-keyframe signal)", () => {
@@ -131,6 +144,12 @@ describe("phaseLabel: user-facing names for pipeline tokens (cf#303)", () => {
     expect(phaseLabel("queued")).toBe("Waiting to start");
   });
 
+  it("keeps the filmmaker phase words", () => {
+    expect(PHASE_LABELS.keyframe).toBe("Drawing keyframes");
+    expect(PHASE_LABELS.i2v).toBe("Animating shots");
+    expect(PHASE_LABELS.assemble).toBe("Putting the film together");
+  });
+
   it("is case-insensitive on the token", () => {
     expect(phaseLabel("KEYFRAME")).toBe(PHASE_LABELS.keyframe);
   });
@@ -215,11 +234,12 @@ describe("the two notes are mutually exclusive (cf#303)", () => {
 });
 
 describe("cold-start copy (cf#303)", () => {
-  it("explains WHY the wait exists, not just that it exists", () => {
-    // Conrad's framing: people accept a slower time if they are told what is
-    // happening and why. The note names the cost trade; it does not apologise.
-    expect(COLD_START_NOTE).toMatch(/cost/i);
-    expect(COLD_START_NOTE).toMatch(/idle/i);
+  it("names the wait in filmmaker language, not GPU economics", () => {
+    expect(COLD_START_NOTE).toMatch(/starting up/i);
+    expect(COLD_START_NOTE).toMatch(/model coming online/i);
+    expect(COLD_START_NOTE).not.toMatch(/RunPod/i);
+    expect(COLD_START_NOTE).not.toMatch(/cost/i);
+    expect(COLD_START_NOTE).not.toMatch(/idle/i);
   });
 
   it("does not claim to know RunPod's queue state", () => {

@@ -12,7 +12,7 @@
   <meta name="theme-color" content="#0E1730">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body class="planner-body" data-studio-page="planner">
+<body class="planner-body filmmaker-surface" data-studio-page="planner">
   <header class="topbar">
     <a class="brand brand-vivijure" href="planner" aria-label="Vivijure studio">
       <span class="brand-mark" aria-hidden="true"></span>
@@ -37,6 +37,13 @@
             <span class="account-pref-text">
               <span class="account-name">Email me when a render finishes</span>
               <span class="account-sub" id="pref-email-status">No emails when renders finish</span>
+            </span>
+          </label>
+          <label class="account-pref">
+            <input type="checkbox" id="pref-operator-tools" />
+            <span class="account-pref-text">
+              <span class="account-name">Operator tools</span>
+              <span class="account-sub" id="pref-operator-tools-status">Hidden on this device</span>
             </span>
           </label>
         </div>
@@ -176,7 +183,7 @@
       </div>
     </section>
 
-    <details class="planner-advanced" data-step="plan">
+    <details id="planner-preflight-fold" class="planner-advanced" data-step="plan">
       <summary>Preflight (operator)</summary>
       <section id="planner-preflight" class="planner-stage planner-preflight-inner" hidden>
         <header class="planner-stage-header">
@@ -337,18 +344,9 @@
         <span id="planner-bundle-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">
-        Confirm who is in the film, then assemble. A face photo per person is enough to preview.
-        You do not need a training set to make a first film.
+        Confirm who is in the film, then assemble. A portrait per person is enough for a first film.
       </p>
       <div id="planner-bundle-cast" class="planner-bundle-cast"></div>
-      <details id="planner-bundle-consistent" class="planner-bundle-consistent">
-        <summary>Make them consistent across shots</summary>
-        <p class="planner-stage-hint">
-          Optional. Extra photos and LoRA training help the same face hold from shot to shot.
-          Skip this for a first preview. Train on the Cast page when you want consistency.
-        </p>
-        <p><a href="cast">Open Cast to train</a></p>
-      </details>
       <!-- v0.149.0 (Phase 4b): optional per-scene start keyframes. Attaching an
            image here ships it as clips/<id>_keyframe.png in the bundle, which the
            GPU pod uses as that scene's i2v motion start frame. -->
@@ -471,10 +469,10 @@
           <summary class="planner-overrides-summary">expert: raw JSON</summary>
           <div class="planner-overrides-expert-block">
             <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
-            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"own-gpu","config":{"keyframe":{"steps":30},"own-gpu":{"fps":16}}}' spellcheck="false"></textarea>
+            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"seedance","config":{"cloud-keyframe":{"width":1344},"seedance":{"resolution":"720p"}}}' spellcheck="false"></textarea>
             <p class="planner-overrides-hint">
               optional JSON in the module wire shape:
-              <code>{ "motion_backend": "own-gpu", "config": { "keyframe": {…}, "own-gpu": {…} } }</code>.
+              <code>{ "motion_backend": "seedance", "config": { "cloud-keyframe": {…}, "seedance": {…} } }</code>.
               wins over the structured fields above on conflict.
             </p>
           </div>
@@ -533,7 +531,7 @@
           <h4>output</h4>
           <pre id="planner-render-output-content"></pre>
           <div class="planner-actions">
-            <a id="planner-render-download" href="#" class="planner-primary" download>download silent MP4</a>
+            <a id="planner-render-download" href="#" class="planner-primary" download>Download film</a>
             <a id="planner-render-open" href="#" target="_blank" rel="noopener" class="planner-render-link">open in new tab</a>
           </div>
           <!-- cf#118: finishing-degrade disclosure. Populated by planner-render.js from

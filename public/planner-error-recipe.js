@@ -18,6 +18,8 @@
     "This motion model rejected the still. Retry, or switch to Seedance.";
   var FLAGGED_MSG =
     "The image filter blocked this shot. Rewrite the prompt or swap the keyframe.";
+  var FINISH_DOOR_MSG =
+    "We could not finish this film (the finish door is down). Retry in a bit.";
   var UNKNOWN_MSG = "This render failed.";
 
   function stringifyError(raw) {
@@ -47,6 +49,13 @@
       || /real person/i.test(s)
     ) {
       return "flagged";
+    }
+    // Infra only. Do not put CSAM / policy refusals on this path; those stay
+    // unknown so the raw refusal is the first line the filmmaker sees.
+    if (
+      /video-finish URL not configured|finish url not configured|hooks_unavailable/i.test(s)
+    ) {
+      return "finish_door";
     }
     return "unknown";
   }
@@ -80,6 +89,9 @@
     if (kind === "flagged") {
       return { kind: kind, message: FLAGGED_MSG, raw: text };
     }
+    if (kind === "finish_door") {
+      return { kind: kind, message: FINISH_DOOR_MSG, raw: text };
+    }
     var human = firstHumanLine(text);
     return { kind: "unknown", message: human, raw: text };
   }
@@ -87,6 +99,7 @@
   return {
     KEYFRAMES_MSG: KEYFRAMES_MSG,
     FLAGGED_MSG: FLAGGED_MSG,
+    FINISH_DOOR_MSG: FINISH_DOOR_MSG,
     UNKNOWN_MSG: UNKNOWN_MSG,
     stringifyError: stringifyError,
     classifyError: classifyError,

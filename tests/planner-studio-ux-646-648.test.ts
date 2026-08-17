@@ -10,19 +10,24 @@ const html = readFileSync("public/planner.html", "utf8");
 const chrome = readFileSync("public/studio-chrome.js", "utf8");
 const bundle = readFileSync("public/planner-bundle.js", "utf8");
 const renderCfg = readFileSync("public/planner-render-config.js", "utf8");
+const css = readFileSync("public/styles.css", "utf8");
 
 describe("cf#648 cast is who is in the movie", () => {
-  it("the cast step has an empty state and a create-character CTA", () => {
-    expect(html).toMatch(/No characters yet/);
-    expect(html).toMatch(/planner-faces-create/);
-    expect(html).toMatch(/cast#new/);
+  it("the cast step has an empty state and an add-character field", () => {
+    expect(html).toMatch(/No saved characters yet/);
+    expect(html).toMatch(/planner-faces-add/);
+    expect(html).toMatch(/planner-faces-find/);
     expect(html).toMatch(/Who is in this movie/);
   });
 
-  it("bundle happy-path copy does not demand 8 training images", () => {
-    expect(html).not.toMatch(/8 or more/);
+  it("bundle happy-path copy says portraits are enough and does not push training", () => {
+    const visible = html.replace(/<!--[\s\S]*?-->/g, "");
+    expect(visible).not.toMatch(/8 or more/);
     expect(bundle).not.toMatch(/8 or more recommended/);
-    expect(html).toMatch(/Make them consistent across shots/);
+    expect(visible).toMatch(/A portrait per person is enough for a first film/);
+    expect(visible).not.toMatch(/Open Cast to train/);
+    expect(visible).not.toMatch(/LoRA training/);
+    expect(visible).not.toMatch(/Make them consistent across shots/);
   });
 
   it("LoRA warning has a mount on the cast step, before bundle", () => {
@@ -36,10 +41,11 @@ describe("cf#648 cast is who is in the movie", () => {
 });
 
 describe("cf#646 render is three choices then spend", () => {
-  it("stills is the default job and motion is a peer choice", () => {
+  it("motion is the default job and stills is a peer choice", () => {
     expect(html).toMatch(/id="planner-mode-stills"/);
-    expect(html).toMatch(/id="planner-mode-motion"/);
-    expect(html).toMatch(/id="planner-keyframes-only"[^>]*checked/);
+    expect(html).toMatch(/id="planner-mode-motion"[^>]*checked/);
+    expect(html).toMatch(/id="planner-keyframes-only"/);
+    expect(html).not.toMatch(/id="planner-keyframes-only"[^>]*checked/);
   });
 
   it("scatter, module settings, and expert JSON live inside Advanced", () => {
@@ -78,5 +84,41 @@ describe("cf#647 Modules and Settings leave primary nav", () => {
     expect(chrome).toMatch(/data-studio-account-ops/);
     expect(chrome).toMatch(/modules/);
     expect(chrome).toMatch(/settings/);
+  });
+});
+
+describe("filmmaker surface hides operator chrome", () => {
+  it("account prefs expose Operator tools, keyed to localStorage", () => {
+    expect(html).toMatch(/id="pref-operator-tools"/);
+    expect(html).toMatch(/Operator tools/);
+    expect(html).toMatch(/class="planner-body filmmaker-surface"/);
+    expect(chrome).toMatch(/skyphusion\.planner\.operatorTools/);
+    expect(chrome).toMatch(/filmmaker-surface/);
+  });
+
+  it("CSS hides the operator set under body.filmmaker-surface", () => {
+    expect(css).toMatch(/body\.filmmaker-surface #planner-preflight-fold/);
+    expect(css).toMatch(/body\.filmmaker-surface #planner-result/);
+    expect(css).toMatch(/body\.filmmaker-surface #planner-markers-format/);
+    expect(css).toMatch(/body\.filmmaker-surface #planner-markers-export/);
+    expect(css).toMatch(/body\.filmmaker-surface #planner-bundle/);
+    expect(css).toMatch(/body\.filmmaker-surface #planner-render-advanced/);
+  });
+
+  it("does not display:none the whole #planner-render section", () => {
+    expect(css).not.toMatch(/body\.filmmaker-surface #planner-render\s*[,{]/);
+  });
+
+  it("title + credit cards stay outside the hidden Advanced fold", () => {
+    const titlesIdx = html.indexOf("planner-film-titles");
+    const advIdx = html.indexOf('id="planner-render-advanced"');
+    expect(titlesIdx).toBeGreaterThan(0);
+    expect(advIdx).toBeGreaterThan(titlesIdx);
+  });
+
+  it("auto-bundle helper is still present (hide, do not delete)", () => {
+    expect(bundle).toMatch(/async function ensureFilmBundle/);
+    expect(html).toMatch(/id="planner-bundle"/);
+    expect(html).toMatch(/id="planner-bundle-btn"/);
   });
 });

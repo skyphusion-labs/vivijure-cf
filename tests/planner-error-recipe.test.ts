@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 import {
+  FINISH_DOOR_MSG,
   FLAGGED_MSG,
   KEYFRAMES_MSG,
   UNKNOWN_MSG,
@@ -28,10 +29,26 @@ describe("classifyError", () => {
     expect(classifyError("looks like a real person")).toBe("flagged");
   });
 
+  it("maps finish-door infra failures to finish_door", () => {
+    expect(classifyError("video-finish URL not configured")).toBe("finish_door");
+    expect(classifyError("VIDEO-FINISH URL NOT CONFIGURED")).toBe("finish_door");
+    expect(classifyError("finish url not configured")).toBe("finish_door");
+    expect(classifyError("hooks_unavailable")).toBe("finish_door");
+    expect(classifyError('{"error":"hooks_unavailable","hook":"film.finish"}')).toBe(
+      "finish_door",
+    );
+  });
+
   it("CONTROL: an unrelated failure is unknown, not a false recipe", () => {
     expect(classifyError("pod timed out")).toBe("unknown");
     expect(classifyError("")).toBe("unknown");
     expect(classifyError(null)).toBe("unknown");
+  });
+
+  it("CONTROL: a CSAM / policy refusal is not remapped to an infra recipe", () => {
+    expect(classifyError("CSAM policy refusal")).toBe("unknown");
+    expect(classifyError("child sexual abuse material")).toBe("unknown");
+    expect(classifyError("NCMEC report required")).toBe("unknown");
   });
 });
 
@@ -49,6 +66,21 @@ describe("recipeFromError", () => {
     expect(rec.kind).toBe("flagged");
     expect(rec.message).toBe(FLAGGED_MSG);
     expect(rec.raw).toContain("3030");
+  });
+
+  it("finish-door infra is a next step, not the URL / hooks blob", () => {
+    const rec = recipeFromError("video-finish URL not configured");
+    expect(rec.kind).toBe("finish_door");
+    expect(rec.message).toBe(FINISH_DOOR_MSG);
+    expect(rec.message).toMatch(/finish door is down/i);
+    expect(rec.raw).toContain("video-finish URL not configured");
+  });
+
+  it("a CSAM refusal keeps the refusal line, not an infra recipe", () => {
+    const rec = recipeFromError("CSAM policy refusal");
+    expect(rec.kind).toBe("unknown");
+    expect(rec.message).toBe("CSAM policy refusal");
+    expect(rec.message).not.toBe(FINISH_DOOR_MSG);
   });
 
   it("unknown JSON still leads with a human line, raw kept for the fold", () => {
@@ -94,6 +126,12 @@ describe("first-sitting UX pins (cf#644 #645 #649)", () => {
   it("the rail labels History as Your films and does not force Audio as step 3", () => {
     expect(stepper).toMatch(/label:\s*"Your films"/);
     expect(stepper).not.toMatch(/label:\s*"Audio"/);
+  });
+
+  it("render download is Download film, not silent MP4", () => {
+    const render = readFileSync("public/planner-render.js", "utf8");
+    expect(render).toMatch(/Download film/);
+    expect(render).not.toMatch(/download silent MP4/);
   });
 
   it("studio nav stays reachable below 860px", () => {

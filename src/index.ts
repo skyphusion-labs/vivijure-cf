@@ -94,6 +94,7 @@ import {
 } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
 import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
+import { enrichScatterPollView } from "./scatter-progress";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
@@ -915,7 +916,7 @@ const hSubmitRender: Handler = async (req, env) => {
       film_titles: b.film_titles,
       project_id: await resolveProjectRef(env, b.projectId),
     });
-    return json(scatterJobToPollView(scatterJob), 201);
+    return json(await enrichScatterPollView(env, scatterJobToPollView(scatterJob)), 201);
   }
   const job = await startFilmJob(env, {
     project,
@@ -1177,7 +1178,7 @@ const hPollRender: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.jobId)) {
     const view = await advanceScatterJob(env, p.jobId, ctx);
     if (!view) throw notFound("render job");
-    return json(view);
+    return json(await enrichScatterPollView(env, view));
   }
   if (!isFilmJobId(p.jobId)) {
     return json({ error: "unknown or legacy render job id (film-* or scatter-* only)", jobId: p.jobId }, 404);
@@ -1316,7 +1317,7 @@ const hScatterRender: Handler = async (req, env) => {
       film_titles: b.film_titles,
         project_id: await resolveProjectRef(env, b.projectId),
     });
-    const view = scatterJobToPollView(job);
+    const view = await enrichScatterPollView(env, scatterJobToPollView(job));
     // cf#392: scatter has no host-owned poll wrapper, so surface on the 201 + structured event.
     // The LoRAs themselves ride render_overrides into every shard; the counts are for verification.
     const scatterSurface = wanLoraProjectionSurface(scatterWanProj);
@@ -1781,7 +1782,7 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.id)) {
     const view = await advanceScatterJob(env, p.id, ctx);
     if (!view) throw notFound("film job");
-    const summary = scatterViewAsFilmSummary(view);
+    const summary = scatterViewAsFilmSummary(await enrichScatterPollView(env, view));
     return json({ ok: true, ...(await withFilmDownloadUrl(env, summary as FilmSummary)) });
   }
   const r = await advanceFilmJob(env, p.id);

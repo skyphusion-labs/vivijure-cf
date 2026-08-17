@@ -31,6 +31,32 @@ function paintPlannerError(el, raw) {
   }
 }
 
+// Filmmaker headline for the in-flight render. The raw job id stays in
+// #planner-render-job-id (polling / resume read it) but is not the headline.
+function setRenderJobHeadline(jobId) {
+  const code = $("#planner-render-job-id");
+  if (!code) return;
+  code.textContent = jobId || "";
+  if (code.closest("details")) return;
+  const wrap = code.parentElement;
+  if (!wrap) return;
+  const details = document.createElement("details");
+  details.className = "planner-render-job-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "Technical details";
+  const label = wrap.querySelector(".planner-render-label");
+  if (label) label.textContent = "id";
+  while (wrap.firstChild) details.appendChild(wrap.firstChild);
+  details.insertBefore(summary, details.firstChild);
+  wrap.appendChild(details);
+}
+
+function pinDownloadFilmLabel() {
+  const a = $("#planner-render-download");
+  if (a) a.textContent = "Download film";
+}
+pinDownloadFilmLabel();
+
 function showRenderStage() {
   const stage = $("#planner-render");
   stage.hidden = false;
@@ -77,12 +103,12 @@ function paintLoraWarning(el, unready, proceedHint) {
   const msg = document.createElement("span");
   msg.className = "planner-lora-preflight-msg";
   msg.textContent =
-    "These characters are not trained for consistency yet: " + names + ". "
-    + (proceedHint || "Continue without consistency, or train them first.");
+    "These characters are using portraits only: " + names + ". "
+    + (proceedHint || "Faces may vary between shots.");
   const link = document.createElement("a");
   link.href = "cast";
   link.className = "planner-lora-preflight-link";
-  link.textContent = "Train on Cast";
+  link.textContent = "Open Cast";
   el.appendChild(msg);
   el.appendChild(document.createTextNode(" "));
   el.appendChild(link);
@@ -93,7 +119,7 @@ function showLoraPreflightWarning(unready) {
   paintLoraWarning(
     $("#planner-lora-preflight-warning"),
     unready,
-    "Click render again to proceed anyway (inline training takes ~15-25 min each).",
+    "Click render again to proceed anyway.",
   );
 }
 
@@ -116,7 +142,7 @@ async function loraPreflightGate() {
     loraPreflightAck = null;
     return true;
   }
-  setRenderStatus("checking cast LoRA status...", "loading");
+  setRenderStatus("checking the cast...", "loading");
   // Refresh the catalog in place; loadCast swallows its own errors and leaves
   // the prior catalog on failure, which is an acceptable fall-back here.
   await loadCast();
@@ -140,8 +166,8 @@ async function loraPreflightGate() {
   showLoraPreflightWarning(unready);
   setRenderStatus(
     unready.length === 1
-      ? "1 bound character has no trained LoRA (see warning above)"
-      : unready.length + " bound characters have no trained LoRA (see warning above)",
+      ? "1 character is using a portrait only (see note above)"
+      : unready.length + " characters are using portraits only (see note above)",
     "error",
   );
   return false;
@@ -331,7 +357,7 @@ async function submitRender() {
     requestNotificationPermission();
   }
   $("#planner-render-result").hidden = false;
-  $("#planner-render-job-id").textContent = data.jobId;
+  setRenderJobHeadline(data.jobId);
   setJobStatusBadge(data.status || "IN_QUEUE");
   // v0.135.6: surface the server's LoRA reuse decision so a reused render is
   // visibly distinct from one that retrains. pretrainedSlots = slots the GPU
@@ -523,7 +549,7 @@ async function submitScatterRender() {
 
   const qualityTier = $("#planner-quality-tier").value;
   setRenderStatus(
-    "submitting scatter render (" + shardCount + " shards)...",
+    "submitting a split render (" + shardCount + " parts)...",
     "loading",
   );
   $("#planner-render-btn").disabled = true;
@@ -585,10 +611,10 @@ async function submitScatterRender() {
     requestNotificationPermission();
   }
   $("#planner-render-result").hidden = false;
-  $("#planner-render-job-id").textContent = data.jobId;
+  setRenderJobHeadline(data.jobId);
   setJobStatusBadge(data.status || "IN_QUEUE");
   setRenderStatus(
-    "scatter submitted -- " + shardCount + " shards gathering...",
+    "split render submitted -- " + shardCount + " parts gathering...",
     "loading",
   );
   startStream();
@@ -732,17 +758,14 @@ function updateRenderProgress(data) {
 
   const out = data.output;
   if (out && typeof out === "object") {
-    if (typeof out.scene_index === "number" && typeof out.scene_total === "number") {
+    if (typeof out.scene_total === "number" && out.scene_total > 0) {
       const el = $("#planner-render-scene");
       el.hidden = false;
       el.innerHTML = "";
-      const lab = document.createElement("span");
-      lab.className = "planner-render-label";
-      lab.textContent = "scene:";
-      el.appendChild(lab);
-      el.appendChild(
-        document.createTextNode(" " + out.scene_index + "/" + out.scene_total),
-      );
+      const done = typeof out.shots_done === "number"
+        ? out.shots_done
+        : (typeof out.scene_index === "number" ? Math.max(0, out.scene_index - 1) : 0);
+      el.textContent = done + " of " + out.scene_total + " shots";
     }
     // cf#303: show a curated, user-facing phase NAME instead of the raw
     // pipeline token ("i2v", "mux"), which reads as jargon to a first-time
@@ -759,12 +782,7 @@ function updateRenderProgress(data) {
     if (phaseText) {
       const el = $("#planner-render-phase");
       el.hidden = false;
-      el.innerHTML = "";
-      const lab = document.createElement("span");
-      lab.className = "planner-render-label";
-      lab.textContent = "phase:";
-      el.appendChild(lab);
-      el.appendChild(document.createTextNode(" " + phaseText));
+      el.textContent = phaseText;
     }
     if (Array.isArray(out.log) && out.log.length > 0) {
       const wrap = $("#planner-render-log-wrap");
@@ -970,7 +988,7 @@ function finalizeRenderPoll(data) {
 // The stale-link half is a correctness fix, not cosmetics. The assemble degrade leaves
 // `output_key` UNDEFINED (core film-output-key.js), and the old code only ever ASSIGNED
 // the anchors, inside `if (typeof out.output_key === "string")`. Nothing reset them, so a
-// degraded render following a good one in the same session left "download silent MP4"
+// degraded render following a good one in the same session left the download
 // pointing at the PREVIOUS render, handing the user the wrong film labelled as this one.
 // Every branch here now writes the anchors, including the empty case.
 function renderDeliverable(out, degrade) {
@@ -982,7 +1000,8 @@ function renderDeliverable(out, degrade) {
   if (deliv.kind === "film") {
     const url = "/api/artifact/" + deliv.key;
     download.href = url;
-    download.download = ((out && out.project) || "silent") + ".mp4";
+    download.download = ((out && out.project) || "film") + ".mp4";
+    pinDownloadFilmLabel();
     download.hidden = false;
     open.href = url;
     open.hidden = false;

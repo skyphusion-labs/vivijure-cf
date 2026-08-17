@@ -318,17 +318,78 @@
     return mod && mod.ui && mod.ui[key] != null ? mod.ui[key] : undefined;
   }
 
+  function moduleName(mod) {
+    return mod && typeof mod.name === "string" ? mod.name.trim() : "";
+  }
+
+  function localityValue(mod) {
+    const loc = uiHint(mod, "locality");
+    return typeof loc === "string" ? loc.trim().toLowerCase() : "";
+  }
+
+  // own-gpu is the quality door (studio GPU). RunPod cloud i2v (seedance, kling, ...)
+  // is the speed door. CF Workers AI modules are cf-*. Anyone can pick any door.
+  function isQualityDoor(mod) {
+    const name = moduleName(mod);
+    const loc = localityValue(mod);
+    return name === "own-gpu" || loc === "byo";
+  }
+
+  function isCfCloudDoor(mod) {
+    return moduleName(mod).indexOf("cf-") === 0;
+  }
+
+  function isRunpodCloudDoor(mod) {
+    if (isQualityDoor(mod) || isCfCloudDoor(mod)) return false;
+    const loc = localityValue(mod);
+    return loc === "cloud" || loc === "datacenter";
+  }
+
+  // Default = RunPod Seedance when installed, else the first RunPod cloud i2v.
+  // CF doors and own-gpu stay on the picker; they are never the implicit default.
+  function defaultSpeedDoor(mods) {
+    const list = Array.isArray(mods) ? mods : [];
+    const seedance = list.find((m) => moduleName(m) === "seedance");
+    if (seedance) return seedance;
+    return list.find((m) => isRunpodCloudDoor(m)) || null;
+  }
+
+  function doorTitle(mod) {
+    if (isQualityDoor(mod)) return "Best look (studio GPU)";
+    return moduleLabel(mod);
+  }
+
+  function doorCost(mod) {
+    if (isQualityDoor(mod)) return "Highest quality, slower";
+    const cost = uiHint(mod, "cost");
+    if (typeof cost !== "string") return "";
+    return filmmakerCostLine(cost).replace(/\.$/, "");
+  }
+
+  function doorBlurb(mod) {
+    if (isQualityDoor(mod)) {
+      return "Our studio GPU. Best look. Cloud doors finish faster.";
+    }
+    const blurb = uiHint(mod, "blurb");
+    return typeof blurb === "string" ? blurb.trim() : "";
+  }
+
   // A short, human "locality" tag derived from the OPTIONAL manifest hint ui.locality.
   // Returns null when the manifest does not declare it (so we never guess local vs cloud
   // from a module name -- that is exactly the brittle coupling this replaces).
   function localityTag(mod) {
-    const loc = uiHint(mod, "locality");
-    if (typeof loc !== "string") return null;
-    const v = loc.trim().toLowerCase();
-    if (v === "local") return { text: "Local (your GPU)", kind: "local" };
-    if (v === "byo") return { text: "Your own RunPod (BYO keys)", kind: "byo" };
-    if (v === "cloud" || v === "datacenter") return { text: "Datacenter", kind: "cloud" };
-    return { text: loc.trim(), kind: "other" };
+    if (isQualityDoor(mod)) return { text: "Best look", kind: "byo" };
+    if (moduleName(mod) === "seedance" || (isRunpodCloudDoor(mod) && !localityValue(mod))) {
+      return { text: "Faster", kind: "cloud" };
+    }
+    const loc = localityValue(mod);
+    if (!loc) return null;
+    if (loc === "local") return { text: "Local (your GPU)", kind: "local" };
+    if (loc === "byo") return { text: "Best look", kind: "byo" };
+    if (loc === "cloud" || loc === "datacenter") {
+      return { text: isCfCloudDoor(mod) ? "Cloud" : "Faster", kind: "cloud" };
+    }
+    return { text: loc, kind: "other" };
   }
 
   // Registry-truth capability bullets: provides[1..].label (the first label is the door
@@ -405,7 +466,7 @@
     titleWrap.className = "planner-backend-title-wrap";
     const title = document.createElement("span");
     title.className = "planner-backend-title";
-    title.textContent = moduleLabel(mod);
+    title.textContent = doorTitle(mod);
     titleWrap.appendChild(title);
 
     const tags = document.createElement("span");
@@ -417,22 +478,22 @@
       t.textContent = loc.text;
       tags.appendChild(t);
     }
-    const cost = uiHint(mod, "cost");
-    if (typeof cost === "string" && cost.trim()) {
+    const cost = doorCost(mod);
+    if (cost) {
       const c = document.createElement("span");
       c.className = "planner-backend-tag is-cost";
-      c.textContent = cost.trim();
+      c.textContent = cost;
       tags.appendChild(c);
     }
     if (tags.childNodes.length) titleWrap.appendChild(tags);
     head.appendChild(titleWrap);
     card.appendChild(head);
 
-    const blurb = uiHint(mod, "blurb");
-    if (typeof blurb === "string" && blurb.trim()) {
+    const blurb = doorBlurb(mod);
+    if (blurb) {
       const p = document.createElement("p");
       p.className = "planner-backend-blurb";
-      p.textContent = blurb.trim();
+      p.textContent = blurb;
       card.appendChild(p);
     }
 
@@ -490,7 +551,7 @@
       const hint = wrap.querySelector(".planner-backend-caption-hint");
       if (hint) {
         hint.textContent = value
-          ? "Pick which backend renders the motion (image-to-video) step."
+          ? "Faster is the default. Best look is our GPU. Any door is fine."
           : "Required: pick which backend renders the motion (image-to-video) step.";
       }
     }
@@ -517,7 +578,7 @@
     const capHint = document.createElement("span");
     capHint.className = "planner-backend-caption-hint";
     capHint.textContent = mods.length > 1
-      ? "Pick which backend renders the motion (image-to-video) step."
+      ? "Faster is the default. Best look is our GPU. Any door is fine."
       : "This backend renders the motion (image-to-video) step.";
     cap.appendChild(capHint);
     section.appendChild(cap);
@@ -544,7 +605,8 @@
       opt.textContent = moduleLabel(m);
       sel.appendChild(opt);
     }
-    sel.value = mods[0].name;
+    const speed = defaultSpeedDoor(mods);
+    sel.value = speed ? speed.name : mods[0].name;
     sel.addEventListener("change", () => {
       if (typeof updateScatterGate === "function") updateScatterGate();
     });
@@ -554,15 +616,15 @@
     doors.className = "planner-backend-doors";
 
     if (mods.length > 1) {
-      // Multiple doors (vivijure#501): the registry order (ui.order then name) is
-      // locality-blind, so mods[0] can be a bound-but-non-operational door that would
-      // sail through the #500 submit preflight and then die deep in the render. Clear the
-      // default so NO door is preselected; every radio starts unchecked and
-      // collectForSubmit() blocks submit until the novice picks one deliberately (or
-      // supplies motion_backend via expert JSON). The single-backend case above keeps its
-      // explicit default (only one serving backend -- nothing to get wrong).
-      sel.selectedIndex = -1;
-      mods.forEach((m) => doors.appendChild(backendDoor(m, true, false)));
+      // Default the speed door (RunPod Seedance, else first RunPod cloud i2v).
+      // own-gpu stays on the picker as Best look. CF doors stay pickable.
+      // If no RunPod cloud door is installed, leave the pick empty (#501).
+      if (speed) {
+        sel.value = speed.name;
+      } else {
+        sel.selectedIndex = -1;
+      }
+      mods.forEach((m) => doors.appendChild(backendDoor(m, true, speed && m.name === speed.name)));
       section.appendChild(doors);
       motionWrap.appendChild(section);
       syncBackendDoors();
@@ -771,6 +833,7 @@
   global.plannerRenderConfig = {
     renderPanel,
     renderBackendSelector,
+    defaultSpeedDoor,
     collect,
     collectForSubmit,
     restore,

@@ -1419,6 +1419,16 @@ body.demo-steer-active #cast-multi-scene { display: none !important; }
    render-management history UI. #planner-history stays hidden in demo (defensive rule below). */
 body.demo-steer-active #planner-history { display: none !important; }
 
+/* Hosted filmmaker surface. body.filmmaker-surface is the default (operator
+   tools OFF). Nodes stay in the DOM so auto-bundle and render submit still
+   run. Do not hide #planner-render: title + credit cards live there. */
+body.filmmaker-surface #planner-preflight-fold,
+body.filmmaker-surface #planner-result,
+body.filmmaker-surface #planner-markers-format,
+body.filmmaker-surface #planner-markers-export,
+body.filmmaker-surface #planner-bundle,
+body.filmmaker-surface #planner-render-advanced { display: none !important; }
+
 .demo-gallery { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 .demo-gallery-title { margin: 0 0 4px; font-size: 16px; }
 .demo-films { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 12px; }
