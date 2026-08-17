@@ -137,6 +137,9 @@ describe("finish-upscale: manifest conformance", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
   });
+  it("declares the upscale door's shipped FFMPEG_TIMEOUT (core#223)", () => {
+    expect(MANIFEST.max_invocation_seconds).toBe(1200);
+  });
   it("invoke success / error / degraded responses all pass the response checker", () => {
     expect(checkInvokeResponse({ ok: true, output: { shot_id: "s", clip_key: "k_up.mp4", out_fps: 16, frames: 80, applied: ["upscale:2x"] } }).pass).toBe(true);
     expect(checkInvokeResponse({ ok: false, error: "finish-upscale: input needs shot_id and clip_key" }).pass).toBe(true);

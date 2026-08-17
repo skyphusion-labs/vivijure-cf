@@ -91,6 +91,10 @@ export const MANIFEST: ModuleManifest = {
     output_key: { kind: "append_suffix", suffix: "_bl" },
     applied: [{ tag: "blender:{job_type|grade}:{preset|filmic_warm}" }],
   },
+  // core#223: the guard the door enforces (handler.py PHASE_HARD_DEADLINE_SECONDS). The door
+  // aborts if sequential caps would exceed it. Not an aspiration. If the door env overrides
+  // it, this number is the SHIPPED default.
+  max_invocation_seconds: 5400,
 };
 
 function json(body: unknown, status = 200): Response {

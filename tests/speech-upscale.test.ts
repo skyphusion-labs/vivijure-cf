@@ -8,6 +8,7 @@ import {
   checkManifest, checkInvokeResponse, checkHookOutput, allPass, failures,
 } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { SpeechInput } from "../modules/speech-upscale/src/contract";
+import { MANIFEST } from "../modules/speech-upscale/src/index";
 
 const SAMPLE_INPUT: SpeechInput = {
   shot_id: "shot_01",
@@ -138,20 +139,14 @@ describe("speech-upscale: passthroughOutput (#249/#77 honest soft-degrade)", () 
 });
 
 describe("speech-upscale: conformance (the live harness in src/modules/conformance.ts)", () => {
-  const MANIFEST = {
-    name: "speech-upscale",
-    version: "0.1.0",
-    api: "vivijure-module/2",
-    hooks: ["speech"],
-    provides: [{ id: "speech-upscale", label: "Clean dialogue audio (resemble-enhance)" }],
-    config_schema: {
-      enable:  { type: "bool", default: false },
-      denoise: { type: "bool", default: false },
-    },
-  };
   it("passes the conformance manifest checker", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
+  });
+  // 540 is the speech-door default. audio-upscale MAX_INVOCATION_SECONDS is a sibling;
+  // declare it here even if that guard has not landed yet.
+  it("declares the speech-door shipped default (core#223)", () => {
+    expect(MANIFEST.max_invocation_seconds).toBe(540);
   });
   it("invoke success / error / degraded / pending responses all pass the envelope checker", () => {
     expect(checkInvokeResponse({ ok: true, output: successOutput(SAMPLE_STATE, { output_key: "k_enh.wav", applied: ["speech-upscale:resemble-enhance"] }) }).pass).toBe(true);
