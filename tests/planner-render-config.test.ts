@@ -126,7 +126,7 @@ let mod: {
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
   collect: () => { motion_backend?: string; select?: { finish?: unknown } };
   collectFinishSelect: () => unknown;
-  __testSeedFinish: (mods: unknown[]) => void;
+  __testSeedFinish: (mods: unknown[], extra?: { speech?: unknown[] }) => void;
   restore: (o: unknown) => void;
   selectTier: (tier: string) => void;
   tierDisplayLabel: (t: { value: string; label?: string; blurb?: string }) => string;
@@ -471,11 +471,10 @@ describe("selectTier with the projection ALREADY loaded (cf#62 Lane C)", () => {
 });
 
 describe("collectFinishSelect (cf#690)", () => {
-  function finishDoc(opts: { lipsync: boolean; upscale: boolean; blender: boolean }) {
+  function finishDoc(opts: { lipsync: boolean; blender: boolean }) {
     const ids: Record<string, El> = {};
     for (const [id, checked] of [
       ["planner-finish-lipsync", opts.lipsync],
-      ["planner-finish-upscale", opts.upscale],
       ["planner-finish-blender", opts.blender],
     ] as const) {
       const el = new El("input");
@@ -498,14 +497,14 @@ describe("collectFinishSelect (cf#690)", () => {
     { name: "finish-rife", participation: "default" },
   ];
 
-  it("default checks emit mode default (lipsync+upscale on, blender off)", () => {
-    finishDoc({ lipsync: true, upscale: true, blender: false });
+  it("default checks emit mode default (lipsync on, blender off)", () => {
+    finishDoc({ lipsync: true, blender: false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
   });
 
   it("naming blender emits the default modules plus finish-blender", () => {
-    finishDoc({ lipsync: true, upscale: true, blender: true });
+    finishDoc({ lipsync: true, blender: true });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
@@ -514,11 +513,18 @@ describe("collectFinishSelect (cf#690)", () => {
   });
 
   it("turning lipsync off drops it from the named list", () => {
-    finishDoc({ lipsync: false, upscale: true, blender: false });
+    finishDoc({ lipsync: false, blender: false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
       modules: ["finish-upscale", "finish-rife"],
     });
+  });
+
+  it("lipsync on forces speech-upscale.enable", () => {
+    finishDoc({ lipsync: true, blender: false });
+    mod.__testSeedFinish(installed, { speech: [{ name: "speech-upscale" }] });
+    const out = mod.collect() as { config?: { "speech-upscale"?: { enable?: boolean } } };
+    expect(out.config && out.config["speech-upscale"] && out.config["speech-upscale"].enable).toBe(true);
   });
 });

@@ -384,7 +384,6 @@ function collectRenderStageState() {
     filmSubtitle: readVal("#planner-film-subtitle"),
     filmCredits: readVal("#planner-film-credits"),
     finishLipsync: readCheck("#planner-finish-lipsync"),
-    finishUpscale: readCheck("#planner-finish-upscale"),
     finishBlender: readCheck("#planner-finish-blender"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-

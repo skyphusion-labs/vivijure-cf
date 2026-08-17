@@ -284,7 +284,6 @@ function restoreRenderStagePanel(saved) {
     if (el) el.checked = !!v;
   };
   setCheck("#planner-finish-lipsync", saved.finishLipsync);
-  setCheck("#planner-finish-upscale", saved.finishUpscale);
   setCheck("#planner-finish-blender", saved.finishBlender);
   if ((saved.filmTitle || saved.filmSubtitle || saved.filmCredits || "").toString().trim().length > 0) {
     const ft = $(".planner-film-titles");

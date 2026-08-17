@@ -726,12 +726,21 @@
     return (finishCache().finish || []).find((m) => m.name === name) || null;
   }
 
+  function speechUpscaleInstalled() {
+    return (finishCache().speech || []).some((m) => m.name === "speech-upscale");
+  }
+
+  function lipsyncOn() {
+    if (!finishMod("finish-lipsync")) return false;
+    const el = document.getElementById("planner-finish-lipsync");
+    return !el || !!el.checked;
+  }
+
   function renderFinishPicks() {
     const box = document.getElementById("planner-finish-picks");
     if (!box) return;
     const pairs = [
       ["finish-lipsync", "planner-finish-lipsync-wrap"],
-      ["finish-upscale", "planner-finish-upscale-wrap"],
       ["finish-blender", "planner-finish-blender-wrap"],
     ];
     let any = false;
@@ -747,26 +756,19 @@
 
   function collectFinishSelect() {
     const lipsyncEl = document.getElementById("planner-finish-lipsync");
-    const upscaleEl = document.getElementById("planner-finish-upscale");
     const blenderEl = document.getElementById("planner-finish-blender");
     const hasLipsync = !!finishMod("finish-lipsync");
-    const hasUpscale = !!finishMod("finish-upscale");
     const hasBlender = !!finishMod("finish-blender");
-    if (!hasLipsync && !hasUpscale && !hasBlender) return undefined;
+    if (!hasLipsync && !hasBlender) return undefined;
     const wantLipsync = !hasLipsync || !lipsyncEl || lipsyncEl.checked;
-    const wantUpscale = !hasUpscale || !upscaleEl || upscaleEl.checked;
     const wantBlender = hasBlender && blenderEl && blenderEl.checked;
-    const defaultsOn = wantLipsync && wantUpscale && !wantBlender;
+    const defaultsOn = wantLipsync && !wantBlender;
     if (defaultsOn) return { mode: "default" };
     const named = [];
     for (const m of finishCache().finish || []) {
       const part = m.participation || "default";
       if (m.name === "finish-lipsync") {
         if (wantLipsync) named.push(m.name);
-        continue;
-      }
-      if (m.name === "finish-upscale") {
-        if (wantUpscale) named.push(m.name);
         continue;
       }
       if (m.name === "finish-blender") {
@@ -808,6 +810,10 @@
       config[mod][field] = val;
     }
     const out = {};
+    if (lipsyncOn() && speechUpscaleInstalled()) {
+      if (!config["speech-upscale"]) config["speech-upscale"] = {};
+      config["speech-upscale"].enable = true;
+    }
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;
@@ -913,11 +919,12 @@
     selectTier,
     collectFinishSelect,
     renderFinishPicks,
-    __testSeedFinish: (mods) => {
+    __testSeedFinish: (mods, extra) => {
       if (!global.plannerRegistry) global.plannerRegistry = {};
       global.plannerRegistry._cacheForRenderConfig = {
         ...(global.plannerRegistry._cacheForRenderConfig || {}),
         finish: Array.isArray(mods) ? mods : [],
+        speech: extra && Array.isArray(extra.speech) ? extra.speech : (global.plannerRegistry._cacheForRenderConfig || {}).speech || [],
       };
     },
     backendChoicePending,
