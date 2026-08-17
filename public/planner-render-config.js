@@ -545,6 +545,9 @@
       sel.appendChild(opt);
     }
     sel.value = mods[0].name;
+    sel.addEventListener("change", () => {
+      if (typeof updateScatterGate === "function") updateScatterGate();
+    });
     section.appendChild(sel);
 
     const doors = document.createElement("div");

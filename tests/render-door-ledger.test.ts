@@ -193,7 +193,7 @@ const DOORS: DoorDecl[] = [
   },
   {
     id: "2 panel scatter", route: "/api/storyboard/render/scatter", path: "/api/storyboard/render/scatter", seam: "scatter",
-    body: { bundleKey: BUNDLE, shotIds: ["shot_01", "shot_02"], shardCount: 2, motion_backend: "alibaba-wan",
+    body: { bundleKey: BUNDLE, shotIds: ["shot_01", "shot_02"], shardCount: 2, motion_backend: "own-gpu",
             qualityTier: "draft", audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "internal", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
     // C2 landed here: this door adopted the shared pre-flight and gained the #696 config-shape gate.

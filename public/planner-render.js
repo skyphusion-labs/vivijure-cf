@@ -153,8 +153,14 @@ async function loraPreflightGate() {
 // control matches what will be sent. 2 is not a default. shotN < 1
 // returns 1 and leaves the field empty so a later real shot count can
 // still apply the implicit default.
+function selectedMotionBackend() {
+  const sel = $("#planner-motion-backend");
+  return sel && typeof sel.value === "string" ? sel.value : "";
+}
+
 function plannerShardCount(shotN) {
   const shots = Math.max(0, Math.floor(Number(shotN)) || 0);
+  if (selectedMotionBackend() !== "own-gpu") return 1;
   const implicit = shots === 0 ? 1 : Math.min(shots, 20);
   const input = $("#planner-scatter-shards");
   if (!input) return implicit;
@@ -366,7 +372,8 @@ function updateScatterGate() {
   const hasLoras = Object.keys(castLoras).length > 0;
 
   let reason = "";
-  if (scenes.length < 2) reason = "needs >= 2 shots";
+  if (selectedMotionBackend() !== "own-gpu") reason = "own-gpu only (cloud i2v is one job)";
+  else if (scenes.length < 2) reason = "needs >= 2 shots";
   else if (!hasLoras) reason = "every character needs a trained LoRA first";
 
   checkbox.disabled = !!reason;
@@ -376,8 +383,7 @@ function updateScatterGate() {
     reasonEl.textContent = reason;
     reasonEl.hidden = !reason;
   }
-  // Parallelism is always on the render stage, not gated on scatter.
-  if (shardWrap) shardWrap.hidden = false;
+  if (shardWrap) shardWrap.hidden = selectedMotionBackend() !== "own-gpu";
   plannerShardCount(scenes.length);
 }
 
@@ -480,6 +486,11 @@ async function submitScatterRender() {
   const shotIds = scenes.map((s, i) => sceneIdAt(s, i));
   if (shotIds.length < 2) {
     setRenderStatus("scatter requires >= 2 shots", "error");
+    renderState.submitting = false;
+    return;
+  }
+  if (selectedMotionBackend() !== "own-gpu") {
+    setRenderStatus("scatter is own-gpu only; cloud i2v is one film job", "error");
     renderState.submitting = false;
     return;
   }
