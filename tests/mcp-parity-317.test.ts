@@ -280,7 +280,8 @@ interface PanelCall {
 }
 
 /** Every panel call whose URL resolves to an `/api/...` path: `fetch(...)`/`api(...)` calls (cast.js's
- * local `api()` wrapper forwards straight to fetch, so its calls carry the same shape) plus
+ * local `api()` wrapper forwards straight to fetch, so its calls carry the same shape),
+ * `postFilmSubmit(...)` (cf#528: always POST, same-click retry key), plus
  * `.href =`/`.src =` DOM assignments, which the browser always fetches with GET even though no
  * fetch() call is written for them. */
 function panelCallRecords(): PanelCall[] {
@@ -288,7 +289,7 @@ function panelCallRecords(): PanelCall[] {
   for (const f of PANEL_FILES) {
     const text = readFileSync(`${process.cwd()}/public/${f}`, "utf8");
 
-    const callRe = /\b(?:fetch|api)\s*\(/g;
+    const callRe = /\b(?:fetch|api|postFilmSubmit)\s*\(/g;
     let m: RegExpExecArray | null;
     while ((m = callRe.exec(text)) !== null) {
       const argStart = callRe.lastIndex;
@@ -296,8 +297,9 @@ function panelCallRecords(): PanelCall[] {
       const [urlExprRaw, optsExpr] = splitTopLevelComma(text.slice(argStart, closeParen));
       const template = urlTemplate(resolveAlias(text, m.index, urlExprRaw));
       if (template.startsWith("/api/")) {
+        const viaSubmit = /^postFilmSubmit\s*\($/.test(m[0]);
         const methodMatch = optsExpr?.match(/\bmethod\s*:\s*"([A-Z]+)"/);
-        records.push({ method: methodMatch ? methodMatch[1] : "GET", template });
+        records.push({ method: viaSubmit ? "POST" : (methodMatch ? methodMatch[1] : "GET"), template });
       }
       callRe.lastIndex = closeParen + 1;
     }
