@@ -29,7 +29,7 @@
 // real signal. The older note here called that channel "unwired"; that is no
 // longer true, and this comment is corrected rather than left to mislead.
 //
-// REMAINING HONEST GAP (cf#303): the snapshot only exists once the GPU worker
+// COLD START vs STALL (cf#303): the snapshot only exists once the GPU worker
 // is actually running. Before that a worker is being started and a large model
 // set loaded, so the keyframe band legitimately sits at its floor with no
 // sub-signal to subdivide on. We do NOT fabricate motion there. Instead the
@@ -37,13 +37,13 @@
 // every endpoint by a deliberate standing cost ruling, so cold start is a
 // permanent accepted characteristic to be EXPLAINED, not engineered away.
 //
-// WHAT WE DELIBERATELY DO NOT CLAIM: we do not say "queued at RunPod". The
-// module /poll contract (core PollResponse) reports only `pending: true`, with
-// no queued-versus-running distinction, and modules hold their own backend
-// creds so the host cannot ask RunPod directly. Asserting queue state would be
-// claiming an observation we cannot make. What we CAN say honestly is that the
-// pipeline is in its startup window, and, via the server-authored `stalled`
-// signal already in the envelope, when it has stopped being one.
+// The queue-versus-running signal now exists (cf#307, core 1.15+): the film
+// poll view sets status IN_QUEUE when the module reports wait=accepted, and
+// the direct RunPod path carries delayTimeMs. The panel must READ those
+// fields. Inferring startup from "keyframe and nothing drawn yet" cannot
+// tell a spinning-up worker from a running encode that has not landed a
+// frame, which is the same failure class this issue names. Filmmaker copy
+// never dumps IN_QUEUE raw; statusLabel translates it.
 (function (root, factory) {
   const api = factory();
   if (typeof module !== "undefined" && module.exports) {
@@ -201,16 +201,75 @@
     return phase;
   }
 
-  // cf#303: the startup window -- the keyframe phase is underway but no keyframe
-  // has landed yet, so the GPU is still being brought up. Bounded by the
-  // server's stall signal: once `stalled` is set this is no longer a normal
-  // startup and we must stop calling it one.
-  //
-  // This is an honest statement about OUR pipeline's position, not a claim
-  // about RunPod's queue, which we cannot observe through the module contract.
-  function isStartupWindow(out) {
+  // Split a full poll view ({ status, delayTimeMs, output }) from a bare
+  // output bag ({ phase, progress, ... }). Callers used to pass only
+  // data.output, which dropped the IN_QUEUE / delayTime signal.
+  function pollParts(poll) {
+    if (!poll || typeof poll !== "object") {
+      return { status: "", delayTimeMs: null, out: null };
+    }
+    const hasStatus = typeof poll.status === "string" && poll.status.length > 0;
+    const nested = poll.output && typeof poll.output === "object" ? poll.output : null;
+    const out = hasStatus && nested ? nested : poll;
+    let delayTimeMs = null;
+    if (typeof poll.delayTimeMs === "number" && poll.delayTimeMs > 0) {
+      delayTimeMs = poll.delayTimeMs;
+    } else if (typeof poll.delayTime === "number" && poll.delayTime > 0) {
+      delayTimeMs = poll.delayTime;
+    }
+    return { status: hasStatus ? poll.status : "", delayTimeMs, out };
+  }
+
+  // The server-authored stall verdict, already carried in the envelope by
+  // stallSignal(). Accepts a full poll or a bare output bag.
+  function isStalled(poll) {
+    if (!poll || typeof poll !== "object") return false;
+    if (poll.stalled === true) return true;
+    if (poll.output && typeof poll.output === "object" && poll.output.stalled === true) {
+      return true;
+    }
+    return false;
+  }
+
+  // True when the door says the worker is still starting: IN_QUEUE,
+  // SUBMITTED, backend_wait=accepted, or a positive delayTime that is not
+  // attached to an already-running encode. delayTime on IN_PROGRESS is
+  // historical queue wait, not a live cold start.
+  function isColdStart(poll) {
+    if (!poll || typeof poll !== "object") return false;
+    if (isStalled(poll)) return false;
+    const parts = pollParts(poll);
+    if (parts.status === "IN_QUEUE" || parts.status === "SUBMITTED") return true;
+    if (parts.out && parts.out.backend_wait === "accepted") return true;
+    if (
+      parts.delayTimeMs &&
+      parts.status !== "IN_PROGRESS" &&
+      parts.status !== "COMPLETED" &&
+      parts.status !== "FAILED" &&
+      parts.status !== "CANCELLED" &&
+      parts.status !== "TIMED_OUT" &&
+      parts.status !== "SCATTERING"
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  // cf#303: the startup window. Prefer the observed queue signal (IN_QUEUE /
+  // delayTime / backend_wait=accepted). Fall back to "keyframe with nothing
+  // drawn" only when the poll has no status, so a running encode that has
+  // not landed a frame is NOT called a cold start.
+  function isStartupWindow(poll) {
+    if (!poll || typeof poll !== "object") return false;
+    if (isStalled(poll)) return false;
+    if (isColdStart(poll)) return true;
+    const parts = pollParts(poll);
+    if (parts.status === "IN_PROGRESS" || (parts.out && parts.out.backend_wait === "running")) {
+      return false;
+    }
+    if (parts.status) return false;
+    const out = parts.out;
     if (!out || typeof out !== "object") return false;
-    if (out.stalled === true) return false;
     const phase = typeof out.phase === "string" ? out.phase.toLowerCase() : "";
     if (phase !== "keyframe" && phase !== "shards") return false;
     if (typeof out.progress === "number" && out.progress > 0) return false;
@@ -218,21 +277,47 @@
     return true;
   }
 
-  // The server-authored stall verdict, already carried in the envelope by
-  // stallSignal() but until now surfaced only in the history list, never in the
-  // live panel the user actually watches during the wait.
-  function isStalled(out) {
-    return !!out && typeof out === "object" && out.stalled === true;
+  // The words the live panel shows. One note, mutually exclusive: stall
+  // wins, then cold start, else nothing (a running encode has no note).
+  function waitCopy(poll) {
+    if (isStalled(poll)) return STALL_NOTE;
+    if (isStartupWindow(poll)) return COLD_START_NOTE;
+    return null;
+  }
+
+  // Filmmaker-facing status words. Raw tokens stay available as the
+  // element's title; the visible text is never IN_QUEUE / IN_PROGRESS.
+  const STATUS_LABELS = {
+    IN_QUEUE: "Starting up",
+    SUBMITTED: "Starting up",
+    IN_PROGRESS: "Rendering",
+    SCATTERING: "Rendering",
+    COMPLETED: "Done",
+    FAILED: "Failed",
+    CANCELLED: "Cancelled",
+    TIMED_OUT: "Timed out",
+  };
+
+  function statusLabel(status) {
+    if (typeof status !== "string" || !status) return null;
+    if (Object.prototype.hasOwnProperty.call(STATUS_LABELS, status)) {
+      return STATUS_LABELS[status];
+    }
+    return status;
   }
 
   return {
     PIPELINE_PHASES,
     PHASE_LABELS,
+    STATUS_LABELS,
     COLD_START_NOTE,
     STALL_NOTE,
     phaseLabel,
+    statusLabel,
     isStartupWindow,
+    isColdStart,
     isStalled,
+    waitCopy,
     MIN_FRACTION_FOR_ETA,
     MIN_ELAPSED_MS_FOR_ETA,
     progressFraction,
