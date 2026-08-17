@@ -86,10 +86,8 @@ function showCastSection() {
   if (typeof renderFacesPanel === "function") renderFacesPanel();
   if (typeof refreshCastLoraWarning === "function") refreshCastLoraWarning();
   showPreflightSection();
-  if (planState.storyboard) {
-    const bundle = $("#planner-bundle");
-    if (bundle) bundle.hidden = false;
-  }
+  const bundle = $("#planner-bundle");
+  if (bundle) bundle.hidden = true;
 }
 
 function preflightBlocksBundle() {
