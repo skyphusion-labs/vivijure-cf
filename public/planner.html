@@ -176,6 +176,27 @@
       </div>
     </section>
 
+    <details class="planner-advanced" data-step="plan">
+      <summary>Preflight (operator)</summary>
+      <section id="planner-preflight" class="planner-stage planner-preflight-inner" hidden>
+        <header class="planner-stage-header">
+          <h2 class="planner-stage-title">preflight</h2>
+          <span id="planner-preflight-status" class="planner-status"></span>
+        </header>
+        <p class="planner-stage-hint">validator + scene shape + cast readiness. errors used to gate Assemble; they still list here.</p>
+        <div class="planner-preflight-toolbar">
+          <button id="planner-preflight-run" type="button" class="planner-secondary">run preflight</button>
+          <label class="planner-preflight-auto-label">
+            <input id="planner-preflight-auto" type="checkbox" checked />
+            auto-run on edit
+          </label>
+          <span id="planner-preflight-counts" class="planner-status"></span>
+          <span id="planner-finish-cost-coverage" class="planner-status" hidden></span>
+        </div>
+        <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>
+      </section>
+    </details>
+
     <!-- v0.51.0: audio bed + beat-driven shot timing. Optional; with no
          audio set the render stays silent. When an audioKey IS set it
          flows to render + finalize as audio_key (v0.52.0) and the GPU
@@ -342,31 +363,6 @@
       </div>
       <div id="planner-bundle-result" class="planner-bundle-result" hidden></div>
     </section>
-
-    <!-- v0.54.0: pre-render preflight. Operator surface; filmmakers can skip it. -->
-    <details class="planner-advanced" data-step="cast">
-      <summary>Preflight (operator)</summary>
-      <section id="planner-preflight" class="planner-stage planner-preflight-inner" hidden>
-        <header class="planner-stage-header">
-          <h2 class="planner-stage-title">preflight</h2>
-          <span id="planner-preflight-status" class="planner-status"></span>
-        </header>
-        <p class="planner-stage-hint">runs validator + scene shape checks + cast readiness + bundle / audio existence. errors gate the bundle button; warnings pass through.</p>
-        <div class="planner-preflight-toolbar">
-          <button id="planner-preflight-run" type="button" class="planner-secondary">run preflight</button>
-          <label class="planner-preflight-auto-label">
-            <input id="planner-preflight-auto" type="checkbox" checked />
-            auto-run on edit
-          </label>
-          <span id="planner-preflight-counts" class="planner-status"></span>
-          <!-- cf#579: the finish-cost coverage census, refreshed each preflight pass. Structured
-               attributes so a check can assert on it; the sentence so a person does not have to
-               grep renders to learn that nothing declares a cost. -->
-          <span id="planner-finish-cost-coverage" class="planner-status" hidden></span>
-        </div>
-        <ul id="planner-preflight-issues" class="planner-preflight-issues"></ul>
-      </section>
-    </details>
 
     <!-- v0.33.0: render stage. Revealed after a successful bundle. -->
     <section id="planner-render" class="planner-stage" data-step="render" hidden>

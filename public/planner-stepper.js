@@ -95,10 +95,12 @@ function buildStepper() {
     btn.addEventListener("click", () => showStep(step.id));
     rail.appendChild(btn);
   });
+  // onclick replaces. addEventListener stacked on every buildStepper()
+  // (init + persist restore) so one Next fired twice: Plan -> Render -> History.
   const back = $("#planner-step-back");
-  if (back) back.addEventListener("click", () => stepDelta(-1));
+  if (back) back.onclick = () => stepDelta(-1);
   const next = $("#planner-step-next");
-  if (next) next.addEventListener("click", () => stepDelta(1));
+  if (next) next.onclick = () => stepDelta(1);
 }
 
 // Reflect unlock state on the rail without changing the active step. If the
@@ -140,6 +142,9 @@ function showStep(id) {
   // re-evaluate them so the sections appear.
   if (id === "cast") {
     showCastSection();
+  }
+  if (id === "plan") {
+    showPreflightSection();
   }
   if (id === "render") {
     const stage = $("#planner-render");
