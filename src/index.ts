@@ -908,6 +908,7 @@ const hSubmitRender: Handler = async (req, env) => {
       bundle_key: bundleKey,
       quality_tier: tier,
       shot_ids: panelShots,
+      scenes,
       shard_count: panelShards,
       cast_loras: b.castLoras ?? {},
       render_overrides: b.renderOverrides,
