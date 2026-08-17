@@ -60,7 +60,7 @@ interface Env {
   SPEECH_UPSCALE_DOORS?: string;
 }
 
-const MANIFEST: ModuleManifest = {
+export const MANIFEST: ModuleManifest = {
   name: "speech-upscale",
   version: "0.2.0",
   api: MODULE_API,
@@ -73,6 +73,10 @@ const MANIFEST: ModuleManifest = {
     denoise: { type: "bool", default: false, label: "extra denoise pass" },
   },
   ui: { section: "speech", icon: "wand", order: 10 },
+  // core#223: the guard the door enforces (speech-door default; matches audio-upscale
+  // MAX_INVOCATION_SECONDS being added in a sibling). Not an aspiration. If the door env
+  // overrides it, this number is the SHIPPED default.
+  max_invocation_seconds: 540,
 };
 
 function json(body: unknown, status = 200): Response {

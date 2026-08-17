@@ -42,6 +42,11 @@ export interface ModuleManifest {
    *  full contract text, including why the permissive default is a stated limit rather than an
    *  oversight. */
   participation?: "default" | "opt_in";
+  /** OPTIONAL, additive (core#182 / core#223). The door's enforced per-invocation wall-clock
+   *  ceiling in seconds. This is the guard the door enforces, not an aspiration. If the door env
+   *  overrides it, the number on the shipped MANIFEST is the SHIPPED default. See the core
+   *  src/modules/types.ts for the full contract text. */
+  max_invocation_seconds?: number;
 }
 
 export interface InvokeContext { project: string; job_id: string; }

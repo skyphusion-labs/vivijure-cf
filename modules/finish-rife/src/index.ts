@@ -83,6 +83,9 @@ export const MANIFEST: ModuleManifest = {
       { tag: "interpolate:{interpolation_factor|2}x" },
     ],
   },
+  // core#223: the guard the door enforces (vivijure-backend finish.py DEFAULT_MAX_SECONDS),
+  // not an aspiration. If the door env overrides it, this number is the SHIPPED default.
+  max_invocation_seconds: 420,
 };
 
 function json(body: unknown, status = 200): Response {

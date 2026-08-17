@@ -48,6 +48,11 @@ export interface ModuleManifest {
    *  module declares only its own nature; the ordering policy lives in the core. See the core
    *  src/modules/types.ts for the full contract text. */
   finish_consumes_audio?: boolean;
+  /** OPTIONAL, additive (core#182 / core#223). The door's enforced per-invocation wall-clock
+   *  ceiling in seconds. This is the guard the door enforces, not an aspiration. If the door env
+   *  overrides it, the number on the shipped MANIFEST is the SHIPPED default. See the core
+   *  src/modules/types.ts for the full contract text. */
+  max_invocation_seconds?: number;
 }
 
 export interface InvokeContext { project: string; job_id: string; }

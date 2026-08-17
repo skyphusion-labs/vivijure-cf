@@ -84,6 +84,10 @@ export const MANIFEST: ModuleManifest = {
     output_key: { kind: "append_suffix", suffix: "_up" },
     applied: [{ tag: "upscale:{scale|2}x" }],
   },
+  // core#223: the guard the door enforces (vivijure-upscale handler.py FFMPEG_TIMEOUT). Hosted
+  // path is URL doors, no 600s platform kill. Not an aspiration. If the door env overrides it,
+  // this number is the SHIPPED default.
+  max_invocation_seconds: 1200,
 };
 
 function json(body: unknown, status = 200): Response {

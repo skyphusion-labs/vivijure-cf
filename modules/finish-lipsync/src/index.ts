@@ -78,6 +78,9 @@ export const MANIFEST: ModuleManifest = {
   // SOURCE frame rate, so the core must run it on the native-fps clip before any interpolation. This
   // flag (not the module name) is how the core hoists it ahead of RIFE for a shot that has a line.
   finish_consumes_audio: true,
+  // core#223: the guard the door enforces (vivijure-musetalk handler.py MAX_INVOCATION_SECONDS),
+  // not an aspiration. If the door env overrides it, this number is the SHIPPED default.
+  max_invocation_seconds: 540,
 };
 
 function json(body: unknown, status = 200): Response {

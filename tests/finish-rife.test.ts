@@ -151,6 +151,9 @@ describe("finish-rife: manifest conformance", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
   });
+  it("declares the backend door's shipped DEFAULT_MAX_SECONDS (core#223)", () => {
+    expect(MANIFEST.max_invocation_seconds).toBe(420);
+  });
 
   it("invoke passthrough response passes the conformance response checker", () => {
     const r = checkInvokeResponse({

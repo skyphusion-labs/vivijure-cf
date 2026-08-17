@@ -144,6 +144,9 @@ describe("finish-lipsync: manifest conformance", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
   });
+  it("declares the musetalk door's shipped MAX_INVOCATION_SECONDS (core#223)", () => {
+    expect(MANIFEST.max_invocation_seconds).toBe(540);
+  });
   it("invoke success / error / degraded responses all pass the response checker", () => {
     expect(checkInvokeResponse({ ok: true, output: { shot_id: "s", clip_key: "k_ls.mp4", out_fps: 16, frames: 80, applied: ["lipsync:v15"] } }).pass).toBe(true);
     expect(checkInvokeResponse({ ok: false, error: "finish-lipsync: input needs shot_id and clip_key" }).pass).toBe(true);

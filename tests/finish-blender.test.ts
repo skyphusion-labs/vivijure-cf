@@ -12,6 +12,7 @@ import {
 } from "../modules/finish-blender/src/finish";
 import { MANIFEST } from "../modules/finish-blender/src/index";
 import worker from "../modules/finish-blender/src/index";
+import { checkManifest, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { DOOR_ROUTE_NAME } from "../modules/_shared/finish-door";
 import type { FinishInput } from "../modules/finish-blender/src/contract";
 
@@ -21,6 +22,16 @@ const sample: FinishInput = {
   src_fps: 24,
   frames: 48,
 };
+
+describe("finish-blender: manifest conformance", () => {
+  it("passes the conformance manifest checker", () => {
+    const checks = checkManifest(MANIFEST);
+    expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
+  });
+  it("declares the blender door's shipped PHASE_HARD_DEADLINE_SECONDS (core#223)", () => {
+    expect(MANIFEST.max_invocation_seconds).toBe(5400);
+  });
+});
 
 describe("finish-blender: coerceConfig", () => {
   it("defaults", () => {
