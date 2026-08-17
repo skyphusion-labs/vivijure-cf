@@ -14,6 +14,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
+import { readIdempotencyKey } from "./film-idempotency";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
@@ -702,7 +703,12 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
   const renderId = await resolveRenderId(env, p.id);
   const row = await getRenderByIdForUser(env, renderId);
   if (!row) throw notFound("render");
-  const r = await retryFailedRender(env, row);
+  let idempotency_key: string | undefined;
+  try {
+    const b = await readBody<{ idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
+    idempotency_key = readIdempotencyKey(b);
+  } catch { /* empty body ok (pre-cf#528 clients) */ }
+  const r = await retryFailedRender(env, row, { idempotency_key });
   if (!r.ok) return json({ ok: false, error: r.error }, r.status);
   const view = r.view;
   await insertRenderBestEffort(env, {
@@ -725,24 +731,29 @@ const hFinalizePreview: Handler = async (req, env, _c, p) => {
   let audioKey: string | undefined;
   let motionBackend: string | undefined;
   let castLoras: Record<string, string> | undefined;
+  let finalizeIdempotencyKey: string | undefined;
   try {
     const b = await readBody<{
       audioKey?: string;
       castLoras?: Record<string, string>;
       motion_backend?: string;
       motionBackend?: string;
+      idempotency_key?: unknown;
+      idempotencyKey?: unknown;
     }>(req);
     audioKey = b.audioKey;
     castLoras = b.castLoras;
     // cf#347: accept snake_case (panel) or camelCase
     const raw = b.motion_backend ?? b.motionBackend;
     motionBackend = typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+    finalizeIdempotencyKey = readIdempotencyKey(b);
   } catch { /* empty body ok */ }
   return animatePreviewHandler(env, await resolveRenderId(env, p.id), {
     deriveMode: "finalized",
     audioKey,
     motionBackend,
     castLoras,
+    idempotency_key: finalizeIdempotencyKey,
   });
 };
 
@@ -824,6 +835,8 @@ const hSubmitRender: Handler = async (req, env) => {
     style_prefix?: string;
     voice_lock?: string;
     shardCount?: number; shard_count?: number;
+    idempotency_key?: unknown;
+    idempotencyKey?: unknown;
   }>(req);
   // cf#334: the guards below are the SHARED pre-flight, not this door's private copy. What stays
   // here is this door's own contract -- its field spellings, its keyframes-only mode, and its 503 on
@@ -959,6 +972,7 @@ const hSubmitRender: Handler = async (req, env) => {
     dialogue_lines: panelDialogue,
     style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
     voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
+    idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -985,6 +999,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
     motion_backend?: string; castLoras?: Record<string, unknown>;
+    idempotency_key?: unknown; idempotencyKey?: unknown;
   }>(req);
   // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
   //
@@ -1090,6 +1105,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     derive_mode: "finalized",
     audio_key: b.audioKey,
     dialogue_lines: fromKfDialogue,
+    idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
     return json({ error: job.error || "render from keyframes failed" }, 422);
@@ -1247,6 +1263,7 @@ const hScatterRender: Handler = async (req, env) => {
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
     motion_backend?: string;
     film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
+    idempotency_key?: unknown; idempotencyKey?: unknown;
   }>(req);
   // cf#334: the shared pre-flight. This door's own contract stays in the profile: it addresses shots
   // by ID rather than sending scenes, and it needs at least TWO of them because a single shard is not
@@ -1618,7 +1635,7 @@ async function withFilmDownloadUrlBestEffort(
   }
 }
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1792,6 +1809,7 @@ const hStartFilm: Handler = async (req, env) => {
     // + motion_config, unchanged here; this only makes the row match what was asked. An absent/invalid
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
+    idempotency_key: readIdempotencyKey(a),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.

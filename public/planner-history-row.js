@@ -1367,12 +1367,11 @@ async function finalizeRender(row, btnEl) {
     }
     // Finalize reuses the render_overrides persisted on the originating row
     // (the backend reads row.render_overrides); no per-finalize override body.
-    const hasBody = Object.keys(finalizeBody).length > 0;
-    resp = await fetch(
+    const inflight = {};
+    resp = await postFilmSubmit(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",
-      hasBody
-        ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(finalizeBody) }
-        : { method: "POST" },
+      finalizeBody,
+      inflight,
     );
     data = await resp.json();
   } catch (err) {
@@ -1449,7 +1448,7 @@ async function animateCloudRender(row, btnEl, model, perShot) {
   if (!resp.ok || !data || !data.ok) {
     btnEl.disabled = false;
     btnEl.textContent = CLOUD_LABEL;
-    const msg = (data && (data.error)
+    const msg = (data && (data.error
       || (Array.isArray(data.errors) && data.errors.join(", "))))
       || ("HTTP " + (resp ? resp.status : "?"));
     window.alert("cloud animate submit failed: " + msg);
@@ -2010,9 +2009,11 @@ async function retryFailedRender(row, btnEl) {
   let resp = null;
   let data = null;
   try {
-    resp = await fetch(
+    const inflight = {};
+    resp = await postFilmSubmit(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/retry",
-      { method: "POST" },
+      {},
+      inflight,
     );
     data = await resp.json();
   } catch (err) {
