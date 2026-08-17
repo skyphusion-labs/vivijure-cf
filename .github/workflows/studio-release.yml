@@ -150,6 +150,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: "0000"
           R2_S3_BUCKET: "vivijure"
           R2_S3_ENDPOINT: "https://x.r2.cloudflarestorage.com"
+          VIDEO_FINISH_URL: ""
+          IMAGE_PREP_URL: ""
+          AUDIO_BEAT_SYNC_URL: ""
+          AUDIO_MIX_URL: ""
+          AUDIO_MASTER_URL: ""
+          FINISH_UPSCALE_DOORS: ""
+          SPEECH_UPSCALE_DOORS: ""
+          FINISH_BLENDER_DOORS: ""
         run: |
           set -euo pipefail
           # cf#560: STRIP THE LOCAL-GPU BLOCK BEFORE RENDERING. This is a HOSTED render -- the

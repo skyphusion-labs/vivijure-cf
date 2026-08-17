@@ -11,6 +11,14 @@ The rail locked Cast until a storyboard existed, so the planner wrote
 shots with nobody chosen. Cast is first and always open. Plan still
 sends those people in the brief.
 
+## v1.32.6 -- 2026-08-17
+
+### fix(ci): pass door URL vars into the tag deploy render
+
+v1.32.5 parsed and ran, then died at wrangler.toml because
+`VIDEO_FINISH_URL` and the other seven door origins were never in
+the envsubst list. Repo vars already existed. Wire them.
+
 ## v1.32.5 -- 2026-08-17
 
 ### fix(ci): v* tags parse and deploy again
