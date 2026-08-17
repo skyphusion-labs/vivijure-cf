@@ -104,6 +104,43 @@ const notifyState = {
   alreadyNotified: new Set(),
 };
 
+// cf#528: per-click idempotency key for film submit. A new user click mints a
+// new UUID. The same click reuses it if the fetch retries on 5xx (or a dropped
+// response), so core can collapse the retry onto one film instead of two bills.
+function mintFilmIdempotencyKey() {
+  return crypto.randomUUID();
+}
+
+function attachFilmIdempotencyKey(body, inflight) {
+  if (!inflight.key) inflight.key = mintFilmIdempotencyKey();
+  body.idempotency_key = inflight.key;
+  return inflight.key;
+}
+
+async function postFilmSubmit(url, body, inflight) {
+  attachFilmIdempotencyKey(body, inflight);
+  const init = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  let lastResp = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(url, init);
+      if (resp.status >= 500 && attempt === 0) {
+        lastResp = resp;
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      if (attempt === 0) continue;
+      throw err;
+    }
+  }
+  return lastResp;
+}
+
 // ---------- localStorage persistence (v0.38.0) ----------
 //
 // Snapshots every meaningful state-changing event (brief edit, cast field

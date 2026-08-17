@@ -29,6 +29,7 @@ import { parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/rende
 import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types";
 import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import { readIdempotencyKey } from "./film-idempotency";
 
 export interface AnimateFromPreviewArgs {
   parent: RenderRow;
@@ -41,6 +42,8 @@ export interface AnimateFromPreviewArgs {
   audioKey?: string;
   /** Cast slot map for voicing derived dialogue_lines (cf#334). */
   castLoras?: Record<string, string>;
+  /** cf#528: panel-supplied submit key. Forwarded into startFilmFromKeyframes. */
+  idempotency_key?: string;
 }
 
 function resolveCloudModel(requested: string | undefined, allowed: string[]): string | undefined {
@@ -271,6 +274,7 @@ export async function animateFromPreview(
       parent_render_id: args.parent.id,
       audio_key: args.audioKey,
       dialogue_lines,
+      idempotency_key: readIdempotencyKey({ idempotency_key: args.idempotency_key }),
     } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] },
     modules,
   );

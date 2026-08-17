@@ -23,6 +23,7 @@ import type { RenderRow } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types";
 import { animateFromPreview } from "./finalize-from-keyframes";
+import { readIdempotencyKey } from "./film-idempotency";
 
 const RETRYABLE = new Set(["FAILED", "CANCELLED", "TIMED_OUT"]);
 
@@ -47,7 +48,9 @@ async function dialogueFromBundle(
 export async function retryFailedRender(
   env: OrchestratorEnv,
   row: RenderRow,
+  opts?: { idempotency_key?: string },
 ): Promise<RetryResult> {
+  const idempotency_key = readIdempotencyKey({ idempotency_key: opts?.idempotency_key });
   if (!RETRYABLE.has(row.status)) {
     return {
       ok: false,
@@ -77,6 +80,7 @@ export async function retryFailedRender(
         row.mode === "finalized"
           ? (mapped.motion_backend ?? defaultGpuDoorModule(modules)?.name)
           : mapped.motion_backend,
+      idempotency_key,
     });
     if (!r.ok) return { ok: false, error: r.error, status: r.status ?? 400 };
     return { ok: true, view: r.view as RunpodJobView, mode: row.mode };
@@ -129,6 +133,7 @@ export async function retryFailedRender(
       master_config: mapped.master_config,
       keyframes_only: keyframesOnly,
       dialogue_lines,
+      idempotency_key,
     },
     modules,
   );

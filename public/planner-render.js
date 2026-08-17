@@ -373,14 +373,12 @@ async function submitRender() {
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
 
+  // cf#528: one key for this click. postFilmSubmit reuses it on a 5xx retry.
+  const inflight = {};
   let resp = null;
   let data = null;
   try {
-    resp = await fetch("/api/storyboard/render", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(reqBody),
-    });
+    resp = await postFilmSubmit("/api/storyboard/render", reqBody, inflight);
     data = await resp.json();
   } catch (err) {
     setRenderStatus("network error: " + err.message, "error");
@@ -647,14 +645,11 @@ async function submitScatterRender() {
   if (scatterVoiceLock) reqBody.voice_lock = scatterVoiceLock;
   if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
 
+  const inflight = {};
   let resp = null;
   let data = null;
   try {
-    resp = await fetch("/api/storyboard/render/scatter", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(reqBody),
-    });
+    resp = await postFilmSubmit("/api/storyboard/render/scatter", reqBody, inflight);
     data = await resp.json();
   } catch (err) {
     setRenderStatus("network error: " + err.message, "error");
