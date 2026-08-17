@@ -19,7 +19,7 @@ with a `degraded` marker), never a silent pass and never an over-eager hard fail
 deliberately-abstract films exist). The pure functions here are unit-tested; the ffmpeg sampling is a
 thin I/O wrapper.
 """
-import subprocess
+from ffmpeg_run import FFMPEG_TIMEOUT, FfmpegTimeout, _run  # noqa: F401
 
 # --- Thresholds (empirically grounded against the S12 noise/good evidence; see #557). ---
 # Keyframe similarity below this = the first frame does not resemble its conditioning keyframe.
@@ -34,10 +34,14 @@ def sample_frames_rgb(path, size=SAMPLE_SIZE, count=SAMPLE_COUNT):
     """Shell ffmpeg to extract up to `count` evenly-spaced frames, each downscaled to size x size rgb24.
     Returns a list of bytes objects (len == size*size*3 each). I/O; kept thin so the math stays testable."""
     # `thumbnail` picks representative frames; fall back to a plain decode if the filter yields nothing.
-    out = subprocess.run(
+    # check=False: a failed decode still yields empty frames (the previous
+    # behaviour). A hang raises FfmpegTimeout so inspect cannot look like a
+    # quiet pass of zero frames.
+    out = _run(
         ["ffmpeg", "-v", "error", "-i", path, "-vf",
          f"scale={size}:{size},format=rgb24", "-f", "rawvideo", "-"],
-        capture_output=True).stdout
+        timeout=FFMPEG_TIMEOUT, check=False,
+    ).stdout
     fsz = size * size * 3
     frames = [out[i * fsz:(i + 1) * fsz] for i in range(len(out) // fsz)]
     if not frames:

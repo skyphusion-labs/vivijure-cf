@@ -53,6 +53,9 @@ ffmpeg, CPU-only: per-track gain, `sidechaincompress` (music keyed on the dialog
   name.
 - Deploy on your container host: `docker compose -p vivijure-media -f containers/compose.yaml up -d --build audio-mix`;
   health: `curl http://127.0.0.1:8783/health`.
+- Every ffmpeg/ffprobe child has a wall-clock bound (cf#571): `FFMPEG_TIMEOUT` (default 1200s),
+  `FFPROBE_TIMEOUT` (default 60s). A hang kills the process group and returns
+  `{ok:false, error:"ffmpeg timeout after Ns"}`.
 
 ## Soft-degrade
 

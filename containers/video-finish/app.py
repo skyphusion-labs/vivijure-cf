@@ -27,6 +27,7 @@ import uuid
 from aiohttp import ClientSession, ClientTimeout, web
 
 from bearer import bearer_middleware
+from ffmpeg_run import FFPROBE_TIMEOUT, FfmpegTimeout, _run
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 import photometric_gate
@@ -238,6 +239,9 @@ async def _finish_work(body):
                     width, height, fps, crf, preset, crossfade, trim_join_frames,
                     keep_clip_audio,
                 )
+        except FfmpegTimeout as e:
+            log.exception("ffmpeg timeout")
+            raise _JobError(500, str(e))
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed")
             raise _JobError(500, f"ffmpeg failed: {e}")
@@ -283,10 +287,6 @@ async def finish(req):
     except _JobError as e:
         return web.json_response({"ok": False, "error": e.message}, status=e.status)
     return web.json_response(result)
-
-
-def _run(cmd):
-    subprocess.run(cmd, check=True, capture_output=True)
 
 
 async def _put_meta_sidecar(meta_url, *, duration_seconds=None, prepend_seconds=None):
@@ -339,10 +339,10 @@ async def _put_meta_sidecar(meta_url, *, duration_seconds=None, prepend_seconds=
 
 
 def _probe_duration(path):
-    proc = subprocess.run(
+    proc = _run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True,
+        timeout=FFPROBE_TIMEOUT, text=True,
     )
     return max(0.1, float(proc.stdout.strip()))
 
@@ -353,11 +353,11 @@ def _probe_audio(path):
     sample_rate and channel_layout are None when has_audio is False.
     Falls back to stereo/44100 if the layout string is absent or unknown.
     """
-    proc = subprocess.run(
+    proc = _run(
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=sample_rate,channel_layout",
          "-of", "default=noprint_wrappers=1", path],
-        capture_output=True, text=True, check=True,
+        timeout=FFPROBE_TIMEOUT, text=True,
     )
     out = proc.stdout.strip()
     if not out:
@@ -804,6 +804,9 @@ async def _film_titles_work(body):
                 work, film_path, title_spec, credits_spec,
                 width, height, fps, crf, preset,
             )
+        except FfmpegTimeout as e:
+            log.exception("ffmpeg timeout in /film-titles")
+            raise _JobError(500, str(e))
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed in /film-titles")
             raise _JobError(500, f"ffmpeg failed: {e}")
@@ -1027,6 +1030,9 @@ async def _subtitle_work(body):
             loop = asyncio.get_running_loop()
             try:
                 await loop.run_in_executor(None, _burn_subtitles, film_path, out_path, vf, crf, preset)
+            except FfmpegTimeout as e:
+                log.exception("ffmpeg timeout in /subtitle key=%s", safe_log_value(output_key))  # codeql[py/log-injection]
+                raise _JobError(500, str(e))
             except subprocess.CalledProcessError as e:
                 log.exception("ffmpeg subtitles burn failed key=%s", safe_log_value(output_key))  # codeql[py/log-injection]
                 raise _JobError(500, f"ffmpeg failed: {e}")
@@ -1115,6 +1121,9 @@ async def inspect(req):
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, inspect_core.inspect, clip_path, kf_path)
+        except inspect_core.FfmpegTimeout as e:
+            log.exception("/inspect ffmpeg timeout")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
         except Exception as e:  # noqa: BLE001
             log.exception("/inspect failed")
             return web.json_response({"ok": False, "error": f"inspect failed: {e}"}, status=500)
@@ -1278,6 +1287,9 @@ async def frames(req):
         degraded = None
         try:
             duration = _probe_duration(clip_path)
+        except FfmpegTimeout as e:
+            log.exception("/frames ffprobe timeout")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
         except Exception:
             duration = None
         if not duration or duration <= 0:
