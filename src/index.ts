@@ -92,7 +92,7 @@ import {
   scatterJobToPollView,
   isScatterJobId,
 } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
-import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
+import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary, scatterEligibleMotion } from "./shard-count";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
@@ -894,7 +894,7 @@ const hSubmitRender: Handler = async (req, env) => {
     panelShots.length,
     shardMaxFromEnv(env.RENDER_SHARD_MAX),
   );
-  if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2) {
+  if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2 && scatterEligibleMotion(motionBackend)) {
     if (shouldProjectWanLoras(motionBackend, wanPretrained)) {
       const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
       b.renderOverrides = injected.overrides;
@@ -1264,6 +1264,9 @@ const hScatterRender: Handler = async (req, env) => {
   const scatterShotIds = b.shotIds as string[];
   const shardCount = resolveShardCount(b.shardCount, scatterShotIds.length, shardMaxFromEnv(env.RENDER_SHARD_MAX));
   if (shardCount < 2) throw badRequest("shardCount 1 is a normal film; use POST /api/storyboard/render or POST /api/render/film");
+  if (!scatterEligibleMotion(b.motion_backend)) {
+    throw badRequest("scatter is own-gpu only; cloud i2v is one film job (provider rate limits)");
+  }
   const project = resolveProjectForBundle(scatterBundleKey, b.project);
   const tier = coerceQualityTier(b.qualityTier) ?? "final";
   const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
@@ -1701,7 +1704,7 @@ const hStartFilm: Handler = async (req, env) => {
     filmScenes.length,
     shardMaxFromEnv(env.RENDER_SHARD_MAX),
   );
-  if (filmShards >= 2 && filmScenes.length >= 2) {
+  if (filmShards >= 2 && filmScenes.length >= 2 && scatterEligibleMotion(a.motion_backend)) {
     const bagConfig: Record<string, Record<string, unknown>> = {
       ...(a.finish_config ?? {}),
       ...(a.speech_config ?? {}),
