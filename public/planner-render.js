@@ -422,6 +422,8 @@ async function submitRender() {
   // previous render's startedAt does not leak in. updateRenderProgress
   // re-anchors on the first non-IN_QUEUE status update.
   renderState.startedAt = null;
+  renderState.lastOut = null;
+  renderState.lastPoll = null;
   if (renderState.tickTimer !== null) {
     clearInterval(renderState.tickTimer);
     renderState.tickTimer = null;
@@ -691,6 +693,8 @@ async function submitScatterRender() {
   // vivijure#552: jobId set; the jobId/pollTimer guard now owns the button.
   renderState.submitting = false;
   renderState.startedAt = null;
+  renderState.lastOut = null;
+  renderState.lastPoll = null;
   if (renderState.tickTimer !== null) {
     clearInterval(renderState.tickTimer);
     renderState.tickTimer = null;
@@ -835,8 +839,11 @@ async function pollRender() {
   // cf#515: "about every Ns" because the interval is now jittered per client.
   // Stating a flat number here would be a claim the scheduler no longer makes.
   renderState.pollErrorStreak = 0;
+  const statusWords = window.renderEta && window.renderEta.statusLabel
+    ? window.renderEta.statusLabel(data.status)
+    : data.status.toLowerCase();
   setRenderStatus(
-    data.status.toLowerCase() + "; polling about every "
+    statusWords + "; polling about every "
       + Math.round(pollSchedule.POLL_BASE_MS / 1000) + "s",
     "loading",
   );
@@ -906,20 +913,30 @@ function updateRenderProgress(data) {
     renderState.startedAt = Date.now();
     savePersistedState();
   }
+  // cf#303: IN_QUEUE used to skip the widget because startedAt stays null
+  // (so a long queue wait does not skew ETA). That hid the only note that
+  // can tell a spinning-up worker from a stall. Show the bar + note without
+  // starting the clock.
+  const queued = data.status === "IN_QUEUE" || data.status === "SUBMITTED";
+  if (queued && renderState.startedAt === null) {
+    showQueuedProgress(data);
+    return;
+  }
   if (renderState.startedAt !== null) {
-    refreshProgressWidget(out);
+    refreshProgressWidget(out, data);
     if (renderState.tickTimer === null) {
       renderState.tickTimer = setInterval(() => {
         // No new data; just re-render the elapsed / ETA text against
         // the last-known progress fraction. cachedOut is the most
         // recent output we saw; null means we never observed one
         // (so the bar stays hidden until the first real update).
-        refreshProgressWidget(renderState.lastOut);
+        refreshProgressWidget(renderState.lastOut, renderState.lastPoll);
       }, 1000);
     }
     // Cache the last observed output so the tick timer can re-render
     // the elapsed / ETA without a fresh status snapshot.
     renderState.lastOut = out && typeof out === "object" ? out : renderState.lastOut;
+    renderState.lastPoll = data && typeof data === "object" ? data : renderState.lastPoll;
   }
 }
 
@@ -950,11 +967,49 @@ function computeProgressFraction(out) {
   return null;
 }
 
+// cf#303: one note element, driven by the FULL poll (status / delayTime /
+// backend_wait), not just data.output. Passing only the output bag is what
+// made IN_QUEUE and a running encode look the same.
+function paintWaitNote(poll) {
+  const coldEl = $("#planner-render-coldstart");
+  if (!coldEl) return;
+  const eta = window.renderEta;
+  let note = "";
+  if (eta) {
+    if (typeof eta.waitCopy === "function") note = eta.waitCopy(poll) || "";
+    else if (eta.isStalled(poll)) note = eta.STALL_NOTE;
+    else if (eta.isStartupWindow(poll)) note = eta.COLD_START_NOTE;
+  }
+  coldEl.hidden = !note;
+  coldEl.textContent = note;
+  coldEl.classList.toggle(
+    "planner-render-coldstart-stalled",
+    !!note && note === (eta && eta.STALL_NOTE),
+  );
+}
+
+// cf#303: IN_QUEUE / SUBMITTED window. The ETA clock is deliberately not
+// running (startedAt stays null). Show the bar at 0% and say the worker is
+// starting, so this is not a blank or stalled-looking panel.
+function showQueuedProgress(poll) {
+  const widget = $("#planner-render-progress");
+  if (widget) widget.hidden = false;
+  paintWaitNote(poll);
+  const pctEl = $("#planner-render-progress-pct");
+  const fillEl = $("#planner-render-progress-fill");
+  const etaEl = $("#planner-render-progress-eta");
+  const elapsedEl = $("#planner-render-progress-elapsed");
+  if (pctEl) pctEl.textContent = "0%";
+  if (fillEl) fillEl.style.width = "0%";
+  if (etaEl) etaEl.textContent = "starting up";
+  if (elapsedEl) elapsedEl.textContent = "0s";
+}
+
 // v0.44.0: paint the progress bar + ETA from the current renderState
 // + an output snapshot. Called both on a real status update and on
 // the 1s tick timer (with the cached last output) so the elapsed
 // counter advances smoothly between snapshots.
-function refreshProgressWidget(out) {
+function refreshProgressWidget(out, poll) {
   const widget = $("#planner-render-progress");
   if (!widget) return;
   const startedAt = renderState.startedAt;
@@ -967,28 +1022,9 @@ function refreshProgressWidget(out) {
   const elapsedEl = $("#planner-render-progress-elapsed");
   if (elapsedEl) elapsedEl.textContent = formatDuration(elapsedMs);
 
-  // cf#303: during the startup window the bar legitimately has no signal to
-  // show, and a bare 0% is indistinguishable from a stall. Say so in words.
-  // Words ONLY: the bar stays at its band floor, because inventing motion here
-  // would be exactly the dishonesty render-eta.js refuses.
-  //
-  // The stall branch is the necessary other half: the reassuring startup note
-  // must give way to the warning once the server says the phase has stopped
-  // advancing, or it would explain away the very failure it was added to make
-  // visible. The stall signal was already in the envelope and already shown in
-  // the history list, but never in this live panel.
-  const coldEl = $("#planner-render-coldstart");
-  if (coldEl) {
-    const eta = window.renderEta;
-    let note = "";
-    if (eta) {
-      if (eta.isStalled(out)) note = eta.STALL_NOTE;
-      else if (eta.isStartupWindow(out)) note = eta.COLD_START_NOTE;
-    }
-    coldEl.hidden = !note;
-    coldEl.textContent = note;
-    coldEl.classList.toggle("planner-render-coldstart-stalled", !!note && note === (eta && eta.STALL_NOTE));
-  }
+  // cf#303: prefer the full poll so IN_QUEUE / delayTime drive the note.
+  // Fall back to the output bag on a tick that predates lastPoll.
+  paintWaitNote(poll || out);
 
   const frac = computeProgressFraction(out);
   const pctEl = $("#planner-render-progress-pct");
@@ -1026,6 +1062,7 @@ function hideProgressWidget() {
     renderState.tickTimer = null;
   }
   renderState.lastOut = null;
+  renderState.lastPoll = null;
   renderState.startedAt = null;
   const widget = $("#planner-render-progress");
   if (widget) widget.hidden = true;
@@ -1177,7 +1214,11 @@ function renderDegradeNote(degrade, deliv, out) {
 
 function setJobStatusBadge(status) {
   const el = $("#planner-render-job-status");
-  el.textContent = status;
+  const label = window.renderEta && window.renderEta.statusLabel
+    ? window.renderEta.statusLabel(status)
+    : status;
+  el.textContent = label;
+  el.title = status && label && status !== label ? status : "";
   let kind = "running";
   if (status === "COMPLETED") kind = "done";
   if (status === "FAILED" || status === "CANCELLED" || status === "TIMED_OUT") kind = "error";
@@ -1225,6 +1266,8 @@ function dismissRenderResult() {
   renderState.currentProject = null;
   renderState.currentLabel = null;
   renderState.startedAt = null;
+  renderState.lastOut = null;
+  renderState.lastPoll = null;
   $("#planner-render-result").hidden = true;
   $("#planner-render-log-wrap").hidden = true;
   $("#planner-render-output").hidden = true;

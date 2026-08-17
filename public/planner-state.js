@@ -88,6 +88,11 @@ const renderState = {
   // the v0.38.0 localStorage stash so a refresh-mid-render keeps the
   // same baseline; cleared on terminal status.
   startedAt: null,
+  // Last poll output bag (progress fraction) and full poll view (status /
+  // delayTimeMs). The tick timer re-renders from these; lastPoll keeps the
+  // IN_QUEUE signal so a 1s tick cannot drop the cold-start note.
+  lastOut: null,
+  lastPoll: null,
   // v0.44.0: ms timer that re-renders the elapsed + ETA text on a
   // 1s cadence between SSE / poll updates. Without it the elapsed
   // counter only advances when a new status snapshot lands (every
