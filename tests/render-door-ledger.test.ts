@@ -187,6 +187,7 @@ const DOORS: DoorDecl[] = [
   {
     id: "1 panel MAIN render", route: "/api/storyboard/render", path: "/api/storyboard/render", seam: "film",
     body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
+            shardCount: 1,
             audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
     guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
@@ -263,6 +264,7 @@ const DOORS: DoorDecl[] = [
   {
     id: "6 agent / MCP / Slate", route: "/api/render/film", path: "/api/render/film", seam: "film",
     body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
+            shardCount: 1,
             audio_key: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
     guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
