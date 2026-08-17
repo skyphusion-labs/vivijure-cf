@@ -244,8 +244,8 @@ surface is public by design, and there is nothing to write.
   there is physically nothing to spend even if a request reached a spend path. The demo gate is the
   independent SECOND barrier at the front door; absent bindings are the first.
 - **Own seeded D1, no prod data.** The demo binds its own D1 seeded from
-  `migrations/demo/0001_demo_seed.sql` (the 26 captured module manifests + fictional projects/cast +
-  completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
+  `migrations/demo/0001_demo_seed.sql` (captured module manifests -- see GET /api/modules -- plus fictional
+  projects/cast + completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
   can never auto-apply to prod (see the seed file header) and carries high explicit ids (>=9000).
 - **`host.readonly` projection (`@skyphusion-labs/vivijure-core modules/registry` `isDemoEnv`, the structural twin of
   `isDemoMode`; change both together).** `GET /api/modules` projects `host.readonly = true` in demo

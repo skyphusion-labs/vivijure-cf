@@ -133,6 +133,19 @@ function resolveMotionBackendForPreflight() {
   return "";
 }
 
+// Wan LoRA readiness is a registry projection (cf#474): look up the selected
+// motion.backend module and ask plannerRegistry whether its schema is the
+// dual-expert LoRA door. No compiled module name.
+function motionIsWanLora(motionBackend) {
+  const registry = window.plannerRegistry;
+  if (!motionBackend || !registry || typeof registry.isWanLoraMotion !== "function") return false;
+  const mods = typeof registry.motionBackendModules === "function"
+    ? registry.motionBackendModules() || []
+    : [];
+  const m = mods.find((x) => x.name === motionBackend);
+  return !!registry.isWanLoraMotion(m);
+}
+
 // Returns true when the render may proceed, false when it should pause on a
 // freshly-shown warning. Re-fetches /api/cast so the readiness check is fresh.
 async function loraPreflightGate() {
@@ -148,7 +161,7 @@ async function loraPreflightGate() {
   await loadCast();
   const motionBackend = resolveMotionBackendForPreflight();
   const unready = window.loraPreflight.unreadyBoundLoraSlots(bindings, planState.castCatalog, {
-    motionBackend,
+    wanLora: motionIsWanLora(motionBackend),
   });
   if (unready.length === 0) {
     hideLoraPreflightWarning();

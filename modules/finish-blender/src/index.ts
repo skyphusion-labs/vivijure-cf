@@ -276,9 +276,14 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   // a failover would quietly restore the rented dependency this exists to remove while every
   // signal stayed green (same rule as the plane proxy, cp#321).
   //
-  // Here a failover would also HANG rather than merely cost money: the blender RunPod endpoint is
-  // parked at workersMax 0 as the rollback, so a job sent there would sit IN_QUEUE with no worker
-  // to take it. And unlike its polish-step siblings this module does NOT soft-degrade a failure
+  // An unbound submit does NOT hang. The blender endpoint is parked at workersMax 0 as the
+  // rollback (vivijure-blender#10), but the arm below calls reconcileRunpodEndpointWorkersMax
+  // before /run whenever RUNPOD_WORKERS_MAX is a positive finite number. That reconcile PATCHes
+  // workersMax up when live is below spec; it cannot tell an operator park from RunPod idle
+  // scale-down (the two states are the same integer). So an unbound submit either un-parks the
+  // endpoint and rents GPU (management-capable key) or fails the film (invoke-scoped key,
+  // reconcile !ok). Neither outcome is IN_QUEUE-with-no-worker (cf#530).
+  // And unlike its polish-step siblings this module does NOT soft-degrade a failure
   // into the chain -- a failed blender job fails the whole film -- so a silent second path is
   // exactly the wrong thing to have.
   const pool = await doorsFor(env);
