@@ -4,6 +4,9 @@ Vivijure is not one program. It is a small group of programs that work together.
 whole group the **constellation**. This page shows the map once. Every repo in the constellation
 shows this same map, so you always know where you are.
 
+Using a hosted studio (not installing one)? Start at
+[using-the-studio.md](using-the-studio.md).
+
 The **Studio** is the center. It is the control plane: it holds your projects, your storyboards,
 your cast, and it tells everything else what to do. You talk to the Studio; the Studio talks to
 everything else. Run that control plane on Cloudflare with
