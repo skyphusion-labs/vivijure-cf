@@ -345,13 +345,20 @@
     return loc === "cloud" || loc === "datacenter";
   }
 
-  // Default = RunPod Seedance when installed, else the first RunPod cloud i2v.
-  // CF doors and own-gpu stay on the picker; they are never the implicit default.
+  // Default = first RunPod cloud i2v (registry order / ui.order). Never a
+  // compiled-in module name. CF doors and own-gpu stay on the picker.
   function defaultSpeedDoor(mods) {
-    const list = Array.isArray(mods) ? mods : [];
-    const seedance = list.find((m) => moduleName(m) === "seedance");
-    if (seedance) return seedance;
-    return list.find((m) => isRunpodCloudDoor(m)) || null;
+    const list = (Array.isArray(mods) ? mods : []).filter(isRunpodCloudDoor);
+    const flagged = list.find((m) => uiHint(m, "default") === true || uiHint(m, "default") === "motion");
+    if (flagged) return flagged;
+    list.sort((a, b) => {
+      const ao = Number(uiHint(a, "order"));
+      const bo = Number(uiHint(b, "order"));
+      const an = Number.isFinite(ao) ? ao : 99;
+      const bn = Number.isFinite(bo) ? bo : 99;
+      return an - bn;
+    });
+    return list[0] || null;
   }
 
   function doorTitle(mod) {
@@ -379,7 +386,7 @@
   // from a module name -- that is exactly the brittle coupling this replaces).
   function localityTag(mod) {
     if (isQualityDoor(mod)) return { text: "Best look", kind: "byo" };
-    if (moduleName(mod) === "seedance" || (isRunpodCloudDoor(mod) && !localityValue(mod))) {
+    if (isRunpodCloudDoor(mod) && !localityValue(mod)) {
       return { text: "Faster", kind: "cloud" };
     }
     const loc = localityValue(mod);

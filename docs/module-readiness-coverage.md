@@ -14,10 +14,10 @@ the modules, that test fails.
 |---|---|---|---|
 | 1 | Modules in this repo | **31** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **15** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
-| 3 | Modules PUBLISHED as tenant bundles by a studio release | **20** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
-| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **15** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
+| 3 | Modules PUBLISHED as tenant bundles by a studio release | **24** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **19** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **15 of 31**.
+Population 4 is the one an operator actually sees, and it is **19 of 31**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -60,10 +60,10 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | audio-master | yes | no | no | **yes** | no |
 | beat-sync | yes | no | no | **yes** | no |
 | cast-image | yes | no | no | no | no |
-| cf-flux-3-video | yes | no | no | no | no |
-| cf-grok-video | yes | no | no | no | no |
-| cf-hh1-r2v | yes | no | no | no | no |
-| cf-seedance | yes | no | no | no | no |
+| cf-flux-3-video | yes | no | no | **yes** | **yes** |
+| cf-grok-video | yes | no | no | **yes** | **yes** |
+| cf-hh1-r2v | yes | no | no | **yes** | **yes** |
+| cf-seedance | yes | no | no | **yes** | **yes** |
 | cloud-keyframe | yes | no | no | no | no |
 | dialogue-gen | yes | no | no | no | no |
 | film-titles | yes | no | no | **yes** | no |
