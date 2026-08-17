@@ -122,6 +122,7 @@ function makeDocument(roots: El[]) {
 let mod: {
   renderTierPicker: (render: unknown) => void;
   renderBackendSelector: (mods: unknown[], wrap: El) => boolean;
+  defaultSpeedDoor: (mods: unknown[]) => { name?: string } | null;
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
   collect: () => { motion_backend?: string };
   restore: (o: unknown) => void;
@@ -155,8 +156,21 @@ function freshWrap(): El {
   return wrap;
 }
 
-describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)", () => {
-  it("renders 2 doors with NO preselection: select unselected, no radio checked", () => {
+function cloudBackend(name: string, label: string) {
+  return { name, provides: [{ label }], config_schema: {}, ui: { locality: "cloud" } };
+}
+
+function qualityBackend() {
+  return {
+    name: "own-gpu",
+    provides: [{ label: "Own GPU (Wan2.2 i2v)" }],
+    config_schema: {},
+    ui: { locality: "byo" },
+  };
+}
+
+describe("renderBackendSelector (default RunPod speed door; any other door is pickable)", () => {
+  it("2 unlabeled doors still have NO preselection (not a RunPod cloud door)", () => {
     const wrap = freshWrap();
     const shown = mod.renderBackendSelector([backend("a", "Door A"), backend("b", "Door B")], wrap);
     expect(shown).toBe(true);
@@ -164,10 +178,39 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     const sel = doc.getElementById("planner-motion-backend") as SelectEl;
     expect(sel).not.toBeNull();
     expect(sel.selectedIndex).toBe(-1);
-    expect(sel.value).toBe(""); // the #501 core guarantee: serving[0] is NOT auto-picked
+    expect(sel.value).toBe("");
     const radios = wrap.querySelectorAll(".planner-backend-radio");
     expect(radios.length).toBe(2);
     expect(radios.some((r) => r.checked === true)).toBe(false);
+  });
+
+  it("defaults to RunPod seedance when own-gpu and CF doors are also installed", () => {
+    const wrap = freshWrap();
+    const mods = [
+      qualityBackend(),
+      cloudBackend("seedance", "Seedance V1.5 Pro (cloud i2v)"),
+      cloudBackend("cf-seedance", "Seedance 2.0 (CF AI)"),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("seedance");
+    mod.renderBackendSelector(mods, wrap);
+    const doc = (globalThis as Record<string, unknown>).document as ReturnType<typeof makeDocument>;
+    const sel = doc.getElementById("planner-motion-backend") as SelectEl;
+    expect(sel.value).toBe("seedance");
+    const radios = wrap.querySelectorAll(".planner-backend-radio");
+    expect(radios.length).toBe(3);
+    const checked = radios.filter((r) => r.checked === true);
+    expect(checked.length).toBe(1);
+    expect(String(checked[0].value)).toBe("seedance");
+  });
+
+  it("does not default to own-gpu or a CF door when no RunPod cloud door is installed", () => {
+    const wrap = freshWrap();
+    const mods = [qualityBackend(), cloudBackend("cf-seedance", "Seedance 2.0 (CF AI)")];
+    expect(mod.defaultSpeedDoor(mods)).toBeNull();
+    mod.renderBackendSelector(mods, wrap);
+    const doc = (globalThis as Record<string, unknown>).document as ReturnType<typeof makeDocument>;
+    const sel = doc.getElementById("planner-motion-backend") as SelectEl;
+    expect(sel.value).toBe("");
   });
 
   it("single backend builds a hidden select carrying that backend, no radio (#502/S14 behavior)", () => {
@@ -180,7 +223,10 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     expect(sel.value).toBe("solo"); // explicit default preserved: only one serving backend
     expect(wrap.querySelectorAll(".planner-backend-radio").length).toBe(0); // nothing to pick
     // collect against the rendered single-backend state emits the explicit backend, never blocks
-    expect(mod.collectForSubmit("")).toEqual({ motion_backend: "solo" });
+    expect(mod.collectForSubmit("")).toEqual({
+      motion_backend: "solo",
+      keyframe_backend: "cloud-keyframe",
+    });
   });
 
   it("2+ doors: caption carries a 'required' cue until a door is picked, then clears", () => {
@@ -191,7 +237,7 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     expect(hint.textContent).toMatch(/^Required: pick which backend/i);
     mod.restore({ motion_backend: "a" }); // pick a door via the real restore path
     expect(hint.textContent).not.toMatch(/Required/);
-    expect(hint.textContent).toMatch(/^Pick which backend/i);
+    expect(hint.textContent).toMatch(/Any door is fine/i);
   });
 });
 
@@ -222,14 +268,32 @@ describe("collectForSubmit (vivijure#501: block submit until a door is chosen)",
 
   it("does NOT throw once a door is picked; carries the choice through", () => {
     selectDoc("a");
-    const out = mod.collectForSubmit("") as { motion_backend?: string };
+    const out = mod.collectForSubmit("") as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("a");
+    expect(out.keyframe_backend).toBe("cloud-keyframe");
   });
 
   it("does NOT throw when the pick arrives via expert JSON", () => {
     selectDoc("");
-    const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string };
+    const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("b");
+    expect(out.keyframe_backend).toBe("cloud-keyframe");
+  });
+
+  it("defaults own-gpu motion to cloud-keyframe stills (fastest path)", () => {
+    selectDoc("");
+    const out = mod.collectForSubmit('{"motion_backend":"own-gpu"}') as {
+      motion_backend?: string;
+      keyframe_backend?: string;
+    };
+    expect(out.motion_backend).toBe("own-gpu");
+    expect(out.keyframe_backend).toBe("cloud-keyframe");
+  });
+
+  it("keeps an explicit keyframe_backend", () => {
+    selectDoc("a");
+    const out = mod.collectForSubmit('{"keyframe_backend":"keyframe"}') as { keyframe_backend?: string };
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
   it("never blocks when zero backends are installed (no select rendered)", () => {

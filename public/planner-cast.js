@@ -458,6 +458,6 @@ function refreshCastLoraWarning() {
     el.textContent = "";
     return;
   }
-  paintLoraWarning(el, unready, "Continue without consistency, or train them on Cast first.");
+  paintLoraWarning(el, unready, "Portraits are enough for a first film.");
 }
 

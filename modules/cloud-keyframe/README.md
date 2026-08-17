@@ -16,7 +16,7 @@ whichever fits the render -- GPU (SDXL + trained cast LoRAs) or cloud (reference
 ```mermaid
 flowchart LR
   cast["cast.image<br/>(character portraits)"]
-  kf["cloud-keyframe<br/>(FLUX-2 / nano-banana) · 20"]
+  kf["cloud-keyframe<br/>(FLUX-2 / nano-banana) · 5"]
   clips["clips<br/>(motion.backend: cloud i2v)"]
   dlg["dialogue<br/>(TTS)"]
   sp["speech<br/>(enhance)"]
@@ -82,7 +82,7 @@ To self-host (service `vivijure-module-cloud-keyframe`, bound into the core as `
 ## Contract
 
 - **Hook**: `keyframe` (cardinality `pick_one`; the first render stage). `ui { section: "keyframe",
-  order: 20 }`.
+  order: 5 }` (leads the GPU keyframe module so omitted stills take this faster path).
 - **Input** (`KeyframeInput`): `project`, `bundle_key` (the storyboard bundle -- self-describing:
   storyboard + cast portraits), optional `shot_ids` (a subset to (re)generate). `pretrained_loras` is
   ignored (this module trains no LoRA; identity is the portraits).

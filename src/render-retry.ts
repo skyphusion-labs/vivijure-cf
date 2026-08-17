@@ -16,10 +16,8 @@ import {
   dialogueLinesFromBundleScenes,
   resolveExplicitLineVoices,
 } from "@skyphusion-labs/vivijure-core/dialogue-lines";
-import {
-  filmJobToPollView,
-  mapRenderOverridesToModuleConfigs,
-} from "@skyphusion-labs/vivijure-core/film-render-bridge";
+import { filmJobToPollView } from "@skyphusion-labs/vivijure-core/film-render-bridge";
+import { mapRenderOverridesToModuleConfigs } from "./film-render-bridge";
 import { coerceQualityTier } from "@skyphusion-labs/vivijure-core/runpod-types";
 import type { RenderRow } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";

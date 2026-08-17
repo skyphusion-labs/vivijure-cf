@@ -61,7 +61,10 @@
   const PIPELINE_PHASES = [
     { key: "keyframe", start: 0.0, span: 0.35 },
     { key: "i2v", start: 0.35, span: 0.5 },
+    { key: "shards", start: 0.0, span: 0.85 },
     { key: "finish", start: 0.85, span: 0.08 },
+    { key: "gather", start: 0.85, span: 0.08 },
+    { key: "finishing", start: 0.85, span: 0.08 },
     { key: "assemble", start: 0.93, span: 0.05 },
     { key: "mux", start: 0.98, span: 0.02 },
   ];
@@ -79,19 +82,19 @@
     queued: "Waiting to start",
     keyframe: "Drawing keyframes",
     i2v: "Animating shots",
+    shards: "Animating shots",
     finish: "Finishing shots",
-    assemble: "Assembling the film",
+    gather: "Putting the film together",
+    finishing: "Putting the film together",
+    assemble: "Putting the film together",
     mux: "Adding audio",
   };
 
-  // cf#303: what the panel says while RunPod is starting a worker. It says WHY,
-  // not just what: the wait is a deliberate cost trade, not a fault, and naming
-  // the reason is what turns a stalled-looking bar into an explained wait. Kept
-  // here (not in the DOM layer) so it is single-sourced and unit-testable.
+  // cf#303: what the panel says while a worker is starting. Filmmaker-facing:
+  // name the wait, do not lecture about GPU economics or name the vendor.
+  // Kept here (not in the DOM layer) so it is single-sourced and unit-testable.
   const COLD_START_NOTE =
-    "Getting a GPU going. The first few minutes go into starting a worker and "
-    + "loading the model, before any frame is drawn. We do not keep GPUs "
-    + "running idle, which is what keeps rendering costs down.";
+    "Starting up. The first minutes are the model coming online, then frames appear.";
 
   // cf#303: shown when the server's own stall signal fires (the envelope's
   // `stalled` flag, authored by the orchestrator past KEYFRAME_STALL_SECONDS).
@@ -208,7 +211,8 @@
   function isStartupWindow(out) {
     if (!out || typeof out !== "object") return false;
     if (out.stalled === true) return false;
-    if (typeof out.phase !== "string" || out.phase.toLowerCase() !== "keyframe") return false;
+    const phase = typeof out.phase === "string" ? out.phase.toLowerCase() : "";
+    if (phase !== "keyframe" && phase !== "shards") return false;
     if (typeof out.progress === "number" && out.progress > 0) return false;
     if (typeof out.scene_index === "number" && out.scene_index > 1) return false;
     return true;
