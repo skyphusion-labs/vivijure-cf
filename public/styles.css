@@ -1260,6 +1260,19 @@ body.sw-open .sw-dock { transform: none; }
   font: inherit; font-weight: 700; cursor: pointer;
 }
 
+/* cf#525: valid token, wrong scope. Not the paste-once overlay. */
+.scope-denied-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 22px; font-size: 13px; font-weight: 600;
+  color: var(--ink); background: color-mix(in srgb, var(--accent-2) 14%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-2) 40%, var(--line));
+}
+.scope-denied-dismiss {
+  flex: 0 0 auto; background: transparent; border: 1px solid var(--line);
+  color: var(--muted); border-radius: 6px; padding: 4px 8px;
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+
 /* Demo read-only banner (injected by readonly-gate.js when the host projects host.readonly). A
    projection of the registry, not a hardcoded demo page: absent host.readonly, this never renders. */
 .readonly-banner {

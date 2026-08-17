@@ -52,3 +52,12 @@ export function authorizeRoute(route: Scope, credential: Scope | null): boolean 
  *  against the shim's OWN regex, read out of the shim, in tests/route-scope-authz.test.ts. */
 export const AUTHZ_DENY_REASON =
   "insufficient scope: this credential is not authorized for this route";
+
+/** Machine-readable discriminator for an authorization refusal (cf#525).
+ *
+ *  Authn failures (missing/bad token) also 403, and their `error` strings mention "API token" so
+ *  the paste-once shim fires. Status alone cannot tell the two apart. This code is attached ONLY
+ *  to the authorizeRoute deny, never to an auth-gate 403, so a client that already authenticated
+ *  can tell "re-issue with operator scope" from "paste a live token". A prober without a valid
+ *  credential never reaches this path. */
+export const AUTHZ_DENY_CODE = "scope_denied";
