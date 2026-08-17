@@ -103,7 +103,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.5",
+  version: "0.1.6",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -236,7 +236,8 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   const slot_refs: Record<string, string[]> = {};
   // Stage every used slot; for film_ref=cast:<slot> also stage the anchor slot even if no selected
   // shot features it, so its portrait can seed the film-wide reference.
-  const slotsToStage = usedSlots(selected);
+  const namedSlots = usedSlots(selected);
+  const slotsToStage = [...new Set([...namedSlots, ...Object.keys(registry)])];
   if (filmPlan.mode === "cast" && filmPlan.slot && !slotsToStage.includes(filmPlan.slot)) {
     slotsToStage.push(filmPlan.slot);
   }
@@ -260,7 +261,12 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
       keys.push(key);
     }
     if (keys.length === 0) {
-      return { ok: false, error: "cloud-keyframe: slot " + slot + " has no portrait in the bundle (cannot render its shots)" };
+      // Scatter shards often get one empty-slot shot. Skip unused registry
+      // slots that have no file. Still fail if this shard NAMED the slot.
+      if (namedSlots.includes(slot)) {
+        return { ok: false, error: "cloud-keyframe: slot " + slot + " has no portrait in the bundle (cannot render its shots)" };
+      }
+      continue;
     }
     slot_refs[slot] = keys;
   }
