@@ -9,12 +9,6 @@ export function shardMaxFromEnv(raw: unknown): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_SHARD_MAX;
 }
 
-/** Scatter fans a film across our GPU workers. Cloud i2v (Seedance, Veo, Flux,
- *  Kling, Wan cloud, ...) is rate-limited per key. Only own-gpu may scatter. */
-export function scatterEligibleMotion(backend: unknown): boolean {
-  return backend === "own-gpu";
-}
-
 /** omitted -> min(shots, defaultMax). explicit N -> clamp [1, shots]. 2 is not a default. */
 export function resolveShardCount(
   requested: unknown,

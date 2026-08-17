@@ -160,7 +160,6 @@ function selectedMotionBackend() {
 
 function plannerShardCount(shotN) {
   const shots = Math.max(0, Math.floor(Number(shotN)) || 0);
-  if (selectedMotionBackend() !== "own-gpu") return 1;
   const implicit = shots === 0 ? 1 : Math.min(shots, 20);
   const input = $("#planner-scatter-shards");
   if (!input) return implicit;
@@ -372,8 +371,7 @@ function updateScatterGate() {
   const hasLoras = Object.keys(castLoras).length > 0;
 
   let reason = "";
-  if (selectedMotionBackend() !== "own-gpu") reason = "own-gpu only (cloud i2v is one job)";
-  else if (scenes.length < 2) reason = "needs >= 2 shots";
+  if (scenes.length < 2) reason = "needs >= 2 shots";
   else if (!hasLoras) reason = "every character needs a trained LoRA first";
 
   checkbox.disabled = !!reason;
@@ -383,7 +381,7 @@ function updateScatterGate() {
     reasonEl.textContent = reason;
     reasonEl.hidden = !reason;
   }
-  if (shardWrap) shardWrap.hidden = selectedMotionBackend() !== "own-gpu";
+  if (shardWrap) shardWrap.hidden = false;
   plannerShardCount(scenes.length);
 }
 
@@ -489,11 +487,7 @@ async function submitScatterRender() {
     renderState.submitting = false;
     return;
   }
-  if (selectedMotionBackend() !== "own-gpu") {
-    setRenderStatus("scatter is own-gpu only; cloud i2v is one film job", "error");
-    renderState.submitting = false;
-    return;
-  }
+
   const castLoras = buildCastLoraSubmit();
   if (Object.keys(castLoras).length === 0) {
     setRenderStatus(

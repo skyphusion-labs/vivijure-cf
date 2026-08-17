@@ -738,6 +738,13 @@
     // opts.keyframesOnly so a keyframes-only preview is never falsely blocked here.
     const keyframesOnly = !!(opts && opts.keyframesOnly);
     const backendSel = document.getElementById("planner-motion-backend");
+    // Cloud i2v + GPU keyframe is the mix Conrad saw: stills on own-gpu,
+    // motion on Seedance. Pair them. Explicit keyframe_backend still wins.
+    if (overrides.motion_backend && overrides.motion_backend !== "own-gpu") {
+      if (!overrides.keyframe_backend) overrides.keyframe_backend = "cloud-keyframe";
+    } else if (overrides.motion_backend === "own-gpu") {
+      if (!overrides.keyframe_backend) overrides.keyframe_backend = "keyframe";
+    }
     if (!keyframesOnly && backendSel && !overrides.motion_backend) {
       const names = Array.from(backendSel.options || [])
         .map((o) => (o.textContent || o.value || "").trim())
