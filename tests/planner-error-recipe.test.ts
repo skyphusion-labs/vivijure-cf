@@ -29,6 +29,10 @@ describe("classifyError", () => {
     expect(classifyError("looks like a real person")).toBe("flagged");
   });
 
+  it("maps gather generic to shard_dead (real shard error is preferred server-side)", () => {
+    expect(classifyError("1 shot(s) can never arrive (owning shard dead): shot_02")).toBe("shard_dead");
+  });
+
   it("maps finish-door infra failures to finish_door", () => {
     expect(classifyError("video-finish URL not configured")).toBe("finish_door");
     expect(classifyError("VIDEO-FINISH URL NOT CONFIGURED")).toBe("finish_door");

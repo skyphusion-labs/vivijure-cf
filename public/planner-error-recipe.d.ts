@@ -1,7 +1,7 @@
 // Types for the pure helpers in planner-error-recipe.js (cf#649).
 // Hand-authored (no build step) so tests typecheck under the CI tsc gate.
 
-export type ErrorRecipeKind = "keyframes" | "flagged" | "finish_door" | "unknown";
+export type ErrorRecipeKind = "keyframes" | "flagged" | "finish_door" | "shard_dead" | "unknown";
 
 export interface ErrorRecipe {
   kind: ErrorRecipeKind;
@@ -14,6 +14,7 @@ export interface ErrorRecipe {
 export const KEYFRAMES_MSG: string;
 export const FLAGGED_MSG: string;
 export const FINISH_DOOR_MSG: string;
+export const SHARD_DEAD_MSG: string;
 export const UNKNOWN_MSG: string;
 
 export function stringifyError(raw: unknown): string;

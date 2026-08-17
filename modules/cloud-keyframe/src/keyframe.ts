@@ -5,23 +5,21 @@
 import type { BundleScene, RegistryCharacter } from "./bundle";
 import type { KeyframeShot } from "./contract";
 
-// The image models this module can drive. FLUX-2 klein-9b is the default: cheapest (fixed 4-step),
-// fast, identity holds well, and it honors width/height so aspect is controllable. nano-banana-pro is
-// the quality-up option (more photoreal, slightly more faithful identity), pricier + slower.
+// RunPod Nano Banana 2 only. FLUX on Cloudflare 3030'd hosted stills; RunPod
+// promotes us, Cloudflare does not. Old flux / nano-banana-pro ids clamp here.
 export const MODELS = [
-  "@cf/black-forest-labs/flux-2-klein-9b",
-  "google/nano-banana-pro",
-  "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-dev",
+  "google/nano-banana-2",
 ] as const;
 export type Model = (typeof MODELS)[number];
+
+export const RUNPOD_NANO2_ENDPOINT = "google-nano-banana-2-edit";
 
 export const MIN_DIM = 512;
 export const MAX_DIM = 1536;
 
-/** Clamp a model id to one this module drives (default flux-2-klein-9b). */
-export function clampModel(v: unknown): Model {
-  return (MODELS as readonly string[]).includes(v as string) ? (v as Model) : MODELS[0];
+/** Clamp a model id to one this module drives (default RunPod Nano Banana 2). */
+export function clampModel(_v: unknown): Model {
+  return MODELS[0];
 }
 
 /** Clamp a keyframe dimension to the model-safe range, default `fallback`. */
