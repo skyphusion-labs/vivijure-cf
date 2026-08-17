@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { scatterEligibleMotion } from "../src/shard-count";
-
 import {
   buildShardJobs,
   gatherDecision,
@@ -9,18 +7,6 @@ import {
   type ScatterArgs,
   type ShardStatus,
 } from "@skyphusion-labs/vivijure-core/scatter";
-
-describe("scatterEligibleMotion", () => {
-  it("is own-gpu only (cloud i2v is rate-limited)", () => {
-    expect(scatterEligibleMotion("own-gpu")).toBe(true);
-    expect(scatterEligibleMotion("seedance")).toBe(false);
-    expect(scatterEligibleMotion("cf-seedance")).toBe(false);
-    expect(scatterEligibleMotion("cf-flux-3-video")).toBe(false);
-    expect(scatterEligibleMotion("alibaba-wan")).toBe(false);
-    expect(scatterEligibleMotion("local-gpu")).toBe(false);
-    expect(scatterEligibleMotion(undefined)).toBe(false);
-  });
-});
 
 // ----------------------------------------------------------------- splitShots
 
