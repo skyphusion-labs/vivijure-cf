@@ -416,6 +416,18 @@ jobs:
           # cf#279: the 6 RunPod-polling modules bind the studio D1 as TELEMETRY_DB. The SAME repo
           # secret the core render already consumes -- no new deploy configuration was introduced.
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          # Public HTTPS door origins. fill-module-placeholders.sh writes these into
+          # film-titles / subtitle [vars]. Missing here used to ship VIDEO_FINISH_URL=""
+          # so title cards passthrough:no-video-finish-url while the studio Worker had
+          # the real origin. Same vars as "Render core wrangler.toml" below.
+          VIDEO_FINISH_URL: ${{ vars.VIDEO_FINISH_URL }}
+          IMAGE_PREP_URL: ${{ vars.IMAGE_PREP_URL }}
+          AUDIO_BEAT_SYNC_URL: ${{ vars.AUDIO_BEAT_SYNC_URL }}
+          AUDIO_MIX_URL: ${{ vars.AUDIO_MIX_URL }}
+          AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
+          FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
+          SPEECH_UPSCALE_DOORS: ${{ vars.SPEECH_UPSCALE_DOORS }}
+          FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
           # #520: the 5 media modules carry a REPLACE_WITH_VPC_*_ID placeholder (no hardcoded prod VPC
           # service id in the tracked tomls). Filled per-module below from these repo secrets.
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}

@@ -51,6 +51,16 @@ describe("hosted module tomls carry no Workers VPC", () => {
     expect(hits).toEqual([]);
   });
 
+  it("Deploy module workers env passes VIDEO_FINISH_URL (not only the core render step)", () => {
+    const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+    const deployMods = ci.split("- name: Deploy module workers")[1];
+    const renderCore = ci.split("- name: Render core wrangler.toml")[1];
+    expect(deployMods, "Deploy module workers step missing").toBeTruthy();
+    expect(renderCore, "Render core wrangler.toml step missing").toBeTruthy();
+    const deployEnv = deployMods.split("- name:")[0];
+    expect(deployEnv).toMatch(/VIDEO_FINISH_URL:\s*\$\{\{\s*vars\.VIDEO_FINISH_URL\s*\}\}/);
+  });
+
   it("the three door modules declare their DOORS var", () => {
     const need: Record<string, string> = {
       "finish-upscale": "FINISH_UPSCALE_DOORS",
