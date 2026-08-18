@@ -1097,7 +1097,7 @@ describe("advanceFilmJob partial keyframe recovery (#619)", () => {
     expect(done?.job.keyframes_incomplete).toBeUndefined(); // full set -> no degrade
   });
 
-  it("at the ceiling with a partial set: delivers what rendered, records the drop, never a silent complete (#619)", async () => {
+  it("at the ceiling with a partial set: FAILS the film (every shot must return)", async () => {
     const { env, read } = kfRecoveryEnv(
       kfJob({
         created_at: Date.now() - (PHASE_HARD_DEADLINE_SECONDS + 60) * 1000,
@@ -1106,13 +1106,10 @@ describe("advanceFilmJob partial keyframe recovery (#619)", () => {
       ["renders/neon/keyframes/shot_01.png", "renders/neon/keyframes/shot_02.png"],
     );
     const r = await advanceFilmJob(orch(env), "film-619");
-    // advanced (delivered the 2 rendered scenes) rather than hanging or hard-failing the whole film...
-    expect(r?.job.phase).toBe("done");
-    expect(r?.job.keyframe_recovered).toBe(true);
-    // ...but LOUDLY: the drop is recorded so the film never reports a clean complete over the rebased total.
-    expect(r?.job.keyframes_incomplete).toEqual({ adopted: 2, expected: 4, dropped: ["shot_03", "shot_04"] });
-    // and it is surfaced on the film summary the API returns.
-    expect(summarizeFilm(read(), null).keyframes_incomplete).toEqual({ adopted: 2, expected: 4, dropped: ["shot_03", "shot_04"] });
+    expect(r?.job.phase).toBe("failed");
+    expect(r?.job.error).toMatch(/incomplete film -- keyframes 2\/4/);
+    expect(r?.job.error).toMatch(/shot_03/);
+    expect(read().phase).toBe("failed");
   });
 });
 
@@ -1189,21 +1186,15 @@ describe("advanceToClips partial keyframe set on the NORMAL completion path (#62
     ...over,
   });
 
-  it("delivers-with-degrade when the module completes with a PARTIAL set: advances but records the drop LOUDLY (#622)", async () => {
-    // The exact #622 shape: a keyframe module reports done with 2 of 4 keyframes. The old code built the
-    // clip job from the 2 matched shots and dropped shot_03/shot_04 silently, so the film reported a clean
-    // complete over a rebased total of 2. It must now advance delivering the 2 rendered scenes, but record
-    // the drop so no counter is silently rebased.
+  it("FAILS when the module completes with a PARTIAL set (every shot must return)", async () => {
     const { env, read } = kfCompletionEnv(kfJob(), [
       { shot_id: "shot_01", keyframe_key: "renders/neon/keyframes/shot_01.png" },
       { shot_id: "shot_02", keyframe_key: "renders/neon/keyframes/shot_02.png" },
     ]);
     const r = await advanceFilmJob(orch(env), "film-622");
-    expect(r?.job.phase).toBe("clips"); // advanced (delivered what rendered), did NOT hard-fail the whole film
-    expect(r?.job.keyframes_incomplete).toEqual({ adopted: 2, expected: 4, dropped: ["shot_03", "shot_04"] });
-    // surfaced on the film summary the API returns, and persisted (not just in-memory)
-    expect(summarizeFilm(read(), null).keyframes_incomplete).toEqual({ adopted: 2, expected: 4, dropped: ["shot_03", "shot_04"] });
-    expect(read().keyframes_incomplete).toEqual({ adopted: 2, expected: 4, dropped: ["shot_03", "shot_04"] });
+    expect(r?.job.phase).toBe("failed");
+    expect(r?.job.error).toMatch(/incomplete film -- keyframes 2\/4/);
+    expect(read().phase).toBe("failed");
   });
 
   it("does NOT flag a degrade when the module completes with the FULL set (#622)", async () => {
@@ -1219,7 +1210,7 @@ describe("advanceToClips partial keyframe set on the NORMAL completion path (#62
     const { env, read } = kfCompletionEnv(kfJob(), []);
     const r = await advanceFilmJob(orch(env), "film-622");
     expect(r?.job.phase).toBe("failed");
-    expect(r?.job.error).toMatch(/produced none of the requested shots/);
+    expect(r?.job.error).toMatch(/incomplete film -- keyframes 0\/4/);
     expect(read().keyframes_incomplete).toBeUndefined(); // a hard fail is not a delivered-with-degrade
   });
 });

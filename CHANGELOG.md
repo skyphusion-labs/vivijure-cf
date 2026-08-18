@@ -5,6 +5,18 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.5 -- 2026-08-18
+
+### chore(deps): pin vivijure-core 1.22.3
+
+Incomplete films are FAILED. Every storyboard shot must return.
+
+### fix(motion): Wan 2.7 is a talking door
+
+The model invents speech even on a silent board. We labeled it silent
+and sent no script. It is native_audio. Give it the storyboard line.
+Cannot lock the Cast sample.
+
 ## v1.33.4 -- 2026-08-18
 
 ### fix(finish): give film-titles the video-finish URL
