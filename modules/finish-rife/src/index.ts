@@ -22,7 +22,7 @@ import {
 } from "./contract";
 import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
-  passthroughOutput,
+  passthroughOutput, sourceClipKey,
   runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS,
   type PollState,
 } from "./finish";
@@ -52,7 +52,7 @@ interface Env {
 // against a transcribed copy in the test file. finish-lipsync already exported its own.
 export const MANIFEST: ModuleManifest = {
   name: "finish-rife",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["finish"],
   max_invocation_seconds: 900,
@@ -211,30 +211,32 @@ function pollPassthrough(st: PollState, reason: string, detail?: string): PollRe
 
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
-  if (!input?.shot_id || !input?.clip_key) {
-    return { ok: false, error: "finish-rife: input needs shot_id and clip_key" };
+  const clipKey = sourceClipKey(input);
+  if (!input?.shot_id || !clipKey) {
+    return { ok: false, error: "finish-rife: input needs shot_id and a clip (clip_key or video_url)" };
   }
+  const resolved: FinishInput = { ...input, clip_key: clipKey };
   const { route, endpointId } = await runpodCreds(env);
   if (!route.credential || !endpointId) {
     // Degrade, but say WHICH: absent-key-with-endpoint is propagation, not misconfiguration (cf#114).
-    return passthrough(input, credentialDegradeReason(route, endpointId) ?? "no-runpod-secrets");
+    return passthrough(resolved, credentialDegradeReason(route, endpointId) ?? "no-runpod-secrets");
   }
 
   const cfg = coerceConfig(req.config);
   // Nothing enabled: a real, intentional no-op (NOT a degrade) -- skip the GPU round-trip.
   if (!cfg.interpolate && cfg.face_restore === "none") {
-    return passthrough(input, "nothing-enabled", { degraded: false });
+    return passthrough(resolved, "nothing-enabled", { degraded: false });
   }
 
   try {
     const r = await fetch(runpodBase(route, endpointId) + "/run", {
       method: "POST",
       headers: { ...auth(route), "content-type": "application/json" },
-      body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
+      body: JSON.stringify(buildRunPodBody(resolved, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(input, "runpod-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) return passthrough(resolved, "runpod-run-failed", { detail: "HTTP " + r.status });
     const jobId = ((await r.json()) as { id?: string }).id;
-    if (!jobId) return passthrough(input, "no-jobid");
+    if (!jobId) return passthrough(resolved, "no-jobid");
     // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
     // permanently -- and a failure RATE needs this denominator, not only the failures.
     const submittedAt = Date.now();
@@ -242,11 +244,11 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
     return {
       ok: true,
       pending: true,
-      poll: encodePoll({ jobId, shotId: input.shot_id, clipKey: input.clip_key, srcFps: input.src_fps ?? 24, frames: input.frames ?? 0, submittedAt }),
+      poll: encodePoll({ jobId, shotId: resolved.shot_id, clipKey: clipKey, srcFps: resolved.src_fps ?? 24, frames: resolved.frames ?? 0, submittedAt }),
       jobId,  // cf#289/#296: RunPod cannot enumerate jobs, so a caller that is not handed the id at submit can never reach it.
     };
   } catch (e) {
-    return passthrough(input, "exception", { detail: (e as Error).message });
+    return passthrough(resolved, "exception", { detail: (e as Error).message });
   }
 }
 
