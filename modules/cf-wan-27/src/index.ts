@@ -105,7 +105,6 @@ const MANIFEST: ModuleManifest = {
     max_seconds: 15,
     first_last: true,
     seed: true,
-    voice_ref: false,
   },
 };
 
