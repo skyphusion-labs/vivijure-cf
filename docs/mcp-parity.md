@@ -13,11 +13,11 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **93** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Voice-sample routes added for Cast talking-voice preview + attach. |
-| Panel-reachable | **72** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (72) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
+| Studio API route entries | **92** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. Voice-sample routes added for Cast talking-voice preview + attach. |
+| Panel-reachable | **71** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (71) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. |
 | MCP tools | **42** | 41 curated tools plus the `studio_request` escape hatch. |
 | Reached by a CURATED tool | **41** | Route entries with a purpose-built tool. |
-| Reachable via `studio_request` | **90** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. |
+| Reachable via `studio_request` | **89** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. |
 | Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
 | Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **90 of 93** route
-entries there is nothing an agent cannot invoke. Curated coverage is 41 of 93 (44%), and that number
+`studio_request` sends any method to any path with the studio bearer, so for **89 of 92** route
+entries there is nothing an agent cannot invoke. Curated coverage is 41 of 92 (45%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 90 a low number costs discoverability, not reach, and 52
+contract to find the route. For those 89 a low number costs discoverability, not reach, and 51
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
@@ -143,7 +143,7 @@ are being reconciled in vivijure-cf#334. A curated submit tool with a blocked po
 capability, and 29 tools built on an unreconciled door would freeze the divergence. A test in
 `vivijure-mcp` asserts no curated tool aims at one, and is written to be deleted when #334 lands.
 
-The remaining 39 panel-reachable routes with no curated tool are, method-aware, **35**: the 9 blocked
+The remaining 38 panel-reachable routes with no curated tool are, method-aware, **34**: the 9 blocked
 render-door routes, the 19 deliberately left on `studio_request` (internal helpers, module
 config, session), and `POST /api/cast/:id/train-wan-lora`, panel-reachable since vivijure-local#329
 and with no curated tool yet. Module config write stays on the hatch for a structural reason rather
@@ -168,7 +168,7 @@ the flattering direction, which is exactly why they survived.
 - **Reached by a curated tool (41) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
-- **Route entries (93) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+- **Route entries (92) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
   registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
   added explicitly; a second would be invisible.
 - **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.
@@ -271,7 +271,6 @@ structurally invisible to the MCP.
 | `POST` | `/api/render/film` | no | `submit_film` | json |
 | `GET` | `/api/render/film/:id` | no | `poll_film` | json |
 | `POST` | `/api/storyboard/renders/:id/regen-shot` | yes | -- | json |
-| `POST` | `/api/storyboard/render/scatter` | yes | -- | json |
 | `POST` | `/api/storyboard/render-from-keyframes` | yes | -- | json |
 | `GET` | `/api/storyboard/render/:jobId` | yes | -- | json |
 | `DELETE` | `/api/storyboard/render/:jobId` | yes | -- | json |

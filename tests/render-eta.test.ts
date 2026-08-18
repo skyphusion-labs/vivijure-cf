@@ -38,18 +38,6 @@ describe("progressFraction phase bands (#115)", () => {
     expect(cursor).toBeCloseTo(1, 6);
   });
 
-  it("scatter shards use shot progress across most of the bar", () => {
-    expect(progressFraction(out({ phase: "shards", progress: 0 }))).toBeCloseTo(0, 6);
-    expect(progressFraction(out({ phase: "shards", progress: 2 / 7 }))).toBeCloseTo(0.85 * (2 / 7), 5);
-    expect(phaseLabel("shards")).toBe("Animating shots");
-    expect(phaseLabel("gather")).toBe("Putting the film together");
-  });
-
-  it("scatter with no shots done is a startup window", () => {
-    expect(isStartupWindow(out({ phase: "shards", progress: 0, scene_index: 1 }))).toBe(true);
-    expect(isStartupWindow(out({ phase: "shards", progress: 0.3, scene_index: 3 }))).toBe(false);
-  });
-
   it("keyframe sits at the band floor (no per-keyframe signal)", () => {
     expect(progressFraction(out({ phase: "keyframe", scene_index: 1, scene_total: 6 }))).toBeCloseTo(0, 6);
   });

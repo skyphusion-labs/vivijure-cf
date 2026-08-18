@@ -1,7 +1,4 @@
-// Scatter is for silent cloud drafts. Talking clips and the look doors
-// (own-gpu / local-gpu) stay on one film so voice and face can hold.
-
-const LOOK_DOORS = new Set(["own-gpu", "local-gpu"]);
+// Talking-door helpers for the film submit filter.
 
 export function generateAudioOn(config: Record<string, unknown> | undefined): boolean {
   if (!config) return true;
@@ -31,16 +28,4 @@ export function doorCanSpeakLines(
   mod: { usage?: { native_audio?: boolean } } | undefined,
 ): boolean {
   return !!(mod && mod.usage && mod.usage.native_audio === true);
-}
-
-export function talkingScatterAllowed(
-  mod: { name?: string; usage?: { native_audio?: boolean; scatter_native_audio?: boolean } } | undefined,
-  generateAudio: boolean,
-): boolean {
-  if (isTalkingClip(mod, generateAudio)) return false;
-  const name = mod && mod.name;
-  if (name && LOOK_DOORS.has(name)) return false;
-  const usage = mod && mod.usage;
-  if (usage && usage.scatter_native_audio === false) return false;
-  return true;
 }

@@ -36,7 +36,6 @@ import { describe, it, expect, vi } from "vitest";
 const h = vi.hoisted(() => ({
   film: [] as Array<Record<string, unknown>>,
   fromKeyframes: [] as Array<Record<string, unknown>>,
-  scatter: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
@@ -50,19 +49,6 @@ vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
     startFilmFromKeyframes: vi.fn(async (_e: unknown, args: Record<string, unknown>) => {
       h.fromKeyframes.push(args);
       return { film_id: "film-ledger-kf", phase: "clips", scenes: args.scenes, project: "p", created_at: 0 };
-    }),
-  };
-});
-vi.mock("@skyphusion-labs/vivijure-core/scatter-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/scatter-orchestrator")>();
-  return {
-    ...actual,
-    startScatterRender: vi.fn(async (_e: unknown, args: Record<string, unknown>) => {
-      h.scatter.push(args);
-      return {
-        scatter_id: "scatter-ledger", phase: "keyframe", project: "p", created_at: 0,
-        shard_film_ids: [], expected_shot_ids: ["shot_01", "shot_02"],
-      };
     }),
   };
 });
@@ -153,7 +139,7 @@ const post = (path: string, body: unknown) =>
 // --- the declaration --------------------------------------------------------------------------
 // yes      = the door carries it into the start function
 // no       = the door does not, and that is the divergence this issue is about
-// internal = resolved inside core rather than passed at the door (scatter reads D1 last_storyboard)
+// internal = resolved inside core rather than passed at the door
 // n/a      = does not apply to this door's phase shape, and the reason is recorded
 type Cell = "yes" | "no" | "internal" | "n/a";
 
@@ -161,7 +147,7 @@ interface DoorDecl {
   id: string;
   route: string;              // the API_ROUTES pattern, for the derivation check
   path: string;               // the concrete path to drive
-  seam: "film" | "fromKeyframes" | "scatter";
+  seam: "film" | "fromKeyframes";
   body: Record<string, unknown>;
   caps: { dialogue: Cell; quality_tier: Cell; audio_key: Cell; film_titles: Cell };
   guards: { config_shape: Cell; unsafe_bundle_key: Cell; motion_backend_preflight: Cell; motion_config_preflight: Cell };
@@ -202,15 +188,6 @@ const DOORS: DoorDecl[] = [
     caps: { dialogue: "yes", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
     guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
     na_reasons: { dialogue: "derived inside hSubmitRender from the bundle storyboard when the panel omits dialogue_lines (cf#334 door 1)" },
-  },
-  {
-    id: "2 panel scatter", route: "/api/storyboard/render/scatter", path: "/api/storyboard/render/scatter", seam: "scatter",
-    body: { bundleKey: BUNDLE, shotIds: ["shot_01", "shot_02"], shardCount: 2, motion_backend: "alibaba-wan",
-            qualityTier: "draft", audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
-    caps: { dialogue: "internal", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
-    // C2 landed here: this door adopted the shared pre-flight and gained the #696 config-shape gate.
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
-    na_reasons: { dialogue: "resolved inside startScatterRender from D1 last_storyboard, and only when project_id is non-null" },
   },
   {
     id: "3 panel render-from-keyframes", route: "/api/storyboard/render-from-keyframes",
@@ -341,7 +318,7 @@ function observed(args: Record<string, unknown> | undefined) {
 }
 
 async function drive(d: DoorDecl) {
-  h.film = []; h.fromKeyframes = []; h.scatter = [];
+  h.film = []; h.fromKeyframes = [];
   const res = await worker.fetch(post(d.path, d.body), env, ctx);
   // Read the body on every drive, not only on failure: a refusal that does not say WHY sends the
   // next reader to the wrong file, and a verdict without its evidence cannot be audited.

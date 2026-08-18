@@ -7,10 +7,10 @@ import { describe, it, expect, vi } from "vitest";
 // the API boundary; and when the schema itself over-promised (the #577 trigger: seedance advertised
 // 1080p, the provider rejects it), the value sailed through the clamp and failed EVERY shot ~17min
 // of final-tier keyframes later. Pure helpers carry the judging; handler tests pin the wiring on
-// all three keyframe-burning submit paths (hStartFilm, hSubmitRender, hScatterRender).
+// the keyframe-burning submit paths (hStartFilm, hSubmitRender). Scatter submit is retired.
 
 // ---- handler-wiring stubs (same pattern as motion-backend-preflight.test.ts) ---------------------
-const h = vi.hoisted(() => ({ started: 0, scatterStarted: 0 }));
+const h = vi.hoisted(() => ({ started: 0 }));
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
@@ -29,17 +29,6 @@ vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
   return { ...actual, readBundleScenes: vi.fn(async () => []) };
 });
-vi.mock("@skyphusion-labs/vivijure-core/scatter-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/scatter-orchestrator")>();
-  return {
-    ...actual,
-    startScatterRender: vi.fn(async () => {
-      h.scatterStarted++;
-      return { cancelled: false, phase: "keyframe", project: "p", film_key: undefined, shard_film_ids: [], expected_shot_ids: [] };
-    }),
-  };
-});
-
 import worker from "../src/index";
 import { configPreflightViolations, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { MODULE_API, type ConfigSchema, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -204,22 +193,5 @@ describe("hSubmitRender motion override-config preflight (#577 handler)", () => 
     );
     expect(res.status).toBe(201);
     expect(h.started).toBe(1);
-  });
-});
-
-describe("hScatterRender motion override-config preflight (#577 handler)", () => {
-  it("a bad per-module override config bounces 400 before any shard dispatch", async () => {
-    h.scatterStarted = 0;
-    const res = await worker.fetch(
-      post("/api/storyboard/render/scatter", {
-        bundleKey: "bundles/verify.tar.gz", shotIds: ["shot_01", "shot_02"], motion_backend: "seedance",
-        renderOverrides: { config: { seedance: { resolution: "1080p" } } },
-      }),
-      env(), ctx,
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: string };
-    expect(body.error).toContain("480p, 720p");
-    expect(h.scatterStarted).toBe(0);
   });
 });

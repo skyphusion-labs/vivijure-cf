@@ -100,9 +100,9 @@ export interface RenderShapeProfile {
   /** The message this door uses when scenes are missing. Preserved verbatim per door. */
   scenesRequiredMessage: string;
   /**
-   * The minimum renderable-unit count this door accepts. One for the film doors; TWO for scatter,
-   * where a single shard is not a scatter at all. Declared rather than defaulted, because a default
-   * of 1 would silently accept a degenerate scatter and the failure would surface much later as a
+   * The minimum renderable-unit count this door accepts. One for the film doors.
+   * Declared rather than defaulted so a door that needs more than one unit cannot
+   * silently accept a degenerate request. The failure would otherwise surface as a
    * sharding bug rather than here as a refusal.
    */
   minSceneCount?: number;

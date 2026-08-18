@@ -236,8 +236,8 @@ the same deny reason as any other bad token so a prober learns nothing, and a
   (`badRequest` -> 400, `notFound` -> 404). Some handlers return a non-throw error body directly
   (e.g. `503`, `422`, `502`, `504`); those are documented per route. Any other uncaught error returns
   `500 { "error": "internal error" }`.
-- A `:id` that addresses a film job is the `film-<...>` string id; a `:jobId` may be `film-*` or
-  `scatter-*`. Render-library / cast / project ids are opaque public ids (UUID strings); cast
+- A `:id` that addresses a film job is the `film-<...>` string id; a `:jobId` is `film-*` only
+  (poll of leftover `scatter-*` ids returns 410). Render-library / cast / project ids are opaque public ids (UUID strings); cast
   lookups additionally accept the internal numeric row id (#576).
 - No route requires a request auth field (see 1.1).
 
@@ -245,7 +245,7 @@ the same deny reason as any other bad token so a prober learns nothing, and a
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
+**92 route entries** (distinct `method` + `pattern`) over **74 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -317,8 +317,7 @@ unchanged.
 | 45 | POST | `/api/render/film` | 2.20 |
 | 46 | GET | `/api/render/film/:id` | 2.21 |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
-| 48 | POST | `/api/storyboard/render/scatter` | 2.23 |
-| 49 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
+| 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
 | 51 | DELETE | `/api/storyboard/render/:jobId` | 2.24 |
 | 52 | GET | `/api/storyboard/renders` | 2.25 |
@@ -1010,7 +1009,7 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
 | `cast_loras` | `{ [slot]: castId }` | no | -- | Binds storyboard character slots (A, B, ...) to cast ids. Drives the keyframe LoRAs AND per-slot voice resolution. A bound cast whose LoRA is not ready is rejected `400` (the untrained-cast message), symmetric with `/api/storyboard/render` (#738) -- never a silent drop to a generic render. |
-| `shard_count` | number | no | min(shots, 20) | Alias `shardCount`. Parallel shard jobs. Omitted uses the pool. `1` stays a single `film-*` job. `>= 2` starts a `scatter-*` parent; poll the same `GET /api/render/film/:id`. Cap with `RENDER_SHARD_MAX`. |
+| `shard_count` | number | no | ignored | Alias `shardCount`. Film scatter is retired. A submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage, not a split-motion door. |
 
 **Dialogue voicing precedence (#582), one rule, both paths:**
 
@@ -1047,14 +1046,14 @@ inserted so the film shows in history.
 
 Advances the job one tick and returns its summary; keeps the history row in sync.
 
-**Request:** path `:id` = the `film-<...>` or `scatter-<...>` id. No body.
+**Request:** path `:id` = the `film-<...>` id. No body. A leftover `scatter-*` id returns 410.
 
 **Response 200:** `{ ok: true, ...FilmSummary, download_url? }`:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `film_id` | string | The job id (`film-*` or `scatter-*`). |
-| `phase` | FilmPhase or scatter phase | Film: `keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed`. Scatter: `shards, gather, mux, finishing, done, failed`. |
+| `film_id` | string | The job id (`film-*` only). |
+| `phase` | FilmPhase | `keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed`. |
 | `error` | string \| undefined | Set when `phase === "failed"`. |
 | `clips` | `JobSummary` \| undefined | `{ total, done, failed, pending, complete }`, when a clips job exists. |
 | `clip_deliveries` | `ClipDelivery[]` \| undefined | #707 duration honesty: one entry per DONE shot whose backend reported usable numbers -- `{ shot_id, planned_seconds, delivered_seconds, fps, frames, distilled? }`. `delivered_seconds` is `frames/fps` (ms-rounded), so a fixed-grid backend's clamp is visible instead of silent. `distilled` (#705) is `true` when a distilled model variant rendered the clip, carried only when the backend reported it. Absent until a backend reports numbers -- absence is honest, never fabricated. |
@@ -1065,7 +1064,7 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
 | `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
-| `wan_lora_projection` | `{ injected, dropped }` \| undefined | cf#392: counts from the host Wan cast-LoRA projection into `alibaba-wan-lora` (`high_noise_loras` / `low_noise_loras`). `injected` = cast slots whose expert pair was presigned into the motion config; `dropped` = slots skipped by the per-pass cap. Present only when at least one slot was injected or dropped; absent on non-Wan / no-Wan-cast renders (absence is honest, never fabricated zeros). Also relayed on the planner poll view (`GET /api/storyboard/render/:jobId` -> `output.wan_lora_projection`) and on the scatter 201 body. Paired with the `film.wan_lora_projection` structured event. |
+| `wan_lora_projection` | `{ injected, dropped }` \| undefined | cf#392: counts from the host Wan cast-LoRA projection into `alibaba-wan-lora` (`high_noise_loras` / `low_noise_loras`). `injected` = cast slots whose expert pair was presigned into the motion config; `dropped` = slots skipped by the per-pass cap. Present only when at least one slot was injected or dropped; absent on non-Wan / no-Wan-cast renders (absence is honest, never fabricated zeros). Also relayed on the planner poll view (`GET /api/storyboard/render/:jobId` -> `output.wan_lora_projection`). Paired with the `film.wan_lora_projection` structured event. |
 | `download_url` | string \| undefined | Presigned GET of the finished film (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; a later poll re-issues a fresh one), added only when `phase === "done"` and `film_key` is set. |
 
 **404** `{ "error": "film job not found" }` for an unknown id.
@@ -1079,56 +1078,13 @@ Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"
 `400 "render has no bundle_key"`; `400 "shot <id> not in bundle storyboard"`;
 `503 { ok:false, error: "no keyframe module installed ..." }`; `422 { ok:false, error }` on submit failure.
 
-### 2.23 POST /api/storyboard/render/scatter
+### 2.23 Scatter (retired)
 
-Sharded (scatter) render submission: split shots across shards.
-
-**Request body:**
-
-| Field | Type | Req | Default | Meaning |
-|-------|------|-----|---------|---------|
-| `bundleKey` | string | yes | -- | Render bundle. |
-| `shotIds` | string[] | yes (>= 2) | -- | Shots to render. |
-| `shardCount` | number | no | min(shots, 20) | Parallel shard jobs. 1 is a normal film. Omitted uses the worker pool, not 2. Cap with `RENDER_SHARD_MAX`. |
-| `project` | string | no | derived | Project namespace. |
-| `qualityTier` | tier | no | `"final"` | Quality. |
-| `castLoras` | `{ [slot]: cast_id }` | no | `{}` | Bound cast LoRAs. OPTIONAL (#739): absent/empty -> shards render generic, like the film/render paths. A PRESENT-but-not-ready binding is rejected `400` (the untrained-cast message), symmetric with #738 -- never a silent drop. |
-| `renderOverrides` | object | no | -- | Per-module overrides. |
-| `motion_backend` | string | yes | -- | Motion choice (top-level, or via `renderOverrides.motion_backend`). An omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#504; scatter has no keyframes-only mode). |
-| `audioKey` | string | no | -- | Audio bed. |
-| `projectId` | number/string | no | -- | History project id. |
-| `film_titles` | `{ title: {text, subtitle?}, credits: {lines[]} }` | no | -- | Title + credit cards (#273); same shape as 2.20 `hStartFilm`. |
-
-**Response 201:** `{ ok: true, jobId, status }`. Errors: `400 "bundleKey required"`;
-`400 "bundleKey must be a plain relative key under bundles/"` (path-format guard);
-`400 "shotIds[] required (>= 2)"`; `400` (the untrained-cast message) if a bound cast LoRA is not ready (#739); `422 { ok: false, error }` on submit failure. Poll a `scatter-*`
-job id via `GET /api/storyboard/render/:jobId` (2.24).
-
-**Submit durability (runnability-first, #290).** A scatter submit spans **two stores** (D1
-render rows + the R2 scatter doc), so no single `DB.batch` can make it atomic. The ordering is
-therefore deliberate and DB-agnostic:
-
-1. Write the **R2 docs first** -- per-shard film docs, then the scatter doc (`saveScatterJob`).
-   The render is **runnable the instant the scatter doc lands**, because the poll/advance path
-   (2.24) loads ONLY the R2 doc. (`finalizeScatterSubmit` owns this.)
-2. Then write the D1 rows: the parent insert, then the shard rows as **one all-or-nothing
-   `DB.batch`**, each statement wrapped in `withD1Retry`. The D1 rows are the UI-list projection,
-   not the runnability gate.
-3. A persistent D1 row-write failure is **logged (`d1.error`) and swallowed, never failing the
-   submit**; the render is already runnable from step 1.
-4. **Self-heal:** the poll/advance path calls `ensureScatterRenderRow`, which reconstructs a
-   missing UI-list row from the R2 doc (the doc carries `project_id` + `render_overrides` for a
-   faithful rebuild; a cheap existence read makes it a no-op once present).
-
-This closes the orphan-row class (a UI row with no runnable doc) that the old D1-first ordering
-produced on any blip between steps. The retry/error events (`d1.retry`, `d1.exhausted`,
-`d1.error`) are queryable in Loki (see `docs/observability.md`), so the next blip is a greppable
-histogram rather than a silent throw.
+Scatter (split motion/film across shards) is retired. Keyframe parallelism is a single-film keyframe stage, not this door. Poll of `scatter-*` ids returns 410.
 
 ### 2.24 GET / DELETE /api/storyboard/render/:jobId -- poll / cancel
 
-`:jobId` may be `film-*` or `scatter-*`. A legacy / unknown id returns `404 { error: "unknown or
-legacy render job id (film-* or scatter-* only)", jobId }`.
+`:jobId` is `film-*` only. A leftover `scatter-*` id returns `410 { error: "Scatter is retired. Start a single film.", jobId }`. A legacy / unknown id returns `404 { error: "unknown or legacy render job id (film-* only)", jobId }`.
 
 - **GET** advances the job one tick and returns the RunPod-shaped poll view (2.24.1). For a
   cloud-finalized job it also writes cloud/hybrid progress to the history row.
@@ -1136,11 +1092,11 @@ legacy render job id (film-* or scatter-* only)", jobId }`.
 
 #### 2.24.1 RunPod-shaped poll view (RunpodJobView)
 
-Returned by the storyboard render submit + this route + the regen/scatter submits.
+Returned by the storyboard render submit + this route + the regen submit.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `jobId` | string | The `film-<...>` / `scatter-<...>` job id. |
+| `jobId` | string | The `film-<...>` job id. |
 | `status` | `"IN_PROGRESS"\|"COMPLETED"\|"FAILED"\|"CANCELLED"` | Folded from the job phase. |
 | `statusRaw` | string | The raw phase (or `"CANCELLED"`). |
 | `output` | object \| undefined | On COMPLETED: `{ output_key, project, mode }` (+ `keyframes`/`scenes` for keyframes-only, + `clips`/`model` for derived animation, + `sidecar_key` when a soft `.srt` subtitle sidecar was produced). While IN_PROGRESS: phase progress `{ phase, scene_index, scene_total, project, progress?, last_progress_at, stalled?, stall_seconds? }`. |
@@ -2073,7 +2029,7 @@ are documented here for total coverage. The API returns them wrapped (`{ cast }`
 | Field | Type | Meaning |
 |-------|------|---------|
 | `id` | number | Primary key. |
-| `job_id` | string | The `film-*` / `scatter-*` job id. |
+| `job_id` | string | The `film-*` job id. Leftover `scatter-*` history rows poll as 410. |
 | `project` | string | Project namespace. |
 | `bundle_key` | string | Render bundle R2 key. |
 | `quality_tier` | string | The tier used. |
@@ -2139,7 +2095,7 @@ points unless marked **host**.
 | Per-shot clip job (`ClipJob`, `JobSummary`, `summarizeJob`) | `@skyphusion-labs/vivijure-core` `render-orchestrator` |
 | Render-override parsing, quality tiers, `RenderConfigProjection` | `@skyphusion-labs/vivijure-core` `render-module-config` |
 | RunPod-shaped poll view, override mapping, scene normalization | `@skyphusion-labs/vivijure-core` `film-render-bridge` (host `src/film-render-bridge.ts` re-exports + D1 row map) |
-| Scatter orchestration | `@skyphusion-labs/vivijure-core` `scatter-orchestrator` |
+| Scatter orchestration | retired (host 410 on leftover `scatter-*` ids; core helper remains for id-shape only) |
 | Voice catalog | `@skyphusion-labs/vivijure-core` `voices` |
 | Caption cue timing (FilmFinishCaption source) | `@skyphusion-labs/vivijure-core` `captions` |
 | Cast / project / render row schemas | `src/cast-db.ts`, `src/storyboard-projects-db.ts`, `src/renders-db.ts` |

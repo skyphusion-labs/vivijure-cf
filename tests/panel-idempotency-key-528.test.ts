@@ -32,9 +32,8 @@ describe("cf#528 panel source sends idempotency_key on every film submit", () =>
     expect(STATE).toContain("attempt === 0");
   });
 
-  it("planner render, scatter, from-keyframes, finalize, and retry all go through postFilmSubmit", () => {
+  it("planner render, from-keyframes, finalize, and retry all go through postFilmSubmit", () => {
     expect(RENDER).toContain('postFilmSubmit("/api/storyboard/render"');
-    expect(RENDER).toContain('postFilmSubmit("/api/storyboard/render/scatter"');
     expect(BUNDLE).toContain('postFilmSubmit("/api/storyboard/render-from-keyframes"');
     expect(ROW).toContain('postFilmSubmit(');
     expect(ROW).toMatch(/\/finalize"/);

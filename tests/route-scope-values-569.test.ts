@@ -152,7 +152,7 @@ describe("cf#569 every API_ROUTES scope value is pinned", () => {
 
   it("pin table and API_ROUTES agree in both directions", () => {
     // Denominator in the message: an empty-vs-empty pass would otherwise read the same
-    // as 93-of-93. The counts above already refuse 0-of-0 (PINNED_ROUTE_COUNT is 93).
+    // as 92-of-92. The counts above already refuse 0-of-0 (PINNED_ROUTE_COUNT is 92).
     expect(
       diff,
       `asserted ${EXPECTED_ROUTE_SCOPES.length} of ${API_ROUTES.length} routes`,

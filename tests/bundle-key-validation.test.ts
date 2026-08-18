@@ -87,7 +87,6 @@ describe("render submit routes reject a malformed bundleKey with 400", () => {
   const routes: Array<{ path: string; body: (key: string) => unknown }> = [
     { path: "/api/storyboard/render", body: (bundleKey) => ({ bundleKey, scenes: SCENES }) },
     { path: "/api/storyboard/render-from-keyframes", body: (bundleKey) => ({ bundleKey }) },
-    { path: "/api/storyboard/render/scatter", body: (bundleKey) => ({ bundleKey, shotIds: ["shot_01", "shot_02"] }) },
     { path: "/api/render/film", body: (bundle_key) => ({ bundle_key, scenes: SCENES }) },
     { path: "/api/storyboard/renders/adopt", body: (bundleKey) => ({ jobId: "job-adopt-1", bundleKey }) },
   ];
