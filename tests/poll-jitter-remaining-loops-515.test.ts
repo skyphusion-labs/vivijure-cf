@@ -54,8 +54,10 @@ describe("cf#515: every remaining poll loop arms through the shared policy", () 
     // SEPARATE property from jitter, so both directions are still asserted; they are
     // now named calls rather than a hand-rolled counter, which is what removed the
     // declaration-satisfies-the-assertion trap this test used to have to dodge.
-    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(1);
-    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(1);
+    // Two loops: LoRA training + Cast voice-sample preview. Each has one error arm
+    // and one success arm. A drop to 1 means a loop went flat again.
+    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(2);
+    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(2);
   });
 
   it("planner-audio.js routes BOTH arms through one scheduler and backs off", () => {

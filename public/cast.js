@@ -274,6 +274,7 @@
   }
 
   function populateEditor(c) {
+    stopVoiceSamplePoll();
     setEditorStatus("");
     $("#cast-name").value = c.name;
     $("#cast-bible").value = c.bible || "";
@@ -449,12 +450,83 @@
     if (keep) keep.disabled = true;
   }
 
-  let voiceSampleTimer = 0;
+  const VOICE_SAMPLE_POLL_MS = 2500;
+  let voiceSampleLoop = null;
+  let voiceSampleId = null;
+  let voiceSampleInflight = false;
+
+  function voiceSampleLoopObj() {
+    if (!voiceSampleLoop) {
+      voiceSampleLoop = pollPolicy().createLoop({
+        baseMs: VOICE_SAMPLE_POLL_MS,
+        run: function () {
+          if (voiceSampleId !== null) pollVoiceSample(voiceSampleId);
+        },
+        isActive: function () {
+          return voiceSampleId !== null && state.selectedId === voiceSampleId;
+        },
+      });
+    }
+    return voiceSampleLoop;
+  }
+
+  function schedulePollVoiceSample(id) {
+    voiceSampleId = id;
+    voiceSampleLoopObj().arm();
+  }
+
+  function stopVoiceSamplePoll() {
+    voiceSampleId = null;
+    if (voiceSampleLoop) voiceSampleLoop.stop();
+  }
+
+  async function pollVoiceSample(id) {
+    if (voiceSampleInflight) {
+      schedulePollVoiceSample(id);
+      return;
+    }
+    if (state.selectedId !== id) {
+      stopVoiceSamplePoll();
+      return;
+    }
+    voiceSampleInflight = true;
+    try {
+      const data = await api("/api/cast/" + id + "/voice-sample");
+      if (data.status === "pending") {
+        voiceSampleId = id;
+        voiceSampleLoopObj().armAfterSuccess();
+        return;
+      }
+      stopVoiceSamplePoll();
+      if (data.status === "failed") {
+        setVoiceSampleStatus(data.error || "Sample failed.", true);
+        return;
+      }
+      const player = $("#cast-voice-player");
+      if (player && data.clip_key) {
+        player.src = artifactUrl(data.clip_key);
+        player.hidden = false;
+      }
+      const keep = $("#cast-voice-keep");
+      if (keep) keep.disabled = false;
+      const honor = data.module_name === "cf-seedance"
+        ? "Listen. If you keep it, Seedance will use this exact take."
+        : "Listen. " + (data.module_name || "This door") + " cannot lock this take. Seedance can.";
+      setVoiceSampleStatus(honor);
+    } catch (e) {
+      setVoiceSampleStatus((e.message || "poll error") + " (retrying)", true);
+      voiceSampleId = id;
+      voiceSampleLoopObj().armAfterError();
+    } finally {
+      voiceSampleInflight = false;
+    }
+  }
+
   async function generateVoiceSample(seconds) {
     const id = state.selectedId;
     if (!id) return;
     const line = ($("#cast-voice-line") && $("#cast-voice-line").value) || "";
-    setVoiceSampleStatus("Generating " + seconds + "s sample…");
+    setVoiceSampleStatus("Generating " + seconds + "s sample...");
     const keep = $("#cast-voice-keep");
     if (keep) keep.disabled = true;
     try {
@@ -463,29 +535,9 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ seconds, line }),
       });
-      const poll = async () => {
-        const data = await api("/api/cast/" + id + "/voice-sample");
-        if (data.status === "pending") {
-          voiceSampleTimer = setTimeout(poll, 2500);
-          return;
-        }
-        if (data.status === "failed") {
-          setVoiceSampleStatus(data.error || "Sample failed.", true);
-          return;
-        }
-        const player = $("#cast-voice-player");
-        if (player && data.clip_key) {
-          player.src = artifactUrl(data.clip_key);
-          player.hidden = false;
-        }
-        if (keep) keep.disabled = false;
-        const honor = data.module_name === "cf-seedance"
-          ? "Listen. If you keep it, Seedance will use this exact take."
-          : "Listen. " + (data.module_name || "This door") + " cannot lock this take. Seedance can.";
-        setVoiceSampleStatus(honor);
-      };
-      poll();
+      schedulePollVoiceSample(id);
     } catch (e) {
+      stopVoiceSamplePoll();
       setVoiceSampleStatus(e.message || "Could not start the sample.", true);
     }
   }

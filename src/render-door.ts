@@ -53,6 +53,8 @@ export interface ResolvedCast {
   wanPretrained: Record<string, { high: string; low: string }>;
   castIds: Record<string, number>;
   voices: Record<string, string>;
+  /** Slot -> kept Cast preview clip key (Seedance reference_video). */
+  voiceRefs: Record<string, string>;
 }
 
 /**
@@ -365,6 +367,7 @@ export async function preflightRenderModules(
       wanPretrained: cast.wanPretrained,
       castIds: cast.castIds,
       voices: cast.voices,
+      voiceRefs: cast.voiceRefs,
     },
   };
 }

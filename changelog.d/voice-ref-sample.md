@@ -3,4 +3,5 @@
 Cast can generate a short clip from the portrait, or attach a clip
 or reference audio the filmmaker already has. Cloudflare Seedance
 sends that clip as reference_video. Veo, Flux, Grok, and Vidu cannot
-lock the take; the Cast page and each door's limits say so.
+lock the take; the Cast page and each door's limits say so. Pins
+vivijure-core 1.21.8 (voice_ref_url / voice_ref_keys).

@@ -248,10 +248,7 @@ export async function animateFromPreview(
       lines = resolveExplicitLineVoices(lines, bundleScenes, resolved.voices);
       dialogue_lines = lines;
     }
-    voice_ref_keys = voiceRefKeysFromScenes(
-      bundleScenes,
-      (resolved as { voiceRefs?: Record<string, string> }).voiceRefs,
-    );
+    voice_ref_keys = voiceRefKeysFromScenes(bundleScenes, resolved.voiceRefs);
   } catch {
     // best-effort: missing bundle dialogue must not block finalize
   }
@@ -280,7 +277,7 @@ export async function animateFromPreview(
       parent_render_id: args.parent.id,
       audio_key: args.audioKey,
       dialogue_lines,
-      ...({ voice_ref_keys }),
+      voice_ref_keys,
       idempotency_key: readIdempotencyKey({ idempotency_key: args.idempotency_key }),
     } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] },
     modules,

@@ -167,13 +167,13 @@ export async function keepCastVoiceSample(env: Env, castId: number): Promise<{ v
   if (!cast) fail(404, "cast member");
   const state = await getState(env, cast.public_id);
   if (!state?.clip_key) fail(400, "No finished sample to keep. Generate one and wait for it.");
-  const row = await updateCast(env, castId, { voice_ref_key: state.clip_key } as Parameters<typeof updateCast>[2]);
+  const row = await updateCast(env, castId, { voice_ref_key: state.clip_key });
   if (!row) fail(404, "cast member");
   return { voice_ref_key: state.clip_key };
 }
 
 export async function clearCastVoiceSample(env: Env, castId: number): Promise<void> {
-  await updateCast(env, castId, { voice_ref_key: null } as Parameters<typeof updateCast>[2]);
+  await updateCast(env, castId, { voice_ref_key: null });
 }
 
 /** Map talking shots to the kept Cast sample. Slot comes from the storyboard line. */
@@ -249,7 +249,7 @@ async function persistVoiceRef(
   const ext = VOICE_REF_EXT[sniffed] || "bin";
   const key = "cast/" + castId + "/voice-ref." + ext;
   await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: sniffed } });
-  const row = await updateCast(env, castId, { voice_ref_key: key } as Parameters<typeof updateCast>[2]);
+  const row = await updateCast(env, castId, { voice_ref_key: key });
   if (!row) fail(404, "cast member");
   return { voice_ref_key: key, mime: sniffed };
 }

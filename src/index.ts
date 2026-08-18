@@ -1054,7 +1054,7 @@ const hSubmitRender: Handler = async (req, env) => {
     dialogue_lines: panelDialogue,
     style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
     voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
-    voice_ref_keys: voiceRefKeysFromScenes(scenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], (panelPre.cast as { voiceRefs?: Record<string, string> }).voiceRefs),
+    voice_ref_keys: voiceRefKeysFromScenes(scenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], panelPre.cast.voiceRefs),
     idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
@@ -1172,7 +1172,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
       lines = resolveExplicitLineVoices(lines, parsedScenes, resolved.voices);
       fromKfDialogue = lines;
     }
-    fromKfVoiceRefs = (resolved as { voiceRefs?: Record<string, string> }).voiceRefs;
+    fromKfVoiceRefs = resolved.voiceRefs;
   } catch { /* best-effort */ }
 
   const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
@@ -1912,7 +1912,7 @@ const hStartFilm: Handler = async (req, env) => {
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
     idempotency_key: readIdempotencyKey(a),
-    ...({ voice_ref_keys: voiceRefKeysFromScenes(filmScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], (resolvedLoras as { voiceRefs?: Record<string, string> }).voiceRefs) }),
+    voice_ref_keys: voiceRefKeysFromScenes(filmScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], resolvedLoras.voiceRefs),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
