@@ -5,6 +5,15 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.4 -- 2026-08-18
+
+### fix(finish): give film-titles the video-finish URL
+
+Module deploy never passed VIDEO_FINISH_URL into
+fill-module-placeholders.sh, so vivijure-module-film-titles shipped
+VIDEO_FINISH_URL="". Title cards passthrough'd. The studio Worker
+already had the real origin. Same vars as the core render step.
+
 ## v1.33.3 -- 2026-08-18
 
 ### fix(spend): no implicit daily ceiling
