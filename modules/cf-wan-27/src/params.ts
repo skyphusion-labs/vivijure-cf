@@ -36,15 +36,38 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
   };
 }
 
+export type AlibabaMedia = { type: "first_frame" | "last_frame" | "driving_audio"; url: string };
+
+/**
+ * CF publishes a flat i2v postcard (image, prompt, duration). Alibaba Wan 2.7
+ * is first_frame + optional last_frame + optional driving_audio. CF Workers AI
+ * is a passthrough to Alibaba. We send BOTH shapes: keep `image` so a strict
+ * CF schema still runs, and send `media[]` so a proxy can lip-sync.
+ *
+ * Without driving_audio Alibaba invents speech. With it, lips follow the file.
+ */
+export function buildAlibabaMedia(input: MotionBackendInput): AlibabaMedia[] {
+  const media: AlibabaMedia[] = [{ type: "first_frame", url: input.keyframe_url }];
+  if (input.last_keyframe_url) media.push({ type: "last_frame", url: input.last_keyframe_url });
+  if (input.voice_ref_url) media.push({ type: "driving_audio", url: input.voice_ref_url });
+  return media;
+}
+
 export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
+  const media = buildAlibabaMedia(input);
   const params: Record<string, unknown> = {
     image: input.keyframe_url,
     prompt: input.prompt,
     duration: clampDuration(input.seconds),
     resolution: config.resolution,
     watermark: false,
+    media,
   };
   if (typeof config.seed === "number") params.seed = config.seed;
+  const last = media.find((m) => m.type === "last_frame");
+  const audio = media.find((m) => m.type === "driving_audio");
+  if (last) params.last_frame = last.url;
+  if (audio) params.driving_audio = audio.url;
   return params;
 }
 
