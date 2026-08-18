@@ -5,6 +5,19 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.1 -- 2026-08-18
+
+### fix(finish): RIFE keeps the clip key and does not kill the film
+
+Own-iron finish_clip needs clip_key. Core used to strip it after
+presign; RIFE then fail-closed a completed 10-shot. Recover the key
+from video_url if it is gone, forward both to RunPod, and only refuse
+when there is no clip at all.
+
+### chore(deps): pin vivijure-core 1.22.1
+
+Keep clip_key after finish presign so own-iron RIFE can read R2.
+
 ## v1.33.0 -- 2026-08-18
 
 ### fix(render): show cold start vs stall (cf#303)
