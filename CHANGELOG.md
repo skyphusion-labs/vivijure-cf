@@ -5,6 +5,13 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.2 -- 2026-08-18
+
+### chore(deps): pin vivijure-core 1.22.2
+
+Cast LoRA keys are loras/, not project-scoped. Keyframe no longer
+fail-closes a banked adapter.
+
 ## v1.33.1 -- 2026-08-18
 
 ### fix(finish): RIFE keeps the clip key and does not kill the film
