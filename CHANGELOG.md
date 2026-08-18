@@ -5,6 +5,140 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.0 -- 2026-08-18
+
+### fix(render): show cold start vs stall (cf#303)
+
+The film poll already carries `IN_QUEUE` (module `wait=accepted`) and
+the direct RunPod path already carries `delayTimeMs`. The live panel
+ignored both: it hid the progress widget for the whole queue wait, then
+inferred "startup" from "keyframe with nothing drawn", so a spinning-up
+worker and a running encode (or a stall) still read the same.
+
+The panel now reads the poll. `IN_QUEUE` / `delayTime` / `accepted`
+shows "Starting up" and the startup note. A running encode shows
+"Rendering" and no note. The stall verdict still replaces the note.
+No raw `IN_QUEUE` in the visible text; the token stays on the title.
+The bar still does not invent motion.
+
+### docs(user): 8th-grade hosted-studio how-to
+
+User-facing path for people USING a hosted studio (project, story,
+cast, render, watch). Not the installer. Closes the parked docs
+deliverable.
+
+### Fixed: scope denial is distinguishable from a dead credential (cf#525)
+
+A consumer token hitting an operator route still returns **403**. The body now
+carries `code: "scope_denied"` (and header `X-Vivijure-Authz`) so a client can
+tell authorization-failure from a missing/bad token. `AUTHZ_DENY_REASON` still
+does not trip the paste-once prompt. The panel shows a banner: re-issue with
+operator scope.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/525
+
+Panel film submits send a per-click `idempotency_key`. The host
+forwards it into core so a 5xx retry or double-post is one film,
+not two GPU bills. The 60s natural-key path stays the backstop.
+
+Also: animate-cloud error path had an extra `)` that made
+`planner-history-row.js` unparseable (found via node --check).
+
+### fix(finish): name photometric identity precondition
+
+The 2% luma check is only valid for identity-preserving operations
+(preset=neutral at strength 1, or strength 0). Named
+SEMANTIC_PRECONDITION and returned as applies_when on
+/photometric-check. Caller wiring is finish-blender after such a grade.
+
+### Fixed: hung ffmpeg no longer holds a finish-door thread forever (cf#571)
+
+`video-finish`, `audio-mix`, and `audio-master` ran every ffmpeg/ffprobe child
+with no `timeout=`. A wedged encode consumed one default-executor thread
+permanently; `/health` kept answering and the door degraded until restart.
+
+Every production invocation now goes through a bounded `_run`: default
+`FFMPEG_TIMEOUT=1200s` (encodes) / `FFPROBE_TIMEOUT=60s` (probes), process-group
+kill on expiry, named `FfmpegTimeout` (`ffmpeg timeout after Ns`). Assemble
+fails loud (it is the film; there is no passthrough). `image-prep` and
+`audio-beat-sync` have no ffmpeg subprocess.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/571
+
+### Fixed: clip-level vendors now declare every core presigned field (cf#590)
+
+`finish-rife` and `finish-blender` vendored `FinishInput` with none of the five
+credentialless transport fields core already sends (`video_url`, `output_url`,
+`output_key`, `audio_url`, `hash_url`). `finish-upscale` was missing `audio_url`.
+A field core adds is invisible to those copies on a dependency bump.
+
+The four finish doors now declare the full FinishInput set; speech-upscale stays
+on the SpeechInput set. A test reads core's interfaces from the installed
+package and goes red when a vendor has not mirrored a new `*_url` / `output_key`.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/590
+
+### fix(hygiene): install fetch timeout; ledger fake no longer wipes (cf#600, #555, #474)
+
+`hInstallModule` now times out and retries the resident `/module.json` fetch
+the same way core and the control plane do, instead of hanging. The storage
+quota test fake throws on unknown SQL instead of clearing the ledger. Wan LoRA
+preflight asks the planner registry whether a door is Wan LoRA instead of
+hardcoding a cost-door name. SECURITY.md no longer ships a hand-typed
+manifest count.
+
+### test(registry): GOLDEN bar is a derived gate
+
+Hooks (12) and quality tiers (draft/standard/final) come from core.
+First-party modules are directories with wrangler.toml. The old "30
+modules" snapshot is not pinned; the list is re-derived when it
+moves.
+
+### feat(planner): spoken lines pick talking doors and keep the Cast voice
+
+If the storyboard has a spoken line, the motion picker only offers
+doors with native audio (Seedance, Veo, Flux, Vidu, Grok). The server
+refuses a silent look door on that film. Speaker dropdown shows the
+Cast name and locked voice. Voice is chosen once on Cast.
+
+### fix(hosted): MuseTalk is not a hosted door
+
+`MODULE_LIPSYNC` is unbound on the flagship Worker. Talking films keep
+native AV from our keyframes. The finish-lipsync worker stays in the tree
+for OSS / homelab (`wrangler.toml.example` SATELLITE block).
+
+### fix(planner): own-gpu is silent look, not the full product
+
+The studio GPU door is still the best picture. It cannot talk and it
+cannot lock a Cast voice sample. Wan-train stays optional and folded
+away: keyframes use the SDXL LoRA, not Wan adapters. A bound character
+without an SDXL adapter is refused before keyframe spend.
+
+### chore(deps): pin vivijure-core 1.21.7
+
+Storyboard SPOKEN LINE now rides the i2v prompt. Tests follow the
+1.21.6 fail-closed finish bearer and the 1.21.7 presign omit.
+
+### chore(deps): pin vivijure-core 1.22.0
+
+Keyframe hook fans across KEYFRAME_PARALLEL shot chunks (default 4)
+on one film. Not scatter-*.
+
+### feat(render): retire film scatter
+
+Film scatter (split motion/film across shards) is retired. One film,
+no split. POST /api/storyboard/render/scatter is gone (404). Poll of
+leftover scatter-* ids returns 410. Keyframe parallelism is a
+single-film keyframe stage, not this door.
+
+### feat(cast): hear a 5/10s talking sample and keep it as the voice
+
+Cast can generate a short clip from the portrait, or attach a clip
+or reference audio the filmmaker already has. Cloudflare Seedance
+sends that clip as reference_video. Veo, Flux, Grok, and Vidu cannot
+lock the take; the Cast page and each door's limits say so. Pins
+vivijure-core 1.21.8 (voice_ref_url / voice_ref_keys).
+
 ## v1.32.10 -- 2026-08-17
 
 ### fix(security): report door, hosted spend ceiling, no quarantine GET
