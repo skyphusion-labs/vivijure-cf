@@ -200,9 +200,24 @@
         opt.textContent = v.label;
         sel.appendChild(opt);
       }
+      renderVoiceHonor(data.talking_doors);
     } catch (e) {
       // Non-fatal: the picker just stays at "no voice (silent)" if the catalog cannot load.
       console.warn("could not load voices:", e.message);
+    }
+  }
+
+  function renderVoiceHonor(doors) {
+    const ul = $("#cast-voice-honor");
+    if (!ul) return;
+    ul.innerHTML = "";
+    if (!Array.isArray(doors) || !doors.length) return;
+    for (const d of doors) {
+      if (!d || !d.name || !d.label) continue;
+      const li = document.createElement("li");
+      const exact = d.honor === "exact";
+      li.textContent = d.name + (exact ? " (exact lock): " : ": ") + d.label;
+      ul.appendChild(li);
     }
   }
 
@@ -263,6 +278,7 @@
     $("#cast-name").value = c.name;
     $("#cast-bible").value = c.bible || "";
     $("#cast-voice").value = c.voice_id || "";
+    refreshVoiceSampleUi(c);
     $("#cast-slug").textContent = "/" + c.slug;
     updateExportLink(c); // #324: point the .vvcast download at this cast
     restoreTrainingStyle(c.id); // v0.135.13: per-character training art-style
@@ -408,6 +424,117 @@
       selectCast(data.cast.id);
     } catch (e) {
       setListStatus("Could not create the character: " + e.message, true);
+    }
+  }
+
+  function setVoiceSampleStatus(text, isErr) {
+    const el = $("#cast-voice-sample-status");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "cast-list-status" + (isErr ? " is-error" : "");
+  }
+
+  function refreshVoiceSampleUi(c) {
+    const player = $("#cast-voice-player");
+    const keep = $("#cast-voice-keep");
+    if (!player) return;
+    if (c && c.voice_ref_key) {
+      player.src = artifactUrl(c.voice_ref_key);
+      player.hidden = false;
+      setVoiceSampleStatus("Saved sample. Cloudflare Seedance will use this voice. Veo will not.");
+    } else {
+      player.removeAttribute("src");
+      player.hidden = true;
+    }
+    if (keep) keep.disabled = true;
+  }
+
+  let voiceSampleTimer = 0;
+  async function generateVoiceSample(seconds) {
+    const id = state.selectedId;
+    if (!id) return;
+    const line = ($("#cast-voice-line") && $("#cast-voice-line").value) || "";
+    setVoiceSampleStatus("Generating " + seconds + "s sample…");
+    const keep = $("#cast-voice-keep");
+    if (keep) keep.disabled = true;
+    try {
+      await api("/api/cast/" + id + "/voice-sample", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ seconds, line }),
+      });
+      const poll = async () => {
+        const data = await api("/api/cast/" + id + "/voice-sample");
+        if (data.status === "pending") {
+          voiceSampleTimer = setTimeout(poll, 2500);
+          return;
+        }
+        if (data.status === "failed") {
+          setVoiceSampleStatus(data.error || "Sample failed.", true);
+          return;
+        }
+        const player = $("#cast-voice-player");
+        if (player && data.clip_key) {
+          player.src = artifactUrl(data.clip_key);
+          player.hidden = false;
+        }
+        if (keep) keep.disabled = false;
+        const honor = data.module_name === "cf-seedance"
+          ? "Listen. If you keep it, Seedance will use this exact take."
+          : "Listen. " + (data.module_name || "This door") + " cannot lock this take. Seedance can.";
+        setVoiceSampleStatus(honor);
+      };
+      poll();
+    } catch (e) {
+      setVoiceSampleStatus(e.message || "Could not start the sample.", true);
+    }
+  }
+
+  async function keepVoiceSample() {
+    const id = state.selectedId;
+    if (!id) return;
+    try {
+      const data = await api("/api/cast/" + id + "/voice-sample/keep", { method: "POST" });
+      const c = findCast(id);
+      if (c) c.voice_ref_key = data.voice_ref_key;
+      setVoiceSampleStatus("Saved. Cloudflare Seedance will use this voice on every shot. Veo will not match it exactly.");
+      const keep = $("#cast-voice-keep");
+      if (keep) keep.disabled = true;
+    } catch (e) {
+      setVoiceSampleStatus(e.message || "Could not keep the sample.", true);
+    }
+  }
+
+  async function clearVoiceSample() {
+    const id = state.selectedId;
+    if (!id) return;
+    try {
+      await api("/api/cast/" + id + "/voice-sample", { method: "DELETE" });
+      const c = findCast(id);
+      if (c) c.voice_ref_key = null;
+      refreshVoiceSampleUi(c);
+      setVoiceSampleStatus("Cleared. Talking doors will invent a voice again.");
+    } catch (e) {
+      setVoiceSampleStatus(e.message || "Could not clear the sample.", true);
+    }
+  }
+
+  async function attachVoiceSample(file) {
+    const id = state.selectedId;
+    if (!id || !file) return;
+    setVoiceSampleStatus("Attaching " + file.name + "...");
+    try {
+      const data = await api("/api/cast/" + id + "/voice-sample/attach", {
+        method: "POST",
+        headers: { "content-type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      const c = findCast(id);
+      if (c) c.voice_ref_key = data.voice_ref_key;
+      refreshVoiceSampleUi(c);
+      setVoiceSampleStatus("Saved. Cloudflare Seedance will use this clip as the voice. Veo will not match it exactly.");
+    } catch (e) {
+      setVoiceSampleStatus(e.message || "Could not attach the clip.", true);
     }
   }
 
@@ -1236,6 +1363,22 @@
     $("#cast-name").addEventListener("input", () => markDirty(true));
     $("#cast-bible").addEventListener("input", () => markDirty(true));
     $("#cast-voice").addEventListener("change", () => markDirty(true));
+    const v5 = $("#cast-voice-5");
+    const v10 = $("#cast-voice-10");
+    const vKeep = $("#cast-voice-keep");
+    const vClear = $("#cast-voice-clear");
+    if (v5) v5.addEventListener("click", () => generateVoiceSample(5));
+    if (v10) v10.addEventListener("click", () => generateVoiceSample(10));
+    if (vKeep) vKeep.addEventListener("click", keepVoiceSample);
+    if (vClear) vClear.addEventListener("click", clearVoiceSample);
+    const vAttach = $("#cast-voice-attach");
+    if (vAttach) {
+      vAttach.addEventListener("change", (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (f) attachVoiceSample(f);
+        e.target.value = "";
+      });
+    }
     $("#cast-training-style").addEventListener("input", persistTrainingStyle); // v0.135.13
 
     $("#cast-portrait-file").addEventListener("change", (e) => {

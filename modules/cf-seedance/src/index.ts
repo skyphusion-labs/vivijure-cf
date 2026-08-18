@@ -102,7 +102,8 @@ const MANIFEST: ModuleManifest = {
       "Same seed and same voice lock",
       "Last still is the next start",
       "One film, no scatter",
-      "Cannot lock the voice from a previous clip",
+      "Uses the Cast voice sample as reference video. Same voice as the clip you kept.",
+      "Generate a 5 or 10 second sample on Cast first",
     ],
   },
   usage: {
@@ -113,6 +114,7 @@ const MANIFEST: ModuleManifest = {
     max_seconds: 30,
     first_last: true,
     seed: true,
+    voice_ref: true,
   },
 };
 

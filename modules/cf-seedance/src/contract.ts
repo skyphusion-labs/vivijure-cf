@@ -35,6 +35,7 @@ export interface MotionUsageDecl {
   duration_steps?: number[];
   first_last?: boolean;
   seed?: boolean;
+  voice_ref?: boolean;
 }
 
 export interface ModuleManifest {
@@ -79,6 +80,8 @@ export interface MotionBackendInput {
   keyframe_key?: string;
   last_keyframe_url?: string;
   last_keyframe_key?: string;
+  voice_ref_url?: string;
+  voice_ref_key?: string;
   prompt: string;
   seconds: number;
 }

@@ -89,8 +89,30 @@
         <select id="cast-voice" class="cast-voice-select">
           <option value="">no voice (silent)</option>
         </select>
-        <small class="cast-field-hint">the voice this character speaks in, across every film; used when a shot has a dialogue line.</small>
+        <small class="cast-field-hint">Timbre card for talking doors. It is not a clip you can hear. Generate a sample below.</small>
       </label>
+
+      <section class="cast-field" id="cast-voice-sample">
+        <span>Talking voice sample</span>
+        <p class="cast-field-hint">Generate a 5 or 10 second clip from the portrait and listen. Keep the take you like. Or attach a short clip you already have (video with the voice, or a reference audio file). Cloudflare Seedance uses that clip as the lock on every talking shot. Veo, Flux, Grok, and Vidu cannot lock the take you heard -- they only match the description, so the voice may not be an exact match.</p>
+        <label class="cast-field">
+          <span>sample line</span>
+          <input id="cast-voice-line" type="text" value="Hello. This is how I sound." />
+        </label>
+        <div class="cast-list-actions">
+          <button id="cast-voice-5" type="button">Generate 5s</button>
+          <button id="cast-voice-10" type="button">Generate 10s</button>
+          <button id="cast-voice-keep" type="button" disabled>Keep this voice</button>
+          <button id="cast-voice-clear" type="button">Clear saved sample</button>
+        </div>
+        <label class="cast-upload-btn" title="attach a short talking clip or reference audio">
+          attach clip or audio
+          <input id="cast-voice-attach" type="file" accept="video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/webm,audio/aac,.mp4,.webm,.mov,.mp3,.wav,.m4a,.ogg,.aac" hidden />
+        </label>
+        <p id="cast-voice-sample-status" class="cast-list-status" role="status"></p>
+        <video id="cast-voice-player" controls hidden playsinline style="max-width:100%;margin-top:0.5rem"></video>
+        <ul id="cast-voice-honor" class="cast-section-hint" style="margin-top:0.5rem;padding-left:1.2rem"></ul>
+      </section>
 
       <section class="cast-portrait-pane">
         <header class="cast-section-header">

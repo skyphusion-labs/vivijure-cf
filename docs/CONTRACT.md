@@ -245,7 +245,7 @@ the same deny reason as any other bad token so a prober learns nothing, and a
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**88 route entries** (distinct `method` + `pattern`) over **72 distinct path patterns**. Those two
+**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -286,6 +286,11 @@ unchanged.
 | 22 | GET | `/api/cast/:id/refs-job/:jobId` | 2.8 |
 | 23 | POST | `/api/cast/:id/train-lora` | 2.9 |
 | 24 | GET | `/api/cast/:id/lora-status` | 2.9 |
+| 24a | POST | `/api/cast/:id/voice-sample` | 2.9.1 |
+| 24b | GET | `/api/cast/:id/voice-sample` | 2.9.1 |
+| 24c | POST | `/api/cast/:id/voice-sample/keep` | 2.9.1 |
+| 24d | DELETE | `/api/cast/:id/voice-sample` | 2.9.1 |
+| 24e | POST | `/api/cast/:id/voice-sample/attach` | 2.9.1 |
 | 25 | POST | `/api/upload` | 2.10 |
 | 25a | POST | `/api/report` | 2.10.1 |
 | 26 | GET | `/api/artifact/*key` | 2.11 |
@@ -519,6 +524,11 @@ Errors: `404` if the cast member (POST) or job (GET) is unknown.
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
+| POST `/api/cast/:id/voice-sample` | `{ seconds?: 5\|10, line?: string, motion_backend?: string }` | `202 { poll, module_name, seconds }` | 5/10s talking preview from the portrait |
+| GET `/api/cast/:id/voice-sample` | -- | `{ status, clip_key?, error?, module_name? }` | poll the preview |
+| POST `/api/cast/:id/voice-sample/keep` | -- | `{ voice_ref_key }` | save the preview as the talking-door lock |
+| POST `/api/cast/:id/voice-sample/attach` | raw video/audio body, or `{ from_chat_artifact }` | `{ voice_ref_key, mime }` | attach a clip or reference audio the filmmaker already has |
+| DELETE `/api/cast/:id/voice-sample` | -- | `{ ok: true }` | clear the saved sample |
 | POST `/api/cast/:id/train-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKey, modelFamily: "sdxl", cast }` | see the shared table below |
 | POST `/api/cast/:id/train-wan-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKeys, modelFamily: "wan", cast }` | as above, plus `501` when Wan training is not wired on this host (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) |
 | GET `/api/cast/:id/lora-status` | none | `200 { cast, view }`; `view` is `null` when the member has never been submitted for training | `404` if unknown |
@@ -2045,6 +2055,7 @@ are documented here for total coverage. The API returns them wrapped (`{ cast }`
 | `sdxl_lora_ready` | boolean | Derived: SDXL identity adapter present (`lora_key` under `loras/`). Prefer for keyframe binding. |
 | `wan_lora_ready` | boolean | Derived: both Wan experts present under `loras/`. Prefer for Wan motion binding. |
 | `voice_id` | string \| null | Aura-1 speaker (one of the 12; see 2.4). null = unassigned. |
+| `voice_ref_key` | string \| null | Kept talking sample (R2 key). Cloudflare Seedance sends this clip as `reference_video`. Veo cannot lock it. |
 
 ### A.2 StoryboardProject
 
