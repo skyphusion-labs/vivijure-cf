@@ -31,11 +31,12 @@ describe("infinitetalk", () => {
 });
 
 describe("cf twins", () => {
-  it("wan 2.7 uses image + 2-15s", () => {
+  it("wan 2.7 uses image + 2-15s and Alibaba media[]", () => {
     expect(clampWan(1)).toBe(2);
     const p = wan27(shot, { resolution: "1080P" });
     expect(p.image).toBe("https://r2/x.png");
     expect(p.watermark).toBe(false);
+    expect(p.media).toEqual([{ type: "first_frame", url: "https://r2/x.png" }]);
   });
   it("hailuo uses first_frame_image", () => {
     const p = hailuo(shot, { resolution: "768P", prompt_optimizer: true, fast_pretreatment: false });

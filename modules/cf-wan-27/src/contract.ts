@@ -81,6 +81,8 @@ export interface MotionBackendInput {
   keyframe_key?: string;
   prompt: string;
   seconds: number;
+  /** Kept Cast talking sample. Alibaba driving_audio (wav/mp3); we send the URL and see if CF forwards it. */
+  voice_ref_url?: string;
 }
 export interface MotionBackendOutput {
   shot_id: string;

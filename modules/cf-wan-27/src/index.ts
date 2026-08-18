@@ -74,7 +74,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-wan-27",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.7)" }],
@@ -89,11 +89,11 @@ const MANIFEST: ModuleManifest = {
     order: 60,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Wan 2.7 stills-to-clip with native audio. 2-15 seconds. Invents speech if you do not give a line.",
+    blurb: "Wan 2.7 stills-to-clip. Alibaba lip-sync via driving_audio when a Cast sample exists. Invents speech if not.",
     limits: [
       "2-15 second clips",
-      "Talks. Give the storyboard the line or it invents one.",
-      "Cannot lock the Cast voice sample. Same description, not the same take.",
+      "Talks. Sends Alibaba media[] (first_frame, last_frame, driving_audio).",
+      "Without driving_audio it invents speech. With a Cast sample it lip-syncs if CF forwards the field.",
       "One film, no scatter",
     ],
   },
@@ -144,6 +144,8 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
+  const media = Array.isArray(modelParams.media) ? modelParams.media as { type: string }[] : [];
+  console.warn("cf-wan-27 alibaba media types: " + (media.map((m) => m.type).join(",") || "none"));
   const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
   const url = parseVideoUrl(result);
   if (!url) throw new Error("model completed but returned no video URL");
