@@ -43,8 +43,8 @@ vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
     ...actual,
     resolveCastLoras: vi.fn(async (_env: unknown, castLoras: Record<string, unknown> | undefined) =>
       castLoras && Object.keys(castLoras).length
-        ? { pretrained: {}, voices: { A: "asteria" }, speakerNames: { A: "Wren" }, castIds: { A: 4 }, skipped: [], skippedDetail: [] }
-        : { pretrained: {}, voices: {}, speakerNames: {}, castIds: {}, skipped: [], skippedDetail: [] },
+        ? { pretrained: { A: "loras/wren.safetensors" }, wanPretrained: {}, voices: { A: "asteria" }, voiceRefs: {}, speakerNames: { A: "Wren" }, castIds: { A: 4 }, skipped: [], skippedDetail: [] }
+        : { pretrained: {}, wanPretrained: {}, voices: {}, voiceRefs: {}, speakerNames: {}, castIds: {}, skipped: [], skippedDetail: [] },
     ),
   };
 });

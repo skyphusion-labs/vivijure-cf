@@ -29,27 +29,16 @@
   // cf#383: prefer additive sdxl_lora_ready / wan_lora_ready when the API
   // provides them; otherwise derive from key presence. Shared lora_status
   // alone is not family-honest (Wan-only + status ready is not SDXL ready).
-  function isCastLoraReady(cast, options) {
+  function isCastLoraReady(cast, _options) {
     if (!cast) return false;
-    var wanLora = !!(options && options.wanLora);
     var sdxlReady =
       typeof cast.sdxl_lora_ready === "boolean"
         ? cast.sdxl_lora_ready
         : !!(cast.lora_key && String(cast.lora_key).indexOf("loras/") === 0);
-    var wanReady =
-      typeof cast.wan_lora_ready === "boolean"
-        ? cast.wan_lora_ready
-        : !!(
-            cast.wan_lora_key_high &&
-            String(cast.wan_lora_key_high).indexOf("loras/") === 0 &&
-            cast.wan_lora_key_low &&
-            String(cast.wan_lora_key_low).indexOf("loras/") === 0
-          );
-    // Still require non-training shared status so an in-flight retrain is not treated as ready.
+    // Keyframes consume the SDXL adapter. Wan-train is motion-only and is not
+    // a substitute, even when this render's motion door is Wan.
     if (cast.lora_status === "training") return false;
-    if (sdxlReady) return true;
-    if (wanLora) return wanReady;
-    return false;
+    return sdxlReady;
   }
 
   // Given the planner's {slot: cast_id} bindings and the current cast catalog

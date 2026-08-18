@@ -57,6 +57,31 @@ export interface ResolvedCast {
   voiceRefs: Record<string, string>;
 }
 
+/** Bound slots with no SDXL key. Wan-only adapters do not count. */
+export function missingSdxlForKeyframes(
+  castLoras: Record<string, unknown> | undefined,
+  resolved: { pretrained: Record<string, string>; speakerNames?: Record<string, string> },
+): Array<{ slot: string; name?: string }> {
+  if (!castLoras) return [];
+  const out: Array<{ slot: string; name?: string }> = [];
+  for (const [slot, raw] of Object.entries(castLoras)) {
+    if (typeof slot !== "string" || !slot.trim()) continue;
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    if (resolved.pretrained[slot]) continue;
+    out.push({ slot, name: resolved.speakerNames?.[slot] });
+  }
+  return out;
+}
+
+export function missingSdxlMessage(missing: Array<{ slot: string; name?: string }>): string {
+  const names = missing.map((d) => d.name || ("slot " + d.slot));
+  return (
+    "These characters have no SDXL LoRA for keyframes -- train SDXL on the Cast page first: "
+    + names.join(", ")
+    + ". Wan-train is not a substitute."
+  );
+}
+
 /**
  * Per-door declarations. Everything here is something the doors genuinely differ on today; nothing
  * here is a knob invented for flexibility.
@@ -359,6 +384,11 @@ export async function preflightRenderModules(
   // empty maps and is unaffected.
   const cast = await deps.resolveCastLoras(env as never, (input.castLoras ?? {}) as Record<string, unknown>);
   if (cast.skipped.length) return bad(untrainedCastMessage(cast.skippedDetail));
+  // Keyframes consume the SDXL adapter. Wan-train is motion-only and is not a
+  // substitute. A Wan-ready bind used to pass this door and then render generic
+  // stills.
+  const missingSdxl = missingSdxlForKeyframes(input.castLoras, cast);
+  if (missingSdxl.length) return bad(missingSdxlMessage(missingSdxl));
 
   return {
     ok: true,

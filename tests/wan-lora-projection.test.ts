@@ -25,10 +25,10 @@ const WAN_LOW = "loras/cast-5/1700000000.low.safetensors";
 const SDXL_KEY = "loras/cast-9/1700000000.safetensors";
 function castResult(marker: unknown) {
   if (marker === "wan") {
-    return { pretrained: {}, wanPretrained: { A: { high: WAN_HIGH, low: WAN_LOW } }, voices: {}, castIds: { A: 5 }, skipped: [], skippedDetail: [] };
+    return { pretrained: { A: SDXL_KEY }, wanPretrained: { A: { high: WAN_HIGH, low: WAN_LOW } }, voices: {}, voiceRefs: {}, speakerNames: { A: "Wren" }, castIds: { A: 5 }, skipped: [], skippedDetail: [] };
   }
   if (marker === "sdxl") {
-    return { pretrained: { A: SDXL_KEY }, wanPretrained: {}, voices: {}, castIds: { A: 9 }, skipped: [], skippedDetail: [] };
+    return { pretrained: { A: SDXL_KEY }, wanPretrained: {}, voices: {}, voiceRefs: {}, speakerNames: { A: "Wren" }, castIds: { A: 9 }, skipped: [], skippedDetail: [] };
   }
   return { pretrained: {}, wanPretrained: {}, voices: {}, castIds: {}, skipped: [], skippedDetail: [] };
 }
@@ -239,14 +239,14 @@ describe("shouldProjectWanLoras / ensureModuleOverrideConfig -- the gating primi
 
 // ==================================================================================================
 describe("cross-wire control at ALL THREE render paths (Wan cast vs SDXL cast, both directions)", () => {
-  it("RENDER: a Wan cast projects ONLY high/low_noise_loras at 1.5, NEVER pretrained_loras", async () => {
+  it("RENDER: a Wan cast still sends SDXL as pretrained_loras (keyframes) plus high/low on motion", async () => {
     const res = await worker.fetch(post("/api/storyboard/render", { bundleKey: "bundles/x.tar.gz", scenes: SCENES, motion_backend: WAN_LORA_BACKEND, castLoras: { A: "wan" } }), env(), ctx);
     expect(res.status).toBe(201);
     const args = cap.film[0];
     const mc = args.motion_config as Record<string, unknown>;
     expect(parseLoras(mc.high_noise_loras)).toEqual([{ path: `https://r2.example/${WAN_HIGH}?sig=X&ttl=${WAN_LORA_PRESIGN_TTL_SECONDS}`, scale: 1.5 }]);
     expect(parseLoras(mc.low_noise_loras)[0].path).toContain(WAN_LOW);
-    expect(args.pretrained_loras).toBeUndefined();
+    expect(args.pretrained_loras).toEqual({ A: SDXL_KEY });
   });
   it("RENDER: an SDXL cast projects ONLY pretrained_loras, NEVER the Wan fields (same Wan backend)", async () => {
     const res = await worker.fetch(post("/api/storyboard/render", { bundleKey: "bundles/x.tar.gz", scenes: SCENES, motion_backend: WAN_LORA_BACKEND, castLoras: { A: "sdxl" } }), env(), ctx);
@@ -258,14 +258,14 @@ describe("cross-wire control at ALL THREE render paths (Wan cast vs SDXL cast, b
     expect(mc.low_noise_loras).toBe("[]");
   });
 
-  it("FILM: a Wan cast projects ONLY the Wan fields, NEVER pretrained_loras", async () => {
+  it("FILM: a Wan cast still sends SDXL as pretrained_loras (keyframes) plus Wan motion fields", async () => {
     const res = await worker.fetch(post("/api/render/film", { bundle_key: "bundles/x.tar.gz", scenes: SCENES, motion_backend: WAN_LORA_BACKEND, cast_loras: { A: "wan" } }), env(), ctx);
     expect(res.status).toBe(201);
     const args = cap.film[0];
     const mc = args.motion_config as Record<string, unknown>;
     expect(parseLoras(mc.high_noise_loras)[0].path).toContain(WAN_HIGH);
     expect(parseLoras(mc.low_noise_loras)[0].scale).toBe(1.5);
-    expect(args.pretrained_loras).toBeUndefined();
+    expect(args.pretrained_loras).toEqual({ A: SDXL_KEY });
   });
   it("FILM: an SDXL cast projects ONLY pretrained_loras, NEVER the Wan fields", async () => {
     const res = await worker.fetch(post("/api/render/film", { bundle_key: "bundles/x.tar.gz", scenes: SCENES, motion_backend: WAN_LORA_BACKEND, cast_loras: { A: "sdxl" } }), env(), ctx);

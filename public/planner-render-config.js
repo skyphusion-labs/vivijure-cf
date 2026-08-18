@@ -327,8 +327,8 @@
     return typeof loc === "string" ? loc.trim().toLowerCase() : "";
   }
 
-  // own-gpu is the quality door (studio GPU). RunPod cloud i2v (seedance, kling, ...)
-  // is the speed door. CF Workers AI modules are cf-*. Anyone can pick any door.
+  // own-gpu is the silent look door (studio GPU). RunPod cloud i2v (seedance, kling, ...)
+  // is the talking/speed door. CF Workers AI modules are cf-*. Anyone can pick any door.
   function isQualityDoor(mod) {
     const name = moduleName(mod);
     const loc = localityValue(mod);
@@ -362,12 +362,12 @@
   }
 
   function doorTitle(mod) {
-    if (isQualityDoor(mod)) return "Best look (studio GPU)";
+    if (isQualityDoor(mod)) return "Silent look (studio GPU)";
     return moduleLabel(mod);
   }
 
   function doorCost(mod) {
-    if (isQualityDoor(mod)) return "Highest quality, slower";
+    if (isQualityDoor(mod)) return "Look only, slower";
     const cost = uiHint(mod, "cost");
     if (typeof cost !== "string") return "";
     return filmmakerCostLine(cost).replace(/\.$/, "");
@@ -375,7 +375,7 @@
 
   function doorBlurb(mod) {
     if (isQualityDoor(mod)) {
-      return "Our studio GPU. Best look. Cloud doors finish faster.";
+      return "Our studio GPU. Best picture, silent. No talking audio and no voice lock. Use a talking door for dialogue.";
     }
     const blurb = uiHint(mod, "blurb");
     return typeof blurb === "string" ? blurb.trim() : "";
@@ -385,14 +385,14 @@
   // Returns null when the manifest does not declare it (so we never guess local vs cloud
   // from a module name -- that is exactly the brittle coupling this replaces).
   function localityTag(mod) {
-    if (isQualityDoor(mod)) return { text: "Best look", kind: "byo" };
+    if (isQualityDoor(mod)) return { text: "Silent look", kind: "byo" };
     if (isRunpodCloudDoor(mod) && !localityValue(mod)) {
       return { text: "Faster", kind: "cloud" };
     }
     const loc = localityValue(mod);
     if (!loc) return null;
     if (loc === "local") return { text: "Local (your GPU)", kind: "local" };
-    if (loc === "byo") return { text: "Best look", kind: "byo" };
+    if (loc === "byo") return { text: "Silent look", kind: "byo" };
     if (loc === "cloud" || loc === "datacenter") {
       return { text: isCfCloudDoor(mod) ? "Cloud" : "Faster", kind: "cloud" };
     }
@@ -558,7 +558,7 @@
       const hint = wrap.querySelector(".planner-backend-caption-hint");
       if (hint) {
         hint.textContent = value
-          ? "Faster is the default. Best look is our GPU. Any door is fine."
+          ? "Talking doors are the default. Studio GPU is silent look only."
           : "Required: pick which backend renders the motion (image-to-video) step.";
       }
     }
@@ -601,7 +601,7 @@
     capHint.textContent = linesOn
       ? "This storyboard has spoken lines. Only doors that can say them (they keep audio on our stills)."
       : (mods.length > 1
-        ? "Faster is the default. Best look is our GPU. Any door is fine."
+        ? "Talking doors are the default. Studio GPU is silent look only."
         : "This backend renders the motion (image-to-video) step.");
     cap.appendChild(capHint);
     section.appendChild(cap);
@@ -640,7 +640,7 @@
 
     if (mods.length > 1) {
       // Default the speed door (RunPod Seedance, else first RunPod cloud i2v).
-      // own-gpu stays on the picker as Best look. CF doors stay pickable.
+      // own-gpu stays on the picker as silent look. CF doors stay pickable.
       // If no RunPod cloud door is installed, leave the pick empty (#501).
       if (speed) {
         sel.value = speed.name;

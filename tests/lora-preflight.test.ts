@@ -41,11 +41,9 @@ describe("isCastLoraReady (mirrors the server reuse gate)", () => {
   it("is false when status is ready but the SDXL key is missing (non-Wan backend)", () => {
     expect(isCastLoraReady({ id: ADA, name: "wren", lora_status: "ready" })).toBe(false);
   });
-  it("accepts Wan dual keys when the caller marks the render as Wan LoRA", () => {
-    expect(isCastLoraReady(wanReady(ADA, "mara"), { wanLora: true })).toBe(true);
-  });
-  it("rejects Wan-only keys when the render is not Wan LoRA", () => {
+  it("rejects Wan-only keys even when the motion door is Wan (keyframes need SDXL)", () => {
     expect(isCastLoraReady(wanReady(ADA, "mara"))).toBe(false);
+    expect(isCastLoraReady(wanReady(ADA, "mara"), { wanLora: true })).toBe(false);
     expect(isCastLoraReady(wanReady(ADA, "mara"), { wanLora: false })).toBe(false);
   });
   it("SDXL key wins on Wan LoRA renders (core cast-loras.ts)", () => {
@@ -77,7 +75,7 @@ describe("isCastLoraReady (mirrors the server reuse gate)", () => {
         },
         { wanLora: true },
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
   it("is false while training even when family-ready keys exist", () => {
     expect(
@@ -109,11 +107,11 @@ describe("unreadyBoundLoraSlots (which bound slots will be retrained inline)", (
     expect(out[0].castId).toBe(WREN);
   });
 
-  it("does not flag Wan-ready cast on Wan LoRA renders", () => {
+  it("flags Wan-only cast even on Wan LoRA renders (keyframes still need SDXL)", () => {
     const catalog = [wanReady(ADA, "mara")];
     expect(
       unreadyBoundLoraSlots({ A: ADA }, catalog, { wanLora: true }),
-    ).toEqual([]);
+    ).toEqual([{ slot: "A", castId: ADA, name: "mara" }]);
   });
 
   it("flags Wan-only cast when motion backend is not Wan", () => {
