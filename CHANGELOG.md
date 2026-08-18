@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.3 -- 2026-08-18
+
+### fix(spend): no implicit daily ceiling
+
+Hosted token mode used to invent SPEND_DAILY_CEILING=25 when the
+operator never set the var. Unset means off. Set the var if you
+want a cap.
+
 ## v1.33.2 -- 2026-08-18
 
 ### chore(deps): pin vivijure-core 1.22.2
