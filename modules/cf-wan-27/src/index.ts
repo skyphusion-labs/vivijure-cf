@@ -74,10 +74,10 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-wan-27",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Silent detailed (Wan 2.7)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.7)" }],
   config_schema: {
     resolution: { type: "enum", values: ["720P", "1080P"], default: "720P", label: "resolution" },
     ratio: { type: "enum", values: ["16:9", "9:16", "3:4", "4:3", "1:1", "21:9", "9:21", "5:4", "4:5"], default: "16:9", label: "aspect ratio" },
@@ -89,22 +89,23 @@ const MANIFEST: ModuleManifest = {
     order: 60,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Newer Wan stills-to-clip. Silent. 2-15 seconds.",
+    blurb: "Wan 2.7 stills-to-clip with native audio. 2-15 seconds. Invents speech if you do not give a line.",
     limits: [
       "2-15 second clips",
-      "Silent motion, stronger faces",
-      "One film, no scatter (look door)",
-      "Speaking is Cast voice plus MuseTalk",
+      "Talks. Give the storyboard the line or it invents one.",
+      "Cannot lock the Cast voice sample. Same description, not the same take.",
+      "One film, no scatter",
     ],
   },
   usage: {
-    native_audio: false,
-    voice: "cast_tts",
+    native_audio: true,
+    voice: "prompt_lock",
     scatter_native_audio: false,
     min_seconds: 2,
     max_seconds: 15,
     first_last: true,
     seed: true,
+    voice_ref: false,
   },
 };
 
