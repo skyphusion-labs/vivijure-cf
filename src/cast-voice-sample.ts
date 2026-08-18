@@ -59,6 +59,11 @@ export const TALKING_VOICE_HONOR = [
     honor: "neighborhood" as const,
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
+  {
+    name: "cf-wan-27",
+    honor: "neighborhood" as const,
+    label: "Talks. Cannot lock the sample you heard. Same description, not the same take.",
+  },
 ];
 
 type SampleState = {

@@ -218,15 +218,16 @@ Multi-ref silent. Cast, props, locations.
 
 ## cf-wan-27 (Cloudflare Wan 2.7)
 
-Hosted Wan door. Newer weights than RunPod 2.6. Code for 2.6 stays unbound.
+Hosted Wan door. Newer weights than RunPod 2.6. Native audio. Give it the
+storyboard line or it invents speech.
 
 | | |
 |---|---|
 | Duration | 2-15 seconds |
-| Talks? | No. |
-| Voice lock | `cast_tts`. Seed pins the look. |
-| First+last? | No. |
-| Cannot | Native talking audio. |
+| Talks? | Yes. |
+| Voice lock | Neighborhood only. Not the Cast sample. |
+| First+last? | Yes. |
+| Cannot | Exact voice lock. Silence. |
 
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 

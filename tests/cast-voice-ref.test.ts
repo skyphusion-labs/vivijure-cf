@@ -51,5 +51,8 @@ describe("TALKING_VOICE_HONOR", () => {
     expect(seedance?.honor).toBe("exact");
     expect(veo?.honor).toBe("neighborhood");
     expect(veo?.label).toMatch(/not the same take/i);
+    const wan = TALKING_VOICE_HONOR.find((d) => d.name === "cf-wan-27");
+    expect(wan?.honor).toBe("neighborhood");
+    expect(wan?.label).toMatch(/Talks/i);
   });
 });
