@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.6 -- 2026-08-18
+
+### feat(motion): send Alibaba media[] on Wan 2.7
+
+CF is a passthrough to Alibaba. We now send first_frame, last_frame,
+and driving_audio (Cast sample) plus the CF image postcard. Without
+driving_audio Alibaba invents speech. This is the prove-it rewrite.
+
 ## v1.33.5 -- 2026-08-18
 
 ### chore(deps): pin vivijure-core 1.22.3
