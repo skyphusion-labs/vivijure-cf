@@ -89,8 +89,30 @@
         <select id="cast-voice" class="cast-voice-select">
           <option value="">no voice (silent)</option>
         </select>
-        <small class="cast-field-hint">the voice this character speaks in, across every film; used when a shot has a dialogue line.</small>
+        <small class="cast-field-hint">Timbre card for talking doors. It is not a clip you can hear. Generate a sample below.</small>
       </label>
+
+      <section class="cast-field" id="cast-voice-sample">
+        <span>Talking voice sample</span>
+        <p class="cast-field-hint">Generate a 5 or 10 second clip from the portrait and listen. Keep the take you like. Or attach a short clip you already have (video with the voice, or a reference audio file). Cloudflare Seedance uses that clip as the lock on every talking shot. Veo, Flux, Grok, and Vidu cannot lock the take you heard -- they only match the description, so the voice may not be an exact match.</p>
+        <label class="cast-field">
+          <span>sample line</span>
+          <input id="cast-voice-line" type="text" value="Hello. This is how I sound." />
+        </label>
+        <div class="cast-list-actions">
+          <button id="cast-voice-5" type="button">Generate 5s</button>
+          <button id="cast-voice-10" type="button">Generate 10s</button>
+          <button id="cast-voice-keep" type="button" disabled>Keep this voice</button>
+          <button id="cast-voice-clear" type="button">Clear saved sample</button>
+        </div>
+        <label class="cast-upload-btn" title="attach a short talking clip or reference audio">
+          attach clip or audio
+          <input id="cast-voice-attach" type="file" accept="video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/webm,audio/aac,.mp4,.webm,.mov,.mp3,.wav,.m4a,.ogg,.aac" hidden />
+        </label>
+        <p id="cast-voice-sample-status" class="cast-list-status" role="status"></p>
+        <video id="cast-voice-player" controls hidden playsinline style="max-width:100%;margin-top:0.5rem"></video>
+        <ul id="cast-voice-honor" class="cast-section-hint" style="margin-top:0.5rem;padding-left:1.2rem"></ul>
+      </section>
 
       <section class="cast-portrait-pane">
         <header class="cast-section-header">
@@ -205,7 +227,7 @@
       <section class="cast-lora-pane">
         <header class="cast-section-header">
           <h3>SDXL LoRA training</h3>
-          <p class="cast-section-hint">train a character SDXL LoRA standalone (separate from rendering). takes ~15-25 minutes on the GPU with a full 10-image reference set (fewer refs train faster); uses the portrait + training refs above. costs ~$0.50-$2 of GPU time per training run.</p>
+          <p class="cast-section-hint">This is the face lock for keyframes. Cloud talking doors animate those stills. Takes ~15-25 minutes on the GPU with a full 10-image reference set (fewer refs train faster). Uses the portrait + training refs above. About $0.50-$2 of GPU time per run.</p>
         </header>
         <div id="cast-lora-status-row" class="cast-lora-status-row">
           <span id="cast-lora-badge" class="cast-lora-badge cast-lora-badge-idle">idle</span>
@@ -218,11 +240,9 @@
         </div>
       </section>
 
-      <section class="cast-lora-pane">
-        <header class="cast-section-header">
-          <h3>Wan LoRA training</h3>
-          <p class="cast-section-hint">train dual Wan 2.2 expert adapters for alibaba-wan-lora motion renders. same portrait + refs; ~35-45 minutes GPU at 2000 steps with a full 10-ref set (a cold worker adds image-download startup time); costs ~$2-$4 per run (measured; cf#214).</p>
-        </header>
+      <details class="cast-lora-pane cast-gen-block">
+        <summary>Wan LoRA (optional, slow)</summary>
+        <p class="cast-section-hint">Not needed for keyframes or Seedance talking films. Only the Wan motion doors (alibaba-wan-lora, studio GPU) load these adapters. Dual Wan 2.2 experts, same portrait + refs, ~35-45 minutes GPU plus a cold-worker start, about $2-$4 per run.</p>
         <div id="cast-wan-lora-status-row" class="cast-lora-status-row">
           <span id="cast-wan-lora-meta" class="cast-lora-meta"></span>
         </div>
@@ -232,7 +252,7 @@
           <a id="cast-wan-lora-download-low" class="cast-secondary-btn cast-accent-outline" target="_blank" rel="noopener" hidden>download low expert</a>
           <span id="cast-wan-lora-status-text" class="cast-gen-status"></span>
         </div>
-      </section>
+      </details>
 
       <footer class="cast-editor-footer">
         <button id="cast-delete-btn" type="button" class="cast-danger-btn">delete this character</button>

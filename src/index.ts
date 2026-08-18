@@ -45,6 +45,17 @@ import {
   deleteCastArtifacts,
 } from "./cast-media";
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
+import {
+  TALKING_VOICE_HONOR,
+  startCastVoiceSample,
+  pollCastVoiceSample,
+  keepCastVoiceSample,
+  clearCastVoiceSample,
+  attachCastVoiceSample,
+  attachCastVoiceSampleFromKey,
+  voiceRefKeysFromScenes,
+  isSampleError,
+} from "./cast-voice-sample";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
 import { authorizeRoute, AUTHZ_DENY_REASON, AUTHZ_DENY_CODE, type Scope } from "./authz";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
@@ -271,7 +282,10 @@ const hSaveProjectStoryboard: Handler = async (req, env, _c, p) => {
 const hListCast: Handler = async (_req, env) => json({ cast: (await listCast(env)).map(toPublicCast) });
 // The dialogue voice catalog (aura-1 speakers). Static; the cast voice picker renders from it so the
 // list of voices has one source of truth (src/voices.ts), not a hardcoded copy in the frontend.
-const hListVoices: Handler = async (_req, env) => json({ voices: catalogForDeploy(env, VOICE_CATALOG) });
+const hListVoices: Handler = async (_req, env) => json({
+  voices: catalogForDeploy(env, VOICE_CATALOG),
+  talking_doors: TALKING_VOICE_HONOR,
+});
 const hCreateCast: Handler = async (req, env) => {
   const b = await readBody<{ name?: string; bible?: string | null }>(req);
   if (!b.name) throw badRequest("name required");
@@ -298,6 +312,63 @@ const hPatchCast: Handler = async (req, env, _c, p) => {
   const row = await updateCast(env, await resolveCastId(env, p.id), patch);
   if (!row) throw notFound("cast member");
   return json({ cast: toPublicCast(row) });
+};
+const hStartCastVoiceSample: Handler = async (req, env, _c, p) => {
+  try {
+    const b = await readBody<{ seconds?: number; line?: string; motion_backend?: string }>(req);
+    const out = await startCastVoiceSample(env, await resolveCastId(env, p.id), {
+      seconds: b.seconds,
+      line: b.line,
+      motion_backend: b.motion_backend,
+    });
+    return json(out, 202);
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hPollCastVoiceSample: Handler = async (_req, env, _c, p) => {
+  try {
+    return json(await pollCastVoiceSample(env, await resolveCastId(env, p.id)));
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hKeepCastVoiceSample: Handler = async (_req, env, _c, p) => {
+  try {
+    return json(await keepCastVoiceSample(env, await resolveCastId(env, p.id)));
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hClearCastVoiceSample: Handler = async (_req, env, _c, p) => {
+  try {
+    await clearCastVoiceSample(env, await resolveCastId(env, p.id));
+    return json({ ok: true });
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hAttachCastVoiceSample: Handler = async (req, env, _c, p) => {
+  try {
+    const id = await resolveCastId(env, p.id);
+    const ct = (req.headers.get("content-type") || "").toLowerCase();
+    if (ct.startsWith("application/json")) {
+      const b = await readBody<{ from_chat_artifact?: string }>(req);
+      if (!b.from_chat_artifact) throw badRequest("from_chat_artifact required");
+      return json(await attachCastVoiceSampleFromKey(env, id, b.from_chat_artifact));
+    }
+    return json(await attachCastVoiceSample(env, id, {
+      bytes: await req.arrayBuffer(),
+      claimedMime: ct,
+    }));
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
 };
 const hDeleteCast: Handler = async (req, env, _c, p) => {
   const row = await deleteCast(env, await resolveCastId(env, p.id));
@@ -983,6 +1054,7 @@ const hSubmitRender: Handler = async (req, env) => {
     dialogue_lines: panelDialogue,
     style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
     voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
+    voice_ref_keys: voiceRefKeysFromScenes(scenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], panelPre.cast.voiceRefs),
     idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
@@ -1092,13 +1164,15 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
 
   // cf#334: derive dialogue from the bundle so RFK is not silent-by-default on a voiced package.
   let fromKfDialogue: DialogueLine[] | undefined;
+  let fromKfVoiceRefs: Record<string, string> | undefined;
   try {
-    const { voices } = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
-    let lines = dialogueLinesFromBundleScenes(parsedScenes, voices);
+    const resolved = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
+    let lines = dialogueLinesFromBundleScenes(parsedScenes, resolved.voices);
     if (lines.length) {
-      lines = resolveExplicitLineVoices(lines, parsedScenes, voices);
+      lines = resolveExplicitLineVoices(lines, parsedScenes, resolved.voices);
       fromKfDialogue = lines;
     }
+    fromKfVoiceRefs = resolved.voiceRefs;
   } catch { /* best-effort */ }
 
   const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
@@ -1125,6 +1199,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     derive_mode: "finalized",
     audio_key: b.audioKey,
     dialogue_lines: fromKfDialogue,
+    voice_ref_keys: voiceRefKeysFromScenes(parsedScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], fromKfVoiceRefs),
     idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
@@ -1837,6 +1912,7 @@ const hStartFilm: Handler = async (req, env) => {
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
     idempotency_key: readIdempotencyKey(a),
+    voice_ref_keys: voiceRefKeysFromScenes(filmScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], resolvedLoras.voiceRefs),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -2357,6 +2433,11 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
   { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
+  { method: "POST",   pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hStartCastVoiceSample },
+  { method: "GET",    pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hPollCastVoiceSample },
+  { method: "POST",   pattern: "/api/cast/:id/voice-sample/keep",      scope: "consumer",    handler: hKeepCastVoiceSample },
+  { method: "POST",   pattern: "/api/cast/:id/voice-sample/attach",    scope: "consumer",    handler: hAttachCastVoiceSample },
+  { method: "DELETE", pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hClearCastVoiceSample },
   { method: "POST",   pattern: "/api/upload",                          scope: "consumer",    handler: hUpload },
   { method: "POST",   pattern: "/api/report",                          scope: "consumer",    handler: handleAbuseReport },
   { method: "GET",    pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },

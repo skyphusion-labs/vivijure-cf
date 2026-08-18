@@ -78,6 +78,13 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
   };
   // Visual continuity: next shot's start still becomes this clip's last frame.
   if (input.last_keyframe_url) params.last_frame_image = input.last_keyframe_url;
+  // Voice lock: the Cast preview clip. CF Seedance 2.x takes reference_video
+  // (not a voice_id). Prompt already carries the spoken line.
+  if (input.voice_ref_url) {
+    params.reference_video = input.voice_ref_url;
+    const prompt = typeof params.prompt === "string" ? params.prompt : "";
+    params.prompt = (prompt + " Same speaking voice as the reference video. Do not invent a new speaker.").trim();
+  }
   return params;
 }
 

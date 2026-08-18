@@ -62,6 +62,7 @@ const MANIFEST: ModuleManifest = {
       "Same voice lock on every shot",
       "One film, no scatter",
       "No first+last still on this door",
+      "Cannot lock the Cast voice sample. Same description, not the same take.",
     ],
   },
   usage: {

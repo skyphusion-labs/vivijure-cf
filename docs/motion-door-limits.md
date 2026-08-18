@@ -180,9 +180,10 @@ Holds a look from reference stills. Silent.
 | First+last? | Yes. Start still plus the next shot's start still go in as reference images. |
 | Cannot | Native talking audio. |
 
-## own-gpu (best look, studio GPU)
+## own-gpu (silent look, studio GPU)
 
-Best look, slower, silent. Cloud talking doors finish faster.
+Our studio GPU. Best picture, silent. No talking audio and no voice lock.
+Use a talking door for dialogue.
 
 | | |
 |---|---|

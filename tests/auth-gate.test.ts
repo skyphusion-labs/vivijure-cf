@@ -512,7 +512,9 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
   it("demo serves voices: [] -- same rule for the TTS voice catalog", async () => {
     const res = await worker.fetch(get("/api/voices"), demoEnv, ctx);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ voices: [] });
+    const body = await res.json() as { voices: unknown; talking_doors?: unknown };
+    expect(body.voices).toEqual([]);
+    expect(Array.isArray(body.talking_doors)).toBe(true);
   });
 
   it("token mode still serves the full catalogs (no over-scrub outside demo)", async () => {
@@ -521,6 +523,9 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
     expect(models.models.length).toBeGreaterThan(0);
     const voices = (await (await worker.fetch(get("/api/voices", auth), tokenEnv, ctx)).json()) as any;
     expect(voices.voices.length).toBeGreaterThan(0);
+    expect(Array.isArray(voices.talking_doors)).toBe(true);
+    expect(voices.talking_doors.some((d: { name: string; honor: string }) => d.name === "cf-seedance" && d.honor === "exact")).toBe(true);
+    expect(voices.talking_doors.some((d: { name: string; honor: string }) => d.name === "cf-veo" && d.honor === "neighborhood")).toBe(true);
   });
 });
 

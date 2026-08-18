@@ -94,6 +94,7 @@ const MANIFEST: ModuleManifest = {
       "Talking films stay on one film (no scatter) so the speaker can stay consistent",
       "First and last stills hold the cut",
       "Faces drift",
+      "Cannot lock the Cast voice sample yet. Same description, not the same take.",
     ],
   },
   usage: {

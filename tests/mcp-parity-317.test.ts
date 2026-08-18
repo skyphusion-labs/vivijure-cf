@@ -425,16 +425,16 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 88, // studio API route entries (method+pattern); + POST /api/report
+  routes: 93, // studio API route entries (method+pattern); + voice-sample generate/poll/keep/clear/attach
   tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
   curatedCovered: 41, // route entries reached by a CURATED tool
-  panelReachable: 67, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70; cf#353 wired the retry button)
+  panelReachable: 72, // + Cast voice-sample generate/poll/keep/clear/attach
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
-  panelUncurated: 30, // panel-reachable entries with NO curated tool, METHOD-aware
-  panelUncuratedPathOnly: 34, // the same set under the PRE-cf#333 path-only matcher
-  hatchReachable: 85, // reachable via studio_request = routes minus the raw-body class
+  panelUncurated: 35, // + 5 voice-sample routes, no curated MCP tool yet
+  panelUncuratedPathOnly: 39, // method-aware + the 4 uncurated path-only false positives
+  hatchReachable: 90, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously

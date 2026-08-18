@@ -71,6 +71,7 @@ const cast = (over: Partial<CastMember> = {}): CastMember => ({
   lora_key: null, lora_status: "training", lora_job_id: "01fd7d02-aged-e2",
   lora_error: null, lora_trained_at: null, voice_id: null,
   wan_lora_key_high: null, wan_lora_key_low: null, ...over,
+  voice_ref_key: over.voice_ref_key ?? null,
 });
 
 beforeEach(() => polled.mockReset());

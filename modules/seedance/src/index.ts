@@ -67,7 +67,7 @@ const MANIFEST: ModuleManifest = {
       "Same seed and same voice lock",
       "Last still is the next start",
       "One film, no scatter",
-      "Cannot lock the voice from a previous clip",
+      "RunPod 1.5 cannot lock the Cast voice sample. Use Cloudflare Seedance for an exact lock.",
     ],
   },
   usage: {

@@ -44,6 +44,9 @@ describe("cf#317 the matcher, before any claim built on it", () => {
   it("POSITIVE control: a route known to be documented is found", () => {
     expect(documented("/api/storyboard/preflight")).toBe(true);
     expect(documented("/api/cast/:id/train-lora")).toBe(true);
+    expect(documented("/api/cast/:id/voice-sample")).toBe(true);
+    expect(documented("/api/cast/:id/voice-sample/keep")).toBe(true);
+    expect(documented("/api/cast/:id/voice-sample/attach")).toBe(true);
   });
 
   it("NEGATIVE control: a route that cannot exist is not found", () => {

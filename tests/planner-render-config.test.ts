@@ -239,7 +239,7 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
     expect(hint.textContent).toMatch(/^Required: pick which backend/i);
     mod.restore({ motion_backend: "a" }); // pick a door via the real restore path
     expect(hint.textContent).not.toMatch(/Required/);
-    expect(hint.textContent).toMatch(/Any door is fine/i);
+    expect(hint.textContent).toMatch(/Talking doors are the default/i);
   });
 });
 
