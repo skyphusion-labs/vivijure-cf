@@ -631,7 +631,7 @@
     const speed = defaultSpeedDoor(mods);
     sel.value = speed ? speed.name : mods[0].name;
     sel.addEventListener("change", () => {
-      if (typeof updateScatterGate === "function") updateScatterGate();
+
     });
     section.appendChild(sel);
 

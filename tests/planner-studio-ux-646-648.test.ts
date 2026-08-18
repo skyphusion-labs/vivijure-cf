@@ -56,10 +56,10 @@ describe("cf#646 render is three choices then spend", () => {
     expect(html).not.toMatch(/id="planner-keyframes-only"[^>]*checked/);
   });
 
-  it("scatter, module settings, and expert JSON live inside Advanced", () => {
+  it("module settings and expert JSON live inside Advanced (no scatter checkbox)", () => {
     const advIdx = html.indexOf('id="planner-render-advanced"');
     expect(advIdx).toBeGreaterThan(0);
-    expect(html.indexOf('id="planner-scatter"', advIdx)).toBeGreaterThan(advIdx);
+    expect(html).not.toMatch(/id="planner-scatter"/);
     expect(html.indexOf('id="planner-module-config"', advIdx)).toBeGreaterThan(advIdx);
     expect(html.indexOf("expert: raw JSON", advIdx)).toBeGreaterThan(advIdx);
   });

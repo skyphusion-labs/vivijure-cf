@@ -120,9 +120,9 @@ describe("planner voice lock wiring", () => {
   it("both submit paths fill then send voice_lock, and block empty native-audio motion", () => {
     expect(renderJs).toMatch(/function requirePlannerVoiceLock/);
     expect(renderJs).toMatch(/function plannerGenerateAudioOn/);
-    expect(renderJs.match(/requirePlannerVoiceLock/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(renderJs.match(/requirePlannerVoiceLock/g)?.length).toBeGreaterThanOrEqual(2);
     expect(renderJs).toMatch(/reqBody\.voice_lock = voiceLock/);
-    expect(renderJs).toMatch(/reqBody\.voice_lock = scatterVoiceLock/);
+    expect(renderJs).not.toMatch(/scatterVoiceLock/);
     expect(renderJs).toMatch(/Lock a speaking voice or pick Cast first/);
     expect(renderJs).toMatch(/data-field="generate_audio"/);
     expect(configJs).toMatch(/storyboardHasSpokenLines/);

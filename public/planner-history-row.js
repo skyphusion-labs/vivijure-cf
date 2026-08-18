@@ -142,33 +142,6 @@ function buildHistoryRow(r, childrenByParent) {
     meta.appendChild(fsBadge);
   }
 
-  // v0.162.0: scatter parent badge + shard progress. Shard children are
-  // suppressed from the top-level list in renderHistoryList; only the parent
-  // card appears. childrenByParent already indexes shards by parent numeric id.
-  if (typeof r.job_id === "string" && r.job_id.startsWith("scatter-")) {
-    const shards = childrenByParent.get(r.id) || [];
-    const nShards = shards.length;
-    const scatterBadge = document.createElement("span");
-    scatterBadge.className = "planner-history-mode planner-history-mode-scatter";
-    scatterBadge.textContent =
-      nShards ? "distributed -- " + nShards + " parts" : "distributed";
-    scatterBadge.title =
-      "split render" +
-      (nShards ? " (" + nShards + " parallel parts)" : "");
-    meta.appendChild(scatterBadge);
-
-    if (r.status === "SCATTERING" || r.status === "IN_PROGRESS" || r.status === "IN_QUEUE") {
-      const done = shards.filter((s) => s.status === "COMPLETED").length;
-      if (nShards > 0) {
-        const progBadge = document.createElement("span");
-        progBadge.className = "planner-history-mode planner-history-mode-progress";
-        progBadge.textContent = done + " of " + nShards + " parts complete";
-        progBadge.title = "split render progress";
-        meta.appendChild(progBadge);
-      }
-    }
-  }
-
   // v0.145.2: version badge for a derived animation (GPU finalize or cloud
   // i2v). One keyframes preview can have several of these; the label
   // disambiguates them (e.g. "cloud · gen-4.5" vs "cloud · hailuo-2.3-fast"

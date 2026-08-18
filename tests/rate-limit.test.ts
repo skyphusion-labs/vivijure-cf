@@ -17,7 +17,6 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
       "/api/storyboard/render",
       "/api/render/clips",
       "/api/render/film",
-      "/api/storyboard/render/scatter",
       "/api/storyboard/render-from-keyframes",
       "/api/storyboard/renders/abc-123/animate-cloud",
       "/api/storyboard/renders/abc-123/animate-hybrid",

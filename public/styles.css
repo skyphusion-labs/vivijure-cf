@@ -837,8 +837,6 @@ details.planner-bundle-consistent {
   display: grid; gap: 12px; padding: 14px 16px; border: 1px solid var(--line);
   border-radius: 12px; background: var(--panel-2); margin-bottom: 4px;
 }
-.planner-scatter-shard-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.planner-scatter-shard-row input[type="number"] { width: 5em; }
 .planner-overrides-secondary {
   background: var(--panel); border: 1px solid var(--line); color: var(--ink);
   border-radius: 9px; padding: 8px 10px; font: inherit; cursor: pointer;

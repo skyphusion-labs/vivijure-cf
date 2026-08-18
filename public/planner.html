@@ -464,20 +464,6 @@
       </details>
       <details class="planner-advanced" id="planner-render-advanced">
         <summary>Advanced</summary>
-        <!-- v0.162.0: scatter/gather distributed render. Enabled only when
-             the storyboard has >= 2 shots AND at least one character slot is
-             bound (scatter requires castLoras to be non-empty -- the server
-             hard-400s otherwise). updateScatterGate() enforces this dynamically
-             and shows a short reason when disabled. -->
-        <label class="planner-field-check" id="planner-scatter-wrap">
-          <input id="planner-scatter" type="checkbox" />
-          <span>distributed render (same backend on every shard)</span>
-        </label>
-        <span id="planner-scatter-reason" class="planner-status planner-scatter-reason" hidden></span>
-        <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap">
-          <label class="planner-field-check" for="planner-scatter-shards">parallelism (shards)</label>
-          <input id="planner-scatter-shards" type="number" min="1" inputmode="numeric" />
-        </div>
         <details class="planner-overrides-details">
           <summary class="planner-overrides-summary">module settings (optional)</summary>
           <p class="planner-overrides-hint">

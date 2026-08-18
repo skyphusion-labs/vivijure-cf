@@ -3,12 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Phase C Part 2 (cf#29): the Wan cast-LoRA projection. resolveCastLoras (core) sorts a bound cast
 // into DISJOINT SDXL (`pretrained`) and Wan (`wanPretrained`) maps; this cf-side projection turns a
 // Wan cast's two-expert R2 keys into presigned URLs inside the alibaba-wan-lora module config
-// (high_noise_loras / low_noise_loras), at ALL THREE render submit paths (render, film, scatter).
+// (high_noise_loras / low_noise_loras), at the live render submit paths (render, film).
 //
 // The load-bearing invariant these tests pin: a Wan cast projects ONLY the Wan config fields (never
 // pretrained_loras), an SDXL cast projects ONLY pretrained_loras (never the Wan fields), and this
-// holds at EACH of the three paths -- scatter especially, which forwards render_overrides RAW and
-// resolves per-shard downstream (the divergence that would otherwise ship a Wan cast LoRA-less).
+// holds at EACH remaining submit path. Scatter submit is retired.
 
 // --- deterministic presign: URL echoes the key + TTL so assertions can see both -------------------
 vi.mock("../src/r2-presign", async (orig) => {
@@ -43,7 +42,6 @@ vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
 // --- capture what each door hands its orchestrator -------------------------------------------------
 const cap = vi.hoisted(() => ({
   film: [] as Array<Record<string, unknown>>,
-  scatter: [] as Array<Record<string, unknown>>,
   wanTrainId: null as number | null,
   /** R2 film-job docs written by persistWanLoraProjectionOnFilm (cf#392). */
   filmDocs: [] as Array<{ key: string; body: string }>,
@@ -57,17 +55,6 @@ vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
       cap.film.push(args);
       return { film_id: "film-wan-test", phase: "keyframe", scenes: args.scenes, project: "p", created_at: 0 };
     }),
-  };
-});
-vi.mock("@skyphusion-labs/vivijure-core/scatter-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/scatter-orchestrator")>();
-  return {
-    ...actual,
-    startScatterRender: vi.fn(async (_env: unknown, args: Record<string, unknown>) => {
-      cap.scatter.push(args);
-      return { scatter_id: "scatter-wan-test", phase: "shards" };
-    }),
-    scatterJobToPollView: vi.fn(() => ({ jobId: "scatter-wan-test", status: "in_progress" })),
   };
 });
 vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
@@ -122,7 +109,7 @@ function fakeModule(manifest: unknown) {
   return { fetch: async () => new Response(JSON.stringify(manifest), { status: 200, headers: { "content-type": "application/json" } }) };
 }
 // The real alibaba-wan-lora config_schema: high/low_noise_loras are DECLARED string fields, so they
-// survive validateConfig on the scatter (pre-clamp) path.
+// survive validateConfig on the film (pre-clamp) path.
 const WAN_LORA_SCHEMA = {
   high_noise_loras: { type: "string", default: "[]", label: "high" },
   low_noise_loras: { type: "string", default: "[]", label: "low" },
@@ -151,7 +138,7 @@ function post(path: string, body: unknown): Request {
 }
 const SCENES = [{ shot_id: "shot_01", prompt: "a shot", seconds: 4 }];
 
-beforeEach(() => { cap.film = []; cap.scatter = []; cap.wanTrainId = null; cap.filmDocs = []; });
+beforeEach(() => { cap.film = []; cap.wanTrainId = null; cap.filmDocs = []; });
 
 function parseLoras(v: unknown): Array<{ path: string; scale: number }> {
   return JSON.parse(String(v)) as Array<{ path: string; scale: number }>;
@@ -238,7 +225,7 @@ describe("shouldProjectWanLoras / ensureModuleOverrideConfig -- the gating primi
 });
 
 // ==================================================================================================
-describe("cross-wire control at ALL THREE render paths (Wan cast vs SDXL cast, both directions)", () => {
+describe("cross-wire control at the live render paths (Wan cast vs SDXL cast, both directions)", () => {
   it("RENDER: a Wan cast still sends SDXL as pretrained_loras (keyframes) plus high/low on motion", async () => {
     const res = await worker.fetch(post("/api/storyboard/render", { bundleKey: "bundles/x.tar.gz", scenes: SCENES, motion_backend: WAN_LORA_BACKEND, castLoras: { A: "wan" } }), env(), ctx);
     expect(res.status).toBe(201);
@@ -276,22 +263,12 @@ describe("cross-wire control at ALL THREE render paths (Wan cast vs SDXL cast, b
     expect(mc.high_noise_loras).toBeUndefined();
   });
 
-  it("SCATTER: wan-lora is a look door, so the scatter door refuses", async () => {
-    const res = await worker.fetch(post("/api/storyboard/render/scatter", { bundleKey: "bundles/x.tar.gz", shotIds: ["shot_01", "shot_02"], motion_backend: WAN_LORA_BACKEND, castLoras: { A: "wan" } }), env(), ctx);
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error?: string };
-    expect(body.error || "").toMatch(/one film/i);
-  });
-  it("SCATTER: an SDXL cast on wan-lora is also refused", async () => {
-    const res = await worker.fetch(post("/api/storyboard/render/scatter", { bundleKey: "bundles/x.tar.gz", shotIds: ["shot_01", "shot_02"], motion_backend: WAN_LORA_BACKEND, castLoras: { A: "sdxl" } }), env(), ctx);
-    expect(res.status).toBe(400);
-  });
 });
 
 
 
 // ==================================================================================================
-// cf#392: surface {injected, dropped} on poll / film summary / scatter 201 + structured event.
+// cf#392: surface {injected, dropped} on poll / film summary + structured event.
 describe("cf#392 wan_lora_projection surface", () => {
   it("hasWanLoraProjection / wanLoraProjectionSurface: only when injected or dropped > 0", () => {
     expect(hasWanLoraProjection({ injected: 0, dropped: 0, applied: false })).toBe(false);
@@ -414,19 +391,6 @@ describe("cf#392 wan_lora_projection surface", () => {
     expect(body[WAN_LORA_PROJECTION_FIELD]).toEqual({ injected: 1, dropped: 0 });
   });
 
-  it("SCATTER: wan-lora look door refuses before a projection body can land", async () => {
-    const res = await worker.fetch(
-      post("/api/storyboard/render/scatter", {
-        bundleKey: "bundles/x.tar.gz",
-        shotIds: ["shot_01", "shot_02"],
-        motion_backend: WAN_LORA_BACKEND,
-        castLoras: { A: "wan" },
-      }),
-      env(),
-      ctx,
-    );
-    expect(res.status).toBe(400);
-  });
 });
 
 // ==================================================================================================
