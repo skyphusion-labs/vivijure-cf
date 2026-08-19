@@ -57,13 +57,15 @@ export function composePrompt(
   return `${lead}${scenePrompt.trim()}${idText}`;
 }
 
-/** RunPod Nano Banana 2 is an EDIT door. The storyboard line is the still we want;
- *  the portraits in images[] are identity, not the frame to retouch. */
+/** Edit pass for Workers AI nano-banana-2: the first image is the scene plate, later
+ *  images are faces. Do not retouch a portrait into a new still. */
 export function composeEditPrompt(scenePrompt: string): string {
   const scene = scenePrompt.trim();
   return (
     "Create a new cinematic film still from this description. "
-    + "Keep the face, hair, skin, and wardrobe of the people in the reference images. "
+    + "This is a new film still. The people stand in the location in the first image. "
+    + "Keep their faces, hair, skin, and wardrobe. "
+    + "Do not move them onto a studio backdrop or grey paper. "
     + "Do not copy the reference framing. "
     + scene
   );
@@ -95,13 +97,15 @@ export interface FilmRefPlan {
  * Modelled as a STRING (not a static enum) on purpose: the contract ConfigField enum needs fixed
  * `values`, but the cast anchor `<slot>` is a per-project character slot the static manifest cannot
  * enumerate. Returns null for a malformed value so the caller HARD-FAILS honestly (a producer stage
- * does not silently ignore a config the operator set); absent / "" / "none" is the no-op default.
+ * does not silently ignore a config the operator set). Absent / "" defaults to first_keyframe (shot 1
+ * is the scene lock after plate-first). Explicit "none" is the no-op.
  */
 export function parseFilmRef(v: unknown): FilmRefPlan | null {
-  if (v === undefined || v === null) return { mode: "none" };
+  if (v === undefined || v === null) return { mode: "first_keyframe" };
   if (typeof v !== "string") return null;
   const s = v.trim();
-  if (s === "" || s === "none") return { mode: "none" };
+  if (s === "") return { mode: "first_keyframe" };
+  if (s === "none") return { mode: "none" };
   if (s === "first_keyframe") return { mode: "first_keyframe" };
   if (s.startsWith("cast:")) {
     const slot = s.slice("cast:".length).trim();
@@ -145,6 +149,11 @@ export function stageRefKey(project: string, jobId: string, slot: string, index:
   return `keyframe-stage/${project}/${jobId}/ref_${slot}_${String(index).padStart(2, "0")}.png`;
 }
 
+/** Scene-plate sidecar for one character shot. Not the delivered keyframe. */
+export function plateKey(project: string, jobId: string, shotId: string): string {
+  return `keyframe-stage/${project}/${jobId}/plate_${shotId}.png`;
+}
+
 /** The async run-state doc for a cloud-keyframe job. */
 export function stateKey(project: string, jobId: string): string {
   return `keyframe-stage/${project}/${jobId}.state.json`;
@@ -156,6 +165,8 @@ export function stateKey(project: string, jobId: string): string {
 export interface ShotPlan {
   shot_id: string;
   prompt: string;
+  /** Style + scene only (no identity text). Present on new jobs; absent on pre-plate-then-edit state. */
+  plate_prompt?: string;
   slots: string[];
 }
 

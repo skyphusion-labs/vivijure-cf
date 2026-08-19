@@ -1,9 +1,8 @@
 // cloud-keyframe: a `keyframe` module worker (vivijure-module/2), GPUless. It turns a project's
-// storyboard into one START keyframe per shot via reference-conditioned CLOUD image generation -- no
-// GPU backend, no RunPod, NO LoRA. Character identity comes from the cast PORTRAITS packed in the
-// bundle (the same portraits a LoRA would have trained on), conditioned through FLUX-2 multiref or
-// nano-banana-pro image_input. This is the cost-door: cloud keyframe + cloud i2v = a film path with
-// zero GPU rental.
+// storyboard into one START keyframe per shot via Workers AI google/nano-banana-2 -- no GPU backend,
+// no RunPod, NO LoRA. Character shots are plate-then-edit: a text-only scene plate, then an edit that
+// places faces into that plate. Empty-slot shots stay text-only until first_keyframe locks shot 1 as
+// the film-wide scene. Portraits are identity, never the film-wide lock.
 //
 // ASYNC: a multi-shot project can't render inside one Worker request (a cloud gen is seconds each), so:
 //   GET  /module.json -> manifest
@@ -50,8 +49,10 @@ import {
   clampDim,
   clampRefsPerSlot,
   composePrompt,
+  composeEditPrompt,
   keyframeKey,
   stageRefKey,
+  plateKey,
   stateKey,
   selectScenes,
   usedSlots,
@@ -98,7 +99,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.7",
+  version: "0.1.8",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -117,8 +118,9 @@ export const MANIFEST: ModuleManifest = {
     refs_per_slot: { type: "int", default: 1, min: 1, max: 4, label: "reference images per character" },
     // cp#32: one film-wide reference appended to EVERY shot (character-less shots included) to lock
     // style/realism across the film. STRING not enum: the cast anchor <slot> is per-project and a
-    // static enum cannot carry it. Grammar: none | first_keyframe | cast:<slot>. Default none = no-op.
-    film_ref: { type: "string", default: "none", label: "film-wide reference lock (none | first_keyframe | cast:<slot>)" },
+    // static enum cannot carry it. Grammar: none | first_keyframe | cast:<slot>. After plate-first,
+    // shot 1 is the scene lock, so the default is first_keyframe (not a portrait borrow).
+    film_ref: { type: "string", default: "first_keyframe", label: "film-wide reference lock (none | first_keyframe | cast:<slot>)" },
   },
   ui: { section: "keyframe", order: 5 },
 };
@@ -179,6 +181,48 @@ async function normalizeKeyframe(
     .transform({ width, height, fit: "cover" })
     .output({ format: "image/png" });
   return { bytes: await out.response().arrayBuffer(), mime: "image/png" };
+}
+
+type GenOk = { ok: true; gen: { bytes: ArrayBuffer; mime: string } };
+type GenErr = { ok: false; error: string };
+
+/** One generateImage call with FLAG_RETRY_ATTEMPTS on a flaky 3030. Plate and edit each get their own budget. */
+async function generateImageWithFlagRetry(
+  env: Env,
+  gatewayId: string,
+  model: string,
+  prompt: string,
+  refBlobs: Blob[],
+  width: number,
+  height: number,
+  shotId: string,
+): Promise<GenOk | GenErr> {
+  let lastFlag: Error | undefined;
+  for (let attempt = 0; attempt < FLAG_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const gen = await generateImage(
+        env.AI,
+        gatewayId,
+        model,
+        rephraseForFlagRetry(prompt, attempt),
+        refBlobs,
+        width,
+        height,
+      );
+      return { ok: true, gen };
+    } catch (e) {
+      const err = e as Error;
+      if (!isRetryableFlag(err.message)) {
+        return { ok: false, error: "cloud-keyframe: shot " + shotId + " render failed: " + err.message };
+      }
+      lastFlag = err;
+    }
+  }
+  return {
+    ok: false,
+    error: "cloud-keyframe: shot " + shotId + " flagged " + FLAG_RETRY_ATTEMPTS
+      + " times (persistent 3030): " + (lastFlag?.message || "output has been flagged"),
+  };
 }
 
 /** /invoke: read the bundle, stage each used cast portrait (downscaled), plan the shots, persist the
@@ -268,25 +312,17 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
 
   // cp#32: stage the one film-wide reference. cast:<slot> -> the anchor slot canonical portrait
   // (the staging loop already hard-failed if it had none). first_keyframe -> deferred to poll,
-  // which captures the first rendered keyframe into __film__. none -> nothing.
+  // which captures the shot-1 plate into __film__. none -> nothing.
   if (filmPlan.mode === "cast" && filmPlan.slot) {
     slot_refs[FILM_REF_SLOT] = [slot_refs[filmPlan.slot][0]];
   }
-  // RunPod edit requires images[]. A shot with empty character_slots would
-  // otherwise send none even when the bundle has portraits. Borrow every
-  // staged canonical portrait as the film-wide lock.
-  if (!slot_refs[FILM_REF_SLOT]?.length) {
-    const borrowed: string[] = [];
-    for (const [slot, keys] of Object.entries(slot_refs)) {
-      if (slot === FILM_REF_SLOT) continue;
-      if (keys[0]) borrowed.push(keys[0]);
-    }
-    if (borrowed.length) slot_refs[FILM_REF_SLOT] = borrowed;
-  }
+  // first_keyframe is deferred to poll (shot 1 becomes __film__). Do not
+  // copy staged portraits onto empty-slot shots; that rebuilds the grey studio.
 
   const shots: ShotPlan[] = selected.map((s) => ({
     shot_id: s.shot_id,
     prompt: composePrompt(stylePrefix, s.prompt, s.slots, registry),
+    plate_prompt: composePrompt(stylePrefix, s.prompt, [], registry),
     slots: s.slots,
   }));
 
@@ -327,62 +363,73 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
 
   for (let n = 0; n < PER_POLL && state.shots.length > 0; n++) {
     const shot = state.shots[0];
+    const characterShot = shot.slots.length > 0;
+    // New jobs always set plate_prompt. Pre-plate-then-edit state docs omit it and stay one-pass.
+    const twoPass = characterShot && shot.plate_prompt !== undefined;
+    const cap = maxRefsForModel(state.model);
 
     // Gather this shot own character refs first, then the film-wide reference into the leftover
-    // capacity (cp#32). planShotRefs guarantees the film ref never evicts a character ref.
-    const { charKeys, filmKeys } = planShotRefs(state.slot_refs, shot.slots, maxRefsForModel(state.model));
-    const refBlobs: Blob[] = [];
+    // capacity (cp#32). planShotRefs guarantees the film ref never evicts a character ref. On the
+    // edit pass the plate occupies slot 0, so film fills leftover under cap-1.
+    const { charKeys, filmKeys } = planShotRefs(
+      state.slot_refs,
+      shot.slots,
+      twoPass ? Math.max(0, cap - 1) : cap,
+    );
+    const charBlobs: Blob[] = [];
     for (const key of charKeys) {
       const r = await env.R2_RENDERS.get(key);
-      if (r) refBlobs.push(await r.blob());
+      if (r) charBlobs.push(await r.blob());
     }
-    if (shot.slots.length > 0 && refBlobs.length === 0) {
+    if (characterShot && charBlobs.length === 0) {
       return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " lost its staged references" };
     }
+    const filmBlobs: Blob[] = [];
     for (const key of filmKeys) {
       const r = await env.R2_RENDERS.get(key);
-      if (r) refBlobs.push(await r.blob());
+      if (r) filmBlobs.push(await r.blob());
     }
-    if (!refBlobs.length) {
-      for (const [slot, keys] of Object.entries(state.slot_refs)) {
-        if (slot === FILM_REF_SLOT) continue;
-        for (const key of keys) {
-          const r = await env.R2_RENDERS.get(key);
-          if (r) refBlobs.push(await r.blob());
-        }
-        if (refBlobs.length) break;
-      }
-    }
+    // Empty refBlobs stays empty. Do not steal a staged portrait onto an empty-slot shot.
 
-    let gen: { bytes: ArrayBuffer; mime: string } | undefined;
-    let lastFlag: Error | undefined;
-    for (let attempt = 0; attempt < FLAG_RETRY_ATTEMPTS; attempt++) {
+    let gen: { bytes: ArrayBuffer; mime: string };
+    let plateBytes: ArrayBuffer | undefined;
+    if (twoPass) {
+      const platePrompt = shot.plate_prompt || shot.prompt;
+      const plateRes = await generateImageWithFlagRetry(
+        env, gatewayId, state.model, platePrompt, [], state.width, state.height, shot.shot_id,
+      );
+      if (!plateRes.ok) return plateRes;
+      plateBytes = plateRes.gen.bytes;
       try {
-        gen = await generateImage(
-          env.AI,
-          gatewayId,
-          state.model,
-          rephraseForFlagRetry(shot.prompt, attempt),
-          refBlobs,
-          state.width,
-          state.height,
+        await env.R2_RENDERS.put(
+          plateKey(state.project, state.job_id, shot.shot_id),
+          plateBytes,
+          { httpMetadata: { contentType: plateRes.gen.mime } },
         );
-        lastFlag = undefined;
-        break;
       } catch (e) {
-        const err = e as Error;
-        if (!isRetryableFlag(err.message)) {
-          return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " render failed: " + err.message };
-        }
-        lastFlag = err;
+        console.warn("cloud-keyframe: could not persist plate for shot " + shot.shot_id + ": " + (e as Error).message);
       }
-    }
-    if (!gen) {
-      return {
-        ok: false,
-        error: "cloud-keyframe: shot " + shot.shot_id + " flagged " + FLAG_RETRY_ATTEMPTS
-          + " times (persistent 3030): " + (lastFlag?.message || "output has been flagged"),
-      };
+      const editRefs: Blob[] = [new Blob([plateBytes])];
+      for (const b of charBlobs) {
+        if (editRefs.length >= cap) break;
+        editRefs.push(b);
+      }
+      for (const b of filmBlobs) {
+        if (editRefs.length >= cap) break;
+        editRefs.push(b);
+      }
+      const editRes = await generateImageWithFlagRetry(
+        env, gatewayId, state.model, composeEditPrompt(shot.prompt), editRefs, state.width, state.height, shot.shot_id,
+      );
+      if (!editRes.ok) return editRes;
+      gen = editRes.gen;
+    } else {
+      const refs = [...charBlobs, ...filmBlobs];
+      const single = await generateImageWithFlagRetry(
+        env, gatewayId, state.model, shot.prompt, refs, state.width, state.height, shot.shot_id,
+      );
+      if (!single.ok) return single;
+      gen = single.gen;
     }
 
     let norm: { bytes: ArrayBuffer; mime: string };
@@ -401,12 +448,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
 
     state.done.push({ shot_id: shot.shot_id, keyframe_key: key });
 
-    // cp#32 first_keyframe: the first rendered keyframe becomes the film-wide reference for the rest.
-    // Downscaled + staged like a cast portrait so all refs stay uniformly <=512. Best-effort: a
-    // staging miss means the rest render without the lock (drift, not a broken keyframe).
+    // cp#32 first_keyframe: shot 1 is the scene lock. Prefer the plate sidecar (the set, not the
+    // people) when this was a character shot; empty-slot shot 1 IS the plate. Downscaled + staged
+    // like a cast portrait so all refs stay uniformly <=512. Best-effort: a staging miss means
+    // the rest render without the lock (drift, not a broken keyframe).
     if (state.film_ref?.mode === "first_keyframe" && !(state.slot_refs[FILM_REF_SLOT]?.length)) {
       try {
-        const small = await downscaleRef(env.IMAGES, norm.bytes);
+        const source = plateBytes ?? norm.bytes;
+        const small = await downscaleRef(env.IMAGES, source);
         const frKey = stageRefKey(state.project, state.job_id, FILM_REF_SLOT, 1);
         await env.R2_RENDERS.put(frKey, small, { httpMetadata: { contentType: "image/png" } });
         state.slot_refs[FILM_REF_SLOT] = [frKey];

@@ -122,6 +122,7 @@ export function proxiedParams(
 ): Record<string, unknown> {
   if (model.startsWith("google/")) {
     const p: Record<string, unknown> = { prompt, output_format: "png", aspect_ratio: nearestAspectRatio(width, height) };
+    // Text-only plate: omit image_input entirely. An empty array is not the same as absent.
     if (imageInputs.length) p.image_input = imageInputs.slice(0, PROXIED_MAX_REFS);
     return p;
   }
