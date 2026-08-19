@@ -391,14 +391,14 @@ service = "vivijure-module-google-veo"
 binding = "MODULE_VIDU_Q3"
 service = "vivijure-module-vidu-q3"
 
-# Wan 2.6 RunPod stays in modules/alibaba-wan but is NOT bound on hosted.
-# [[services]]
-# binding = "MODULE_ALIBABA_WAN"
-# service = "vivijure-module-alibaba-wan"
-
 [[services]]
-binding = "MODULE_CF_WAN_27"
-service = "vivijure-module-cf-wan-27"
+binding = "MODULE_ALIBABA_WAN"
+service = "vivijure-module-alibaba-wan"
+
+# CF Wan 2.7 is unbound on hosted (no driving_audio on the CF schema).
+# [[services]]
+# binding = "MODULE_CF_WAN_27"
+# service = "vivijure-module-cf-wan-27"
 
 [[services]]
 binding = "MODULE_CF_HAILUO"
