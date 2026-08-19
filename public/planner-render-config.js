@@ -345,20 +345,48 @@
     return loc === "cloud" || loc === "datacenter";
   }
 
-  // Default = first RunPod cloud i2v (registry order / ui.order). Never a
-  // compiled-in module name. CF doors and own-gpu stay on the picker.
+  function usageOf(mod) {
+    return mod && mod.usage && typeof mod.usage === "object" ? mod.usage : {};
+  }
+
+  function boundCastHasSample() {
+    const st = global.planState;
+    if (!st) return false;
+    const bindings = st.castBindings || {};
+    const catalog = st.castCatalog || [];
+    for (const slot of Object.keys(bindings)) {
+      const id = bindings[slot];
+      const c = catalog.find((x) => x && (x.id === id || String(x.id) === String(id)));
+      if (c && typeof c.voice_ref_key === "string" && c.voice_ref_key) return true;
+    }
+    return false;
+  }
+
+  function byUiOrder(a, b) {
+    const ao = Number(uiHint(a, "order"));
+    const bo = Number(uiHint(b, "order"));
+    const an = Number.isFinite(ao) ? ao : 99;
+    const bn = Number.isFinite(bo) ? bo : 99;
+    return an - bn;
+  }
+
+  // Hosted talking default: Seedance if a Cast sample is kept (usage.voice_ref);
+  // else InfiniteTalk if the board has a line (driving_audio, not native);
+  // Wan last (driving_audio + native auto-dub). Else first talking door by ui.order.
   function defaultSpeedDoor(mods) {
-    const list = (Array.isArray(mods) ? mods : []).filter(isRunpodCloudDoor);
-    const flagged = list.find((m) => uiHint(m, "default") === true || uiHint(m, "default") === "motion");
-    if (flagged) return flagged;
-    list.sort((a, b) => {
-      const ao = Number(uiHint(a, "order"));
-      const bo = Number(uiHint(b, "order"));
-      const an = Number.isFinite(ao) ? ao : 99;
-      const bn = Number.isFinite(bo) ? bo : 99;
-      return an - bn;
-    });
-    return list[0] || null;
+    const list = Array.isArray(mods) ? mods : [];
+    if (boundCastHasSample()) {
+      const seedance = list.find((m) => usageOf(m).voice_ref === true);
+      if (seedance) return seedance;
+    }
+    if (storyboardHasSpokenLines()) {
+      const ourFile = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === false);
+      if (ourFile) return ourFile;
+    }
+    const wan = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === true);
+    if (wan) return wan;
+    const talking = talkingMotionMods(list).slice().sort(byUiOrder);
+    return talking[0] || null;
   }
 
   function doorTitle(mod) {
@@ -576,7 +604,8 @@
   }
 
   function doorCanSpeak(mod) {
-    return !!(mod && mod.usage && mod.usage.native_audio === true);
+    const usage = usageOf(mod);
+    return usage.native_audio === true || usage.driving_audio === true;
   }
 
   function talkingMotionMods(mods) {
@@ -639,9 +668,8 @@
     doors.className = "planner-backend-doors";
 
     if (mods.length > 1) {
-      // Default the speed door (RunPod Seedance, else first RunPod cloud i2v).
-      // own-gpu stays on the picker as silent look. CF doors stay pickable.
-      // If no RunPod cloud door is installed, leave the pick empty (#501).
+      // Default: Seedance if a sample is kept, else InfiniteTalk if any line,
+      // Wan last, else first talking door. Leave the pick empty when none apply.
       if (speed) {
         sel.value = speed.name;
       } else {
@@ -726,7 +754,7 @@
             motionWrap.hidden = false;
             const empty = document.createElement("p");
             empty.className = "planner-backend-caption-hint";
-            empty.textContent = "This storyboard has spoken lines, but no talking door is installed. Bind Seedance, Veo, Flux, Vidu, or Grok.";
+            empty.textContent = "This storyboard has spoken lines, but no talking door is installed. Bind Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok.";
             motionWrap.appendChild(empty);
           }
         } else if (renderBackendSelector(doors, motionWrap)) motionShown = true;
@@ -947,6 +975,8 @@
     renderPanel,
     renderBackendSelector,
     defaultSpeedDoor,
+    doorCanSpeak,
+    talkingMotionMods,
     collect,
     collectForSubmit,
     restore,

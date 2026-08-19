@@ -140,7 +140,12 @@ describe("phaseLabel: user-facing names for pipeline tokens (cf#303)", () => {
   it("keeps the filmmaker phase words", () => {
     expect(PHASE_LABELS.keyframe).toBe("Drawing keyframes");
     expect(PHASE_LABELS.i2v).toBe("Animating shots");
+    expect(PHASE_LABELS.clips).toBe("Animating shots");
+    expect(PHASE_LABELS.pre_clip_dialogue).toBe("Recording the lines");
+    expect(PHASE_LABELS.pre_clip_speech).toBe("Cleaning the voice");
     expect(PHASE_LABELS.assemble).toBe("Putting the film together");
+    expect(phaseLabel("pre_clip_dialogue")).toBe("Recording the lines");
+    expect(phaseLabel("clips")).toBe(PHASE_LABELS.i2v);
   });
 
   it("is case-insensitive on the token", () => {

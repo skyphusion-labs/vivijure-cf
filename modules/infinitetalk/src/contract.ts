@@ -27,6 +27,8 @@ export interface MotionUsageDecl {
   duration_steps?: number[];
   first_last?: boolean;
   seed?: boolean;
+  /** Shot LINE file as driving audio. Never the Cast sample. */
+  driving_audio?: boolean;
 }
 
 export interface ModuleManifest {
@@ -75,7 +77,9 @@ export interface MotionBackendInput {
   shot_id: string;
   keyframe_url: string;
   keyframe_key?: string;
+  /** Shot LINE file (Cast TTS of this storyboard line). InfiniteTalk driving audio. */
   audio_url?: string;
+  audio_key?: string;
   prompt: string;
   seconds: number;
 }

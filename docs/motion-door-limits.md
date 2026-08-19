@@ -27,9 +27,8 @@ Shared rules:
 - **Flux v2v** (feed the last 4 seconds of the previous clip) is the real Flux
   speaker lock. Talking Flux stays on one film so that path can land. Until
   v2v is wired, the speaker lock is the same prompt lock on every shot.
-- Seedance on Cloudflare has a **seed** knob and **no `audio_urls`**. Voice
-  lock is seed plus prompt. There is no audio-reference field on the door we
-  call.
+- Seedance on Cloudflare uses the talking sample you kept as the voice
+  lock. Same take, every shot.
 - Kling in this tree is **2.1 silent**. It is not Kling 2.6 `voice_id`. Speaking
   is Cast TTS plus MuseTalk.
 
@@ -47,15 +46,15 @@ Stylized talking clips from your stills. Faces drift.
 
 ## cf-seedance (Seedance talking)
 
-Fast talking clips. Same seed keeps the voice closer.
+Fast talking clips. Uses the sample you kept.
 
 | | |
 |---|---|
 | Duration | 4-12 seconds |
 | Talks? | Yes. |
-| Voice lock | `seed_and_prompt`. Same seed and same voice lock on every shot. |
-| First+last? | Yes. `last_frame_image` is the next shot's start still when we have one. |
-| Cannot | Lock the voice from a previous clip (no `audio_urls` / audio-reference on this door). |
+| Voice lock | The sample you kept. Same voice on every shot. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. |
+| Cannot | Invent a different speaker. Hosted does not add mouths in finish. |
 
 ## seedance (Seedance talking, hosted speed default)
 
@@ -129,17 +128,19 @@ Physical motion, silent.
 | First+last? | No. |
 | Cannot | Native talking audio. Arbitrary lengths. |
 
-## alibaba-wan (silent detailed)
+## alibaba-wan (Wan 2.6 talking)
 
-Detailed motion, stronger faces, silent.
+Stills to clip. Mouth follows the storyboard line when we have a Cast
+voice. Without a line, invents speech from the prompt. Cannot lock the
+sample you kept. Public slug `wan-2-6-i2v`. Cloudflare Wan 2.7 is gone.
 
 | | |
 |---|---|
 | Duration | 5, 10, or 15 seconds |
-| Talks? | No. |
-| Voice lock | `cast_tts`. |
+| Talks? | Yes. Our LINE file, or auto-dub when the shot has no words. |
+| Voice lock | Mouth follows the storyboard line in the Cast voice. |
 | First+last? | No. |
-| Cannot | Native talking audio. Continuous duration. |
+| Cannot | Lock the sample you kept. Continuous durations. |
 
 ## alibaba-wan-lora (silent, your trained face)
 
@@ -192,17 +193,17 @@ this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).
 | First+last? | No. |
 | Cannot | Native talking audio. Commercial self-host. Cloud API-free is the point, not datacenter parity. |
 
-## infinitetalk (RunPod)
+## infinitetalk
 
-Portrait plus Cast audio. The speaker is ours.
+Portrait plus Cast audio. The speaker is ours, not invented.
 
 | | |
 |---|---|
-| Duration | Audio-driven, we clamp 2-15 seconds |
-| Talks? | Mouth is driven by our audio. Not native invented speech. |
-| Voice lock | `cast_tts`. Needs `audio_url` from Aura or Chatterbox. |
+| Duration | Clip length follows the LINE audio. |
+| Talks? | Mouth follows our file. Not invented speech. |
+| Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet. |
 | First+last? | No. |
-| Cannot | Invent speech. Run without a Cast audio clip. |
+| Cannot | Invent speech. Lock the sample you kept. |
 
 ## kling-o1-r2v (RunPod)
 
@@ -215,19 +216,6 @@ Multi-ref silent. Cast, props, locations.
 | Voice lock | `cast_tts`. |
 | First+last? | Yes, as extra reference images. |
 | Cannot | Native talking audio. Kling 2.6 voice_id. |
-
-## alibaba-wan (RunPod Wan 2.6 I2V)
-
-Hosted Wan door. Public `wan-2-6-i2v`. Image + prompt + optional audio.
-Cloudflare Wan 2.7 is gone (no driving_audio on that schema).
-
-| | |
-|---|---|
-| Duration | 5, 10, or 15 seconds |
-| Talks? | Yes. |
-| Voice lock | Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept. |
-| First+last? | No. |
-| Cannot | Continuous durations. |
 
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 
@@ -255,5 +243,5 @@ Cloudflare Wan 2.7 is gone (no driving_audio on that schema).
 |---|---|
 | `prompt_lock` | Same speaker description in every motion prompt. No speaker id on the door. |
 | `seed_and_prompt` | Same seed **and** the same prompt lock. Seedance. |
-| `cast_tts` | Silent motion. The speaking voice is the Cast voice (TTS). MuseTalk mouth-replace is homelab-only; hosted does not bind it. |
+| `cast_tts` | Speaking voice is the Cast voice (TTS). Driving-audio doors (InfiniteTalk, Wan) consume that LINE file at motion time. MuseTalk mouth-replace is homelab-only; hosted does not bind it. |
 | `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Not wired yet. |

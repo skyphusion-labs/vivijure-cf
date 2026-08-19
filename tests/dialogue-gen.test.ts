@@ -10,6 +10,13 @@ import {
   DEFAULT_VOICE_ID,
   AUDIO_MIME,
 } from "../modules/dialogue-gen/src/dialogue-gen";
+import {
+  mintSilenceWav,
+  normalizeLineWav,
+  parseWavDurationSeconds,
+  LINE_WAV_MIN_SECONDS,
+  LINE_WAV_MAX_SECONDS,
+} from "../modules/dialogue-gen/src/wav-duration";
 
 // ---- pure helpers ----------------------------------------------------------
 
@@ -52,6 +59,35 @@ describe("dialogue-gen helpers", () => {
   it("normalizeInput rejects an over-cap line (no silent truncation of a character's words)", () => {
     const r = normalizeInput({ project: "p", lines: [{ shot_id: "shot_01", text: "x".repeat(301) }] });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("dialogue-gen WAV pad/trim", () => {
+  it("pads a short line to 3.0s and trims past 15.0s", () => {
+    const short = mintSilenceWav(1.5);
+    const padded = normalizeLineWav(short);
+    expect(padded).not.toBeNull();
+    expect(padded!.padded).toBe(true);
+    expect(padded!.trimmed).toBe(false);
+    expect(padded!.seconds).toBeCloseTo(LINE_WAV_MIN_SECONDS, 5);
+
+    const long = mintSilenceWav(16);
+    const trimmed = normalizeLineWav(long);
+    expect(trimmed).not.toBeNull();
+    expect(trimmed!.trimmed).toBe(true);
+    expect(trimmed!.padded).toBe(false);
+    expect(trimmed!.seconds).toBeCloseTo(LINE_WAV_MAX_SECONDS, 5);
+  });
+
+  it("keeps a legal 4s file and refuses non-WAV bytes", () => {
+    const ok = mintSilenceWav(4);
+    const kept = normalizeLineWav(ok);
+    expect(kept).not.toBeNull();
+    expect(kept!.padded).toBe(false);
+    expect(kept!.trimmed).toBe(false);
+    expect(kept!.seconds).toBeCloseTo(4, 5);
+    expect(parseWavDurationSeconds(kept!.bytes)).toBeCloseTo(4, 5);
+    expect(normalizeLineWav(new TextEncoder().encode("not a wav"))).toBeNull();
   });
 });
 

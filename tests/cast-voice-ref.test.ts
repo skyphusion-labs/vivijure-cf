@@ -52,8 +52,13 @@ describe("TALKING_VOICE_HONOR", () => {
     expect(veo?.honor).toBe("neighborhood");
     expect(veo?.label).toMatch(/not the same take/i);
     const wan = TALKING_VOICE_HONOR.find((d) => d.name === "alibaba-wan");
-    expect(wan?.honor).toBe("neighborhood");
-    expect(wan?.label).toBe("Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.");
+    expect(wan?.honor).toBe("line");
+    expect(wan?.label).toMatch(/Mouth follows the storyboard line in the Cast voice/);
+    expect(wan?.label).toMatch(/Without a line, invents speech/);
+    expect(wan?.honor).not.toBe("exact");
+    const talk = TALKING_VOICE_HONOR.find((d) => d.name === "infinitetalk");
+    expect(talk?.honor).toBe("line");
+    expect(talk?.label).toBe("Mouth follows the storyboard line in the Cast voice.");
     expect(TALKING_VOICE_HONOR.find((d) => d.name === "cf-wan-27")).toBeUndefined();
   });
 });

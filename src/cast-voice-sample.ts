@@ -61,8 +61,13 @@ export const TALKING_VOICE_HONOR = [
   },
   {
     name: "alibaba-wan",
-    honor: "neighborhood" as const,
-    label: "Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.",
+    honor: "line" as const,
+    label: "Mouth follows the storyboard line in the Cast voice. Without a line, invents speech from the prompt. Cannot lock the sample you kept.",
+  },
+  {
+    name: "infinitetalk",
+    honor: "line" as const,
+    label: "Mouth follows the storyboard line in the Cast voice.",
   },
 ];
 

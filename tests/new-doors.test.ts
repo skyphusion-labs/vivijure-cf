@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildKlingBody as buildO1, clampDuration as clampO1 } from "../modules/kling-o1-r2v/src/kling";
-import { buildKlingBody as buildTalk, clampDuration as clampTalk } from "../modules/infinitetalk/src/kling";
+import { buildKlingBody as buildTalk, clampDuration as clampTalk, framesFromDelivered, mp4DurationSeconds } from "../modules/infinitetalk/src/kling";
 import { buildParams as hailuo } from "../modules/cf-hailuo/src/params";
 import { buildParams as veo, clampDuration as clampVeo } from "../modules/cf-veo/src/params";
 import { chatterboxVoice, buildTtsParams } from "../modules/chatterbox/src/chatterbox";
@@ -16,6 +16,29 @@ describe("kling-o1-r2v", () => {
   });
 });
 
+function tinyMp4(timescale: number, duration: number): Uint8Array {
+  const ftypSize = 24;
+  const mvhdPayload = 108;
+  const mvhdSize = 8 + mvhdPayload;
+  const moovSize = 8 + mvhdSize;
+  const out = new Uint8Array(ftypSize + moovSize);
+  const w32 = (o: number, v: number) => {
+    out[o] = (v >>> 24) & 255;
+    out[o + 1] = (v >>> 16) & 255;
+    out[o + 2] = (v >>> 8) & 255;
+    out[o + 3] = v & 255;
+  };
+  const wcc = (o: number, s: string) => {
+    for (let i = 0; i < 4; i++) out[o + i] = s.charCodeAt(i);
+  };
+  w32(0, ftypSize); wcc(4, "ftyp"); wcc(8, "isom");
+  w32(ftypSize, moovSize); wcc(ftypSize + 4, "moov");
+  w32(ftypSize + 8, mvhdSize); wcc(ftypSize + 12, "mvhd");
+  w32(ftypSize + 8 + 8 + 12, timescale);
+  w32(ftypSize + 8 + 8 + 16, duration);
+  return out;
+}
+
 describe("infinitetalk", () => {
   it("requires audio and defaults safety off", () => {
     const b = buildTalk(shot, { audio_url: "https://r2/line.wav", size: "720p" });
@@ -26,6 +49,19 @@ describe("infinitetalk", () => {
       enable_safety_checker: false,
     });
     expect(clampTalk(20)).toBe(15);
+  });
+
+  it("sends input.audio_url as audio and never a Cast sample field", () => {
+    const b = buildTalk({ ...shot, audio_url: "https://r2/line.wav" }, {});
+    expect(b.input.audio).toBe("https://r2/line.wav");
+    expect(JSON.stringify(b)).not.toMatch(/voice_ref/);
+  });
+
+  it("frames follow delivered mp4 duration, else wav seconds", () => {
+    const mp4 = tinyMp4(24, 72); // 3s
+    expect(mp4DurationSeconds(mp4)).toBeCloseTo(3, 5);
+    expect(framesFromDelivered(mp4.buffer as ArrayBuffer, 10, 24)).toBe(72);
+    expect(framesFromDelivered(new ArrayBuffer(8), 4, 24)).toBe(96);
   });
 });
 

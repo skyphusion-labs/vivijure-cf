@@ -16,6 +16,7 @@ import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
 import seedanceWorker from "../modules/seedance/src/index";
 import viduQ3Worker from "../modules/vidu-q3/src/index";
+import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -28,6 +29,7 @@ type Usage = {
   duration_steps?: number[];
   first_last?: boolean;
   seed?: boolean;
+  driving_audio?: boolean;
 };
 
 type Manifest = {
@@ -110,8 +112,16 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     name: "alibaba-wan",
     worker: alibabaWanWorker as unknown as Worker,
     usage: {
-      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
+      native_audio: true, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
       min_seconds: 5, max_seconds: 15, duration_steps: [5, 10, 15],
+    },
+  },
+  {
+    name: "infinitetalk",
+    worker: infinitetalkWorker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
+      min_seconds: 2, max_seconds: 15,
     },
   },
   {
@@ -169,6 +179,7 @@ describe.each(DOORS)("$name filmmaker card + usage", ({ name, worker, usage }) =
     if (usage.duration_steps) expect(m.usage!.duration_steps).toEqual(usage.duration_steps);
     if (usage.first_last !== undefined) expect(m.usage!.first_last).toBe(usage.first_last);
     if (usage.seed !== undefined) expect(m.usage!.seed).toBe(usage.seed);
+    if (usage.driving_audio !== undefined) expect((m.usage as Usage).driving_audio).toBe(usage.driving_audio);
 
     const label = m.provides?.[0]?.label ?? "";
     expect(label.length).toBeGreaterThan(0);
@@ -180,5 +191,32 @@ describe.each(DOORS)("$name filmmaker card + usage", ({ name, worker, usage }) =
 
     expect(Array.isArray(m.ui?.limits) && m.ui!.limits!.length).toBeTruthy();
     expect(typeof m.ui?.cost).toBe("string");
+  });
+});
+
+describe("driving-audio honesty copy", () => {
+  it("Wan blurb does not call the Cast sample audio", async () => {
+    const m = await moduleJson(alibabaWanWorker as unknown as Worker);
+    const blurb = m.ui?.blurb ?? "";
+    const limits = (m.ui?.limits ?? []).join(" ");
+    expect(blurb).not.toMatch(/Cast sample as audio/i);
+    expect(limits).not.toMatch(/Cast sample as audio/i);
+    expect(blurb).not.toMatch(JARGON);
+    expect(limits).not.toMatch(JARGON);
+    expect((m.usage as Usage).driving_audio).toBe(true);
+  });
+
+  it("Seedance blurb may still mention the kept sample", async () => {
+    const m = await moduleJson(cfSeedanceWorker as unknown as Worker);
+    const card = ((m.ui?.blurb ?? "") + " " + (m.ui?.limits ?? []).join(" ")).toLowerCase();
+    expect(card).toMatch(/sample/);
+    expect(m.ui?.blurb ?? "").not.toMatch(JARGON);
+  });
+
+  it("InfiniteTalk declares driving_audio and has no jargon", async () => {
+    const m = await moduleJson(infinitetalkWorker as unknown as Worker);
+    expect((m.usage as Usage).driving_audio).toBe(true);
+    expect(m.ui?.blurb ?? "").not.toMatch(JARGON);
+    expect((m.ui?.limits ?? []).join(" ")).not.toMatch(JARGON);
   });
 });
