@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.7 -- 2026-08-18
+
+### fix(motion): hosted Wan is RunPod 2.6, not CF 2.7
+
+Cloudflare Wan 2.7 rejected media[] and has no driving_audio.
+Unbind MODULE_CF_WAN_27. Bind MODULE_ALIBABA_WAN (wan-2-6-i2v).
+Send image + prompt + optional Cast sample as audio.
+
 ## v1.33.6 -- 2026-08-18
 
 ### feat(motion): send Alibaba media[] on Wan 2.7

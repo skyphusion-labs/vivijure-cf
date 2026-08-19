@@ -3,9 +3,8 @@
 // The video-URL parse, poll token, and RunPod-GC helpers are shared, vendored per-module so the
 // module stays independent (matches the seedance/hailuo reference).
 //
-// Phase 1 (#175): video-only. Wan 2.6 has no audio output param; the core's score/mux chain owns
-// audio, exactly like the seedance/hailuo reference. enable_prompt_expansion defaults false so the
-// prompt is sent as-is; expose it as an opt-in config bool for one-line enable later.
+// RunPod public endpoint wan-2-6-i2v: image + prompt + optional audio URL.
+// enable_prompt_expansion defaults false so the prompt is sent as-is.
 
 import type { MotionBackendInput } from "./contract";
 
@@ -24,19 +23,21 @@ export function clampDuration(seconds: number): number {
 export function buildWanBody(input: MotionBackendInput, cfg: Record<string, unknown>): {
   input: Record<string, unknown>;
 } {
-  return {
-    input: {
-      prompt: input.prompt,
-      image: input.keyframe_url,
-      negative_prompt: "",
-      size: "720p",
-      duration: clampDuration(input.seconds),
-      shot_type: "single",
-      seed: -1,
-      enable_prompt_expansion: cfg.enable_prompt_expansion === true,
-      enable_safety_checker: cfg.enable_safety_checker === true,
-    },
+  const inputBody: Record<string, unknown> = {
+    prompt: input.prompt,
+    image: input.keyframe_url,
+    negative_prompt: "",
+    size: "1280*720",
+    duration: clampDuration(input.seconds),
+    shot_type: "single",
+    seed: -1,
+    enable_prompt_expansion: cfg.enable_prompt_expansion === true,
+    enable_safety_checker: cfg.enable_safety_checker === true,
   };
+  if (typeof input.voice_ref_url === "string" && input.voice_ref_url) {
+    inputBody.audio = input.voice_ref_url;
+  }
+  return { input: inputBody };
 }
 
 /** RunPod video workers vary in output shape; find the first plausible video URL (prefers an .mp4). */

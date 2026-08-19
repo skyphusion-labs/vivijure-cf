@@ -77,6 +77,8 @@ export interface MotionBackendInput {
   keyframe_key?: string;
   prompt: string;
   seconds: number;
+  /** Cast talking sample. RunPod Wan 2.6 I2V takes this as input.audio. */
+  voice_ref_url?: string;
 }
 export interface MotionBackendOutput {
   shot_id: string;

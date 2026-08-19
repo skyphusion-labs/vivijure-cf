@@ -64,6 +64,11 @@ export const TALKING_VOICE_HONOR = [
     honor: "neighborhood" as const,
     label: "Talks. Cannot lock the sample you heard. Same description, not the same take.",
   },
+  {
+    name: "alibaba-wan",
+    honor: "neighborhood" as const,
+    label: "RunPod Wan 2.6. Sends the Cast sample as audio when kept. Prompt for the line.",
+  },
 ];
 
 type SampleState = {

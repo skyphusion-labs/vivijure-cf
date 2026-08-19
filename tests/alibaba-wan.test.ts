@@ -31,13 +31,23 @@ describe("alibaba-wan pure logic", () => {
       prompt: "a city at dawn",
       image: "https://r2/x.png",
       negative_prompt: "",
-      size: "720p",
+      size: "1280*720",
       duration: 5,
       shot_type: "single",
       seed: -1,
       enable_prompt_expansion: true,
       enable_safety_checker: false,
     });
+    expect(body.input.audio).toBeUndefined();
+  });
+
+  it("buildWanBody sends Cast sample as input.audio", () => {
+    const body = buildWanBody(
+      { shot_id: "shot_01", keyframe_url: "https://r2/x.png", prompt: "Mara says hello.", seconds: 5, voice_ref_url: "https://r2/voice.wav" },
+      {},
+    );
+    expect(body.input.audio).toBe("https://r2/voice.wav");
+    expect(body.input.image).toBe("https://r2/x.png");
   });
 
   it("buildWanBody defaults enable_prompt_expansion OFF when config is empty", () => {
@@ -45,7 +55,7 @@ describe("alibaba-wan pure logic", () => {
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
       {},
     );
-    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, size: "720p", negative_prompt: "" });
+    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, size: "1280*720", negative_prompt: "" });
   });
 
   it("extractVideoUrl finds the video url across output shapes", () => {

@@ -216,18 +216,22 @@ Multi-ref silent. Cast, props, locations.
 | First+last? | Yes, as extra reference images. |
 | Cannot | Native talking audio. Kling 2.6 voice_id. |
 
-## cf-wan-27 (Cloudflare Wan 2.7)
+## alibaba-wan (RunPod Wan 2.6 I2V)
 
-Hosted Wan door. Newer weights than RunPod 2.6. Native audio. Give it the
-storyboard line or it invents speech.
+Hosted Wan door. Public `wan-2-6-i2v`. Image + prompt + optional audio.
+CF Wan 2.7 is unbound (no driving_audio on the CF schema).
 
 | | |
 |---|---|
-| Duration | 2-15 seconds |
+| Duration | 5, 10, or 15 seconds |
 | Talks? | Yes. |
-| Voice lock | Neighborhood only. Not the Cast sample. |
-| First+last? | Yes. |
-| Cannot | Exact voice lock. Silence. |
+| Voice lock | Cast sample as `audio` when kept. Prompt for the line. |
+| First+last? | No. |
+| Cannot | CF Wan 2.7 lip-sync. Continuous durations. |
+
+## cf-wan-27 (Cloudflare Wan 2.7)
+
+Unbound on hosted. CF schema is image/prompt only. No driving_audio.
 
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 

@@ -44,10 +44,10 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.1.1",
+  version: "0.2.0",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Silent detailed (Wan)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
   config_schema: {
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
     enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
@@ -57,17 +57,18 @@ const MANIFEST: ModuleManifest = {
     order: 70,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Detailed motion, stronger faces, silent. 5, 10, or 15 seconds.",
+    blurb: "Wan 2.6 stills-to-clip. Talks. Uses the Cast sample as audio when you kept one. 5, 10, or 15 seconds.",
     limits: [
       "5, 10, or 15 second clips",
-      "Silent motion, stronger faces",
-      "Speaking is Cast voice plus MuseTalk",
+      "Talks. Sends image + prompt + audio (Cast sample) when kept.",
+      "Cannot lock the sample as Seedance does. Neighborhood without audio.",
+      "One film, no scatter",
     ],
   },
   usage: {
-    native_audio: false,
-    voice: "cast_tts",
-    scatter_native_audio: true,
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
     min_seconds: 5,
     max_seconds: 15,
     duration_steps: [5, 10, 15],

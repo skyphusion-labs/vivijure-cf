@@ -119,7 +119,7 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     name: "alibaba-wan",
     worker: alibabaWanWorker as unknown as Worker,
     usage: {
-      native_audio: false, voice: "cast_tts", scatter_native_audio: true,
+      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
       min_seconds: 5, max_seconds: 15, duration_steps: [5, 10, 15],
     },
   },
