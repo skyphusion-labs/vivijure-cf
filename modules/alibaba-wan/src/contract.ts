@@ -27,6 +27,8 @@ export interface MotionUsageDecl {
   duration_steps?: number[];
   first_last?: boolean;
   seed?: boolean;
+  /** Shot LINE file as driving audio. Never the Cast sample. */
+  driving_audio?: boolean;
 }
 
 export interface ModuleManifest {
@@ -79,10 +81,14 @@ export interface MotionBackendInput {
   seconds: number;
   /** Cast talking sample. Seedance uses this as reference_video. Never Wan audio. */
   voice_ref_url?: string;
+  /** Shot LINE file (Cast TTS of this storyboard line). Wan 2.6 driving audio. */
+  audio_url?: string;
+  audio_key?: string;
 }
 export interface MotionBackendOutput {
   shot_id: string;
   clip_key: string;
   fps: number;
   frames: number;
+  has_audio?: boolean;
 }

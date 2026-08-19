@@ -123,6 +123,8 @@ let mod: {
   renderTierPicker: (render: unknown) => void;
   renderBackendSelector: (mods: unknown[], wrap: El) => boolean;
   defaultSpeedDoor: (mods: unknown[]) => { name?: string } | null;
+  doorCanSpeak: (mod: unknown) => boolean;
+  talkingMotionMods: (mods: unknown[]) => unknown[];
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
   collect: () => { motion_backend?: string; select?: { finish?: unknown } };
   collectFinishSelect: () => unknown;
@@ -171,6 +173,21 @@ function qualityBackend() {
   };
 }
 
+function talkingDoor(name: string, usage: Record<string, unknown>) {
+  return {
+    name,
+    provides: [{ label: name }],
+    config_schema: {},
+    ui: { locality: name.startsWith("cf-") ? "cloud" : "cloud", order: 20 },
+    usage: {
+      scatter_native_audio: false,
+      min_seconds: 4,
+      max_seconds: 15,
+      ...usage,
+    },
+  };
+}
+
 describe("renderBackendSelector (default RunPod speed door; any other door is pickable)", () => {
   it("2 unlabeled doors still have NO preselection (not a RunPod cloud door)", () => {
     const wrap = freshWrap();
@@ -186,23 +203,65 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
     expect(radios.some((r) => r.checked === true)).toBe(false);
   });
 
-  it("defaults to RunPod seedance when own-gpu and CF doors are also installed", () => {
+  it("defaults to cf-seedance when a Cast sample is kept", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = {
+      castBindings: { A: "c1" },
+      castCatalog: [{ id: "c1", voice_ref_key: "cast/1/voice-ref.mp4" }],
+      storyboard: { scenes: [{ dialogue: { text: "Hello." } }] },
+    };
     const wrap = freshWrap();
     const mods = [
       qualityBackend(),
-      cloudBackend("seedance", "Seedance V1.5 Pro (cloud i2v)"),
-      cloudBackend("cf-seedance", "Seedance 2.0 (CF AI)"),
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("cf-seedance", { native_audio: true, voice_ref: true, voice: "seed_and_prompt" }),
     ];
-    expect(mod.defaultSpeedDoor(mods)?.name).toBe("seedance");
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("cf-seedance");
     mod.renderBackendSelector(mods, wrap);
     const doc = (globalThis as Record<string, unknown>).document as ReturnType<typeof makeDocument>;
     const sel = doc.getElementById("planner-motion-backend") as SelectEl;
-    expect(sel.value).toBe("seedance");
-    const radios = wrap.querySelectorAll(".planner-backend-radio");
-    expect(radios.length).toBe(3);
-    const checked = radios.filter((r) => r.checked === true);
-    expect(checked.length).toBe(1);
-    expect(String(checked[0].value)).toBe("seedance");
+    expect(sel.value).toBe("cf-seedance");
+    win.planState = {};
+  });
+
+  it("defaults to InfiniteTalk when a line exists and no sample is kept", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = {
+      castBindings: {},
+      castCatalog: [],
+      storyboard: { scenes: [{ dialogue: { text: "Hello." } }] },
+    };
+    const mods = [
+      qualityBackend(),
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("cf-seedance", { native_audio: true, voice_ref: true, voice: "seed_and_prompt" }),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("infinitetalk");
+    win.planState = {};
+  });
+
+  it("defaults to Wan when no sample and no spoken line", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = { castBindings: {}, castCatalog: [], storyboard: { scenes: [] } };
+    const mods = [
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("alibaba-wan");
+    win.planState = {};
+  });
+
+  it("doorCanSpeak treats driving_audio as speaking", () => {
+    expect(mod.doorCanSpeak(talkingDoor("infinitetalk", { native_audio: false, driving_audio: true }))).toBe(true);
+    expect(mod.doorCanSpeak(talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true }))).toBe(true);
+    expect(mod.doorCanSpeak(qualityBackend())).toBe(false);
+    const talkers = mod.talkingMotionMods([
+      qualityBackend(),
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true }),
+    ]) as { name?: string }[];
+    expect(talkers.map((m) => m.name)).toEqual(["infinitetalk"]);
   });
 
   it("does not default to own-gpu or a CF door when no RunPod cloud door is installed", () => {

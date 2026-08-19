@@ -34,8 +34,10 @@ export function buildWanBody(input: MotionBackendInput, cfg: Record<string, unkn
     enable_prompt_expansion: cfg.enable_prompt_expansion === true,
     enable_safety_checker: cfg.enable_safety_checker === true,
   };
-  // Do not send Cast sample (voice_ref_url) as audio. Wan audio is the shot LINE wav;
-  // that field is not on this door yet. Absent audio => provider invents speech from the prompt.
+  // Driving audio is the shot LINE (WAV/MP3), never the Cast sample.
+  if (typeof input.audio_url === "string" && input.audio_url) {
+    inputBody.audio = input.audio_url;
+  }
   return { input: inputBody };
 }
 

@@ -983,7 +983,7 @@ const hSubmitRender: Handler = async (req, env) => {
   if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
     if (!doorCanSpeakLines(panelMotionMod) || !generateAudioOn(mapped.motion_config)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
       );
     }
   }
@@ -1139,7 +1139,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   if (spokenLinesPresent(fromKfDialogue)) {
     if (!doorCanSpeakLines(fromKfMotionMod) || !generateAudioOn(mapped.motion_config)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
       );
     }
   }
@@ -1673,7 +1673,7 @@ const hStartFilm: Handler = async (req, env) => {
   if (spokenLinesPresent(dialogue_lines)) {
     if (!doorCanSpeakLines(filmMotionMod) || !generateAudioOn(a.motion_config as Record<string, unknown> | undefined)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
       );
     }
   }

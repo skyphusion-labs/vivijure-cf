@@ -17,8 +17,9 @@ talks to the GPUs. You do not open RunPod or Cloudflare.
 3. **Cast.** Add the people (or creatures) who appear. Give each one a
    still picture. If you train a look for a face, wait until that job
    finishes before you render.
-4. **Audio (optional).** Add music, talking, or both. A shot with a line
-   of dialogue can later move the mouth to match.
+4. **Audio (optional).** Add music, talking, or both. Talking doors
+   either use the sample you kept (Seedance) or speak the line in the
+   Cast voice (Wan / InfiniteTalk). Hosted does not add mouths in finish.
 5. **Check.** Run preflight. Fix anything it flags (a clip that is too
    long, a missing picture, a door that is off).
 6. **Render.** Pick a quality: draft (fast look), standard, or final

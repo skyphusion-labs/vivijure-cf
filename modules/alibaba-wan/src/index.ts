@@ -57,17 +57,20 @@ const MANIFEST: ModuleManifest = {
     order: 70,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Wan 2.6 stills-to-clip. Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.",
+    blurb: "Wan 2.6 stills-to-clip. Talks. Mouth follows the storyboard line when we have a Cast voice. Without a line, invents speech.",
     limits: [
       "5, 10, or 15 second clips",
-      "Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.",
+      "Mouth follows the storyboard line in the Cast voice.",
+      "Without a line, invents speech from the prompt.",
+      "Cannot lock the sample you kept.",
       "One film, no scatter",
     ],
   },
   usage: {
     native_audio: true,
-    voice: "prompt_lock",
+    voice: "cast_tts",
     scatter_native_audio: false,
+    driving_audio: true,
     min_seconds: 5,
     max_seconds: 15,
     duration_steps: [5, 10, 15],
@@ -224,7 +227,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
 }
 
 export default {

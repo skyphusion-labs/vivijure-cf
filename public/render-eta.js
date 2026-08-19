@@ -60,7 +60,10 @@
   // assemble / mux).
   const PIPELINE_PHASES = [
     { key: "keyframe", start: 0.0, span: 0.35 },
+    { key: "pre_clip_dialogue", start: 0.30, span: 0.05 },
+    { key: "pre_clip_speech", start: 0.33, span: 0.02 },
     { key: "i2v", start: 0.35, span: 0.5 },
+    { key: "clips", start: 0.35, span: 0.5 },
     { key: "shards", start: 0.0, span: 0.85 },
     { key: "finish", start: 0.85, span: 0.08 },
     { key: "gather", start: 0.85, span: 0.08 },
@@ -81,7 +84,10 @@
     // falls back to so the pre-submit window is not blank either.
     queued: "Waiting to start",
     keyframe: "Drawing keyframes",
+    pre_clip_dialogue: "Recording the lines",
+    pre_clip_speech: "Cleaning the voice",
     i2v: "Animating shots",
+    clips: "Animating shots",
     shards: "Animating shots",
     finish: "Finishing shots",
     gather: "Putting the film together",

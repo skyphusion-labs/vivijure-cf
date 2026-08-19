@@ -37,7 +37,7 @@ interface TailItem {
 interface Labels { worker: string; level: string; phase: string; module: string; }
 interface LokiStream { stream: Labels; values: [string, string][]; }
 
-const PHASES = ["keyframe", "clips", "dialogue", "speech", "finish", "assemble", "master", "mux", "done", "failed"];
+const PHASES = ["keyframe", "pre_clip_dialogue", "pre_clip_speech", "clips", "dialogue", "speech", "finish", "assemble", "master", "mux", "done", "failed"];
 
 function mapLevel(l?: string): "info" | "warn" | "error" {
   const v = (l || "").toLowerCase();

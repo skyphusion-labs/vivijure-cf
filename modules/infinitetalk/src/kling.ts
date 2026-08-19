@@ -124,3 +124,63 @@ export function terminalErrorInOutput(output: unknown): string | null {
   if (o.status === "error") return "backend reported status=error with no error detail";
   return null;
 }
+
+function u32be(b: Uint8Array, o: number): number {
+  return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+}
+function fourcc(b: Uint8Array, o: number): string {
+  return String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+}
+
+const MP4_CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl"]);
+
+/** Delivered mp4 duration from mvhd. Null when the file is not inspectable. */
+export function mp4DurationSeconds(bytes: Uint8Array): number | null {
+  const walk = (start: number, end: number): number | null => {
+    let o = start;
+    while (o + 8 <= end) {
+      let size = u32be(bytes, o);
+      const type = fourcc(bytes, o + 4);
+      let header = 8;
+      if (size === 1) {
+        if (o + 16 > end) break;
+        size = u32be(bytes, o + 12);
+        header = 16;
+      }
+      if (size === 0) size = end - o;
+      if (size < header) break;
+      const boxEnd = Math.min(o + size, end);
+      if (type === "mvhd") {
+        const p = o + header;
+        if (p + 20 > boxEnd) return null;
+        const version = bytes[p];
+        let ts: number;
+        let dur: number;
+        if (version === 1) {
+          if (p + 32 > boxEnd) return null;
+          ts = u32be(bytes, p + 20);
+          dur = u32be(bytes, p + 28);
+        } else {
+          ts = u32be(bytes, p + 12);
+          dur = u32be(bytes, p + 16);
+        }
+        return ts > 0 ? dur / ts : null;
+      }
+      if (MP4_CONTAINERS.has(type)) {
+        const hit = walk(o + header, boxEnd);
+        if (hit != null) return hit;
+      }
+      o = boxEnd;
+    }
+    return null;
+  };
+  return walk(0, bytes.length);
+}
+
+/** Poll frames = delivered mp4 duration * fps when inspectable, else round(wavSeconds * fps). */
+export function framesFromDelivered(bytes: ArrayBuffer, wavSeconds: number, fps: number): number {
+  const d = mp4DurationSeconds(new Uint8Array(bytes));
+  if (d && d > 0) return Math.max(1, Math.round(d * fps));
+  const fallback = Number.isFinite(wavSeconds) && wavSeconds > 0 ? wavSeconds : 0;
+  return Math.max(1, Math.round(fallback * fps));
+}

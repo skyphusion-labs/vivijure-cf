@@ -6,11 +6,12 @@ export function generateAudioOn(config: Record<string, unknown> | undefined): bo
 }
 
 export function isTalkingClip(
-  mod: { name?: string; usage?: { native_audio?: boolean } } | undefined,
+  mod: { name?: string; usage?: { native_audio?: boolean; driving_audio?: boolean } } | undefined,
   generateAudio: boolean,
 ): boolean {
   const usage = mod && mod.usage;
-  if (!usage || usage.native_audio !== true) return false;
+  if (!usage) return false;
+  if (usage.native_audio !== true && usage.driving_audio !== true) return false;
   if (!generateAudio) return false;
   return true;
 }
@@ -23,9 +24,10 @@ export function spokenLinesPresent(
   return lines.some((l) => l && typeof l.text === "string" && l.text.trim().length > 0);
 }
 
-/** Native-AV door: it can speak our keyframe using the storyboard script. */
+/** Native-AV or driving-audio door: it can speak our keyframe using the storyboard script. */
 export function doorCanSpeakLines(
-  mod: { usage?: { native_audio?: boolean } } | undefined,
+  mod: { usage?: { native_audio?: boolean; driving_audio?: boolean } } | undefined,
 ): boolean {
-  return !!(mod && mod.usage && mod.usage.native_audio === true);
+  const usage = mod && mod.usage;
+  return !!(usage && (usage.native_audio === true || usage.driving_audio === true));
 }

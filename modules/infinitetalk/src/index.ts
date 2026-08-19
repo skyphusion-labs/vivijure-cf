@@ -13,7 +13,7 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./kling";
+import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, framesFromDelivered, RUNPOD_COLD_GRACE_MS } from "./kling";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
@@ -52,8 +52,8 @@ const MANIFEST: ModuleManifest = {
     cost: "Pay per render",
     blurb: "Portrait plus Cast audio. The speaker is ours, not invented.",
     limits: [
-      "Needs a Cast audio clip (Aura or Chatterbox)",
-      "Portrait plus that audio; speaker stays ours",
+      "Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet.",
+      "Clip length follows that audio.",
       "One film, no scatter",
     ],
   },
@@ -61,6 +61,7 @@ const MANIFEST: ModuleManifest = {
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,
+    driving_audio: true,
     min_seconds: 2,
     max_seconds: 15,
   },
@@ -218,7 +219,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: framesFromDelivered(bytes, st.seconds, OUT_FPS) } };
 }
 
 export default {

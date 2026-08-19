@@ -53,6 +53,24 @@ describe("alibaba-wan pure logic", () => {
     expect(serialized).not.toMatch(/voice_ref/);
   });
 
+  it("buildWanBody sends the shot LINE as input.audio, never the Cast sample", () => {
+    const body = buildWanBody(
+      {
+        shot_id: "shot_01",
+        keyframe_url: "https://r2/x.png",
+        prompt: "Mara says hello.",
+        seconds: 5,
+        audio_url: "https://r2/line.wav",
+        voice_ref_url: "https://r2/voice.mp4",
+      },
+      {},
+    );
+    expect(body.input.audio).toBe("https://r2/line.wav");
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("https://r2/voice.mp4");
+    expect(serialized).not.toMatch(/voice_ref/);
+  });
+
   it("buildWanBody defaults enable_prompt_expansion OFF when config is empty", () => {
     const body = buildWanBody(
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
