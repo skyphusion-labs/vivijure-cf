@@ -30,6 +30,10 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   // Only forward known values so typos never invent a method on the wire.
   const im = cfg.identity_method;
   if (im === "instantid" || im === "ip_adapter") o.identity_method = im;
+  // Scene lock + Pass B strength. Unknown keys (incl. scene_denoise) stay off the
+  // wire. Old backend images ignore these; new ones default scene_lock true / 0.70.
+  if (typeof cfg.scene_lock === "boolean") o.scene_lock = cfg.scene_lock;
+  num("canny_scale", "canny_scale");
   return o;
 }
 

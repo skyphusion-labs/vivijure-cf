@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { clampTier, buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS } from "../modules/keyframe/src/keyframe";
+import { MANIFEST } from "../modules/keyframe/src/manifest";
 
 describe("keyframe pure logic", () => {
   it("clampTier accepts the known tiers and defaults to final", () => {
@@ -47,6 +48,41 @@ describe("keyframe pure logic", () => {
     expect(a.input.render_overrides).toBeUndefined();
     const b = buildPreviewBody({ project: "p", bundle_key: "b" }, {});
     expect(b.input.render_overrides).toBeUndefined();
+  });
+
+  it("buildPreviewBody folds scene_lock and canny_scale into render_overrides.keyframe", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b" },
+      { scene_lock: true, canny_scale: 0.7 },
+    );
+    expect(input.render_overrides).toEqual({
+      keyframe: { scene_lock: true, canny_scale: 0.7 },
+    });
+  });
+
+  it("buildPreviewBody forwards scene_lock false (debug hatch) and a non-default canny_scale", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b" },
+      { scene_lock: false, canny_scale: 0.55 },
+    );
+    expect(input.render_overrides).toEqual({
+      keyframe: { scene_lock: false, canny_scale: 0.55 },
+    });
+  });
+
+  it("buildPreviewBody drops invalid scene_lock / canny_scale and never forwards scene_denoise", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b" },
+      { scene_lock: "true", canny_scale: "0.70", scene_denoise: 0.4 },
+    );
+    expect(input.render_overrides).toBeUndefined();
+    const mixed = buildPreviewBody(
+      { project: "p", bundle_key: "b" },
+      { width: 1024, scene_lock: true, scene_denoise: 0.4 },
+    );
+    expect(mixed.input.render_overrides).toEqual({
+      keyframe: { width: 1024, scene_lock: true },
+    });
   });
 
   it("buildPreviewBody passes process_shot_ids only when a subset is given", () => {
@@ -145,5 +181,33 @@ describe("keyframe pure logic", () => {
     expect(classifyGoneState(now - (RUNPOD_NOTFOUND_GRACE_MS - 1), now)).toBe("gone-grace");
     expect(classifyGoneState(now - (RUNPOD_NOTFOUND_GRACE_MS + 1), now)).toBe("gone-failed");
     expect(classifyGoneState(undefined, now)).toBe("gone-failed");
+  });
+});
+
+describe("keyframe scene-lock schema", () => {
+  const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
+
+  it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
+    expect(MANIFEST.version).toBe("0.3.2");
+    expect(MANIFEST.config_schema?.scene_lock).toMatchObject({
+      type: "bool",
+      default: true,
+    });
+    expect(MANIFEST.config_schema?.canny_scale).toMatchObject({
+      type: "float",
+      default: 0.7,
+      min: 0,
+      max: 1,
+    });
+    expect(MANIFEST.config_schema?.scene_denoise).toBeUndefined();
+  });
+
+  it("filmmaker labels name the still, not the GPU door", () => {
+    const lock = MANIFEST.config_schema?.scene_lock;
+    const scale = MANIFEST.config_schema?.canny_scale;
+    expect(lock && "label" in lock ? lock.label : "").toMatch(/scene/i);
+    expect(scale && "label" in scale ? scale.label : "").toMatch(/scene lock/i);
+    expect(lock && "label" in lock ? lock.label : "").not.toMatch(JARGON);
+    expect(scale && "label" in scale ? scale.label : "").not.toMatch(JARGON);
   });
 });

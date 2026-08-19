@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.1",
+  version: "0.3.2",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -36,6 +36,20 @@ export const MANIFEST: ModuleManifest = {
       values: ["ip_adapter", "instantid"],
       default: "ip_adapter",
       label: "face identity method",
+    },
+    // Keep people in the location still (plate then face). Off is a debug hatch.
+    // Safe no-op on backend images that do not know the key. No scene_denoise.
+    scene_lock: {
+      type: "bool",
+      default: true,
+      label: "keep people in the scene",
+    },
+    canny_scale: {
+      type: "float",
+      default: 0.7,
+      min: 0,
+      max: 1,
+      label: "scene lock strength",
     },
   },
   ui: { section: "keyframe", order: 10 },
