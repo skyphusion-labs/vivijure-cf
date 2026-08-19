@@ -5,6 +5,14 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.8 -- 2026-08-19
+
+### fix(motion): delete Cloudflare Wan 2.7
+
+The CF schema cannot take our line as audio. Hosted Wan is RunPod 2.6.
+Remove the module, the binding, and the talking-honor entry so the
+next tag cannot ship it.
+
 ## v1.33.7 -- 2026-08-18
 
 ### fix(motion): hosted Wan is RunPod 2.6, not CF 2.7

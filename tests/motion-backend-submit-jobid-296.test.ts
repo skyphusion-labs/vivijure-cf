@@ -38,7 +38,6 @@ import cfGrokWorker from "../modules/cf-grok-video/src/index";
 import cfFluxWorker from "../modules/cf-flux-3-video/src/index";
 import cfHailuoWorker from "../modules/cf-hailuo/src/index";
 import cfVeoWorker from "../modules/cf-veo/src/index";
-import cfWan27Worker from "../modules/cf-wan-27/src/index";
 import klingO1Worker from "../modules/kling-o1-r2v/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
@@ -109,7 +108,6 @@ const CF_MODULES: { name: string; worker: Worker }[] = [
   { name: "cf-flux-3-video", worker: cfFluxWorker as unknown as Worker },
   { name: "cf-hailuo", worker: cfHailuoWorker as unknown as Worker },
   { name: "cf-veo", worker: cfVeoWorker as unknown as Worker },
-  { name: "cf-wan-27", worker: cfWan27Worker as unknown as Worker },
 ];
 
 /** Answers the vendor /run with a job id and everything else with something harmless. Records the

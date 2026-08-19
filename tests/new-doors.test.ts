@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildKlingBody as buildO1, clampDuration as clampO1 } from "../modules/kling-o1-r2v/src/kling";
 import { buildKlingBody as buildTalk, clampDuration as clampTalk } from "../modules/infinitetalk/src/kling";
-import { buildParams as wan27, clampDuration as clampWan } from "../modules/cf-wan-27/src/params";
 import { buildParams as hailuo } from "../modules/cf-hailuo/src/params";
 import { buildParams as veo, clampDuration as clampVeo } from "../modules/cf-veo/src/params";
 import { chatterboxVoice, buildTtsParams } from "../modules/chatterbox/src/chatterbox";
@@ -31,13 +30,6 @@ describe("infinitetalk", () => {
 });
 
 describe("cf twins", () => {
-  it("wan 2.7 uses image + 2-15s and Alibaba media[]", () => {
-    expect(clampWan(1)).toBe(2);
-    const p = wan27(shot, { resolution: "1080P" });
-    expect(p.image).toBe("https://r2/x.png");
-    expect(p.watermark).toBe(false);
-    expect(p.media).toEqual([{ type: "first_frame", url: "https://r2/x.png" }]);
-  });
   it("hailuo uses first_frame_image", () => {
     const p = hailuo(shot, { resolution: "768P", prompt_optimizer: true, fast_pretreatment: false });
     expect(p.first_frame_image).toBe("https://r2/x.png");

@@ -395,11 +395,6 @@ service = "vivijure-module-vidu-q3"
 binding = "MODULE_ALIBABA_WAN"
 service = "vivijure-module-alibaba-wan"
 
-# CF Wan 2.7 is unbound on hosted (no driving_audio on the CF schema).
-# [[services]]
-# binding = "MODULE_CF_WAN_27"
-# service = "vivijure-module-cf-wan-27"
-
 [[services]]
 binding = "MODULE_CF_HAILUO"
 service = "vivijure-module-cf-hailuo"
