@@ -148,11 +148,9 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   });
 
   it("the four populations are the sizes the published table claims", () => {
-    // 31 = main's 27 (26 base + finish-blender, cf#470) + 4 new CF AI i2v modules
-    // (cf-hh1-r2v, cf-seedance, cf-grok-video, cf-flux-3-video). Recomputed against the
-    // merged tree, not summed from either branch in isolation (the dispatch's own "26->30"
-    // arithmetic missed main's independent finish-blender addition).
-    expect(ENTRIES.length).toBe(37);
+    // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
+    // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
+    expect(ENTRIES.length).toBe(36);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the

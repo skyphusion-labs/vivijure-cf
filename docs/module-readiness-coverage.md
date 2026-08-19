@@ -12,12 +12,12 @@ the modules, that test fails.
 
 | # | Population | Size | Where it is defined |
 |---|---|---|---|
-| 1 | Modules in this repo | **37** | `modules/*/src/index.ts` (excluding `_shared`) |
+| 1 | Modules in this repo | **36** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **17** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **24** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **18** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **18 of 37**.
+Population 4 is the one an operator actually sees, and it is **18 of 36**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -66,7 +66,6 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | cf-hh1-r2v | yes | no | no | **yes** | **yes** |
 | cf-seedance | yes | no | no | **yes** | **yes** |
 | cf-veo | yes | no | no | no | no |
-| cf-wan-27 | yes | no | no | no | no |
 | chatterbox | yes | no | no | no | no |
 | cloud-keyframe | yes | no | no | no | no |
 | dialogue-gen | yes | no | no | no | no |

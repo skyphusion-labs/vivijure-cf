@@ -9,7 +9,6 @@ import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
-import cfWan27Worker from "../modules/cf-wan-27/src/index";
 import googleVeoWorker from "../modules/google-veo/src/index";
 import klingWorker from "../modules/kling/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
@@ -89,14 +88,6 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     usage: {
       native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
       min_seconds: 1, max_seconds: 15,
-    },
-  },
-  {
-    name: "cf-wan-27",
-    worker: cfWan27Worker as unknown as Worker,
-    usage: {
-      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
-      min_seconds: 2, max_seconds: 15, first_last: true, seed: true,
     },
   },
   {

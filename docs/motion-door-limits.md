@@ -219,7 +219,7 @@ Multi-ref silent. Cast, props, locations.
 ## alibaba-wan (RunPod Wan 2.6 I2V)
 
 Hosted Wan door. Public `wan-2-6-i2v`. Image + prompt + optional audio.
-CF Wan 2.7 is unbound (no driving_audio on the CF schema).
+Cloudflare Wan 2.7 is gone (no driving_audio on that schema).
 
 | | |
 |---|---|
@@ -227,11 +227,7 @@ CF Wan 2.7 is unbound (no driving_audio on the CF schema).
 | Talks? | Yes. |
 | Voice lock | Cast sample as `audio` when kept. Prompt for the line. |
 | First+last? | No. |
-| Cannot | CF Wan 2.7 lip-sync. Continuous durations. |
-
-## cf-wan-27 (Cloudflare Wan 2.7)
-
-Unbound on hosted. CF schema is image/prompt only. No driving_audio.
+| Cannot | Continuous durations. |
 
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 
