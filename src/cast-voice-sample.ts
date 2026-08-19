@@ -62,7 +62,7 @@ export const TALKING_VOICE_HONOR = [
   {
     name: "alibaba-wan",
     honor: "neighborhood" as const,
-    label: "RunPod Wan 2.6. Sends the Cast sample as audio when kept. Prompt for the line.",
+    label: "Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.",
   },
 ];
 

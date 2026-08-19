@@ -41,13 +41,16 @@ describe("alibaba-wan pure logic", () => {
     expect(body.input.audio).toBeUndefined();
   });
 
-  it("buildWanBody sends Cast sample as input.audio", () => {
+  it("buildWanBody ignores Cast sample voice_ref_url (audio stays undefined)", () => {
     const body = buildWanBody(
       { shot_id: "shot_01", keyframe_url: "https://r2/x.png", prompt: "Mara says hello.", seconds: 5, voice_ref_url: "https://r2/voice.wav" },
       {},
     );
-    expect(body.input.audio).toBe("https://r2/voice.wav");
+    expect(body.input.audio).toBeUndefined();
     expect(body.input.image).toBe("https://r2/x.png");
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("https://r2/voice.wav");
+    expect(serialized).not.toMatch(/voice_ref/);
   });
 
   it("buildWanBody defaults enable_prompt_expansion OFF when config is empty", () => {

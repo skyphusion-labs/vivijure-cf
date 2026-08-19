@@ -53,7 +53,7 @@ describe("TALKING_VOICE_HONOR", () => {
     expect(veo?.label).toMatch(/not the same take/i);
     const wan = TALKING_VOICE_HONOR.find((d) => d.name === "alibaba-wan");
     expect(wan?.honor).toBe("neighborhood");
-    expect(wan?.label).toMatch(/Wan 2\.6/i);
+    expect(wan?.label).toBe("Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.");
     expect(TALKING_VOICE_HONOR.find((d) => d.name === "cf-wan-27")).toBeUndefined();
   });
 });
