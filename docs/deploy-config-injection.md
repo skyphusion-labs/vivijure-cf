@@ -382,3 +382,24 @@ branch, the store-id fill, and the R2 endpoint derivation -- so the manual expor
 - Fork PRs do not get secrets -> the render/deploy only works on trusted (tag) runs, which is why
   deploy is tag-gated.
 - Edit the `.example`, never the rendered file -- the rendered one is gitignored and overwritten.
+
+---
+
+## 8. Inherit-patch a single live Worker var (never a one-binding PATCH)
+
+`PATCH /accounts/:id/workers/scripts/:name/settings` **replaces** the `bindings` array when that
+field is sent. A body that lists only the var you want to change drops every other binding. This
+account was wiped to 2 bindings that way once.
+
+To change one `plain_text` var (example: hosted `SPEND_DAILY_CEILING` must stay `"0"`):
+
+1. `GET` settings. Record the binding **count** and the **name set**.
+2. Build a new list of the **same length**: `{ "type": "inherit", "name": "<existing>" }` for
+   every binding except the one you are changing.
+3. Put the changed binding in as its real type (`plain_text` + `text` for a var). Never send
+   `secret_text` without `text`; inherit those.
+4. `PATCH` `multipart/form-data` with field `settings` = `{ "bindings": [ ...full list ] }`.
+5. `GET` again. Count and name set must match the first GET. Only the intended var changed.
+
+Do not invent a partial PATCH. Do not enable `workers.dev` to reach module `/ready` (that host
+is off on purpose; `/ready` is unauthenticated next to `/invoke`).
