@@ -80,9 +80,9 @@ FINISH_BLENDER_DOORS = "${FINISH_BLENDER_DOORS}"
 #     DENIED 503, not allowed -- the money path fails closed like the auth gate, so a novice never
 #     silently runs unmetered. A healthy limiter (bound below) is unaffected. Set to the literal
 #     "false" to opt back to fail-open (a limiter blip allows the render).
-#   SPEND_DAILY_CEILING = "25"        -- OFF unless set: at most N spend-route submissions per UTC day
-#     (counted in D1, migration 0008). Over the ceiling returns 429 until UTC midnight. Submissions,
-#     not dollars.
+#   SPEND_DAILY_CEILING = "0"         -- OFF when unset or "0"; a positive integer caps spend-route
+#     submissions per UTC day (counted in D1, migration 0008). Over the ceiling returns 429 until
+#     UTC midnight. Submissions, not dollars. Hosted must stay "0" (Conrad never set a cap).
 #   R2_STORAGE_QUOTA_BYTES = "53687091200"  -- OFF unless set (core#52): the studio storage ceiling in
 #     BYTES (this example is 50 GiB). Usage is accounted at WRITE TIME in D1 (migration 0013), never
 #     read from the R2 usage API, so the Node/MinIO host behaves identically. Over the ceiling, the
@@ -91,7 +91,7 @@ FINISH_BLENDER_DOORS = "${FINISH_BLENDER_DOORS}"
 #     closed), same posture as the spend ceiling. Backfill + drift repair: POST /api/storage/reconcile
 #     (accounting starts at the version that shipped it). Bytes only -- no "50GB" unit parsing.
 # SPEND_LIMIT_FAIL_CLOSED = "false"
-SPEND_DAILY_CEILING = "25"
+SPEND_DAILY_CEILING = "0"
 # R2_STORAGE_QUOTA_BYTES = "53687091200"
 # Assemble duration honesty gate (#697, src/film-orchestrator.ts):
 #   FILM_CLIP_DURATION_FLOOR -- the fraction of a shot`s PLANNED seconds its ASSEMBLED clip must reach
