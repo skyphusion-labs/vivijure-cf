@@ -225,7 +225,7 @@ Cloudflare Wan 2.7 is gone (no driving_audio on that schema).
 |---|---|
 | Duration | 5, 10, or 15 seconds |
 | Talks? | Yes. |
-| Voice lock | Cast sample as `audio` when kept. Prompt for the line. |
+| Voice lock | Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept. |
 | First+last? | No. |
 | Cannot | Continuous durations. |
 

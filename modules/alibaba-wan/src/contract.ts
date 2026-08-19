@@ -77,7 +77,7 @@ export interface MotionBackendInput {
   keyframe_key?: string;
   prompt: string;
   seconds: number;
-  /** Cast talking sample. RunPod Wan 2.6 I2V takes this as input.audio. */
+  /** Cast talking sample. Seedance uses this as reference_video. Never Wan audio. */
   voice_ref_url?: string;
 }
 export interface MotionBackendOutput {

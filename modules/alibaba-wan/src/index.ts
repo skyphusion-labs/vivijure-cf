@@ -57,11 +57,10 @@ const MANIFEST: ModuleManifest = {
     order: 70,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Wan 2.6 stills-to-clip. Talks. Uses the Cast sample as audio when you kept one. 5, 10, or 15 seconds.",
+    blurb: "Wan 2.6 stills-to-clip. Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.",
     limits: [
       "5, 10, or 15 second clips",
-      "Talks. Sends image + prompt + audio (Cast sample) when kept.",
-      "Cannot lock the sample as Seedance does. Neighborhood without audio.",
+      "Talks. Invents speech from the prompt until the line file ships. Cannot lock the sample you kept.",
       "One film, no scatter",
     ],
   },
