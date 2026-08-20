@@ -382,7 +382,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     } catch (e) {
       return { ok: false, error: "cloud-keyframe: could not persist rate-retry state: " + (e as Error).message };
     }
-    return { ok: true, pending: true, poll: encodePoll({ project: token.project, job_id: token.job_id }) };
+    return { ok: true, pending: true };
   };
 
   for (let n = 0; n < PER_POLL && state.shots.length > 0; n++) {
