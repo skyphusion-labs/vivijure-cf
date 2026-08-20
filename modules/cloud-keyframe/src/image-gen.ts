@@ -156,6 +156,15 @@ export function isRetryableFlag(msg: unknown): boolean {
   return isFlaggedError(msg) && !isCsamRefusal(msg);
 }
 
+/** Gateway / fetch blips worth a next-tick retry (matrix kling 429 under fan-out). CSAM never. */
+export function isRateLimitError(msg: unknown): boolean {
+  const s = String(msg || "");
+  if (isCsamRefusal(s)) return false;
+  if (/->\s*(408|429|5\d\d)\b/.test(s)) return true;
+  if (/\b7003\b/.test(s)) return true;
+  return false;
+}
+
 /** Pull an error string off a Workers-AI / gateway result so a 3030 in the body is not
  *  collapsed to "flux-2 returned no image". */
 export function extractGenError(result: unknown): string | null {

@@ -45,6 +45,7 @@ import {
   isFlaggedError,
   isCsamRefusal,
   isRetryableFlag,
+  isRateLimitError,
   extractGenError,
   rephraseForFlagRetry,
   FLAG_RETRY_ATTEMPTS,
@@ -291,6 +292,11 @@ describe("cloud-keyframe image-gen helpers", () => {
     expect(isRetryableFlag("error 3030: has been flagged")).toBe(true);
     expect(isRetryableFlag("3030 CSAM child sexual content")).toBe(false);
     expect(isRetryableFlag("connection reset")).toBe(false);
+    expect(isRateLimitError("fetch proxied image -> 429")).toBe(true);
+    expect(isRateLimitError("fetch proxied image -> 500")).toBe(true);
+    expect(isRateLimitError("AiGatewayError: 7003: Model execution failed")).toBe(true);
+    expect(isRateLimitError("flux-2 returned no image")).toBe(false);
+    expect(isRateLimitError("3030 CSAM child sexual content")).toBe(false);
   });
 
   it("extractGenError reads the 3030 off a result body so it is not 'no image'", () => {

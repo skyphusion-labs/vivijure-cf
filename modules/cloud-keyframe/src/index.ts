@@ -29,6 +29,7 @@ import {
   generateImage,
   maxRefsForModel,
   isRetryableFlag,
+  isRateLimitError,
   rephraseForFlagRetry,
   FLAG_RETRY_ATTEMPTS,
   type AiRun,
@@ -184,7 +185,8 @@ async function normalizeKeyframe(
 }
 
 type GenOk = { ok: true; gen: { bytes: ArrayBuffer; mime: string } };
-type GenErr = { ok: false; error: string };
+type GenErr = { ok: false; error: string; retryable?: boolean };
+const KEYFRAME_RATE_MAX = 5;
 
 /** One generateImage call with FLAG_RETRY_ATTEMPTS on a flaky 3030. Plate and edit each get their own budget. */
 async function generateImageWithFlagRetry(
@@ -212,6 +214,13 @@ async function generateImageWithFlagRetry(
       return { ok: true, gen };
     } catch (e) {
       const err = e as Error;
+      if (isRateLimitError(err.message)) {
+        return {
+          ok: false,
+          retryable: true,
+          error: "cloud-keyframe: shot " + shotId + " render failed: " + err.message,
+        };
+      }
       if (!isRetryableFlag(err.message)) {
         return { ok: false, error: "cloud-keyframe: shot " + shotId + " render failed: " + err.message };
       }
@@ -361,6 +370,21 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   if (state.shots.length === 0) return { ok: true, output: readOutput(state) };
   const gatewayId = await secretValue(env.GATEWAY_ID);
 
+  const holdForRate = async (shot: ShotPlan, err: string): Promise<PollResponse<KeyframeOutput>> => {
+    shot.rate_attempts = (shot.rate_attempts ?? 0) + 1;
+    if (shot.rate_attempts >= KEYFRAME_RATE_MAX) {
+      return { ok: false, error: err + " (rate retries exhausted, " + shot.rate_attempts + ")" };
+    }
+    try {
+      await env.R2_RENDERS.put(sk, JSON.stringify(state), {
+        httpMetadata: { contentType: "application/json" },
+      });
+    } catch (e) {
+      return { ok: false, error: "cloud-keyframe: could not persist rate-retry state: " + (e as Error).message };
+    }
+    return { ok: true, pending: true };
+  };
+
   for (let n = 0; n < PER_POLL && state.shots.length > 0; n++) {
     const shot = state.shots[0];
     const characterShot = shot.slots.length > 0;
@@ -398,7 +422,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       const plateRes = await generateImageWithFlagRetry(
         env, gatewayId, state.model, platePrompt, [], state.width, state.height, shot.shot_id,
       );
-      if (!plateRes.ok) return plateRes;
+      if (!plateRes.ok) return plateRes.retryable ? holdForRate(shot, plateRes.error) : plateRes;
       plateBytes = plateRes.gen.bytes;
       try {
         await env.R2_RENDERS.put(
@@ -421,14 +445,14 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       const editRes = await generateImageWithFlagRetry(
         env, gatewayId, state.model, composeEditPrompt(shot.prompt), editRefs, state.width, state.height, shot.shot_id,
       );
-      if (!editRes.ok) return editRes;
+      if (!editRes.ok) return editRes.retryable ? holdForRate(shot, editRes.error) : editRes;
       gen = editRes.gen;
     } else {
       const refs = [...charBlobs, ...filmBlobs];
       const single = await generateImageWithFlagRetry(
         env, gatewayId, state.model, shot.prompt, refs, state.width, state.height, shot.shot_id,
       );
-      if (!single.ok) return single;
+      if (!single.ok) return single.retryable ? holdForRate(shot, single.error) : single;
       gen = single.gen;
     }
 
