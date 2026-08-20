@@ -5,6 +5,21 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.9 -- 2026-08-20
+
+### fix(motion): retry shots that died on load, 429, or 7003
+
+Pin core 1.22.5. A provider high-load or AiGateway 7003 resubmits the
+shot next tick (cap 3). A real 400 still fails closed.
+
+### fix(keyframe): retry Nano Banana 429 on the next poll tick
+
+A 14-film fan-out 429 no longer fails the whole film on shot 8.
+
+### fix(motion): Wan 2.6 resolution is 720p, not 1280*720
+
+Public wan-2-6-i2v 400s the old size field.
+
 ### docs(local-gpu): door-fatmike is gone
 
 Fleet named tunnel `door-fatmike` / `door-propagandhi` was deleted
