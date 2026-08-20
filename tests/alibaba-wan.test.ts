@@ -31,7 +31,7 @@ describe("alibaba-wan pure logic", () => {
       prompt: "a city at dawn",
       image: "https://r2/x.png",
       negative_prompt: "",
-      size: "1280*720",
+      resolution: "720p",
       duration: 5,
       shot_type: "single",
       seed: -1,
@@ -76,7 +76,7 @@ describe("alibaba-wan pure logic", () => {
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
       {},
     );
-    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, size: "1280*720", negative_prompt: "" });
+    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, resolution: "720p", negative_prompt: "" });
   });
 
   it("extractVideoUrl finds the video url across output shapes", () => {
