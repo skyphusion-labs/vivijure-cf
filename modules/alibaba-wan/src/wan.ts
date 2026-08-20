@@ -27,7 +27,7 @@ export function buildWanBody(input: MotionBackendInput, cfg: Record<string, unkn
     prompt: input.prompt,
     image: input.keyframe_url,
     negative_prompt: "",
-    size: "1280*720",
+    resolution: "720p",
     duration: clampDuration(input.seconds),
     shot_type: "single",
     seed: -1,
