@@ -168,6 +168,8 @@ export interface ShotPlan {
   /** Style + scene only (no identity text). Present on new jobs; absent on pre-plate-then-edit state. */
   plate_prompt?: string;
   slots: string[];
+  /** Next-tick 429/5xx budget. A persistent rate-limit still hard-fails the shot. */
+  rate_attempts?: number;
 }
 
 /** The persisted run state (an R2 json doc), advanced one shot at a time per /poll. */
