@@ -37,7 +37,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260811.1",
     "@types/node": "^26.1.2",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.11",
     "blake3-wasm": "2.1.5",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
