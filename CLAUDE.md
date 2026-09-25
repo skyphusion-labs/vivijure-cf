@@ -26,7 +26,7 @@ zero-spend).
 | Panel | Repo | Runtime |
 |-------|------|---------|
 | CF (this repo) | `vivijure-cf` | Workers, D1, R2 |
-| LOCAL | `vivijure-local` | Node, SQLite, MinIO; fleet box propagandhi |
+| LOCAL | `vivijure-local` | Node, SQLite, MinIO; self-hosted, on any GPU box (no longer the Hetzner fleet, decommissioned 2026-09-24) |
 
 **Dual-panel product parity** is required for product-facing features (same-time releases, no
 community edition). **Dependency pins may lag** between cf and local; check each `package.json`.
