@@ -79,7 +79,7 @@ export const MANIFEST: ModuleManifest = {
     },
     strength: { type: "float", default: 1, min: 0, max: 2, label: "preset strength" },
   },
-  // After lipsync (15), before upscale (20): grade at native resolution.
+  // After rife (10), before upscale (20): grade at native resolution.
   ui: { section: "finish", icon: "palette", order: 18 },
   // cf#537, and this line IS the ticket. `finish` is a chain hook, so binding this module used to be
   // the entire enrolment: it ran on every shot of every film and applied a real `filmic_warm` grade

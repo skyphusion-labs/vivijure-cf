@@ -47,7 +47,7 @@ surface internal: the service binding is the boundary, do not punch a hole in it
 | `motion.backend` | keyframe (+ motion prompt) -> shot clip (GPU or cloud) | **pick one** per shot |
 | `finish` | post-process a clip: interpolation / lip-sync / upscale / face restore | **chain** |
 | `score` | add audio to a film: music / narration / beat-sync | **chain** |
-| `dialogue` | per-shot dialogue lines -> speech audio (TTS); feeds the lip-sync finish module | **pick one** |
+| `dialogue` | per-shot dialogue lines -> speech audio (TTS); becomes the shot's spoken track | **pick one** |
 | `speech` | per-shot dialogue audio -> cleaned/enhanced audio (post-dialogue, pre-finish) | **chain** |
 | `plan.enhance` | expand a storyboard before render (LLM auto-direction) | **chain** |
 | `image.generate` | prompt -> a generated image | **pick one** |
@@ -336,7 +336,7 @@ Two gates on that, both worth knowing before you conclude your module did not de
   skipping every other module. Read as `0` on 2026-08-03, so the full set deploys today, but it is a
   mutable variable and the behaviour is a property of its value, not of this sentence.
 - `FINISH_SATELLITES_ONLY` narrows to `scripts/finish-satellite-modules.txt`
-  (`finish-rife`, `finish-upscale`, `finish-lipsync`, `speech-upscale`).
+  (`finish-rife`, `finish-upscale`, `finish-blender`, `speech-upscale`).
 - `local-gpu` is ALWAYS skipped on this deploy: `ci.yml` exports `EXCLUDE="... local-gpu"` (cf#560),
   because that door belongs on vivijure-local, and the core's `wrangler.toml.example` does not bind it.
 

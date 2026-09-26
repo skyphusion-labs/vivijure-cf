@@ -19,7 +19,6 @@ import keyframeWorker from "../modules/keyframe/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 import finishBlenderWorker from "../modules/finish-blender/src/index";
-import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
 
@@ -33,7 +32,6 @@ const MODULES: { name: string; worker: Worker }[] = [
   { name: "own-gpu", worker: ownGpuWorker as unknown as Worker },
   { name: "finish-blender", worker: finishBlenderWorker as unknown as Worker },
   { name: "finish-upscale", worker: finishUpscaleWorker as unknown as Worker },
-  { name: "finish-lipsync", worker: finishLipsyncWorker as unknown as Worker },
   { name: "speech-upscale", worker: speechUpscaleWorker as unknown as Worker },
   // cf#291: finish-rife was missed when this shipped. It is in the tenant release set and writes
   // job-log rows like the rest, so it belongs in the module-agnostic contract, not beside it.
@@ -199,17 +197,6 @@ describe("honest credential text: endpoint present + key absent reads as propaga
     const absent = await invoke(finishUpscaleWorker as unknown as Worker, "finish",
       { shot_id: "s1", clip_key: "c.mp4" }, undefined, undefined);
     expect(absent.ok).toBe(true);
-    expect(absent.output?.degraded).toBe("no-runpod-secrets");
-  });
-
-  it("finish-lipsync degrades with the same distinction", async () => {
-    const notVisible = await invoke(finishLipsyncWorker as unknown as Worker, "finish",
-      { shot_id: "s1", clip_key: "c.mp4", audio_key: "a.wav" }, undefined, ENDPOINT);
-    expect(notVisible.ok).toBe(true);
-    expect(notVisible.output?.degraded).toBe("runpod-key-not-yet-visible");
-
-    const absent = await invoke(finishLipsyncWorker as unknown as Worker, "finish",
-      { shot_id: "s1", clip_key: "c.mp4", audio_key: "a.wav" }, undefined, undefined);
     expect(absent.output?.degraded).toBe("no-runpod-secrets");
   });
 

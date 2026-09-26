@@ -17,7 +17,7 @@ the modules, that test fails.
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **24** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **18** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **18 of 36**.
+Population 4 is the one an operator actually sees, and it is **18 of 35**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -71,7 +71,6 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | dialogue-gen | yes | no | no | no | no |
 | film-titles | yes | no | no | **yes** | no |
 | finish-blender | yes | yes | yes | no | no |
-| finish-lipsync | yes | yes | yes | yes | no |
 | finish-rife | yes | yes | yes | yes | yes |
 | finish-upscale | yes | yes | yes | yes | yes |
 | google-veo | yes | yes | yes | **yes** | **yes** |
@@ -142,8 +141,9 @@ maintained by hand here.
 - **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
   module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
   fail every invocation.
-- **That the finish tier works end to end.** Lipsync, video upscale and audio upscale each need a
-  real submission.
+- **That the finish tier works end to end.** Video upscale and audio upscale each need a real
+  submission. (Post-hoc lip-sync is gone: MuseTalk was ruled out permanently and finish-lipsync
+  removed with it, cf#783. Audio-driven lip-sync is infinitetalk, a motion.backend door.)
 - **Anything under load.** One probe is not a load test.
 
 ## Reporting rule

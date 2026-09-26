@@ -8,7 +8,7 @@ Vivijure has three pieces:
 1. **The Studio Worker** (this repo) -- a single Cloudflare Worker that owns projects, storyboards,
    cast, and render orchestration, plus a registry of opt-in **module workers** (one per capability).
 2. **The GPU backend** (`vivijure-backend`) -- a container on **RunPod Serverless** that does the
-   heavy lifting: LoRA training, SDXL keyframes, image-to-video, lip-sync.
+   heavy lifting: LoRA training, SDXL keyframes, image-to-video.
 3. **The media-stack CPU containers** (`video-finish`, `image-prep`, `audio-beat-sync`,
    `audio-mix`, `audio-master`) -- ffmpeg/CPU work that runs always-on on your own box. The studio
    reaches them over **public HTTPS origins** you configure (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`,
@@ -22,7 +22,7 @@ Vivijure has three pieces:
    unavailable" status (#519 / #524), never a hard-fail after the GPU spend.
 
 You do NOT need a separate API key per video provider. Seedance, Kling, MiniMax Hailuo, Google Veo, Vidu, Wan,
-keyframes, and lip-sync all run **through RunPod**, so one RunPod key covers them.
+keyframes, and the finish satellites all run **through RunPod**, so one RunPod key covers them.
 
 ---
 
@@ -99,7 +99,7 @@ Pick a profile with `VIVIJURE_PROFILE` in `deploy.env`:
   compose tunnel token (`containers/tunnel.env`); it does NOT create Workers VPC services. You set the
   media URLs and bring the containers up with `docker compose` (section 5). This is your first deploy.
 - **satellites** -- also the 3 opt-in GPU finish modules that each need a separate RunPod endpoint:
-  upscale, lip-sync, and speech-upscale.
+  upscale and speech-upscale.
 
 How the split works: in `wrangler.toml.example`, opt-in blocks are wrapped in comment markers.
 `deploy.sh` strips `# >>> SATELLITE:` blocks unless the satellites profile, the `# >>> LOCAL-GPU:`
@@ -137,7 +137,7 @@ template carries 34 as of v1.33.9, see the DP-3 note above) (plus core, D1, R2, 
 media stack) and rendered finished 1080p24 films on all three render paths (own GPU on RunPod, cloud
 i2v, and a local-GPU door). You pay only usage: RunPod GPU seconds, cloud render API calls, AI Gateway
 credits for the planner, or $0 on your own hardware. **Workers Paid ($5/month) is required only for the
-three GPU finish satellites** (finish-upscale, finish-lipsync, speech-upscale); their fan-out at
+two GPU finish satellites** (finish-upscale, speech-upscale); their fan-out at
 satellite scale is what needs the larger per-invocation subrequest budget. One operational rule either
 way: a plan change (free to paid, or back) only takes effect after you **redeploy the core**
 (`./deploy.sh` again), because a running Worker keeps the plan it was deployed under -- so flip the
@@ -259,7 +259,7 @@ exists.
 | Provider | What it is | Sign up |
 |---|---|---|
 | **Cloudflare** | Hosts the Worker + your data (D1, R2, Vectorize) and routes LLM calls (AI Gateway). | dash.cloudflare.com |
-| **RunPod** | Serverless GPUs that run the render backend (training, keyframes, i2v, lip-sync). | runpod.io |
+| **RunPod** | Serverless GPUs that run the render backend (training, keyframes, i2v, finish). | runpod.io |
 | **GitHub** (optional) | Only if you build/host the backend image yourself via GHCR + Actions. | github.com |
 
 Everything bills to your own accounts. The Studio is single-user by design -- one operator, your keys.
@@ -306,7 +306,7 @@ if you let it, *manages* your endpoint).
 
 | Why it's needed |
 |---|
-| The Studio's GPU modules (`own-gpu`, `keyframe`, `finish-rife`, `finish-upscale`, `finish-lipsync`, and the cloud i2v backends) submit jobs to **your** RunPod Serverless endpoint and poll for results. |
+| The Studio's GPU modules (`own-gpu`, `keyframe`, `finish-rife`, `finish-upscale`, and the cloud i2v backends) submit jobs to **your** RunPod Serverless endpoint and poll for results. |
 
 You also need your **endpoint id(s)** (`RUNPOD_ENDPOINT_ID` in `deploy.env`; `deploy.sh` seeds it as
 the Secrets Store secret `BACKEND_RUNPOD_ENDPOINT_ID`) -- the id of the Serverless endpoint running the
@@ -467,7 +467,7 @@ for m in own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance
   npx wrangler deploy -c modules/$m/wrangler.toml
 done
 # The satellites profile also deploys (SATELLITE_MODULES in deploy.sh; each needs a separate RunPod
-# endpoint): finish-upscale finish-lipsync speech-upscale. finish-blender is added only when
+# endpoint): finish-upscale speech-upscale. finish-blender is added only when
 # BLENDER_RUNPOD_ENDPOINT_ID is set.
 # NOTE (#764, DP-3): the core template ALSO binds kling-o1-r2v, infinitetalk, chatterbox, cf-hailuo,
 # cf-veo and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
@@ -502,7 +502,7 @@ fresh-create.
 
 `RUNPOD_ENDPOINT_ID` is bound from one store secret PER ENDPOINT, because the modules target
 different RunPod endpoints (keyframe / i2v on the main backend, upscale on the upscale endpoint,
-lip-sync on the MuseTalk endpoint). The binding name in code stays `RUNPOD_ENDPOINT_ID`; only the
+upscale on the video-upscale endpoint). The binding name in code stays `RUNPOD_ENDPOINT_ID`; only the
 store `secret_name` differs. Modules that share an endpoint share one secret (single source of truth):
 
 | module(s)                      | store secret_name (RUNPOD_ENDPOINT_ID) | RunPod endpoint |
@@ -510,11 +510,10 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 | own-gpu, keyframe, finish-rife | `BACKEND_RUNPOD_ENDPOINT_ID`           | main backend    |
 | finish-upscale                 | `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`     | video upscale   |
 | finish-blender                 | `BLENDER_RUNPOD_ENDPOINT_ID`           | compositor grade |
-| finish-lipsync                 | `MUSETALK_RUNPOD_ENDPOINT_ID`          | MuseTalk        |
 | speech-upscale                 | `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`     | audio upscale   |
 
 > **The satellite ENDPOINTS themselves also need R2 credentials (#522).** The store secret above only
-> carries each satellite's endpoint *id*. Every GPU satellite (finish-upscale, finish-lipsync,
+> carries each satellite's endpoint *id*. Every GPU satellite (finish-upscale,
 > speech-upscale) reads its inputs from, and writes its outputs to, YOUR R2 bucket directly, so its
 > RunPod endpoint template must ALSO set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
 > and `R2_BUCKET` in the endpoint env (the same R2 values the backend endpoint uses in section 4). Miss
@@ -561,7 +560,6 @@ npx wrangler secrets-store secret create $S --name R2_S3_SECRET_ACCESS_KEY      
 npx wrangler secrets-store secret create $S --name PLAN_ENHANCE_CF_AIG_TOKEN      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name BACKEND_RUNPOD_ENDPOINT_ID       --scopes workers --remote
 npx wrangler secrets-store secret create $S --name VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
-npx wrangler secrets-store secret create $S --name MUSETALK_RUNPOD_ENDPOINT_ID      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
 npx wrangler secrets-store secret create $S --name BLENDER_RUNPOD_ENDPOINT_ID      --scopes workers --remote  # optional finish-blender
 ```
@@ -641,7 +639,7 @@ Put the printed id in `deploy.env` as `RUNPOD_ENDPOINT_ID` and run `./deploy.sh`
 created scale-to-zero (workersMin=0): it costs nothing until a render job runs.
 
 The same script provisions the **finish satellite** endpoints (#522) with `--satellite upscale`,
-`--satellite lipsync` or `--satellite audio-upscale`; it sets the four R2 env vars on the satellite
+`--satellite audio-upscale`; it sets the four R2 env vars on the satellite
 template for you, and its last line prints the matching `deploy.env` key (e.g.
 `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID=<id>`) for the satellites profile.
 

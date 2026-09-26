@@ -243,8 +243,9 @@ function restoreBundleStagePanel(savedBundle, savedPlanResult) {
 // hidden special case: drafts saved before cf#780 carry two scalar fields instead, and dropping
 // them would silently untick a choice the user had already made. It retires once saved drafts
 // have aged out; nothing else in this file knows a module name.
+// cf#783: the `finishLipsync` legacy key is dropped with the module. A draft that still carries
+// it now restores nothing for it, which is correct: there is no pick to tick.
 const LEGACY_FINISH_PICK_KEYS = [
-  ["finishLipsync", "finish-lipsync"],
   ["finishBlender", "finish-blender"],
 ];
 

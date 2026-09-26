@@ -50,6 +50,10 @@ describe("cf#646 render is three choices then spend", () => {
     // provides[0].label. A default-participation module (finish-upscale, finish-rife) still gets
     // no control, but that is now DERIVED from its manifest rather than asserted by absence here.
     expect(html).not.toMatch(/id="planner-finish-lipsync"/);
+    // cf#783: MuseTalk is ruled out permanently, so the panel must not offer it in COPY either.
+    // The id assertion above cannot see a sentence; this is what keeps the offer from creeping
+    // back into the note now that the controls themselves are projected.
+    expect(html).not.toMatch(/MuseTalk/i);
     expect(html).not.toMatch(/id="planner-finish-blender"/);
     expect(html).not.toMatch(/id="planner-finish-upscale"/);
   });

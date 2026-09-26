@@ -576,8 +576,10 @@ jobs:
           # workflows themselves and refusing if any member does not call it.
           #
           # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour.
-          # SATELLITE finish-upscale / speech-upscale stay. SATELLITE finish-lipsync is
-          # stripped next: MuseTalk is homelab only. SELFHOST-SKIP marks fleet-only blocks,
+          # SATELLITE finish-upscale / speech-upscale stay. There is no longer a
+          # finish-lipsync block to strip: MuseTalk is ruled out permanently and the module
+          # is gone (cf#783), so the strip script and its gate went with it rather than
+          # staying on as a control with no subject. SELFHOST-SKIP marks fleet-only blocks,
           # which hosted IS.
           #
           # deploy.sh (SELF-HOST, where local-gpu is ALLOWED) keeps its own INSTALL_LOCAL_GPU switch
@@ -585,8 +587,6 @@ jobs:
           # bolting the unconditional strip onto the self-host path would remove a door its operator
           # is entitled to run.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
-          sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
-          mv .wrangler.hosted2.toml .wrangler.hosted.toml
           envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a

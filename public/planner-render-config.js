@@ -820,24 +820,13 @@
     pendingFinishPicks = map && typeof map === "object" ? map : null;
   }
 
-  // DECLARED EXEMPTION (cf#780). These are the only two module names this file still compiles in,
-  // and they are named here rather than buried so the hardcoded-module guard can list them as
-  // declared rather than silently miss them. finish-lipsync drives the mouth off the dialogue
-  // track, so it wants the CLEANED speech that speech-upscale produces. That is real domain
-  // coupling between two specific modules and the registry has no way to express it today; the
-  // fix is a manifest-level dependency declaration, not more panel code. Retire this pair the
-  // moment the contract can say it.
-  const LIPSYNC_MODULE = "finish-lipsync";
-  const SPEECH_UPSCALE_MODULE = "speech-upscale";
-
-  function speechUpscaleInstalled() {
-    return (finishCache().speech || []).some((m) => m.name === SPEECH_UPSCALE_MODULE);
-  }
-
-  function lipsyncOn() {
-    if (!optInFinishMods().some((m) => m.name === LIPSYNC_MODULE)) return false;
-    return finishPickOn(LIPSYNC_MODULE);
-  }
+  // THE cf#780 DECLARED EXEMPTION PAIR IS PAID OFF (cf#783). It compiled in exactly two module
+  // names, finish-lipsync and speech-upscale, for one reason: MuseTalk drove the mouth off the
+  // dialogue track and therefore wanted the CLEANED speech. MuseTalk is ruled out permanently
+  // and finish-lipsync is removed, so the coupling has no subject and both names are gone from
+  // this file. The manifest-level dependency declaration that was going to retire them is no
+  // longer owed by this file, and the ratchet in tests/panel-no-hardcoded-modules.test.ts drops
+  // both declarations to match. This file now compiles in no finish module name at all.
 
   function renderFinishPicks() {
     const box = document.getElementById("planner-finish-picks");
@@ -936,10 +925,12 @@
       config[mod][field] = val;
     }
     const out = {};
-    if (lipsyncOn() && speechUpscaleInstalled()) {
-      if (!config["speech-upscale"]) config["speech-upscale"] = {};
-      config["speech-upscale"].enable = true;
-    }
+    // speech-upscale had exactly ONE planner trigger: the finish-lipsync pick, because MuseTalk
+    // wanted cleaned dialogue first. That trigger went with the module (cf#783), so the planner
+    // no longer enables speech-upscale at all. Deliberately NOT replaced with an always-on
+    // default: it is metered GPU spend, and its own RunPod endpoint is separately dead (cf#757).
+    // Re-wiring the dialogue chain to the live audio-driven door (infinitetalk) is a product
+    // decision, not a side effect of this removal.
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;

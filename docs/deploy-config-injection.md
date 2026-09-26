@@ -175,10 +175,9 @@ described in 3a and fails closed at each:
     [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "::error::CLOUDFLARE_ACCOUNT_ID unset"; exit 1; }
     R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
     R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
-    # 3) HOSTED strips first (cf#560): drop the LOCAL-GPU block and the finish-lipsync SATELLITE block,
+    # 3) HOSTED strips first (cf#560): drop the LOCAL-GPU block,
     #    each via its one shared script (both refuse if the strip did not do what it claims).
     sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
-    sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
     mv .wrangler.hosted2.toml .wrangler.hosted.toml
     # 4) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
     VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
@@ -246,8 +245,8 @@ the workflow half automatically and refuses if a member does not call the shared
 
 | Path | Kind | local-gpu | Mechanism |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | HOSTED, prod studio deploy | forbidden | calls `scripts/strip-local-gpu.sh` (then `scripts/strip-finish-lipsync.sh`), unconditionally |
-| `.github/workflows/studio-release.yml` | HOSTED, the tenant release artifact | forbidden | calls `scripts/strip-local-gpu.sh` (then `scripts/strip-finish-lipsync.sh`), unconditionally |
+| `.github/workflows/ci.yml` | HOSTED, prod studio deploy | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
+| `.github/workflows/studio-release.yml` | HOSTED, the tenant release artifact | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
 | `deploy.sh` | SELF-HOST installer | **allowed** | its own strip, kept unless `INSTALL_LOCAL_GPU=1` |
 | `deploy/vivijure_deploy.py` (`render_core_toml`) | SELF-HOST installer (python) | allowed | no marker handling at all; see the note below |
 | `.dev-modbound/dev-modbound.sh` | LOCAL dev only | n/a | `wrangler dev --local`, never deploys |
@@ -401,7 +400,7 @@ sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" wrangler.tom
 This plain render does NOT strip any marker block: the `SELFHOST-SKIP` `tail_consumers` line (which
 needs our `vivijure-tail` worker), and every `SATELLITE` block, stay in. Fine for `wrangler dev`; for a
 real deploy use `./deploy.sh` or strip them first (the hosted CI render runs
-`scripts/strip-local-gpu.sh` + `scripts/strip-finish-lipsync.sh`, section 3d).
+`scripts/strip-local-gpu.sh`, section 3d).
 
 (`./deploy.sh` performs exactly this render for you -- including the profile strip, the workers.dev
 branch, the store-id fill, and the R2 endpoint derivation -- so the manual export is only for driving
@@ -420,7 +419,6 @@ branch, the store-id fill, and the R2 endpoint derivation -- so the manual expor
   render:
   ```
   sh scripts/strip-local-gpu.sh wrangler.toml.example /tmp/s1.toml
-  sh scripts/strip-finish-lipsync.sh /tmp/s1.toml /tmp/s2.toml
   envsubst "$VARS" < /tmp/s2.toml > /tmp/r.toml
   sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" /tmp/r.toml
   diff wrangler.toml /tmp/r.toml && echo IDENTICAL

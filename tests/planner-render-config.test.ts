@@ -567,7 +567,10 @@ describe("finish picks are projected from the registry (cf#690, cf#780)", () => 
   }
 
   const installed = [
-    { name: "finish-lipsync", participation: "opt_in", provides: [{ label: "Lip-sync to dialogue (MuseTalk)" }] },
+    // A visibly SYNTHETIC opt_in module. It was `finish-lipsync` until cf#783 removed that
+    // module; the projection under test knows no module names, so the fixture name is arbitrary
+    // and a synthetic one cannot drift back into looking like the shipped catalog.
+    { name: "finish-halation", participation: "opt_in", provides: [{ label: "Halation bloom" }] },
     { name: "finish-upscale", participation: "default" },
     { name: "finish-blender", participation: "opt_in", provides: [{ label: "Color grade (Blender compositor)" }] },
     { name: "finish-rife", participation: "default" },
@@ -584,43 +587,47 @@ describe("finish picks are projected from the registry (cf#690, cf#780)", () => 
   };
 
   it("unchecked is the default finish set (native AV keeps talking)", () => {
-    finishDoc({ "finish-lipsync": false, "finish-blender": false });
+    finishDoc({ "finish-halation": false, "finish-blender": false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
   });
 
-  it("checking lipsync names it in plus the default modules", () => {
-    finishDoc({ "finish-lipsync": true, "finish-blender": false });
+  it("checking an opt_in pick names it in plus the default modules", () => {
+    finishDoc({ "finish-halation": true, "finish-blender": false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
-      modules: ["finish-lipsync", "finish-upscale", "finish-rife"],
+      modules: ["finish-halation", "finish-upscale", "finish-rife"],
     });
   });
 
   it("naming blender emits the default modules plus finish-blender", () => {
-    finishDoc({ "finish-lipsync": true, "finish-blender": true });
+    finishDoc({ "finish-halation": true, "finish-blender": true });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
-      modules: ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"],
+      modules: ["finish-halation", "finish-upscale", "finish-blender", "finish-rife"],
     });
   });
 
-  it("lipsync on forces speech-upscale.enable (the one declared cross-module coupling)", () => {
-    finishDoc({ "finish-lipsync": true, "finish-blender": false });
+  // cf#783: the one declared cross-module coupling is GONE. It fired on the finish-lipsync pick,
+  // because MuseTalk wanted cleaned dialogue first, and MuseTalk is ruled out permanently. The
+  // panel now compiles in no finish module name at all, which is what cf#780 was reaching for.
+  // Asserted as a NEGATIVE rather than deleted: a removed test reads exactly like a passing one.
+  it("the planner enables NO module implicitly (the speech-upscale coupling is retired)", () => {
+    finishDoc({ "finish-halation": true, "finish-blender": false });
     mod.__testSeedFinish(installed, { speech: [{ name: "speech-upscale" }] });
     const out = mod.collect() as { config?: { "speech-upscale"?: { enable?: boolean } } };
-    expect(out.config && out.config["speech-upscale"] && out.config["speech-upscale"].enable).toBe(true);
+    expect(out.config && out.config["speech-upscale"]).toBeUndefined();
   });
 
   it("only opt_in modules get a control, in registry order, labelled from the manifest", () => {
     const { box, host } = picksDoc();
     mod.__testSeedFinish(installed);
     mod.renderFinishPicks();
-    expect(inputsOf(host).map((e) => e.dataset.finishModule)).toEqual(["finish-lipsync", "finish-blender"]);
+    expect(inputsOf(host).map((e) => e.dataset.finishModule)).toEqual(["finish-halation", "finish-blender"]);
     // the two default-participation modules are deliberately absent: the core always runs them
-    expect(host.textContent).toContain("Lip-sync to dialogue (MuseTalk)");
+    expect(host.textContent).toContain("Halation bloom");
     expect(host.textContent).toContain("Color grade (Blender compositor)");
     expect(box.hidden).toBe(false);
   });
@@ -630,7 +637,7 @@ describe("finish picks are projected from the registry (cf#690, cf#780)", () => 
     mod.__testSeedFinish([...installed, thirdParty]);
     mod.renderFinishPicks();
     expect(inputsOf(host).map((e) => e.dataset.finishModule)).toEqual([
-      "finish-lipsync",
+      "finish-halation",
       "finish-blender",
       "finish-grain",
     ]);
@@ -665,7 +672,7 @@ describe("finish picks are projected from the registry (cf#690, cf#780)", () => 
     const grain = inputsOf(host).find((e) => e.dataset.finishModule === "finish-grain");
     expect(grain, "no control was built for the parked module").toBeTruthy();
     expect(grain!.checked).toBe(true);
-    const lip = inputsOf(host).find((e) => e.dataset.finishModule === "finish-lipsync");
+    const lip = inputsOf(host).find((e) => e.dataset.finishModule === "finish-halation");
     expect(lip!.checked).toBeFalsy();
   });
 

@@ -1,6 +1,11 @@
 /// <reference types="node" />
-// A DOOR SOFT-DEGRADE MUST DEGRADE ONE SHOT IN ALL FOUR FINISH MODULES, NOT DESTROY THE FILM IN
-// THREE OF THEM (cf#594).
+// A DOOR SOFT-DEGRADE MUST DEGRADE ONE SHOT IN EVERY FINISH MODULE, NOT DESTROY THE FILM IN
+// MOST OF THEM (cf#594).
+//
+// The population was FOUR when this was written. finish-lipsync, the module the contract was
+// lifted OUT of, is gone (cf#783: MuseTalk ruled out permanently), so it is THREE now. The
+// measured table below is left exactly as measured -- it is the defect record, and the one
+// module that already had the behaviour is why the other three could be compared to anything.
 //
 // THE DEFECT THIS FILE GUARDS. Measured at origin/main 895c38c across all four
 // modules/finish-*/src/index.ts, with `terminalErrorInOutput` as the CONTROL (present twice in all
@@ -19,11 +24,13 @@
 // same honest door return was a one-shot degrade through one module and a destroyed film through
 // three, and nothing anywhere said which was which.
 //
-// THE DENOMINATOR IS 4 OF 4, and it is enumerated from disk below rather than typed here, so a fifth
-// finish module added later cannot join the estate untested by simply not being listed.
+// THE DENOMINATOR IS EVERY finish MODULE ON DISK, and it is enumerated from disk below rather than
+// typed here, so a finish module added later cannot join the estate untested by simply not being
+// listed, and one removed cannot leave a phantom subject behind.
 //
-// WHY THIS FILE IS BEHAVIOURAL AND NOT A GREP. tests/finish-lipsync.test.ts unit-tests the pure
-// discriminator, which proves the decision function and never that a module ACTS on it. This file
+// WHY THIS FILE IS BEHAVIOURAL AND NOT A GREP. A unit test of the pure discriminator (there was one
+// in tests/finish-lipsync.test.ts, removed with that module) proves the decision function and never
+// that a module ACTS on it. This file
 // drives each real worker's /poll through both door shapes with a recording D1 stub and asserts the
 // returned FinishOutput and the telemetry row, so a helper that is imported but unreachable (wrong
 // branch, an early return above it) fails here.
@@ -35,7 +42,7 @@
 // the fix from being "absorb everything".
 //
 // THE ASYMMETRY THIS FILE USED TO ASSERT IS GONE AS OF cf#604, and the reason it went is worth more
-// than the asymmetry was. cf#585 made finish-lipsync and finish-upscale degrade on a COMPLETED result
+// than the asymmetry was. cf#585 made finish-lipsync (since removed) and finish-upscale degrade on a COMPLETED result
 // carrying no artifact key at all; finish-rife and finish-blender failed loud there, recorded here as
 // deliberate on the grounds that vivijure-backend and vivijure-blender cannot produce that shape.
 //
@@ -58,7 +65,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import finishLipsync from "../modules/finish-lipsync/src/index";
 import finishUpscale from "../modules/finish-upscale/src/index";
 import finishRife from "../modules/finish-rife/src/index";
 import finishBlender from "../modules/finish-blender/src/index";
@@ -66,7 +72,6 @@ import finishBlender from "../modules/finish-blender/src/index";
 type Worker = { fetch(r: Request, e: never): Promise<Response> };
 
 const SUBJECTS: Array<{ name: string; worker: Worker; completedNoKey: "degrade" | "loud" }> = [
-  { name: "finish-lipsync", worker: finishLipsync as unknown as Worker, completedNoKey: "degrade" },
   { name: "finish-upscale", worker: finishUpscale as unknown as Worker, completedNoKey: "degrade" },
   { name: "finish-rife", worker: finishRife as unknown as Worker, completedNoKey: "degrade" },
   { name: "finish-blender", worker: finishBlender as unknown as Worker, completedNoKey: "degrade" },
@@ -136,7 +141,7 @@ describe("the harness itself can report the failing reading (controls)", () => {
 
   it("the DENOMINATOR is 4, enumerated from disk: every finish module on disk is a subject here", () => {
     const onDisk = readdirSync(join(__dirname, "..", "modules")).filter((d) => d.startsWith("finish-")).sort();
-    expect(onDisk).toEqual(["finish-blender", "finish-lipsync", "finish-rife", "finish-upscale"]);
+    expect(onDisk).toEqual(["finish-blender", "finish-rife", "finish-upscale"]);
     expect(SUBJECTS.map((s) => s.name).sort()).toEqual(onDisk);
   });
 });

@@ -19,7 +19,6 @@ flowchart LR
   sp["speech<br/>(enhance)"]
   subgraph finish["finish chain"]
     rife["finish-rife · 10"]
-    ls["finish-lipsync · 15"]
     up["finish-upscale · 20"]
   end
   asm["assemble"]
@@ -27,7 +26,7 @@ flowchart LR
   done["done"]
 
   cast -. "refs / LoRA" .-> kf
-  kf -- "keyframe_key" --> clips --> dlg --> sp --> rife --> ls --> up --> asm --> mux --> done
+  kf -- "keyframe_key" --> clips --> dlg --> sp --> rife --> up --> asm --> mux --> done
 
   style clips fill:#dff,stroke:#0aa,stroke-width:2px
 ```

@@ -20,7 +20,7 @@ flowchart LR
   clips["clips · motion.backend (i2v)<br/>THIS: Vidu Q3"]
   dlg["dialogue"]
   sp["speech"]
-  fin["finish<br/>(lipsync -> rife -> upscale / overlay)"]
+  fin["finish<br/>(rife -> grade -> upscale / overlay)"]
   asm["assemble"]
   mux["mux"]
   done["done"]

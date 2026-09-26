@@ -2,7 +2,7 @@
 // (resemble-enhance: denoise + restore + bandwidth-extend), dispatched to the dedicated
 // vivijure-audio-upscale RunPod endpoint (CUDA). Pure audio: audio_key in -> enhanced audio_key out.
 //
-// The speech chain runs between the dialogue (TTS) phase and finish, so finish-lipsync (MuseTalk)
+// The speech chain runs between the dialogue (TTS) phase and finish, so the final mux
 // drives off the cleaned audio. The orchestrator folds this module's output.audio_key back into
 // job.dialogue_audio[shot] (a `degraded` output keeps the original, guarded by the core).
 //
@@ -339,7 +339,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<SpeechOut
   }
   // RunPod GC'd the job (HTTP 404 / numeric "status":404): inside the grace window it's a post-submit
   // race -> keep polling; past it the job is really gone -> SOFT-DEGRADE (polish step, never fail the
-  // chain), lip-sync uses the original audio.
+  // chain), the mux uses the original audio.
   if (runpodJobGone(httpStatus, s)) {
     const now = Date.now();
     if (classifyGoneState(st.submittedAt, now) === "gone-failed") {

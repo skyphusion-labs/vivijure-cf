@@ -52,7 +52,7 @@ def test_provision_runpod_per_endpoint_image_serverless_no_volume(repo, monkeypa
     eps = vd.provision_runpod(repo, s, st, cf)
 
     # all four endpoints, none left on the backend image
-    assert set(eps) == {"vivijure-backend", "vivijure-upscale", "vivijure-musetalk", "vivijure-audio-upscale"}
+    assert set(eps) == {"vivijure-backend", "vivijure-upscale", "vivijure-audio-upscale"}
     # NO network volume reconcile happened
     assert not any(kind == "network volume" for kind, _, _ in calls)
 
@@ -61,7 +61,6 @@ def test_provision_runpod_per_endpoint_image_serverless_no_volume(repo, monkeypa
 
     # each satellite template pins its OWN image + is a serverless template (#677/#678)
     assert tmpls["vivijure-upscale-tmpl"]["imageName"].startswith("ghcr.io/skyphusion-labs/vivijure-upscale:")
-    assert tmpls["vivijure-musetalk-tmpl"]["imageName"].startswith("ghcr.io/skyphusion-labs/vivijure-musetalk:")
     assert tmpls["vivijure-audio-upscale-tmpl"]["imageName"].startswith("ghcr.io/skyphusion-labs/vivijure-audio-upscale:")
     assert tmpls["vivijure-backend-tmpl"]["imageName"].startswith("ghcr.io/skyphusion-labs/vivijure-backend:")
     assert all(b.get("isServerless") is True for b in tmpls.values())
@@ -71,7 +70,6 @@ def test_provision_runpod_per_endpoint_image_serverless_no_volume(repo, monkeypa
 
     # state persisted endpoint + template ids, and NO volume key
     assert st.resource_id("runpod_endpoint_vivijure-audio-upscale") == "vivijure-audio-upscale-id"
-    assert st.resource_id("runpod_template_vivijure-musetalk") == "vivijure-musetalk-tmpl-id"
     assert st.resource_id("runpod_volume_vivijure-backend") is None
 
 

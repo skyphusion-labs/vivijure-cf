@@ -32,7 +32,6 @@ import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
-import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
 
@@ -91,19 +90,6 @@ const CASES: Case[] = [
     env: RUNPOD_ENV,
     input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" },
     config: { interpolate: true },
-  },
-  {
-    // finish-lipsync no-ops without dialogue audio for the shot, same reasoning.
-    name: "finish-lipsync",
-    worker: finishLipsyncWorker as unknown as Worker,
-    hook: "finish",
-    env: RUNPOD_ENV,
-    input: {
-      shot_id: "shot_01",
-      clip_key: "renders/p_test/clips/shot_01.mp4",
-      audio_key: "renders/p_test/dialogue/shot_01.wav",
-    },
-    config: {},
   },
   {
     // speech-upscale is opt-in; `enable` off is a clean no-op, not a submit.

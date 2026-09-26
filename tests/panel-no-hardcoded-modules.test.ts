@@ -41,7 +41,10 @@ const CORPUS = MODULE_NAMES.filter((n) => !HOOK_NAMES.has(n));
 
 // ---- declared exemptions ----------------------------------------------------
 // Each entry is a name, the exact sites, and WHY. "Declared" does not mean "fine"; it means
-// visible. Three of these are debt with a named way out.
+// visible. Each remaining one is debt with a named way out. The finish-lipsync /
+// speech-upscale PAIR was paid off in cf#783 (MuseTalk ruled out, module removed, so the
+// coupling has no subject) and is deleted here rather than left as a graveyard entry, which is
+// what the ratchet in the third test below demands.
 const DECLARED: Record<string, { sites: string[]; why: string }> = {
   "own-gpu": {
     sites: ["planner-registry.js", "planner-render-config.js"],
@@ -54,14 +57,6 @@ const DECLARED: Record<string, { sites: string[]; why: string }> = {
   "cf-seedance": {
     sites: ["cast.js"],
     why: "voice-sample copy names the one door that can lock a take; product copy, needs a capability flag to generalise",
-  },
-  "finish-lipsync": {
-    sites: ["planner-render-config.js", "planner-restore.js"],
-    why: "domain coupling to speech-upscale (cleaned speech before mouth replacement) plus the legacy draft key; needs a manifest-level dependency declaration",
-  },
-  "speech-upscale": {
-    sites: ["planner-render-config.js"],
-    why: "other half of the finish-lipsync coupling; same fix",
   },
   "finish-blender": {
     sites: ["planner-restore.js"],
@@ -97,7 +92,7 @@ describe("the panel compiles in no UNDECLARED module name", () => {
     // The bug this file was rewritten for was a corpus of 6 hand-picked names. Assert the corpus
     // is the real module set, and that it reaches names the old list could never have contained.
     expect(MODULE_NAMES.length).toBeGreaterThan(20);
-    expect(MODULE_NAMES).toContain("finish-lipsync");
+    expect(MODULE_NAMES).toContain("finish-rife");
     expect(MODULE_NAMES).toContain("finish-blender");
     expect(MODULE_NAMES).toContain("speech-upscale");
     expect(CORPUS.length).toBe(MODULE_NAMES.length - MODULE_NAMES.filter((n) => HOOK_NAMES.has(n)).length);
