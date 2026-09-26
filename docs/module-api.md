@@ -2,7 +2,9 @@
 
 > Status: **IMPLEMENTED** (`vivijure-module/2`; the `/1` window is closed, no longer accepted). The contract the core and modules share. This
 > document is the design spec; the canonical TypeScript shape lives in
-> `@skyphusion-labs/vivijure-core` (`modules/types`, package path `src/modules/types.ts` in that repo).
+> `@skyphusion-labs/vivijure-core` (import subpath `@skyphusion-labs/vivijure-core/modules/types`;
+> published as `dist/modules/types.d.ts`). Where this prose and that file disagree, the types win;
+> file an issue against this doc.
 
 ## Why this exists
 
@@ -54,29 +56,124 @@ Shapes live in `@skyphusion-labs/vivijure-core` (`modules/types`).
 `pick one` hooks resolve to a single module (the user's chosen backend). `chain` hooks run every
 installed module in a declared order, each consuming the previous output.
 
+**Order.** Every serving module is sorted by `ui.order` ascending (a module with no `ui.order` sorts
+as `100`), ties broken by module `name` (`localeCompare`). A `pick one` hook with no explicit choice
+resolves to the first module in that order. `finish` is the only chain hook that honours a per-render
+participation selection (`SELECTABLE_HOOKS`; see `participation` below); every other chain hook runs
+every bound, serving module.
+
+**What a failing step does** (`ok: false`, a contract-violating output, or an unreachable module)
+depends on the hook, not on the module:
+
+| Hook | Effect of a failed step |
+|---|---|
+| `finish` | Transient failures (see "Transient vs deterministic" below) retry, up to 3 attempts per step; a deterministic failure, or retries exhausted, **fails the shot and therefore the render** with the real error (after R2 reclaim). A finish miss is never a silent degrade. |
+| `speech`, `master`, `film.finish` | Soft-degrade: the step is recorded as degraded, the input (audio bed / film) passes through unchanged, the chain advances. Never fails the render. |
+| `plan.enhance` (via `dispatchChain`) | The failed module is skipped and recorded in `errors`; the chain continues from the last good output. |
+| `notify` | Best-effort per notifier; a failure is swallowed and never fails the render. |
+| `dialogue` | A submit failure on the pre-clip path fails the film; on the post-clip path the film finishes silent. |
+| `keyframe`, `motion.backend` | Fails that phase / shot (motion retries transient provider failures per shot). |
+
+> **Known deviation (#764, MA-13):** `score` is declared `chain`, but no render path folds a score
+> chain today. The host invokes exactly ONE score module per request from the planner
+> (`src/score-bed.ts`, core `beat-analyze`), classifying modules by which config key they declare:
+> `config_schema.prompt` = music bed, `config_schema.text` = narration, `config_schema.clip_seconds` =
+> beat analysis (first by `ui.order` unless the caller names one). The generated bed is read from an
+> `audio:<r2-key>` tag in `ScoreOutput.applied`, not from `film_key`.
+
 ## The module manifest (`module.json`)
 
-Served by the module at `GET /module.json`. The core reads it once to register the module.
+Served by the module at `GET /module.json`. The core fetches it when it discovers the module (see
+"The registry" below for when that happens and how long it is cached).
 
 ```jsonc
 {
   "name": "finish-rife",                 // unique module id
-  "version": "0.1.0",
+  "version": "0.1.2",                    // the MODULE's own release version (free-form, non-empty)
   "api": "vivijure-module/2",            // contract version this module targets (/1 is closed)
   "hooks": ["finish"],                   // which hooks it serves
+  "participation": "default",            // REQUIRED by conformance for a `finish` module (cf#537)
+  "max_invocation_seconds": 900,         // REQUIRED by conformance for `finish` / `speech` (core#223)
   "provides": [                          // user-facing capabilities (one module may offer several)
     { "id": "interpolate", "label": "Smooth motion (frame interpolation)" },
     { "id": "face_restore", "label": "Relock faces" }
   ],
   "config_schema": {                     // typed knobs; the UI renders these, the core validates them
+    "interpolate":          { "type": "bool", "default": true, "label": "Smooth motion" },
     "interpolation_factor": { "type": "int", "min": 1, "max": 8, "default": 2,
                               "label": "Smoothness", "enum_labels": { "1": "off", "2": "2x", "4": "4x" } },
     "face_restore":         { "type": "enum", "values": ["none", "gfpgan"], "default": "none",
                               "label": "Face restore" }
   },
+  "finish_artifacts": {                  // SHOULD for finish; see "Declared finish artifacts"
+    "output_key": { "kind": "shot_named", "filename": "_finished.mp4" },
+    "applied": [
+      { "when": { "knob": "interpolate", "equals": false }, "tag": "noop:interpolate-off" },
+      { "tag": "interpolate:{interpolation_factor|2}x" }
+    ]
+  },
   "ui": { "section": "finish", "icon": "wand", "order": 10 }   // hints for the self-assembling UI
 }
 ```
+
+This is a trimmed, lightly relabeled copy of the real `modules/finish-rife` manifest (`MANIFEST` in
+`modules/finish-rife/src/index.ts`) and passes `checkManifest`. Drop `participation` or
+`max_invocation_seconds` and it still LOADS, but FAILS conformance.
+
+### Manifest field reference
+
+Every field of `ModuleManifest` / `ModuleUi`. "Load" = what `validateManifest` (core
+`modules/manifest-validate`) enforces when the registry reads the manifest: a violation REJECTS the
+module (it is skipped and logged, never registered). "Conformance" = what `checkManifest` (core
+`modules/conformance`) additionally FAILS; a module that fails conformance can still load when
+service-bound, but is never installed through the dispatch install gate, and is not done.
+
+| Field | Type | Req? | Load (rejects) | Conformance (fails) |
+|---|---|---|---|---|
+| `name` | string | yes | missing / empty | |
+| `version` | string | yes | missing / empty | |
+| `api` | `"vivijure-module/2"` | yes | not a supported api (`/1` no longer accepted) | |
+| `hooks` | `HookName[]` | yes | empty, or any unknown hook name | |
+| `provides` | `{ id: string; label: string }[]` | no | | an entry missing `id` or `label` |
+| `config_schema` | `Record<string, ConfigField>` | no | | bad `type`, bad `scope`, enum with empty `values` or a `default` not in `values`, a `default` whose type does not match `type` |
+| `ui` | `ModuleUi` (below) | no | not validated | |
+| `participation` | `"default" \| "opt_in"` | no | any other value | ABSENT on a module serving a `SELECTABLE_HOOKS` hook (today: `finish`) |
+| `max_invocation_seconds` | number (seconds) | no | not a positive finite number | ABSENT on a module serving a `CEILING_DERIVED_HOOKS` hook (today: `finish`, `speech`) |
+| `cancelable` | boolean | no | not validated | |
+| `finish_artifacts` | `FinishArtifactsDecl` | no | malformed (see that section) | |
+| `finish_consumes_audio` | boolean | no | not validated | |
+| `keyframe_label` | string | no | empty / whitespace / non-string | |
+| `duration_grid` | `{ fps: number; tiers: Record<string, { max_frames: number }> }` | no | not validated | |
+| `usage` | `MotionUsageDecl` | no | present but not a valid `MotionUsageDecl` (needs `native_audio`, `voice`, `scatter_native_audio`, `min_seconds`, `max_seconds`) | |
+| `needs_tenant_r2` | boolean | no | not validated | |
+| `ui.section` | string | no | | |
+| `ui.icon` | string | no | | |
+| `ui.order` | number | no | | (absent sorts as `100`) |
+| `ui.locality` | `"local" \| "byo" \| "cloud"` | no | | (absent classifies as `cloud`) |
+| `ui.cost` | string | no | | |
+| `ui.blurb` | string | no | | |
+| `ui.limits` | string[] | no | | |
+
+What each optional field means:
+
+- **`participation`** (cf#537): whether the module runs when a render carries NO explicit selection
+  for its hook. `"default"` or absent = yes; `"opt_in"` = only when a caller names it in that
+  render's selection. Only honoured on `SELECTABLE_HOOKS`. Conformance requires an explicit value so
+  "considered, runs by default" is distinguishable from "nobody thought".
+- **`max_invocation_seconds`** (core#182 / core#223): the module's OWN enforced wall-clock ceiling for
+  one whole invocation, relayed from the guard it actually runs with. The core sizes the phase stall
+  ceiling from it. Declare the whole invocation or nothing; never a rate, never an aspiration. An
+  absent value is reported (`FilmJob.ceiling_undeclared`, `film.ceiling_undeclared` event), not guessed.
+- **`cancelable`**: the module serves `POST /cancel` (see "Async + cancel").
+- **`usage`** (`motion.backend`): how the door is actually called (native audio, voice mode, min/max
+  seconds, duration steps, first/last frame, seed, voice ref, driving audio). Absent = undeclared.
+- **`needs_tenant_r2`**: see `InvokeRequest.r2` under "Invocation contract". Leave absent unless the
+  module submits to a pooled RunPod endpoint that needs the tenant's per-job R2 credential.
+- **`ui.locality`**: load-bearing, not cosmetic. It drives the planner door tag AND the core's
+  local-vs-cloud classification (`cloudMotionModules` / `gpuDoorMotionModules`); every
+  `motion.backend` module SHOULD declare it. `ui.cost` / `ui.blurb` / `ui.limits` are display-only
+  and omitted from the UI when absent (`limits` falls back to the `config_schema` knob ranges).
+- `finish_artifacts`, `keyframe_label`, `finish_consumes_audio`, `duration_grid`: their own sections below.
 
 The `config_schema` is the single source of truth for a module's knobs. The frontend renders the
 controls from it; the core clamps/validates against it before invoking. One declaration, one hop,
@@ -94,6 +191,43 @@ A field may carry an optional `"scope"`:
 
 `scope` is additive: an unmarked field is a `"render"` field, so adding it broke nothing and bumped no
 contract version. See CONTRACT.md 4.1.1 / 4.1.2 for the full spec.
+
+> **Known deviation (#764, MA-14):** the core injects stored install-scope values only on the
+> `notify` hook (film done-transition and scatter notify). For every other hook an `"install"` field
+> is treated like a render field: it arrives at its `default` unless a render config supplies it.
+
+### How `config` is clamped (`validateConfig`)
+
+The `config` a module receives is the output of core `validateConfig(config_schema, userValues)`
+(clamp, never throw), so a module never has to defend against junk in DECLARED keys:
+
+| Case | Result |
+|---|---|
+| Key not declared in `config_schema` | Dropped. |
+| Declared key missing | The field's `default`. |
+| `int` / `float`, value not a finite number (after `Number(v)`) | `default`. |
+| `int` / `float`, below `min` / above `max` | Clamped to `min` / `max`. `int` is then `Math.round`ed. |
+| `bool`, value not a boolean | `default` (a string `"true"` is NOT coerced). |
+| `enum`, value not in `values` | `default`. |
+| `string`, value not a string | `default`. |
+| No `config_schema` at all | `{}`. |
+
+At the API door the host is stricter than the clamp: a caller-supplied `motion.backend` config is
+checked by `configPreflightViolations` BEFORE any GPU spend and an unknown key, wrong type, or
+out-of-range / out-of-set value is a 400 naming what is allowed (#577).
+
+**Host-injected keys (added AFTER the clamp, so they arrive even if undeclared):**
+
+| Hook / call site | Keys the host sets |
+|---|---|
+| `plan.enhance` from the planner routes | `mode`, `model`, `system_message`, `message` (see the mode table below) |
+| `image.generate` (chat image path) | `model` (the module's own catalog id) |
+| `score` beat analysis (core `beat-analyze`) | `audio_url`, `audio_key` |
+
+Keys injected BEFORE the clamp (so a module only receives them if it declares them): `quality_tier`
+on the chosen `keyframe` module, and `quality` on every `motion.backend` module whose schema declares
+`quality`, both set to the render's quality tier. The `dialogue` hook is invoked with `config: {}`
+today (no schema defaults are applied).
 
 ### How a planning module advertises its models (`config_schema.model`, `plan.enhance`)
 
@@ -145,35 +279,87 @@ A planning module also receives the planner's three entry points through `config
 
 | `config.mode` | input | expected output |
 |---|---|---|
-| `"plan"`    | `config.message` (the brief + cast prompt) | `output.storyboard` -- a full storyboard |
+| `"plan"`    | `config.message` (the brief + cast prompt); `input.storyboard` is `{ "scenes": [] }`, `input.brief` the raw brief | `output.storyboard` -- a full storyboard |
 | `"refine"`  | `config.message` (one delta) + `input.storyboard` | `output.storyboard` -- the revised storyboard |
-| `"chat"`    | `config.message` | `output.notes` -- the reply text |
+| `"chat"`    | `config.message` | `output.notes` -- the reply, as a `string[]` (the host joins it with `"\n"`) |
 | `"enhance"` (default) | `input.storyboard` | `output.storyboard` -- a director pass over the prompts |
+
+Planner-route invokes carry `context: { "project": "planner", "job_id": "<random uuid>" }`; there is no
+real project behind them, so a planning module must not write artifacts under that prefix. The
+planner routes do not poll: a planning module must answer inline (`ok: true, output`), never
+`pending`. `config.mode` / `model` / `system_message` / `message` are host-injected after the clamp
+(see above), so they arrive even though the module does not declare them.
 
 `config.system_message` carries the system prompt for the generative modes. A model MISS on
 `plan`/`refine` must degrade honestly (`ok: true`, the input storyboard passed through unchanged, and
 a `notes` entry naming what was skipped and why) rather than failing the chain; malformed I/O (a
 missing `config.message`) fails loud with `ok: false`.
 
+### `image.generate` model catalog
+
+`image.generate` modules advertise models the same way: an enum `config_schema.model` contributes one
+row per value (`type: "image"`, `group: "Image Gen · <module name>"`), and a module with no `model`
+enum appears as one row under its own name. The rows are served, together with the planning rows, by
+`GET /api/models`. The chosen id is handed back as `config.model`. Unlike planning there is NO
+sole-module fallback: an id no installed module declares resolves to nothing (cf#381). The chat image
+path invokes with `context.project: "chat"`, does not poll (answer inline), and returns the image
+bytes in the output (see the per-hook reference) rather than an R2 key.
+
 ## Invocation contract
 
-The core calls a module over a **service binding** (RPC) or HTTP. One entry point per module:
+**Transport.** The core reaches a module by `fetch()`ing it, never by a direct function call: either
+over a `MODULE_<NAME>` **service binding** on the studio Worker (the deploy-wired path), or through the
+Workers-for-Platforms **dispatch namespace** (`MODULE_DISPATCH.get(<script>)`, installed without a
+core redeploy; see `docs/module-dispatch.md`). The URL host is a placeholder (`https://module/...`);
+only the path matters. Everything after "got a Fetcher" is identical for both transports. One entry
+point per module:
 
 ```
 POST /invoke
 {
   "hook":    "finish",                   // which hook is being asked
-  "input":   { ... },                    // the hook's typed input (see below)
-  "config":  { ... },                    // the user's values, already validated vs config_schema
-  "context": { "project": "neon", "job_id": "abc" }
+  "input":   { ... },                    // the hook's typed input (see the per-hook reference)
+  "config":  { ... },                    // the user's values, already clamped vs config_schema
+  "context": { "project": "neon", "job_id": "abc" },   // InvokeContext; never secrets
+  "r2":      { ... }                     // OPTIONAL TenantR2Config, see below; usually ABSENT
 }
 ->
-{ "ok": true,  "output": { ... } }       // the hook's typed output
-{ "ok": false, "error": "human-readable reason" }   // a module failure never crashes the core
+{ "ok": true,  "output": { ... } }                          // the hook's typed output
+{ "ok": true,  "pending": true, "poll": "<token>", "jobId": "<id>" }   // async accept; jobId optional
+{ "ok": false, "error": "human-readable reason" }           // a module failure never crashes the core
 ```
 
 A module is **stateless to the core**: it gets typed input + config, returns typed output. Where it
 does the work (its own GPU, a cloud provider, a CPU container) is the module's business.
+
+**Always HTTP 200 + JSON.** A module answers `/invoke` (and `/poll`, `/cancel`) with HTTP 200 and a
+JSON envelope, INCLUDING for failures: an unknown/unsupported `hook`, malformed input, or a backend
+error is `{ "ok": false, "error": "..." }` with status 200, never a 4xx/5xx or a thrown exception.
+The live conformance gate probes exactly this (a bogus hook must come back `200` + `ok:false`). On the
+core side (`invokeModule` / `pollModule` / `cancelModule`) anything else is turned into
+`ok: false` data, never a crash: an unreachable module (`module unreachable: ...`), a non-2xx status
+(`module /invoke -> <status>`), an empty body, a body that is not JSON, a body over **1 MB**
+(`MAX_MODULE_RESPONSE_BYTES`), or JSON without a boolean `ok`. Keep outputs small: large payloads
+belong in R2 (the one exception, `image.generate`, returns one image and must fit the cap).
+
+**`jobId` (optional, on `pending`).** The module's own backend job id, opaque to the core. The core
+records it (e.g. for the keyframe phase) for telemetry and recovery; it never replaces `poll`.
+
+**`r2` (optional, `TenantR2Config`).** The tenant's per-job R2 credential
+(`{ endpoint, access_key_id, secret_access_key, bucket }`, all four or the key is absent, never
+`null`). The core attaches it ONLY to a module whose manifest sets `needs_tenant_r2: true` AND that is
+first-party (service-bound, not a `dispatch:` module), and only on a host that carries a full
+credential set; a dispatch/community module never receives it, even if it declares the flag. This
+makes the envelope as a whole no longer secret-free (`context` still is). A receiver MUST strip it on
+arrival: call core `takeTenantR2(req)` at the top of the handler, which returns the block and
+`delete`s it from the request so nothing downstream can log it.
+
+**Artifact keys.** Every R2 key a module RETURNS must be a safe relative key under
+`renders/<context.project>/` (core `key-safety`): 1..1024 chars of `[A-Za-z0-9._-/]`, no leading
+`/`, no `..` segment, strictly longer than the prefix. The core refuses (`refused key outside
+renders/<project>/`) and fails the step for an escaping `keyframe_key`, `motion.backend` `clip_key`,
+or `finish` `clip_key`; `KeyframeOutput.trained_loras` values must be under `loras/` or `renders/`.
+Other returned keys are expected to follow the same rule.
 
 ### Async + cancel
 
@@ -189,6 +375,45 @@ This is NOT just for GPU hooks: a CPU-container `film.finish` module (subtitle b
 whose encode outlasts a request budget on a long film ALSO answers `pending` + `poll`, so the core
 drives submit+poll across ticks and no single request holds the encode open (#602). Such a module
 stays FAIL-SAFE -- a poll failure soft-degrades (ships the film uncarded), it never fails the render.
+
+**`POST /poll { "poll": "<token>" }` answers one of (`PollResponse`):**
+
+```
+{ "ok": true, "pending": true, "wait": "accepted" | "running" }   // still going; `wait` optional (cf#307)
+{ "ok": true, "output": { ... } }                                  // done: the hook's typed output
+{ "ok": false, "error": "...",                                     // failed
+  "outcome": "backend-error" | "failed" | "gone" | "cancelled",    // optional closed classification (cf#298)
+  "runpodStatus": "...", "errorType": "..." }                      // optional, when known
+```
+
+`wait` is backend-neutral: `accepted` = the backend has the work but compute has not started (queue /
+cold start), `running` = compute underway. Hosts record `outcome` instead of parsing `error` prose;
+any value outside the set is ignored.
+
+**Transient vs deterministic failure.** The core classifies an `ok: false` `error` string
+(`classifyTransientFailure`) to decide retry vs fail. TRANSIENT (retried, bounded): an HTTP status of
+408, 429 or 5xx embedded as `-> <status>` (the core's own transport errors look like
+`module /poll -> 503`); text matching `unreachable`, `timeout` / `timed out`, `network`,
+`econnreset`, `connection reset|lost`, `fetch failed`; provider load text (`high load`,
+`please try again later`, `cannot process your request`, AI Gateway `7003`). Everything else,
+including any 4xx other than 408/429 and every module-logic `ok: false` (bad input, "job failed", no
+output key), is DETERMINISTIC and is not retried. So: report a genuine, permanent failure plainly; do
+not dress a bad-input rejection in transport words, and do not report a real backend blip as a
+permanent failure.
+
+**Inline vs `pending`, per call site.** A module may answer `pending` only where the host polls. Today:
+
+| Hook (call site) | May answer `pending`? |
+|---|---|
+| `keyframe`, `motion.backend`, `finish`, `speech`, `dialogue`, `master`, `cast.image` | Yes (the core polls across ticks). |
+| `film.finish` | Yes. Scatter finalize polls across ticks (#602); the single-film path polls in-request (about 40 x 3 s) and then soft-degrades. |
+| `motion.backend` cast voice sample | MUST answer `pending` (a synchronous answer is rejected). |
+| `plan.enhance` (planner plan / refine / chat) | No: answer inline. |
+| `plan.enhance` (`POST /api/storyboard/enhance`, `dispatchChain`) | Tolerated: polled in-request (about 40 x 3 s), then fails. Answer inline. |
+| `image.generate` | No: a `pending` answer is rejected. |
+| `notify` | No: the host never polls a notifier; answer inline. |
+| `score` music / narration bed (planner) | MUST answer `pending` (a synchronous answer is rejected). |
+| `score` beat analysis (`config_schema.clip_seconds`) | No: answer inline. |
 
 ### Credential readiness (`GET /ready`, optional + additive)
 
@@ -229,7 +454,25 @@ one it hit:
 |---|---|---|---|
 | present | present | ready | (proceeds) |
 | present | absent | the key is configured but this version cannot see it yet | `credential not yet visible on this worker version (retry shortly)` |
+| absent | present | the endpoint id binding is missing (the key is fine) | `RUNPOD_ENDPOINT_ID not configured` |
 | absent | absent | genuinely unconfigured | `RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID not configured` |
+
+On the proxied route (cf#394) the credential is `RUNPOD_PROXY_TOKEN` and the messages name it instead
+of `RUNPOD_API_KEY`. The shared helper is core `runpodCredentialProblem`.
+
+**Additive `/ready` fields the first-party RunPod modules also report** (none of them gates `ok`
+unless stated):
+
+- `runpod_proxied: boolean` (cf#394): which route answered (the plane proxy vs a direct key). The
+  `credentials.runpod_api_key` field keeps its name on both routes, because the control plane refuses
+  a `/ready` that omits it.
+- `telemetry: { "job_log": "ok" | "unavailable" | "unknown" }` (cf#279 / cf#284): can this worker
+  RECORD a job outcome. `unknown` means could-not-measure (probe error or 1.5 s timeout), never
+  healthy. Informational only.
+- `door: { "bound": true, "token": boolean, "route": string, "routes": [{ "name", "token" }] }`
+  (cf#612): present ONLY when an on-iron door is bound. On the door arm `ok` is the door's readiness
+  (at least one usable door), not the RunPod credentials. The control plane classifies a `/ready`
+  answer with core `classifyReadyResponse` (`module-ready`).
 
 A polish module that soft-degrades rather than failing carries the same distinction in its degrade
 reason (`runpod-key-not-yet-visible` vs `no-runpod-secrets`), so the honest-degrade record does not
@@ -237,9 +480,10 @@ itself carry the lie.
 
 ### Binding readiness (`GET /ready` `bindings` field, optional + additive, cf#295)
 
-A module whose real work depends on a Workers **service binding** (a CPU-container VPC binding, an
-EMAIL send binding) rather than a Secrets Store credential reports that binding's presence the same
-way, in a sibling field kept separate from `credentials`:
+A module whose real work depends on a piece of wired infrastructure (a Workers service binding such as
+an EMAIL send binding, or a configured CPU-container base URL such as `VIDEO_FINISH_URL`) rather than
+a Secrets Store credential reports its presence the same way, in a sibling field kept separate from
+`credentials`:
 
 ```
 GET /ready
@@ -247,7 +491,7 @@ GET /ready
 {
   "ok": true,
   "module": "film-titles",
-  "bindings": { "video_finish_vpc": true }
+  "bindings": { "video_finish_url": true }
 }
 ```
 
@@ -291,9 +535,33 @@ finish_artifacts: {
 }
 ```
 
+Tag templates: `{knob}` is replaced by the knob's value, or by the empty string when the knob is
+absent; `{knob|default}` uses `default` when absent. Only `[A-Za-z0-9_]` knob names are substituted
+(anything else in braces is copied literally), and a template is truncated at 512 characters. When
+`applied` rules are declared but none matches, or no rules are declared (subject to the legacy
+fallback noted below), an R2-adopted step is marked `<binding>:r2-adopted` so the adoption is never
+silent. Declare rules that mirror your module's real `applied` tags.
+
+**The declaration also gates presigned transport.** The core attaches the presigned finish transport
+(`video_url`, `output_url`, `output_key`, plus `audio_url` for a dialogue shot and `hash_url` when
+`output_hash` is set; see `FinishInput`) ONLY when it can predict the step's output key, i.e. only
+when the module declares `finish_artifacts`. A credential-less module (every dispatch/community module:
+it holds no R2 binding of its own) MUST declare it, or it receives keys it cannot read and nowhere to
+write. The presign is all-or-nothing and best-effort: if any leg fails the input stays key-only
+(`clip_key` / `audio_key` are always kept). The finish `output_key` convention MUST produce a key under
+`renders/<context.project>/`.
+
 A finish module WITHOUT the declaration gets no R2 shortcut: its stuck steps pend to the hard
 deadline honestly instead of the core guessing where its output landed. Present-but-malformed
-`finish_artifacts` REJECTS the manifest at registration.
+`finish_artifacts` REJECTS the manifest at registration (non-object; missing `output_key`; unknown
+`output_key.kind`; empty `filename` / `suffix`; `applied` not an array; a rule without a non-empty
+`tag`; a `when` without a non-empty `knob` or without `equals`).
+
+> **Known deviation (#764, MA-8):** for a finish module that declares NO `finish_artifacts`, core
+> `finishStepOutputKey` / `finishStepAppliedTag` (`film-model`) still fall back to matching the binding
+> name (`RIFE`, `LIPSYNC|MUSETALK`, `UPSCALE`) to guess the legacy first-party conventions, and that
+> guess also drives presigning. The contract above ("never pattern-matches") is the rule; do not rely
+> on the fallback.
 
 ### Keyframe display label (`keyframe_label`, optional + additive)
 
@@ -327,7 +595,7 @@ preserved within each group. With `finish-rife` (order 10), `finish-lipsync` (or
 
 - a shot WITH a dialogue line runs `finish-lipsync` -> `finish-rife` -> `finish-upscale`;
 - a shot with NO line keeps the plain `ui.order` (`finish-rife` -> `finish-lipsync` -> `finish-upscale`),
-  where lip-sync no-ops because it has no `audio_key`.
+  where the core does not invoke the audio-consuming step at all and records it as `noop:no-dialogue`.
 
 ```jsonc
 { "hooks": ["finish"], "ui": { "order": 15 }, "finish_consumes_audio": true }
@@ -373,14 +641,26 @@ This is the whole contract for one hook, end to end. It is also the first real m
 ### Types (canonical TS shapes)
 
 ```ts
-// What the core hands a finish module: a rendered clip and what is known about it.
+// What the core hands a finish module: a rendered clip and what is known about it. The clip is
+// self-describing (a finish backend probes it), so every hint below is OPTIONAL: the core passes
+// it when it has it, and a finish module must not require it.
 interface FinishInput {
   shot_id: string;
-  clip_key: string;     // R2 key of the input clip (mp4)
-  src_fps: number;
-  frames: number;
-  width: number;
-  height: number;
+  clip_key: string;          // R2 key of the input clip (mp4); ALWAYS present, even when presigned
+  audio_key?: string;        // the shot's dialogue audio (a lip-sync module drives the mouth from it)
+  src_fps?: number;          // SOURCE hints: omitted when unmeasured, never guessed
+  frames?: number;
+  width?: number;
+  height?: number;
+  delivery_width?: number;   // the DELIVERY target (the film path always supplies it); pick a scale
+  delivery_height?: number;  //   that does not undershoot it
+  output_hash?: string;      // opaque step-input provenance hash (#583); write it to `<output_key>.hash`
+  // Presigned transport, attached ONLY when the module declares `finish_artifacts` (see above):
+  video_url?: string;        // presigned GET of clip_key
+  output_url?: string;       // presigned PUT for the finished clip ...
+  output_key?: string;       //   ... at this key (return it as FinishOutput.clip_key)
+  audio_url?: string;        // presigned GET of audio_key (dialogue shots)
+  hash_url?: string;         // presigned PUT for `<output_key>.hash` (when output_hash is set)
 }
 
 // What a finish module returns: the processed clip plus what it did.
@@ -390,8 +670,17 @@ interface FinishOutput {
   out_fps: number;
   frames: number;
   applied: string[];    // e.g. ["interpolate:2x", "face_restore:gfpgan"]
+  degraded?: string;    // honest soft-degrade reason (a pass that could not run); non-empty string only
 }
 ```
+
+Presigned URLs live 30 minutes. A module that prefers URLs selects on their presence, but must not
+require `clip_key` / `audio_key` to be absent.
+
+**CSAM refusal (a HARD FAIL, never a degrade).** A finish module that refuses content on the CSAM
+bright line returns its normal `FinishOutput` shape with a reason containing `csam` (case-insensitive)
+in `degraded` or in an `applied` tag. The core (`finishOutputIsCsamRefusal` in core `film-model`)
+detects that and FAILS the shot with the reason; it is never folded in as a polish miss.
 
 Invariant for `finish`: every clip in one render is processed with the SAME config, so all outputs
 share fps + codec and the off-GPU concat stays a stream-copy (no re-encode). The module enforces
@@ -409,37 +698,186 @@ The render engine for this lives on the GPU side (the `finish.py` module already
 
 ### Conformance
 
-Every hook ships a conformance suite. A `finish` module is conformant if, given a known input clip
-and a config, it:
-- returns a valid `FinishOutput` with `applied` reflecting the config,
-- preserves the clip's duration (interpolation changes fps + frame count, never length),
-- degrades a missing pass to a no-op instead of erroring,
-- is idempotent under an empty config (returns the input unchanged).
+The conformance checks are published in core, import subpath
+`@skyphusion-labs/vivijure-core/modules/conformance` (not in this repo):
 
-The conformance checks live in `src/modules/conformance.ts`: `checkManifest` (the `module.json`),
-`checkInvokeResponse` (the `{ ok, ... }` envelope), and `checkHookOutput(hook, output)` (the typed
-PAYLOAD a success returns). The last one matters because the envelope and the payload are two
-different promises: a `finish` module can return a perfectly well-formed `{ ok: true, output: {} }`
-and still break the contract, because `{}` is not a `FinishOutput`. The harness validates the
-REQUIRED fields of each hook's output shape (optional hint fields are not demanded), so "envelope-ok"
-is not mistaken for "contract-ok". `npm run conformance` runs the suite (`tests/conformance.test.ts`
-for the shape checks, `tests/conformance.live.test.ts` for a live module). The live spec is opt-in:
-point it at a deployed module to verify its `module.json` + `invoke` (envelope AND payload) end to
-end:
+- `checkManifest(raw)`: the `module.json` (see the "Conformance" column of the manifest field reference).
+- `checkInvokeResponse(raw)`: the `{ ok, ... }` envelope (`ok:true` + `output`, `ok:true` + `pending`
+  + string `poll`, or `ok:false` + string `error`).
+- `checkCancelResponse(raw)`: the `/cancel` envelope.
+- `checkHookOutput(hook, output)`: the typed PAYLOAD a success returns, against the REQUIRED output
+  fields in the per-hook reference below (optional fields are not demanded). This matters because
+  the envelope and the payload are two different promises: `{ ok: true, output: {} }` is a
+  well-formed envelope and still not a `FinishOutput`. The core runs the same check at runtime
+  (`hookOutputViolation`) on every resolved output and fails / degrades the step on a violation.
+- `runLiveConformance(fetcher)`: the dispatch INSTALL gate (`docs/module-dispatch.md` 4.3): manifest,
+  a first-hook `/invoke` probe (typed output checked only if it answers inline), and a bogus-hook
+  probe that must return HTTP 200 + `ok:false`. A dispatch module is installed only if every check
+  passes. It does NOT poll async jobs, so an async hook's typed output is the module's own CI's job.
+
+`npm run conformance` runs `tests/conformance.test.ts` (the shape checks) and
+`tests/conformance.live.test.ts` (a live module). The live spec is opt-in: point it at a deployed
+module to verify its `module.json`, an HTTP 200 well-formed `invoke` envelope for its first hook (and
+the payload when it answers inline), and the bad-hook degrade, end to end:
 
 ```
 MODULE_URL=https://my-module.example.workers.dev npm run conformance
 ```
 
+**Expected behavior the harness does NOT check** (a `finish` module must still do it, and its own
+tests should prove it):
+- `applied` reflects the config it was given,
+- the clip's duration is preserved (interpolation changes fps + frame count, never length),
+- a pass whose model is unavailable degrades to a no-op with a `degraded` reason instead of erroring,
+- under an empty / all-default config that enables no pass, the input passes through unchanged.
+
 Green means the module plugs into ANY Vivijure deployment. This is what keeps the ecosystem
 trustworthy: implementing the interface is not enough, you have to pass the contract.
 
+## Per-hook I/O reference
+
+The canonical shapes are the `*Input` / `*Output` interfaces in core `modules/types`; the fuller
+per-hook semantics (who calls it, when, what the core does with the result) are in `docs/CONTRACT.md`
+section 3. "Req" marks what the core always sends (inputs) or what `checkHookOutput` enforces
+(outputs); a missing required output field is a contract violation (the step fails or degrades per
+the hook's failure policy). Optional output fields are validated only when present, as noted.
+
+**`keyframe`** (pick one; project-level pass, one job for every shot)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `project` | yes | R2 prefix |
+| in | `bundle_key` | yes | the project bundle |
+| in | `shot_ids` | no | subset (parallel keyframe shards) |
+| in | `pretrained_loras` | no | `slot -> R2 key` of already-trained cast LoRAs |
+| out | `project` | yes | string |
+| out | `keyframes[]` | yes | each `{ shot_id, keyframe_key }`, both strings; key under `renders/<project>/` |
+| out | `trained_loras` | no | if present an object of string R2 keys (`loras/` or `renders/`) |
+
+**`motion.backend`** (pick one per shot)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `shot_id`, `keyframe_url`, `prompt`, `seconds` | yes | `keyframe_url` is presigned |
+| in | `keyframe_key`, `last_keyframe_url`, `last_keyframe_key`, `voice_ref_url`, `voice_ref_key`, `audio_url`, `audio_key` | no | end frame (first/last), voice reference clip, driving line audio |
+| out | `shot_id`, `clip_key` | yes | strings; `clip_key` under `renders/<project>/` |
+| out | `fps`, `frames` | yes | finite numbers |
+| out | `has_audio`, `distilled` | no | booleans; omit rather than fabricate |
+
+**`finish`** (chain): see the worked example above (`FinishInput` / `FinishOutput`). Required out:
+`shot_id`, `clip_key` (strings), `out_fps`, `frames` (numbers), `applied` (`string[]`).
+
+**`dialogue`** (pick one; one batch per film)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `project` | yes | R2 prefix |
+| in | `lines[]` | yes | each `{ shot_id, text, voice_id? }` |
+| out | `project` | yes | string |
+| out | `audio[]` | yes | each `{ shot_id, audio_key, voice_id }` all strings, `duration_s?` number |
+| out | `applied` | yes | `string[]` |
+
+**`speech`** (chain, per shot; polish, never fails the render)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `shot_id`, `audio_key` | yes | |
+| in | `audio_url`, `output_url`, `output_key` | no | presigned GET / PUT when the host can presign |
+| out | `shot_id`, `audio_key` | yes | strings; on a soft-degrade return the INPUT `audio_key` |
+| out | `applied` | yes | `string[]`; no fake tag on a degrade |
+| out | `degraded` | no | reason string |
+
+**`plan.enhance`** (chain; answer inline)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `storyboard` | yes | `{ scenes: [{ prompt, ... }], ... }`; preserve every field you do not rewrite |
+| in | `brief` | no | |
+| out | `storyboard` | yes | an object with a `scenes` array |
+| out | `notes` | no | `string[]` |
+
+**`image.generate`** (pick one; answer inline)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `prompt` | yes | |
+| in | `negative_prompt`, `refs` (data URLs), `width`, `height` | no | |
+| out | `image.bytes_b64` | yes | non-empty RAW base64 (a `data:` prefix is a violation) |
+| out | `image.mime` | yes | non-empty, the real mime of the bytes |
+
+**`cast.image`** (pick one)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `cast_id` (number), `portrait_url` (presigned) | yes | |
+| in | `portrait_key`, `source_urls`, `bible`, `art_style` | no | |
+| out | `cast_id` | yes | number |
+| out | `images[]` | yes | each `{ key, mime }` strings (already written to R2) |
+| out | `applied` | yes | `string[]` |
+
+**`score`** (see the MA-13 note under "The hooks" for how the host calls it today)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `film_key`, `seconds` | yes | |
+| in | `storyboard` | no | mood / tempo context |
+| out | `film_key` | yes | string |
+| out | `applied` | yes | `string[]` (the planner bed reads `audio:<r2-key>` from it) |
+| out | `degraded` | no | string if present |
+
+**`notify`** (chain; terminal side effect; answer inline)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `event` (`"render.complete"`), `film_id`, `project` | yes | |
+| in | `download_url`, `seconds` | no | `download_url` is a presigned GET of the film |
+| out | `delivered` | yes | `string[]`; empty (never an error) when there is nothing to deliver |
+
+**`master`** (chain; film-level audio bed; fail-safe)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `film_id`, `audio_key`, `audio_url`, `output_url`, `output_key` | yes | presigned GET of the bed, presigned PUT at `output_key` |
+| in | `seconds` | no | |
+| out | `audio_key` | yes | string; the INPUT key on a soft-degrade |
+| out | `applied` | yes | `string[]` |
+| out | `degraded` | no | reason string |
+
+**`film.finish`** (chain; post-mux cards / subtitles; fail-safe)
+
+| | Field | Req | Notes |
+|---|---|---|---|
+| in | `film_key`, `video_url`, `output_url`, `output_key`, `captions[]`, `sidecar_url`, `sidecar_key` | yes | presigned GET / PUT; `captions` may be empty |
+| in | `width`, `height`, `fps`, `title { text, subtitle? }`, `credits { lines[] }`, `meta_url`, `meta_key` | no | no title / credits => pass the film through |
+| out | `film_key` | yes | string; the INPUT key on a passthrough, never omitted |
+| out | `applied` | no | `string[]` if present |
+| out | `degraded` | no | string if present (set only when the film shipped uncarded) |
+| out | `prepend_seconds` | no | finite number `>= 0` if present |
+| out | `duration_seconds` | no | finite number `> 0` if present |
+| out | `elapsed_ms` | no | |
+
 ## The registry + the self-assembling frontend
 
-On boot, the core reads each bound module's `module.json` and indexes them by hook. Then:
+There is no boot step (a Worker has no boot). The registry is built lazily by core `discoverModules`
+when a request needs it, from two sources merged into one list:
+
+- **Service bindings:** every `MODULE_<NAME>` env binding that is a Fetcher (the `MODULE_DISPATCH`
+  namespace excluded). Each manifest is read with a 3 s timeout, up to 3 attempts (retrying 408 / 429
+  / 5xx / network errors, not other 4xx); an unreachable or invalid module is skipped and logged, never
+  poisoning the registry. This scan is cached per isolate (30 s by default; `GET /api/modules` and
+  the planner use 60 s), and a scan that did not return every bound module is not cached. So a
+  manifest change on a service-bound module can take up to that TTL to show.
+- **Dispatch (WfP):** the enabled rows of the D1 `installed_modules` table, re-read on every call.
+  The manifest used is the SNAPSHOT stored at install time (after the conformance gate), not a live
+  fetch; changing a dispatch module's manifest means reinstalling it. On a name collision the service
+  binding wins.
+
+Then:
 
 - **Pipeline:** at each hook, the core invokes the installed module(s). `pick one` hooks use the
-  user's choice; `chain` hooks fold every module in `ui.order` (the `finish` chain applies one dialogue-aware exception -- see `finish_consumes_audio` above).
+  user's choice (else the first by order); `chain` hooks fold every module in `ui.order` (default
+  100, ties by name; the `finish` chain applies one dialogue-aware exception -- see
+  `finish_consumes_audio` above -- and honours `participation`).
 - **Frontend:** the core serves `GET /api/modules` (the merged manifests). The studio UI renders
   ONLY the sections, controls, and providers that are actually installed. A bare deploy is a lean
   studio; installing `finish-rife` makes the "Smooth motion" control appear, nowhere hardcoded.
@@ -448,22 +886,40 @@ On boot, the core reads each bound module's `module.json` and indexes them by ho
 GET /api/modules
 {
   "api": "vivijure-module/2",
-  "studio_release": "1.20.1",
   "modules": [ { "name": "finish-rife", "hooks": ["finish"], "provides": [...], "config_schema": {...}, "ui": {...} } ],
-  "hooks": { "finish": ["finish-rife"], "motion.backend": ["motion-runpod"] }
+  "hooks": { "finish": ["finish-rife"], "motion.backend": ["own-gpu"] },
+  "catalog": [ { "name": "finish", "blurb": "interpolation / upscale / face restore", "cardinality": "chain", "order": 80 } ],
+  "render": { "quality_tiers": [ { "value": "...", "label": "...", "blurb": "..." } ], "default_tier": "..." },
+  "host": { "dispatch": false },
+  "studio_release": "<release>"
 }
 ```
 
-`studio_release` (cf#287) is the studio build identity: `env.STUDIO_RELEASE` when bound, else the
-baked `package.json` version. Optional `git_sha` appears only when `env.STUDIO_GIT_SHA` is set.
-Module manifest `version` strings do not substitute for this; they track API shape, not the build.
+- `modules`: each manifest as served (the internal `binding` ref is stripped; topology never leaves
+  the core). `hooks`: hook -> module names, in fold order.
+- `catalog`: EVERY hook (installed or not) with its `blurb`, `cardinality` (`pick_one` | `chain`) and
+  display `order`; the UI renders the pipeline panel from it. `render`: host-owned render config
+  (quality tiers, see CONTRACT.md 2.3.1).
+- `host` (optional, the host describing itself): `dispatch` (this deploy binds the WfP namespace),
+  and when relevant `hooks_unavailable` (hook -> reason the UI prints verbatim, cf#98),
+  `abuse_report_url` (only when the operator set one), and on demo deploys `readonly: true`,
+  `render.available`, `assistant`.
+- `studio_release` (cf#287) is the studio build identity: `env.STUDIO_RELEASE` when bound, else the
+  baked `package.json` version. Optional `git_sha` appears only when `env.STUDIO_GIT_SHA` is set.
+  Module manifest `version` strings do not substitute for this: each is that module's own release
+  version (and `api` is the contract version), neither is the studio build.
 
 ## Contributor flow
 
-1. `git clone` the module template (a minimal worker + the shared `vivijure-module/2` types).
-2. Implement one hook's `invoke(input, config, context) -> output`.
-3. `npm run conformance` until green.
-4. Install it: add a service binding (now) or publish to the dispatch namespace (later).
+1. Start from the 4-file module template in `docs/module-authoring.md` (a minimal worker that serves
+   `GET /module.json` and `POST /invoke`, plus a vendored copy of the `vivijure-module/2` shapes you
+   use, or an import of `@skyphusion-labs/vivijure-core/modules/types`). There is no separate
+   template repo to clone.
+2. Implement one hook: answer `POST /invoke` with the envelope above (always HTTP 200 + JSON).
+3. `npm run conformance` (with `MODULE_URL` pointing at your deployed worker) until green.
+4. Install it: add a `MODULE_<NAME>` service binding to the studio's `wrangler.toml` and redeploy, or
+   (on a WfP-enabled host, shipped in v0.8.0) upload it to the dispatch namespace and install it,
+   which runs the conformance gate and needs no core redeploy (`docs/module-dispatch.md`).
 
 That is the whole barrier to entry. One hook, one green suite.
 
