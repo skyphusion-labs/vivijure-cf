@@ -35,7 +35,7 @@ setup, written against our reference instance.
 events (`type: cf-worker-event` -- the request line, status, and the cron/fetch
 trigger), even when `observability.logs.enabled = true`. Your `console.log`
 content does **not** come back through that API. If you filter the CF obs API for
-a token that only exists in a log body (e.g. `shots_expected`) you get `[]`, and
+a token that only exists in a log body (e.g. `film.render.terminal`) you get `[]`, and
 it looks like the log was dropped. It was not. It is in Loki.
 
 ## The pipeline
@@ -56,13 +56,14 @@ only index.
 ```toml
 [observability]
 enabled = true
-head_sampling_rate = 1
 
-[[tail_consumers]]
-service = "vivijure-tail"
+# SELFHOST-SKIP optional block in wrangler.toml.example (top level, before any [table]):
+tail_consumers = [ { service = "vivijure-tail" } ]
 ```
 
-Both are live on the deployed `vivijure-studio` worker today
+That is exactly what `wrangler.toml.example` ships. `head_sampling_rate` is NOT set in the template
+(Cloudflare's default of `1`, i.e. sample every invocation, applies); add `head_sampling_rate = 1`
+under `[observability]` only if you want it explicit. Both are live on the deployed `vivijure-studio` worker today
 (`observability.logs.enabled = true, persist = true, invocation_logs = true`;
 `tail_consumers = [{ service = "vivijure-tail" }]`). The tail worker is
 **OUR-fleet-only** (stripped for self-host / WfP tenants) and is deployed by hand
@@ -72,18 +73,30 @@ part of `deploy.sh` or the tag-gated CI release job -- it changes rarely and has
 no meaning outside this fleet. The worker reaches Loki through its `LOKI_VPC`
 `vpc_service` binding.
 
-## Loki labels (the tail extracts these from the JSON)
+## Loki labels (the tail derives these per line)
+
+The tail (`tail/src/index.ts`, `shapeEventsToLoki` / `deriveFields`) sets exactly four stream
+labels: `worker`, `level`, `phase`, `module`. They are derived by best-effort parsing of the log
+TEXT, not read from structured fields (a line is only read structurally when it is a JSON object
+with `"_v":1`, which no current emitter sets).
 
 | Label          | Meaning / values                                                   |
 |----------------|--------------------------------------------------------------------|
-| `worker`       | the worker `scriptName`, e.g. `vivijure-studio`, `synthetic-smoke` |
-| `service_name` | service identity (often `unknown_service` on bare invocation rows) |
-| `level`        | `info`, `error`, ...                                                |
-| `module`       | the `MODULE_*` worker name, or `none` for core lines               |
-| `phase`        | scatter pipeline stage: `clips`, `dialogue`, `assemble` (`smoke` for the synthetic smoke worker; `unknown` for invocation summaries) |
+| `worker`       | the producing worker's `scriptName`, e.g. `vivijure-studio` (`unknown` if absent) |
+| `level`        | `info`, `warn`, or `error` (`mapLevel`): `console.error` -> `error`, `console.warn` -> `warn`, `console.log` / `info` / `debug` -> `info`; exception rows are always `error`; an invocation summary is `info` when `outcome` is `ok`, `error` for `exception` / `exceededCpu`, else `warn` |
+| `phase`        | the FIRST entry of the tail's `PHASES` list that appears as a whole word in the line: `keyframe`, `pre_clip_dialogue`, `pre_clip_speech`, `clips`, `dialogue`, `speech`, `finish`, `assemble`, `master`, `mux`, `done`, `failed`; otherwise `unknown` |
+| `module`       | `film.finish` if the text contains `film.finish`; else the first `<name>: ` token (lowercase word followed by colon + space) that is not a phase name; else `none`. Compact JSON lines (no space after `:`) therefore get `none` |
+| `service_name` | NOT set by the tail (see note)                                     |
 
-Because `phase` is a real label, you can slice the scatter pipeline without a
-full text scan: `{worker="vivijure-studio", phase="assemble"}`.
+> **Open question (#764, OB-14):** `service_name` is not one of the tail's labels; it is added on the
+> Loki side (Loki's own service-name discovery, typically `unknown_service` for these streams). Whether
+> to keep documenting it here is an owner call.
+
+Because `phase` is a real label you can slice without a full text scan, e.g.
+`{worker="vivijure-studio", phase="assemble"}`. It is a keyword match, not a pipeline fact: a
+`film.phase` line `{"ev":"film.phase",...,"from":"clips","to":"finish"}` is labelled with whichever
+`PHASES` entry comes first in that list order (`clips` here), so filter on the parsed `to` field when
+you need the real transition.
 
 ## Line shape (important: double-wrapped)
 
@@ -92,19 +105,33 @@ A Loki line is `{"msg":"<inner>"}`:
 - **Invocation summary:** `inner` is the request line, e.g.
   `{"msg":"GET https://vivijure.skyphusion.org/... 200","kind":"invocation","outcome":"ok","status":200}`.
 - **App log:** `inner` is your `console.log` payload as a string, e.g.
-  `{"msg":"{\"ev\":\"scatter.assemble.result\",\"sent\":3,\"clipsReceived\":3,\"durationSeconds\":11.051,\"expectedSeconds\":11.0}"}`.
+  `{"msg":"{\"ev\":\"film.phase\",\"film_id\":\"film-...\",\"project\":\"...\",\"from\":\"clips\",\"to\":\"finish\"}","job_id":"film-...","outcome":"ok"}`.
 
 So to parse structured fields you unwrap twice: `| json | line_format "{{.msg}}" | json`.
 
+The OUTER object carries tail-added fields beside `msg` (absent keys are omitted, never zeroed):
+
+| row kind | outer fields |
+|----------|--------------|
+| invocation summary | `msg` (`<METHOD> <path-or-url> <status>`, `cron <expr>`, `scheduled`, or `invocation`), `kind: "invocation"`, `outcome`, `status`, `path`, `cpu_ms`, `wall_ms`, `truncated` (only when the runtime dropped events) |
+| app log (`console.*`) | `msg`, `job_id` (regex-derived from `film-...` / `clips-...` in the text), `reason` (only for `_v:1` lines), `outcome` (the invocation outcome) |
+| exception | `msg` (`<name>: <message>`), `name`, `job_id`, `outcome` (defaults to `exception`) |
+
+`cpu_ms` / `wall_ms` are line fields, not labels; query them with `| json | unwrap wall_ms`.
+
 ## The clips-only / silent-film degrade event (`film.finish_unavailable`)
 
-When the video-finish media tier is UNAVAILABLE at assemble or mux (its `VIDEO_FINISH_VPC` binding is
-unbound, or the container/tunnel is unreachable after the bounded retry), the film does not hard-fail
-after the GPU spend. It COMPLETES delivering what was rendered, and the orchestrator emits one loud,
-structured line so you can see it happened (#519 / #524):
+When the video-finish media tier is UNAVAILABLE, the film does not hard-fail after the GPU spend. It
+COMPLETES delivering what was rendered, and the orchestrator emits one loud, structured line so you
+can see it happened (#519 / #524). In the pinned core the triggers are:
+
+- **assemble:** `VIDEO_FINISH_URL` is unset/empty. (A set URL whose container then fails or is
+  unreachable FAILS the render at assemble with the real error; it does not degrade.)
+- **mux:** `VIDEO_FINISH_URL` is unset/empty, OR the remux job fails / is unreachable (the error from
+  the async submit/poll), OR the container reports it could not attach the audio bed.
 
 ```
-{"ev":"film.finish_unavailable","film_id":"...","project":"...","at":"assemble","delivered":"clips","clips":3,"reason":"VIDEO_FINISH_VPC not configured"}
+{"ev":"film.finish_unavailable","film_id":"...","project":"...","at":"assemble","delivered":"clips","clips":3,"reason":"video-finish tier not installed (VIDEO_FINISH_URL unset); delivered per-shot clips"}
 ```
 
 - `at` -- which delegated step could not run: `assemble` or `mux`.
@@ -112,7 +139,11 @@ structured line so you can see it happened (#519 / #524):
   concatenated film) at the assemble step, or `silent_film` (the assembled film with no audio bed
   muxed onto it) at the mux step.
 - `clips` -- the count of per-shot clips delivered (the assemble degrade); `0` for the silent-film case.
-- `reason` -- the honest cause (unbound binding, or unreachable-after-retry).
+- `reason` -- the honest cause. Literal strings: `video-finish tier not installed (VIDEO_FINISH_URL
+  unset); delivered per-shot clips` (assemble), `video-finish tier not installed (VIDEO_FINISH_URL
+  unset); shipped silent film` (mux), `video-finish could not attach the audio bed (the bed exceeded the
+  container audio cap or was undecodable); shipped silent film` (mux), or the async remux error text
+  (mux, e.g. `video-finish async submit failed (no jobId)`).
 
 This is the UNAVAILABILITY path ONLY. A genuine per-shot / container ERROR (the container ran and
 reported a real failure) still fails the render loud with the real per-shot error (#245 / #249); it
@@ -171,8 +202,10 @@ video-finish tier is installed, and emits one line per shot:
     low luma structure). WARN only: a `content_degraded` marker is set on the shot and the film
     still completes. Never a hard fail on the heuristic alone (deliberately-abstract films exist).
   - `ok` -- passed.
-  - `skip` -- the tier is not installed (self-host), the container was unreachable, or the presign/inspect
-    errored. A down inspector never fails a real render.
+  - `skip` -- the container was unreachable / `/inspect` errored (`video-finish /inspect unreachable or
+    errored`), or the presign failed (`presign failed: ...`). A down inspector never fails a real render.
+    When the tier is NOT installed (`VIDEO_FINISH_URL` unset, e.g. self-host), Layer 2 is a no-op and
+    emits NO `clip.content_validate` line at all (not a `skip`).
 - `keyframe_similarity` -- normalized first-frame-vs-keyframe correlation in [0,1] (present when a keyframe
   was available); ~0 = the output ignored its conditioning.
 - `metrics` -- `sat_mean`, `gray_std_mean`, `chroma_structure_ratio` (the fallback noise signature), `frames`.
@@ -212,9 +245,9 @@ through R2:
 
 `injected` is the number of cast slots whose high/low expert pair was presigned into the config;
 `dropped` is how many the per-pass cap (`MAX_LORAS_PER_PASS`) refused. A pure no-op (wrong motion
-backend, or no Wan cast) emits nothing and leaves the poll field absent. Scatter submissions that
-project set the same field on the 201 body and emit with `scatter_id` instead of (or in addition to)
-`film_id`.
+backend, or no Wan cast) emits nothing and leaves the poll field absent. (Scatter is retired, the
+scatter routes answer `410` `Scatter is retired. Start a single film.`, so every live emit carries
+`film_id`; the emitter still accepts an optional `scatter_id` but no live caller passes one.)
 
 ## The deferred-bookkeeping event (`render.bookkeeping_deferred`, #695)
 
@@ -224,21 +257,77 @@ there logs one structured line and the `201` still ships -- instead of baiting a
 client into paying for a SECOND film:
 
 ```
-{"ev":"render.bookkeeping_deferred","op":"insertRender","job_id":"...","project":"...","reason":"..."}
+{"ev":"render.bookkeeping_deferred","op":"insertRender","job_id":"...","project_label":"...","reason":"..."}
+{"ev":"render.bookkeeping_deferred","op":"withFilmDownloadUrl","film_id":"...","reason":"..."}
 ```
 
 `op` names the deferred write (`insertRender` = the history-row insert; `withFilmDownloadUrl` =
 the presign enrichment, which returns the summary without a `download_url` -- the next poll
-re-issues it).
+re-issues it). The fields differ per `op`: `insertRender` carries `job_id` and `project_label` (a
+scrubbed `keyLabel` of the project, never the raw project name, cf#223); `withFilmDownloadUrl`
+carries `film_id` and no project field.
 
 The poll path insert-if-missing heals the missing row on the next poll. A line here means "the
 film started fine; a UI-list row lagged one poll", never a lost render. Polls themselves stay
 throwing (they are idempotent; a retry is safe there).
 
+## The film lifecycle events (`film.phase`, `film.render.terminal`)
+
+These are the backbone for tracing a render. The core's `putFilm` (every film job-doc write) compares
+the previous persisted phase (in-isolate cache, else recovered from the R2 job doc) with the new one
+and, on a change, emits:
+
+```
+{"ev":"film.phase","film_id":"film-...","project":"...","from":"clips","to":"finish"}
+```
+
+- `from` -- the previous phase, or `null` when none was recoverable (e.g. the first write).
+- `to` -- the new `job.phase` (`keyframe`, `pre_clip_dialogue`, `pre_clip_speech`, `clips`,
+  `dialogue`, `speech`, `finish`, `assemble`, `master`, `mux`, `done`, `failed`).
+
+When the new phase is `done` or `failed` it ALSO emits exactly one terminal line:
+
+```
+{"ev":"film.render.terminal","film_id":"film-...","project":"...","status":"failed","from":"assemble","error":"duration gate: ..."}
+```
+
+- `status` -- `done` or `failed`.
+- `from` -- the phase the film left (or `null`).
+- `error` -- present only when the job carries one (a failed film's real reason; also a `done` film
+  that recorded an error string).
+
+A film that never produces a `film.render.terminal` line is still in flight (or wedged; see
+`film.advance_failed` below).
+
+### Other live structured events
+
+Every line below is a single-line JSON object with an `ev` field (the table lists the fields besides
+`ev`). `level` is what the tail assigns from the console method. Each was verified by grepping the
+emitter in the pinned core dist (`node_modules/@skyphusion-labs/vivijure-core/dist`) or `src/`.
+
+| `ev` | emitter | level | fields | meaning |
+|------|---------|-------|--------|---------|
+| `motion.audio` | core `film-orchestrator` | info | `film_id`, `shot_id`, `kind` (`line` / `silence` / `voice_ref` / `none`) | the audio conditioning chosen per motion shot |
+| `dialogue.pre_clip` | core `film-orchestrator` | info | `film_id`, `project`, `shots` | pre-clip dialogue submitted for N lined shots |
+| `dialogue.padded` / `dialogue.trimmed` | core `film-orchestrator` | info | `film_id`, `project`, `shot_id`, `seconds` | a line WAV was normalized to the clip bounds |
+| `dialogue.silence` | core `film-orchestrator` | info | `film_id`, `project`, `shot_id`, `seconds` | a silence WAV was minted for an unlined shot |
+| `dialogue.neighborhood` | core `film-orchestrator` | info | `film_id`, `project`, `shot_id` | unlined shot left to the native-audio backend (no silence minted) |
+| `speech.skipped_already_done` | core `film-orchestrator` | info | `film_id`, `project` | speech chain already complete; went straight to finish |
+| `finish.presign_skip` / `speech.presign_skip` | core `film-orchestrator` | warn | `shot`, `reason` | best-effort presign for a finish / speech step failed |
+| `film.ceiling_undeclared` | core `film-orchestrator` | info | `film_id`, `phase`, `undeclared`, `unresolved`, `holding_floor_seconds` | phase stall ceiling is unbounded against modules with no `max_invocation_seconds` (core#182) |
+| `film.doc_corrupt` | core `film-orchestrator` | error | `film_id`, `error` | job doc unparseable; the render is marked failed |
+| `film.advance_failed` | core `film-orchestrator` | error | `film_id`, `error` | an advance tick threw; the render is failed with `advance failed: <msg>` |
+| `film.submit.deduplicated` | core `film-submit-idempotency` | info | `film_id` (the incumbent), `dropped_film_id`, `entry`, `keyed_by` (`idempotency-key` / `natural-key`), `window_seconds` | a duplicate film submit was folded into the in-flight film |
+| `d1.retry` / `d1.exhausted` | core `d1-retry` (`withD1Retry`) | info | `op`, `attempt` / `attempts`, `code` | transient D1 error retried / retries exhausted |
+| `authz.deny` | host `src/index.ts` | warn | `route` (template), `method`, `required`, `held` | a route refused the credential's scope (403) |
+| `authz.token_scope_invalid` | host `src/auth-gate.ts` | error | `name`, `scope`, `msg` | an `api_tokens` row has no usable scope; denied |
+| `router.error` | host `src/index.ts` | error | `route` (template), `method`, `reason` | an unhandled handler throw (500 `internal error`) |
+| `auth.allow_unauthenticated` | host `src/access-auth.ts` | info | `msg` | in-Worker auth is disabled (`ALLOW_UNAUTHENTICATED=true`); once per isolate |
+
 ## Poll-surface content length (cf#365) -- assemble vs delivered
 
-`GET /api/render/film/:id` / `poll_film` can expose two CONTENT-length fields (integer ms, absent =
-NOT MEASURED) once the host pins a vivijure-core that projects them:
+`GET /api/render/film/:id` / `poll_film` expose two CONTENT-length fields (integer ms, absent =
+NOT MEASURED); the pinned vivijure-core projects both on the film summary (`film-model.js`):
 
 | Field | Meaning |
 |-------|---------|
@@ -256,21 +345,24 @@ quantity (requested, not delivered). Non-final tiers are known to deliver clips 
 Layer 1 `clip.validate` deliberately does NOT gate on duration (`expected_s` is context-only, since
 backends emit a fixed frame count), so a per-shot finish chain that adopts a truncated partial write can
 deliver a 0.085s clip for a 4s shot and pass every earlier gate. At **assemble** the core compares each
-clip`s ACTUAL probed seconds (from video-finish `clipDurations`, above) against its planned seconds and,
+clip's ACTUAL probed seconds (the per-clip `clipDurations` the video-finish assemble job reports) against its planned seconds and,
 below `FILM_CLIP_DURATION_FLOOR` (default 0.5, `0` disables), FAILS the render loud -- honest-failure
 #245/#249, never a silent green.
 
 This is a HARD FAIL, so it emits **no dedicated structured event**. Like every #245/#249 per-shot
-failure, the reason surfaces on the failed job`s `error` string (and the poll view), e.g.:
+failure, the reason surfaces on the failed job's `error` string (and the poll view), e.g.:
 
 ```
 duration gate: 1 shot(s) delivered below 50% of plan: shot_01 0.10s vs planned 4.00s (floor 2.00s)
 ```
 
-and a matching `level:error` log line (`film <id>: duration gate: ...`). The gate is EVIDENCE-ONLY: a
-video-finish build that reports no `clipDurations` leaves it a logged no-op (`duration gate skipped
-(redeploy video-finish ...)`), so it can never fail a film for a missing measurement. Query the failures
-with `{worker="vivijure-studio"} |= "duration gate"`.
+and a matching `console.warn` log line (`film <id>: duration gate: ...`), which the tail labels
+`level="warn"` (not `error`). The film then reaches `failed`, so the `film.render.terminal` event
+(below) also carries the same `error`. The gate is EVIDENCE-ONLY: a video-finish build that reports
+no `clipDurations` leaves it a logged no-op (`console.warn`: `video-finish reported no per-clip
+durations; duration gate skipped (redeploy video-finish to arm #697)`), so it can never fail a film
+for a missing measurement. Query the failures with `{worker="vivijure-studio"} |= "duration gate"`
+(do not add `level="error"`, which would hide them).
 
 ## Query recipes (Grafana -> Explore -> Loki datasource)
 
@@ -278,19 +370,22 @@ with `{worker="vivijure-studio"} |= "duration gate"`.
 # all studio application logs
 {worker="vivijure-studio"}
 
-# scatter gather + assemble-result lines, by label (no text scan)
+# lines whose text mentions a phase keyword, by label (no text scan; keyword-derived, see Loki labels)
 {worker="vivijure-studio", phase="assemble"}
 
-# the assemble-result duration guard line specifically
-{worker="vivijure-studio"} |= "scatter.assemble.result"
+# every film phase transition (parse the structured fields out: double-unwrap, then filter)
+{worker="vivijure-studio"} | json | line_format "{{.msg}}" | json | ev="film.phase"
+
+# one film's whole timeline (job_id is a line field, not a label)
+{worker="vivijure-studio"} | json | job_id="film-..."
+
+# terminal outcomes only; failed films with their real error
+{worker="vivijure-studio"} | json | line_format "{{.msg}}" | json | ev="film.render.terminal" | status="failed"
 
 # anything carrying a given structured field
-{worker="vivijure-studio"} |= "shots_expected"
+{worker="vivijure-studio"} |= "keyframes_incomplete"
 
-# parse the structured fields out (double-unwrap), then filter
-{worker="vivijure-studio"} | json | line_format "{{.msg}}" | json | ev="scatter.assemble.result"
-
-# errors only
+# errors only (console.error + exceptions); console.warn degrades are level="warn"
 {worker="vivijure-studio", level="error"}
 
 # the finish-unavailable degrade (completed-with-clips / silent-film, #519 / #524)
@@ -310,9 +405,10 @@ with `{worker="vivijure-studio"} |= "duration gate"`.
 ```
 
 ```logql
-# D1 durability events (scatter submit hardening, #290): retries, exhaustion, swallowed errors.
-# Healthy = silent. A spike here is the early warning that the D1 path is flapping.
-{worker="vivijure-studio"} |~ "d1\\.(retry|exhausted|error)"
+# D1 durability events (#290): withD1Retry retries and exhaustion on the film path (renders-db,
+# advance lease, cast LoRA). Healthy = silent. A spike here is the early warning that D1 is flapping.
+# (d1.error was the retired scatter submit's swallowed-error line; nothing live emits it now.)
+{worker="vivijure-studio"} |~ "d1\\.(retry|exhausted)"
 ```
 
 ## Reaching Loki when it is network-isolated
@@ -348,24 +444,38 @@ first.
 
 ## Fleet VPC call attribution (`vpc.call`, cf#396)
 
-Four module workers hold Workers VPC bindings into **our** finishing swarm (descendents /
-badbrains / jello). A consumer using them spends our capacity the same way a RunPod path spends
-our GPU account. cp#288 meters RunPod; until cf#396 nothing recorded wall-clock start or duration
-for these fleet hops.
+Four module workers call **our** finishing swarm. They are no longer Workers VPC bindings: each
+reaches its container over a public HTTPS door configured by a URL var in the module's
+`wrangler.toml`. The event name `vpc.call` (and the `vpc:elapsed_ms=` applied tag) is LEGACY, kept
+so existing Loki queries and in-flight applied tags keep matching; the transport is no longer VPC
+(`modules/_shared/vpc-call-log.ts` header). A consumer using them spends our capacity the same way a
+RunPod path spends our GPU account. cp#288 meters RunPod; until cf#396 nothing recorded wall-clock
+start or duration for these fleet hops.
 
-| module | binding | service |
+| module | URL var (module `wrangler.toml`) | `service` / `binding` field value |
 |---|---|---|
-| `film-titles` | `VIDEO_FINISH_VPC` | video-finish |
-| `subtitle` | `VIDEO_FINISH_VPC` | video-finish |
-| `audio-master` | `AUDIO_MASTER_VPC` | audio-master |
-| `beat-sync` | `AUDIO_BEAT_SYNC_VPC` | audio-beat-sync |
+| `film-titles` | `VIDEO_FINISH_URL` | `video-finish` |
+| `subtitle` | `VIDEO_FINISH_URL` | `video-finish` |
+| `audio-master` | `AUDIO_MASTER_URL` | `audio-master` |
+| `beat-sync` | `AUDIO_BEAT_SYNC_URL` | `audio-beat-sync` |
 
-Helper: `modules/_shared/vpc-call-log.ts`. Every real hop emits one structured line (Loki via
-vivijure-tail). Intermediate async status polls stay silent; only submit + terminal outcomes log.
+Helper: `modules/_shared/vpc-call-log.ts`. Every real hop emits one structured `console.log` line.
+Intermediate async status polls stay silent; only submit + terminal outcomes log. Note the `binding`
+field carries the same service-name string as `service` (e.g. `video-finish`), not a binding or var
+name.
 
 ```
-{"ev":"vpc.call","module":"film-titles","service":"video-finish","binding":"VIDEO_FINISH_VPC","route":"/async/status/job-abc","mode":"async_poll","outcome":"completed","started_at_ms":1720000000000,"elapsed_ms":12,"job_elapsed_ms":45230,"http_status":200,"container_job_id":"job-abc","film_key":"renders/.../film.mp4"}
+{"ev":"vpc.call","module":"film-titles","service":"video-finish","binding":"video-finish","route":"/async/status/job-abc","mode":"async_poll","outcome":"completed","started_at_ms":1720000000000,"elapsed_ms":12,"job_elapsed_ms":45230,"http_status":200,"container_job_id":"job-abc","film_key":"renders/.../film.mp4"}
 ```
+
+Optional correlation fields `project` and `context_job_id` appear when the caller passed them.
+
+> **Known deviation (#764, OB-3):** no module `wrangler.toml` in this repo declares
+> `tail_consumers`, so these module-worker `vpc.call` lines are NOT shipped to vivijure-tail / Loki by
+> the committed config (only the studio core is a tail producer). Unless an operator added a tail
+> consumer to the module workers out of band, the LogQL below returns nothing; the lines are visible
+> only in each module worker's own Workers Observability logs (dashboard; each module ships
+> `[observability] enabled = true`). Reaching Loki is unverified.
 
 | field | meaning |
 |---|---|
@@ -399,7 +509,7 @@ This is **module-side observation**, not full metering:
 3. **`local-gpu` is out of scope on purpose.** It reaches the user's own hardware; nothing of ours
    to meter. Membership is "whose infrastructure absorbs the cost", not credential shape.
 4. **Core paths that also call the same containers** (assemble / mux / beat-analyze on the studio
-   Worker) are a separate surface; this ship covers the four *module* bindings named in #396.
+   Worker) are a separate surface; this ship covers the four *module* hops named in #396.
 
 Requirement for any future catalog proposal: any consumer-reachable path into our infrastructure
 must already carry duration + start-time attribution (this helper, or a successor) before the row
@@ -412,7 +522,7 @@ monitoring host). Query it from inside its docker network:
 
 ```bash
 docker run --rm --network monitoring_default curlimages/curl:latest -s \
-  --data-urlencode 'query={worker="vivijure-studio"} |= `scatter`' \
+  --data-urlencode 'query={worker="vivijure-studio"} |= `film.render.terminal`' \
   --data-urlencode 'since=24h' --data-urlencode 'limit=20' \
   http://monitoring-loki-1:3100/loki/api/v1/query_range
 ```
