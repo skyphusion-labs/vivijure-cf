@@ -238,6 +238,38 @@ function restoreBundleStagePanel(savedBundle, savedPlanResult) {
   }
 }
 
+// cf#780: the opt-in finish picks are projected from the registry, so a draft carries a
+// `finishPicks` MAP keyed by module name. LEGACY_FINISH_PICK_KEYS is a DECLARED shim, not a
+// hidden special case: drafts saved before cf#780 carry two scalar fields instead, and dropping
+// them would silently untick a choice the user had already made. It retires once saved drafts
+// have aged out; nothing else in this file knows a module name.
+const LEGACY_FINISH_PICK_KEYS = [
+  ["finishLipsync", "finish-lipsync"],
+  ["finishBlender", "finish-blender"],
+];
+
+function restoreFinishPicks(saved, setCheck) {
+  const picks = saved && saved.finishPicks;
+  const resolved = {};
+  if (picks && typeof picks === "object") {
+    for (const name of Object.keys(picks)) resolved[name] = !!picks[name];
+  } else {
+    for (const [legacyKey, moduleName] of LEGACY_FINISH_PICK_KEYS) {
+      const v = saved ? saved[legacyKey] : null;
+      if (v != null) resolved[moduleName] = !!v;
+    }
+  }
+  // The controls may not exist yet (renderPanel builds them once the registry resolves), so park
+  // the map for the first build AND apply it directly for the case where they are already there.
+  if (window.plannerRenderConfig
+    && typeof window.plannerRenderConfig.setPendingFinishPicks === "function") {
+    window.plannerRenderConfig.setPendingFinishPicks(resolved);
+  }
+  for (const name of Object.keys(resolved)) {
+    setCheck("#planner-finish-pick-" + name, resolved[name]);
+  }
+}
+
 function restoreRenderStagePanel(saved) {
   if (!saved.jobId && !saved.bundleKey) return;
 
@@ -287,8 +319,7 @@ function restoreRenderStagePanel(saved) {
     const el = $(sel);
     if (el) el.checked = !!v;
   };
-  setCheck("#planner-finish-lipsync", saved.finishLipsync);
-  setCheck("#planner-finish-blender", saved.finishBlender);
+  restoreFinishPicks(saved, setCheck);
   if ((saved.filmTitle || saved.filmSubtitle || saved.filmCredits || "").toString().trim().length > 0) {
     const ft = $(".planner-film-titles");
     if (ft) ft.open = true;
