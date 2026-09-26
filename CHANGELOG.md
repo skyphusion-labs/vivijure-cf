@@ -5,6 +5,16 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(cast-media): copy and write the row before deleting the superseded portrait
+
+Both portrait replacement paths deleted the old R2 object BEFORE the
+replacement existed, so a throw in between left `portrait_key` naming a
+deleted object: a row that passes every check that reads it and points at
+nothing. Not a race -- `copyChatArtifactToRenders` throws 404, 413 and 400
+before it writes a byte, so a tenant uploading a too-big image was enough.
+Now: store, write the row, then drop the superseded object, skipping the
+same-key case a re-upload produces. Parity with vivijure-local#407.
+
 ## v1.33.9 -- 2026-08-20
 
 ### fix(motion): retry shots that died on load, 429, or 7003
