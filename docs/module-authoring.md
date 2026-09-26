@@ -268,7 +268,7 @@ interface Env {
 }
 ```
 
-Three rules that are not obvious from the code:
+Five rules that are not obvious from the code:
 
 - **The branch is whether `RUNPOD_PROXY_BASE` is bound. It is never a failover.** A proxied module
   whose token is missing REFUSES; it must not reach for the direct key, because a shared tenant that
