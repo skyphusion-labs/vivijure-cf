@@ -95,7 +95,7 @@ const MANIFEST: ModuleManifest = {
       "Silent motion",
       "Holds a look from reference stills",
       "One film, no scatter (look lock)",
-      "Speaking is Cast voice plus MuseTalk",
+      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
     ],
   },
   usage: {

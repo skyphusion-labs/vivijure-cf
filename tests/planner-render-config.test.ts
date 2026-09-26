@@ -530,10 +530,9 @@ describe("selectTier with the projection ALREADY loaded (cf#62 Lane C)", () => {
 });
 
 describe("collectFinishSelect (cf#690)", () => {
-  function finishDoc(opts: { lipsync: boolean; blender: boolean }) {
+  function finishDoc(opts: { blender: boolean }) {
     const ids: Record<string, El> = {};
     for (const [id, checked] of [
-      ["planner-finish-lipsync", opts.lipsync],
       ["planner-finish-blender", opts.blender],
     ] as const) {
       const el = new El("input");
@@ -550,40 +549,33 @@ describe("collectFinishSelect (cf#690)", () => {
   }
 
   const installed = [
-    { name: "finish-lipsync", participation: "opt_in" },
     { name: "finish-upscale", participation: "default" },
     { name: "finish-blender", participation: "opt_in" },
     { name: "finish-rife", participation: "default" },
   ];
 
-  it("unchecked lipsync is the default finish set (native AV keeps talking)", () => {
-    finishDoc({ lipsync: false, blender: false });
+  it("unchecked blender is the default finish set (native AV keeps talking)", () => {
+    finishDoc({ blender: false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
   });
 
-  it("checking lipsync names it in plus the default modules", () => {
-    finishDoc({ lipsync: true, blender: false });
-    mod.__testSeedFinish(installed);
-    expect(mod.collectFinishSelect()).toEqual({
-      mode: "named",
-      modules: ["finish-lipsync", "finish-upscale", "finish-rife"],
-    });
-  });
-
   it("naming blender emits the default modules plus finish-blender", () => {
-    finishDoc({ lipsync: true, blender: true });
+    finishDoc({ blender: true });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
-      modules: ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"],
+      modules: ["finish-upscale", "finish-blender", "finish-rife"],
     });
   });
 
-  it("lipsync on forces speech-upscale.enable", () => {
-    finishDoc({ lipsync: true, blender: false });
+  // cf#783: speech-upscale had exactly ONE planner trigger, the finish-lipsync checkbox, and it
+  // went with the module. Asserted as a NEGATIVE rather than left untested: a deleted test reads
+  // exactly like a passing one, and the next reader needs to know the hole is deliberate.
+  it("the planner no longer enables speech-upscale (its only trigger was finish-lipsync)", () => {
+    finishDoc({ blender: false });
     mod.__testSeedFinish(installed, { speech: [{ name: "speech-upscale" }] });
     const out = mod.collect() as { config?: { "speech-upscale"?: { enable?: boolean } } };
-    expect(out.config && out.config["speech-upscale"] && out.config["speech-upscale"].enable).toBe(true);
+    expect(out.config && out.config["speech-upscale"]).toBeUndefined();
   });
 });

@@ -41,12 +41,14 @@ describe("cf#648 cast is who is in the movie", () => {
 });
 
 describe("cf#646 render is three choices then spend", () => {
-  it("Render has first-class lip-sync and blender picks (cf#690)", () => {
+  it("Render has a first-class blender pick, and offers no MuseTalk (cf#690, cf#783)", () => {
     expect(html).toMatch(/id="planner-finish-picks"/);
-    expect(html).toMatch(/id="planner-finish-lipsync"/);
     expect(html).toMatch(/id="planner-finish-blender"/);
     expect(html).not.toMatch(/id="planner-finish-upscale"/);
-    expect(html).toMatch(/Replace mouths with MuseTalk/);
+    // cf#783: MuseTalk is ruled out permanently. The panel must not offer a finish step that
+    // cannot run, and this is the assertion that keeps the copy from creeping back.
+    expect(html).not.toMatch(/id="planner-finish-lipsync"/);
+    expect(html).not.toMatch(/MuseTalk/i);
   });
 
   it("motion is the default job and stills is a peer choice", () => {

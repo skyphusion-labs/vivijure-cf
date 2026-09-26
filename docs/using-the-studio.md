@@ -33,7 +33,7 @@ talks to the GPUs. You do not open RunPod or Cloudflare.
 
 - **Draft / standard / final** is how hard the GPUs work, not a
   different story.
-- **Finish** steps (smoother motion, sharper picture, lip-sync, color)
+- **Finish** steps (smoother motion, sharper picture, color)
   run after the shots exist. Some run on every film. Some run only if
   you ask (color grade is ask-only).
 - **Degraded** means the film shipped but a polish step passed the

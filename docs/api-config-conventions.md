@@ -79,7 +79,7 @@ keyframes run at schema defaults (`quality_tier: "final"`).
 {
   "finish_config": {
     "finish-upscale": { "scale": 2 },
-    "finish-lipsync": { "bbox_shift": 0 }
+    "finish-blender": { "preset": "filmic-warm" }
   },
   "film_finish_config": {
     "subtitle": { "mode": "burn" }
@@ -92,7 +92,7 @@ keyframes run at schema defaults (`quality_tier: "final"`).
 
 - Outer key = **module name** (or the chain slot the orchestrator expects).
 - Inner object = that module's knobs, from its `config_schema` (e.g. `finish-upscale`: `scale`,
-  `model`; `finish-lipsync`: `version`, `bbox_shift`; `subtitle`: `enabled`, `mode`, `font`,
+  `model`; `finish-blender`: `preset`; `subtitle`: `enabled`, `mode`, `font`,
   `font_size`, ...; `audio-master`: `target_lufs`, `upscale`, `format`).
 - Door shape: top level AND every per-module entry must be plain objects (`deep: true`, #696).
 - Subtitle mode (`burn` / `sidecar` / `both`) lives in **`film_finish_config`**, not `finish_config`.

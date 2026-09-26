@@ -428,7 +428,6 @@ function collectRenderStageState() {
     filmTitle: readVal("#planner-film-title"),
     filmSubtitle: readVal("#planner-film-subtitle"),
     filmCredits: readVal("#planner-film-credits"),
-    finishLipsync: readCheck("#planner-finish-lipsync"),
     finishBlender: readCheck("#planner-finish-blender"),
     styleLock: readVal("#planner-style-lock"),
     voiceLock: readVal("#planner-voice-lock"),

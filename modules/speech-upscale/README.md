@@ -5,8 +5,8 @@ audio** with [resemble-enhance](https://github.com/resemble-ai/resemble-enhance)
 bandwidth-extend), dispatched to the dedicated **vivijure-audio-upscale** RunPod endpoint (CUDA).
 
 Pure audio: `audio_key` in -> enhanced `audio_key` out. No clip, no video. The `speech` chain runs
-between the **dialogue** (TTS) phase and **finish**, so finish-lipsync (MuseTalk) drives off the
-cleaned audio. That ordering is the whole point: lip-sync quality follows the audio it's driven by.
+between the **dialogue** (TTS) phase and **finish**, so the film's spoken track comes off the
+cleaned audio. That ordering is the whole point: the film's spoken track follows the audio it is built from.
 
 ## Where it fits
 
@@ -19,20 +19,23 @@ flowchart LR
     su["speech-upscale<br/>(resemble-enhance) · 10"]
   end
   subgraph finish["finish phase"]
-    ls["finish-lipsync<br/>(MuseTalk)"]
     rife["finish-rife / upscale / overlay"]
   end
 
   tts -- "audio_key" --> su
-  su -. "cleaned audio_key" .-> ls
-  ls --> rife
+  su -. "cleaned audio_key" .-> mux["mux"]
+  rife --> mux
 
   style su fill:#dff,stroke:#0aa,stroke-width:2px
 ```
 
 The seam is the audio key: TTS produces `job.dialogue_audio[shot]`, this module cleans it, and the
-cleaned key flows on to MuseTalk -- clean audio in, better lip-sync out. On a soft-degrade the
-**original** key passes through unchanged, so finish-lipsync always has audio to work with.
+cleaned key flows on to the final mux -- clean audio in, clean soundtrack out. On a soft-degrade the
+**original** key passes through unchanged, so the film always has audio to work with.
+
+Its historical consumer was `finish-lipsync` (MuseTalk), removed in cf#783. NOTE for whoever
+picks this up next: that was also this module's only trigger from the planner, so nothing in the
+panel enables it today. See cf#757 for its endpoint.
 
 ## Contract
 

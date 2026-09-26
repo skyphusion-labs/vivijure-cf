@@ -134,14 +134,15 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(READY.length).toBe(ENTRIES.length);
   });
 
-  it("reporting telemetry.job_log and writing job-log rows are the SAME fourteen modules", () => {
+  it("reporting telemetry.job_log and writing job-log rows are the SAME modules", () => {
     // If these ever diverge, one of two real bugs exists: a module that records but cannot say so
     // (invisible failures), or one that claims a job log it never writes (a false green).
     expect([...REPORTS_JOB_LOG].sort()).toEqual([...WRITES_JOB_LOG].sort());
     // cf#305: was 6. The eight cost-door submitters (seedance, kling, vidu-q3, google-veo,
     // minimax-hailuo, alibaba-wan, alibaba-wan-lora, narration-gen) wrote NO row at all, so a
     // census of the table showed six healthy lanes and could not mention the other eight.
-    expect(WRITES_JOB_LOG.length).toBe(17);
+    // cf#783: 17 -> 16 with finish-lipsync removed (MuseTalk ruled out permanently).
+    expect(WRITES_JOB_LOG.length).toBe(16);
     for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "kling-o1-r2v", "infinitetalk"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
     }
@@ -150,18 +151,19 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   it("the four populations are the sizes the published table claims", () => {
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
-    expect(ENTRIES.length).toBe(36);
+    // cf#783: 36 -> 35 with finish-lipsync removed.
+    expect(ENTRIES.length).toBe(35);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
-    // population this counts is unchanged by this PR and 15 stands.
-    expect(WRITES_JOB_LOG.length).toBe(17);
+    // population this counts is unchanged by this PR and 15 stands. cf#783: now 16.
+    expect(WRITES_JOB_LOG.length).toBe(16);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
     // nothing, so publishing is inert until the plane adds rows; it exists to remove the
-    // cross-repo serialisation, not to change behaviour.
-    expect(publishedToTenants().length).toBe(24);
+    // cross-repo serialisation, not to change behaviour. cf#783: 24 -> 23 (finish-lipsync).
+    expect(publishedToTenants().length).toBe(23);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are
@@ -203,7 +205,6 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       "audio-master",
       "beat-sync",
       "film-titles",
-      "finish-lipsync",
       "image-generate",
       "subtitle",
     ]);

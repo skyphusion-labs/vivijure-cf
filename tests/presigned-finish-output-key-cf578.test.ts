@@ -28,7 +28,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
-import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
 import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -88,22 +87,6 @@ const CASES: Case[] = [
     // which the R2 branch at :674 sends. That asymmetry is real and is why the module must not
     // fabricate a tag when none arrives.
     presigned: { ok: true, output_key: WRITTEN_CLIP, bytes: 1121158, frames: 80, scale: 2, model: "realesr-animevideov3", encoder: "h264_nvenc" },
-  },
-  {
-    name: "finish-lipsync",
-    worker: finishLipsyncWorker as unknown as Worker,
-    hook: "finish",
-    input: { shot_id: "shot_01", clip_key: CLIP_IN, audio_key: AUDIO_IN, src_fps: 16, frames: 80 },
-    config: {},
-    written: WRITTEN_CLIP,
-    passedThrough: CLIP_IN,
-    outField: "clip_key",
-    degradeApplied: ["passthrough:no-output-key"],
-    // MEASURED, vivijure-musetalk@c97bd61 handler.py:671 (R2) and :717 (presigned). Unlike upscale,
-    // musetalk KEEPS `applied` on the presigned branch. The two satellites are NOT symmetric, and a
-    // fixture copied from one to the other would test a shape that does not exist.
-    r2: { ok: true, clip_key: WRITTEN_CLIP, bytes: 998877, version: "v15", applied: ["lipsync:v15"] },
-    presigned: { ok: true, output_key: WRITTEN_CLIP, bytes: 998877, version: "v15", applied: ["lipsync:v15"] },
   },
   {
     // THE IN-TREE REFERENCE. Green before and after; see POSITIVE CONTROL above.
@@ -200,7 +183,7 @@ describe.each(CASES)("$name: a presigned satellite return (cf#578)", (c) => {
   });
 
   it("CLAIM: the PRESIGNED return shape yields the SAME downstream artifact reference", async () => {
-    // THE ASSERTION THAT GOES RED AT origin/main for finish-upscale and finish-lipsync.
+    // THE ASSERTION THAT GOES RED AT origin/main for finish-upscale.
     // Equality against the control, not "did not throw": an absence check passes when the output
     // vanished with everything else.
     const controlBody = await (await submitThenPoll(c, c.r2)).poll();
@@ -261,7 +244,7 @@ describe.each(CASES)("$name: a presigned satellite return (cf#578)", (c) => {
 //
 // MEASURED SATELLITE SIDE, at the HEAD of each default branch:
 //   vivijure-upscale       d34135d  presigned returns output_key, NO clip_key   -> finish-upscale  AFFECTED
-//   vivijure-musetalk      c97bd61  presigned returns output_key, NO clip_key   -> finish-lipsync  AFFECTED
+//   vivijure-musetalk      c97bd61  presigned returns output_key, NO clip_key   -> finish-lipsync  RETIRED (cf#783)
 //   vivijure-audio-upscale f2b3908  output_key in both modes, never a clip_key  -> speech-upscale  ALREADY CORRECT
 //   vivijure-blender       4fa33fe  historically clip_key in BOTH modes; a later
 //                                   satellite / version skew can emit output_key
@@ -270,7 +253,8 @@ describe.each(CASES)("$name: a presigned satellite return (cf#578)", (c) => {
 //                                   version-skew rule as blender               -> finish-rife     AFFECTED (cf#604)
 //
 // cf#604 retired the EXEMPT list: a finish door must accept whichever field the satellite wrote.
-// The census below re-derives the 5 from source so a NEW finish door cannot join the class unnoticed.
+// The census below re-derives the population FROM SOURCE so a NEW finish door cannot join the class
+// unnoticed, and a removed one (finish-lipsync, cf#783) leaves no phantom behind.
 describe("the finish-class population is derived, not asserted (cf#578 denominator)", () => {
   it("every finish-class door that parses a terminal artifact key is accounted for", async () => {
     const { readdirSync, readFileSync } = await import("node:fs");
@@ -288,7 +272,8 @@ describe("the finish-class population is derived, not asserted (cf#578 denominat
       }
     };
     const src = (name: string): string => read(name, "index.ts");
-    // The parse layer lives in a per-module helper, never shared: finish.ts, lipsync.ts, speech.ts.
+    // The parse layer lives in a per-module helper, never shared: finish.ts, speech.ts (and
+    // lipsync.ts, kept in the union so a re-added door under that filename is still scanned).
     const helper = (name: string): string =>
       read(name, "finish.ts") + read(name, "lipsync.ts") + read(name, "speech.ts");
 
@@ -308,10 +293,10 @@ describe("the finish-class population is derived, not asserted (cf#578 denominat
     const readsOutputKey = finishClass.filter((n) => helper(n).includes(READS_RESPONSE));
 
     // THE AFFECTED POPULATION. cf#604 retired the exemption: finish-rife and finish-blender now
-    // resolve finishedKey the same way finish-lipsync and finish-upscale do, so a satellite that
-    // returns output_key cannot throw billed work away. EXEMPT is empty on purpose and stays in
-    // the union so a future door that truly cannot produce either field is classified, not silent.
-    const AFFECTED = ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"];
+    // resolve finishedKey the same way finish-upscale does, so a satellite that returns output_key
+    // cannot throw billed work away. EXEMPT is empty on purpose and stays in the union so a future
+    // door that truly cannot produce either field is classified, not silent.
+    const AFFECTED = ["finish-upscale", "finish-blender", "finish-rife"];
     const EXEMPT: string[] = [];
 
     console.log(JSON.stringify({ modulesScanned: candidates.length, finishClass: finishClass.length, readsOutputKey: readsOutputKey.length, finishClassNames: finishClass.slice().sort() }));
@@ -319,7 +304,7 @@ describe("the finish-class population is derived, not asserted (cf#578 denominat
     // POSITIVE CONTROL: the scan reads real files. Without it a path regression empties every set
     // and every claim below passes vacuously on empty arrays.
     expect(candidates.length, "the module scan read nothing").toBeGreaterThanOrEqual(26);
-    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(5);
+    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(4);
 
     // NO UNCLASSIFIED DOOR. Union of the two lists must be the whole class, both ways.
     expect(finishClass.slice().sort(), "a finish-class door is neither fixed nor exempt")

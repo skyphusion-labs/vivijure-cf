@@ -42,10 +42,10 @@ Shapes live in `@skyphusion-labs/vivijure-core` (`modules/types`).
 |---|---|---|
 | `keyframe` | Storyboard -> start keyframes. Backend-selectable: GPU SDXL or GPUless cloud (e.g. cloud-keyframe) are modules. | pick one |
 | `motion.backend` | Keyframe (+ motion prompt) -> shot clip. GPU/RunPod and cloud providers are modules. | pick one per shot |
-| `finish` | Post-process a clip: frame interpolation, lip-sync (MuseTalk), upscale (CUDA Real-ESRGAN), face restore. | chain (0..n, ordered) |
+| `finish` | Post-process a clip: frame interpolation, color grade, upscale (CUDA Real-ESRGAN), face restore. | chain (0..n, ordered) |
 | `score` | Add audio to a film: music, narration, beat-sync. | chain (0..n) |
-| `dialogue` | Per-shot dialogue lines -> speech audio (TTS, one voice per cast member). Runs after clips, before finish; its audio feeds the lip-sync finish module. | pick one |
-| `speech` | Per-shot dialogue AUDIO -> cleaned/enhanced dialogue audio (e.g. speech upscale). Runs after `dialogue`, before `finish`, so lip-sync consumes the improved track. | chain (0..n) |
+| `dialogue` | Per-shot dialogue lines -> speech audio (TTS, one voice per cast member). Runs after clips, before finish; its audio becomes the shot's spoken track, and is offered to any finish module that declares `finish_consumes_audio`. | pick one |
+| `speech` | Per-shot dialogue AUDIO -> cleaned/enhanced dialogue audio (e.g. speech upscale). Runs after `dialogue`, before `finish`, so the improved track is what the film carries. | chain (0..n) |
 | `plan.enhance` | Expand a storyboard before render: LLM auto-direction, camera/lighting enrichment. | chain (0..n) |
 | `image.generate` | prompt -> single image | pick one |
 | `cast.image` | Portrait + bible -> LoRA training reference images. | pick one |
@@ -559,7 +559,7 @@ deadline honestly instead of the core guessing where its output landed. Present-
 
 > **Known deviation (#764, MA-8):** for a finish module that declares NO `finish_artifacts`, core
 > `finishStepOutputKey` / `finishStepAppliedTag` (`film-model`) still fall back to matching the binding
-> name (`RIFE`, `LIPSYNC|MUSETALK`, `UPSCALE`) to guess the legacy first-party conventions, and that
+> name (`RIFE`, `LIPSYNC`, `UPSCALE`) to guess the legacy first-party conventions, and that
 > guess also drives presigning. The contract above ("never pattern-matches") is the rule; do not rely
 > on the fallback.
 
@@ -584,17 +584,22 @@ additive (no MODULE_API bump); present-but-empty-or-non-string REJECTS the manif
 
 A `finish` module MAY declare `finish_consumes_audio: true` to say it drives its output from the
 shot dialogue audio (`FinishInput.audio_key`) and is calibrated to the SOURCE frame rate, i.e. it
-lip-syncs. The core reads this (never a module name) to run such a module FIRST in the finish chain
+lip-syncs. NOTE: since cf#783 removed finish-lipsync, NO module shipped in this repo declares
+`finish_consumes_audio`. The mechanism is live in vivijure-core and the contract below is
+unchanged; there is simply no shipped implementation to read it off, so a new audio-consuming
+finish module is the first thing that will exercise it again.
+The core reads this (never a module name) to run such a module FIRST in the finish chain
 for a shot that HAS a dialogue line, so it lip-syncs the native-fps clip BEFORE any interpolation.
 Without it, a lip-sync run on already-interpolated footage smears the mouth shapes across the doubled
 frames (the breathy look, vivijure #584).
 
 The rule is a STABLE partition of the chain: audio-consuming modules move ahead of the rest, `ui.order`
-preserved within each group. With `finish-rife` (order 10), `finish-lipsync` (order 15,
+preserved within each group. Worked with `finish-rife` (order 10), a hypothetical
+audio-consuming finish module (order 15,
 `finish_consumes_audio`), and `finish-upscale` (order 20):
 
-- a shot WITH a dialogue line runs `finish-lipsync` -> `finish-rife` -> `finish-upscale`;
-- a shot with NO line keeps the plain `ui.order` (`finish-rife` -> `finish-lipsync` -> `finish-upscale`),
+- a shot WITH a dialogue line runs the audio-consuming module -> `finish-rife` -> `finish-upscale`;
+- a shot with NO line keeps the plain `ui.order` (`finish-rife` -> the audio-consuming module -> `finish-upscale`),
   where the core does not invoke the audio-consuming step at all and records it as `noop:no-dialogue`.
 
 ```jsonc

@@ -793,17 +793,10 @@
     return (finishCache().speech || []).some((m) => m.name === "speech-upscale");
   }
 
-  function lipsyncOn() {
-    if (!finishMod("finish-lipsync")) return false;
-    const el = document.getElementById("planner-finish-lipsync");
-    return !!(el && el.checked);
-  }
-
   function renderFinishPicks() {
     const box = document.getElementById("planner-finish-picks");
     if (!box) return;
     const pairs = [
-      ["finish-lipsync", "planner-finish-lipsync-wrap"],
       ["finish-blender", "planner-finish-blender-wrap"],
     ];
     let any = false;
@@ -818,23 +811,16 @@
   }
 
   function collectFinishSelect() {
-    const lipsyncEl = document.getElementById("planner-finish-lipsync");
     const blenderEl = document.getElementById("planner-finish-blender");
-    const hasLipsync = !!finishMod("finish-lipsync");
     const hasBlender = !!finishMod("finish-blender");
-    if (!hasLipsync && !hasBlender) return undefined;
-    const wantLipsync = hasLipsync && !!lipsyncEl && !!lipsyncEl.checked;
+    if (!hasBlender) return undefined;
     const wantBlender = hasBlender && blenderEl && blenderEl.checked;
-    // Lipsync is opt_in. Unchecked + no blender = default finish (rife/upscale).
-    const defaultsOn = !wantLipsync && !wantBlender;
+    // Blender is opt_in. Unchecked = default finish (rife/upscale).
+    const defaultsOn = !wantBlender;
     if (defaultsOn) return { mode: "default" };
     const named = [];
     for (const m of finishCache().finish || []) {
       const part = m.participation || "default";
-      if (m.name === "finish-lipsync") {
-        if (wantLipsync) named.push(m.name);
-        continue;
-      }
       if (m.name === "finish-blender") {
         if (wantBlender) named.push(m.name);
         continue;
@@ -874,10 +860,13 @@
       config[mod][field] = val;
     }
     const out = {};
-    if (lipsyncOn() && speechUpscaleInstalled()) {
-      if (!config["speech-upscale"]) config["speech-upscale"] = {};
-      config["speech-upscale"].enable = true;
-    }
+    // speech-upscale had exactly ONE planner trigger: the finish-lipsync checkbox, because
+    // MuseTalk consumed the dialogue audio and wanted it cleaned first. MuseTalk is ruled out
+    // permanently and the module is gone (cf#783), so that trigger went with it and the
+    // planner no longer enables speech-upscale at all. Deliberately NOT replaced with an
+    // always-on default here: speech-upscale is metered GPU spend, and its own RunPod
+    // endpoint is separately dead (cf#757). Re-wiring the dialogue chain to the live
+    // audio-driven path (infinitetalk) is a product decision, not a side effect of this removal.
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;

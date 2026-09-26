@@ -91,7 +91,8 @@ function degradeReason(output: object, envelopeError?: unknown): string {
  *  detail ("" when the envelope kept none) for a structured soft-degrade, or null for a real
  *  failure.
  *
- *  Lifted VERBATIM from modules/finish-lipsync/src/lipsync.ts (cf#594); the status guard is kept
+ *  Lifted VERBATIM from modules/finish-lipsync/src/lipsync.ts (cf#594; that module was removed in
+ *  cf#783, so this file is now the only copy); the status guard is kept
  *  exactly as it was, so the COMPLETED half stays with `softDegradeInCompletedOutput` below and
  *  neither function can quietly start answering for the other's status. */
 export function softDegradeInFailedEnvelope(s: { status?: string; output?: unknown; error?: unknown }): string | null {

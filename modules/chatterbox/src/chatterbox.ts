@@ -2,7 +2,7 @@
 // state, and line validation. No I/O -- unit-tested without bindings or spend.
 //
 // Backed by Deepgram Aura-1 on Workers AI (chatterbox-turbo). We request 16-bit PCM WAV (not the
-// default MP3) so the lip-sync backend (MuseTalk) gets clean, lossless audio to drive the mouth from.
+// default MP3) so the spoken track stays clean and lossless all the way into the final mux.
 
 import type { DialogueInput, DialogueLine, DialogueOutput, DialogueShotAudio } from "./contract";
 

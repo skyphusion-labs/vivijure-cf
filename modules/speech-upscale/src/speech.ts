@@ -14,7 +14,7 @@ export function passthroughOutput(
 ): SpeechOutput {
   return {
     shot_id: input.shot_id,
-    audio_key: input.audio_key,   // original audio passed through -- lip-sync uses it unchanged
+    audio_key: input.audio_key,   // original audio passed through -- the mux uses it unchanged
     applied: [],                  // nothing applied -- no fake speech-upscale tag
     degraded: detail ? `${reason}: ${detail}` : reason,
   };

@@ -54,7 +54,7 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "3-10 second clips",
       "Silent motion",
-      "Speaking is Cast voice plus MuseTalk",
+      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
     ],
   },
   usage: {

@@ -268,7 +268,7 @@ service = "vivijure-module-finish-rife"
 
 
 # >>> SATELLITE: finish-blender -- Blender compositor on a SEPARATE RunPod endpoint
-# Optional finish-chain grade (headless Blender). After lipsync, before upscale.
+# Optional finish-chain grade (headless Blender). After rife, before upscale.
 # Needs store secret BLENDER_RUNPOD_ENDPOINT_ID + module worker vivijure-module-finish-blender.
 # Kept inside SATELLITE markers: only ships when VIVIJURE_PROFILE=satellites (or a hand-edit).
 #
@@ -354,22 +354,14 @@ binding = "MODULE_AUDIO_MASTER"
 service = "vivijure-module-audio-master"
 
 # Dialogue: per-shot spoken lines -> Deepgram Aura-1 (Workers AI) in the cast member's voice. The
-# `dialogue` phase runs after clips, before finish; its audio_key feeds the lip-sync finish module.
+# `dialogue` phase runs after clips, before finish; its audio_key becomes the shot's spoken track.
 [[services]]
 binding = "MODULE_DIALOGUE"
 service = "vivijure-module-dialogue-gen"
 
-# >>> SATELLITE: finish-lipsync -- MuseTalk lip-sync on a SEPARATE RunPod endpoint
-# HOMELAB / self-host only. Hosted flagship does not bind this door.
-# Native AV on our keyframes is the talking movie path.
-[[services]]
-binding = "MODULE_LIPSYNC"
-service = "vivijure-module-finish-lipsync"
-# <<< SATELLITE: finish-lipsync
-
 # >>> SATELLITE: speech-upscale -- speech cleanup on a SEPARATE RunPod endpoint
 # Speech upscale (the `speech` hook): aviation-grade speech cleanup / enhancement on the dialogue
-# audio_key before lip-sync consumes it. Its own per-module worker; the registry discovers it as a
+# audio_key before the mux carries it. Its own per-module worker; the registry discovers it as a
 # MODULE_* binding.
 [[services]]
 binding = "MODULE_SPEECH_UPSCALE"

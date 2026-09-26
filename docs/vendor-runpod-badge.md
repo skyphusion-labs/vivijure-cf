@@ -22,7 +22,7 @@ Measured originally 2026-07-25 (rollins, cf#248 stage 1). Reproduced 2026-08-01 
 | URL | Status |
 | --- | --- |
 | `.../badge/skyphusion-labs/vivijure-wan-train` | **500** |
-| `.../badge/skyphusion-labs/vivijure-musetalk` | **500** |
+| `.../badge/skyphusion-labs/vivijure-musetalk` | **500** (repo retired, cf#783) |
 | `.../badge/skyphusion-labs/vivijure-upscale` | **500** |
 | `.../badge/skyphusion-labs/vivijure-backend` | **500** |
 | `.../badge/skyphusion-labs/vivijure-audio-upscale` | **500** |

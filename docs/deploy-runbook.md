@@ -269,7 +269,7 @@ build). This keeps every binding pointing at an already-deployed module.
    `modules/*/wrangler.toml` with an explicit reviewed skip-list, so this maintenance step no longer
    exists):
    ```
-   for module in own-gpu finish-rife finish-upscale finish-lipsync keyframe seedance kling \
+   for module in own-gpu finish-rife finish-upscale keyframe seedance kling \
      minimax-hailuo google-veo vidu-q3 alibaba-wan film-titles dialogue-gen; do
    ```
    Add: `cloud-keyframe alibaba-wan-lora subtitle speech-upscale audio-master`. Order within the loop does not matter (all modules

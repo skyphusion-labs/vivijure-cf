@@ -97,10 +97,9 @@ describe("vendored clip-level presign fields (cf#590)", () => {
     );
   });
 
-  it("the clip-level FinishInput vendors are the four finish doors", () => {
+  it("the clip-level FinishInput vendors are the finish doors", () => {
     expect(finishVendors.map((v) => v.name)).toEqual([
       "finish-blender",
-      "finish-lipsync",
       "finish-rife",
       "finish-upscale",
     ]);

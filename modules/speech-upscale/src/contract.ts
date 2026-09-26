@@ -3,7 +3,7 @@
 //
 // speech-upscale is a `speech`-hook module: it enhances ONE shot's dialogue audio (audio_key in ->
 // enhanced audio_key out). The speech chain runs between the dialogue (TTS) phase and the finish
-// phase, so finish-lipsync (MuseTalk) drives off the cleaned audio. Pure audio -- no clip, no video.
+// phase, so the film's spoken track is the cleaned audio. Pure audio -- no clip, no video.
 
 export const MODULE_API = "vivijure-module/2" as const;
 

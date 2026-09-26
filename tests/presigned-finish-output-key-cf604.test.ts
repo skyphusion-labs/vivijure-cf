@@ -42,7 +42,7 @@ const CLIP_IN = "renders/p_test/clips/shot_01.mp4";
 const WRITTEN = "renders/p_test/clips/cf604_written_by_the_satellite.mp4";
 
 /** The degrade tag summarizeFinish counts (vivijure-core src/film-model.ts:421-423). Identical
- *  across all five finish-class doors on purpose: one grep has to find the whole class. */
+ *  across every finish-class door on purpose: one grep has to find the whole class. */
 const DEGRADE_TAG = ["passthrough:no-output-key"];
 
 interface Case {
@@ -214,14 +214,16 @@ describe.each(CASES)("$name: a COMPLETED job with no artifact key (cf#604)", (c)
 //
 // The population is the finish-class doors, derived by the same predicate the cf#578 census uses so
 // the two cannot drift into two different populations. 3 of 5 passed an artifact-less COMPLETED job
-// through before this change; 5 of 5 after.
+// through before this change; 5 of 5 after. The population is 4 since cf#783 removed
+// finish-lipsync with MuseTalk; the historical 3-of-5 / 5-of-5 above is the measurement that
+// motivated the change and is left as measured.
 //
 // A raw grep CANNOT produce that number. Both modules changed here now carry the string
 // `no-output-key` inside their new rationale COMMENTS as well as in the code, so a naive matcher
 // scores them regardless of what the code does -- the same false positive that made a repo with good
 // historical comments read as unusually broken. The comment/code split is asserted below rather than
 // assumed, and the raw-versus-stripped delta is itself the control that the stripper is working.
-describe("the artifact-less COMPLETED contract is 5 of 5 (cf#604 denominator)", () => {
+describe("the artifact-less COMPLETED contract holds for EVERY finish-class door (cf#604 denominator)", () => {
   it("every finish-class door passes the source clip through before it fails", async () => {
     const { readdirSync, readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
@@ -266,19 +268,19 @@ describe("the artifact-less COMPLETED contract is 5 of 5 (cf#604 denominator)", 
     // POSITIVE CONTROL: the scan reads real files. Without it a path regression empties every set and
     // every claim below passes vacuously on empty arrays.
     expect(candidates.length, "the module scan read nothing").toBeGreaterThanOrEqual(26);
-    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(5);
+    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(4);
 
-    // THE CLAIM: all of them, with the five named so a SIXTH door joining the class reddens this
-    // rather than quietly moving the denominator.
+    // THE CLAIM: all of them, NAMED so a door joining or leaving the class reddens this rather
+    // than quietly moving the denominator. It reddened on cf#783, which is the point.
     expect(finishClass.slice().sort()).toEqual(
-      ["finish-blender", "finish-lipsync", "finish-rife", "finish-upscale", "speech-upscale"],
+      ["finish-blender", "finish-rife", "finish-upscale", "speech-upscale"],
     );
     for (const n of finishClass) {
       expect(passesThrough, n + " fails the film on a COMPLETED job that produced no artifact").toContain(n);
     }
 
     // NEGATIVE CONTROL: a module outside the class must NOT match, or the matcher is not
-    // discriminating and the 5 of 5 above is an artifact of matching everything.
+    // discriminating and the all-of-them claim above is an artifact of matching everything.
     expect(finishClass, "the finish-class predicate matched a non-finish module").not.toContain("keyframe");
     expect(codeOnly(src("keyframe")).includes(PASSTHROUGH_CALL), "keyframe matched the finish behaviour").toBe(false);
 
