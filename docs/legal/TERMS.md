@@ -121,21 +121,22 @@ content rules may restrict what you can generate independently of this document.
 not a party to those contracts and is not responsible for those providers' acts, outages, or model
 behavior.
 
-Two of those provider terms change what the software can lawfully be used for, so they are named
-here rather than left to discovery (texts read 2026-09-26; the provider's current text controls):
+Two of those providers publish use restrictions that are worth reading before you rely on a given
+path, so they are pointed to here rather than left to discovery (texts read 2026-09-26; the
+provider's current text controls, and how it applies to your use is between you and your own legal
+advice):
 
 - **Black Forest Labs (FLUX models on Cloudflare Workers AI).** Cloudflare's model pages for
   `@cf/black-forest-labs/*` link their "Terms and License" to BFL's Terms of Service, and
   Cloudflare's own terms say that by using a partner model you agree to the model licensor's terms.
-  Those terms forbid, among other things, using Output "to train, distill or fine-tune any other AI
-  models" (1.3(n)); require the consent of any real, identifiable individual an Output depicts
+  Those terms include, among other things, a restriction on using Output "to train, distill or
+  fine-tune any other AI models" (1.3(n)); require the consent of any real, identifiable individual an Output depicts
   (1.2(c)); forbid presenting Output as human-made or as a real photograph (1.3(m)); forbid
   stripping AI content marking (1.3(p)); and incorporate BFL's Usage Policy (no CSAM or NCII, no
-  military, surveillance, law-enforcement or biometric-inference use). On the plain text, images the
-  `cast.image` module generates through Workers AI FLUX are not lawful LoRA training data; the
-  locally hosted Apache-2.0 FLUX.2 Klein 4B path carries no such term. Whether the clause reaches
-  Cloudflare partner consumption at all is an open counsel question; until answered, treat it as
-  binding.
+  military, surveillance, law-enforcement or biometric-inference use). This document does not
+  interpret how those terms apply to Cloudflare partner consumption or to any particular downstream
+  use such as cast LoRA training; read them against your own setup. The locally hosted Apache-2.0
+  FLUX.2 Klein 4B path is under its own weight licence instead.
 - **Google (Gemini API: `google/nano-banana-pro` and other Google models via the AI Gateway).** The
   Gemini API Additional Terms require you to be 18 or older, forbid offering the Services as part of
   a website, application or service "directed towards or is likely to be accessed by individuals
