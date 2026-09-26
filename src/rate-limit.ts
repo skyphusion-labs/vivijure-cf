@@ -54,8 +54,9 @@ export interface SpendLimitEnv {
 // the real period on the binding; this is the client hint).
 export const SPEND_RETRY_AFTER_SECONDS = 60;
 
-// The POST routes that submit GPU jobs or paid AI work. Kept as explicit regexes (not a dependency on
-// the router) so the spend surface is auditable in one place; :id / child segments are wildcarded.
+// The POST routes that submit GPU jobs, paid AI work, or unbounded metered storage writes. Kept as
+// explicit regexes (not a dependency on the router) so the spend surface is auditable in one place;
+// :id / child segments are wildcarded.
 //
 // cf#256: the PLANNER entry points are spend routes in exactly the sense this list means, and were
 // missing. Every route below that dispatches the plan.enhance hook runs an operator-billed frontier
@@ -102,12 +103,43 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/refine$/,
   /^\/api\/storyboard\/enhance$/,
   /^\/api\/chat$/,
+
+  // Ref GHSA-wmjq-7647-h45x: metered STORAGE, not GPU or model spend, and it belongs in this one
+  // list for exactly the reason the list exists. POST /api/report copies up to MAX_KEYS full objects
+  // into quarantine/, so a call is bounded in COUNT but not in BYTES. The door stays reachable by
+  // consumers (an abuse report has to be filable by whoever can see the content), so metering is the
+  // bound rather than authorization. See SAFETY_PATTERNS below for the posture that follows.
+  /^\/api\/report$/,
 ];
 
 // True for a request that triggers GPU/paid spend and so must pass the limiter.
 export function isSpendRoute(method: string, pathname: string): boolean {
   if (method !== "POST") return false;
   return SPEND_PATTERNS.some((re) => re.test(pathname));
+}
+
+// Ref GHSA-wmjq-7647-h45x: SAFETY routes are METERED like a spend route but must never be SILENCED
+// by one. The abuse-report door is the case: it exists so somebody who can see offending content can
+// get it taken down, so the cost of throttling it too hard is categorically worse than the cost it
+// bounds. Two consequences, both deliberate:
+//
+//   * A BROKEN check (unbound or throwing limiter) never denies a safety route, whatever
+//     SPEND_LIMIT_FAIL_CLOSED says. Fail-closed is right for the money path -- refusing a render
+//     beats an unbounded bill -- and wrong here, where the same posture would answer a report with
+//     503 and leave the reported content in place. A missing limiter binding must not be able to
+//     switch the takedown door off.
+//   * The GPU DAILY CEILING never applies to a safety route. That ceiling caps a day of model/GPU
+//     spend; letting a heavy render day lock out the abuse door until UTC midnight would trade a
+//     cost control against a safety control.
+//
+// A HEALTHY limiter still returns 429 with Retry-After, which is a working meter saying slow down
+// (per-IP, honorable by the caller), not a broken one discarding the report.
+const SAFETY_PATTERNS: RegExp[] = [/^\/api\/report$/];
+
+/** True for a metered route whose failure mode must be fail-OPEN, never fail-closed. */
+export function isSafetyRoute(method: string, pathname: string): boolean {
+  if (method !== "POST") return false;
+  return SAFETY_PATTERNS.some((re) => re.test(pathname));
 }
 
 export type SpendLimitResult =
@@ -159,7 +191,8 @@ async function bumpDailyCount(db: SpendCounterDb, day: string): Promise<number> 
 }
 
 // Enforce the spend limit for a request already known to be a spend route: the per-IP rate limiter
-// first, then the optional daily ceiling. Default posture fails OPEN on a broken check (warns);
+// first, then the optional daily ceiling. A SAFETY route (isSafetyRoute) is throttled by the limiter
+// but is never denied by a broken check and never sees the daily ceiling. Default posture fails OPEN on a broken check (warns);
 // SPEND_LIMIT_FAIL_CLOSED="true" denies 503 instead. An explicit over-limit / over-ceiling verdict
 // is always a 429.
 export async function enforceSpendLimit(
@@ -167,7 +200,9 @@ export async function enforceSpendLimit(
   env: SpendLimitEnv,
   nowMs: number = Date.now(),
 ): Promise<SpendLimitResult> {
-  const closed = failClosed(env);
+  // A safety route is throttled but never denied by a broken check (GHSA-wmjq-7647-h45x).
+  const safety = isSafetyRoute(request.method.toUpperCase(), new URL(request.url).pathname);
+  const closed = failClosed(env) && !safety;
 
   const limiter = env.SPEND_RATE_LIMITER;
   if (!limiter) {
@@ -193,7 +228,7 @@ export async function enforceSpendLimit(
     }
   }
 
-  const ceiling = dailyCeiling(env);
+  const ceiling = safety ? null : dailyCeiling(env);
   if (ceiling !== null) {
     const { day, secondsToReset } = utcDay(nowMs);
     if (!env.DB) {
