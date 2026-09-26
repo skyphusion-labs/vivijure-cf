@@ -50,7 +50,6 @@ export const ORCHESTRATOR_VAR_KEYS = [
   "AUDIO_MIX_URL",
   "AUDIO_MASTER_URL",
   "FINISH_UPSCALE_DOORS",
-  "SPEECH_UPSCALE_DOORS",
   "FINISH_BLENDER_DOORS",
 ] as const;
 // cf#287 STUDIO_RELEASE / STUDIO_GIT_SHA are intentional NOT listed here yet. They are optional

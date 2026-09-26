@@ -18,6 +18,5 @@ narration-gen
 own-gpu
 plan-enhance
 seedance
-speech-upscale
 subtitle
 vidu-q3

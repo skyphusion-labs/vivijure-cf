@@ -29,8 +29,9 @@
 # and correct the population-4 numbers in docs/module-readiness-coverage.md.
 #
 # provenance: skyphusion-labs/vivijure-control-plane @ main, src/tenant-modules.ts
-# read-at: 2026-08-17, plane origin/main (lip-sync finish satellite dropped from hosted)
-# count: 18
+# read-at: 2026-09-26, plane origin/main (speech-upscale removed, cf#786; lip-sync finish
+#          satellite dropped earlier)
+# count: 17
 alibaba-wan
 alibaba-wan-lora
 finish-rife
@@ -43,7 +44,6 @@ narration-gen
 own-gpu
 plan-enhance
 seedance
-speech-upscale
 vidu-q3
 cf-flux-3-video
 cf-grok-video

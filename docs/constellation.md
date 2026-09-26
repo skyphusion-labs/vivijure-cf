@@ -42,7 +42,6 @@ flowchart TD
 
     subgraph finish[Finish helper engines]
         upscale[vivijure-upscale<br/>video upscale]
-        audioup[vivijure-audio-upscale<br/>audio cleanup]
     end
 
     discord --> slate
@@ -53,7 +52,6 @@ flowchart TD
     studio --> audiomods
     cloudmods --> backend
     finishmods --> upscale
-    audiomods --> audioup
     studio --> backend
     studio --> local12
     studio --> local16

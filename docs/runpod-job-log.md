@@ -38,7 +38,6 @@ because the module-to-endpoint mapping is fixed in each module wrangler.toml and
 |---|---|
 | `keyframe`, `own-gpu`, `finish-rife` | the render backend endpoint |
 | `finish-upscale` | the video-upscale endpoint |
-| `speech-upscale` | the audio-upscale endpoint |
 
 ## Why a submit row and not only a failure row
 
@@ -231,7 +230,7 @@ classification depends on them.
 
 **NULL means the endpoint did not tell us, which is different from "this was not a refusal."**
 `vivijure-backend` emits `error_type`. The satellite containers (video-upscale,
-audio-upscale) emit none: a validation refusal and a genuine crash both come back as a bare string in
+audio-upscale, both retired) emit none: a validation refusal and a genuine crash both come back as a bare string in
 `error`. So one endpoint of four is classifiable and the other three carry NULL until those
 containers emit a structured marker. That gap is stated rather than papered over, because a column
 that LOOKED like it had solved the classification problem while covering a quarter of the surface

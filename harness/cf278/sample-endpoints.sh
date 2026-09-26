@@ -7,7 +7,7 @@ set -u
 OUT="${1:?usage: sample-endpoints.sh <outfile> [max_samples] [interval]}"
 MAX="${2:-540}"
 IVL="${3:-10}"
-EPS="backend:t9wcvlxh8rc5la video-upscale:4q8idwbk6tyqbq audio-upscale:sj0btgpjdtswa7"
+EPS="backend:t9wcvlxh8rc5la video-upscale:4q8idwbk6tyqbq"
 
 printf 'ts\tendpoint\tcompleted\tfailed\tretried\tinQueue\tinProgress\tready\trunning\tidle\tthrottled\tunhealthy\tinitializing\n' > "$OUT"
 for i in $(seq 1 "$MAX"); do

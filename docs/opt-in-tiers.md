@@ -82,7 +82,7 @@ shared note just below), then put its endpoint id into the account Secrets Store
 > inputs from, and writes its outputs to, YOUR R2 bucket directly, so its RunPod endpoint template must
 > set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET` (the same R2 values
 > the backend endpoint uses; [DEPLOYMENT.md](DEPLOYMENT.md) section 4). `scripts/runpod-provision.py
-> --satellite <upscale|audio-upscale>` sets these four vars on the endpoint for you from your
+> --satellite upscale` sets these four vars on the endpoint for you from your
 > `deploy.env` (recommended; see each tier below), or set them by hand -- the `deploy.sh` path itself
 > only collects the endpoint *ids*. Miss them and the first full render
 > fails at finish with the satellite's honest error (`R2 mode needs R2_ENDPOINT_URL +
@@ -120,21 +120,22 @@ shared note just below), then put its endpoint id into the account Secrets Store
   set on it; its id in the store secret `BLENDER_RUNPOD_ENDPOINT_ID`; and the `finish-blender`
   (`MODULE_FINISH_BLENDER`) service binding enabled (see wrangler.toml.example; commented by default).
 - **Provision it:** clone `skyphusion-labs/vivijure-blender`, `./deploy.sh`, put the printed
-  `BLENDER_RUNPOD_ENDPOINT_ID` in deploy.env. **Optional** -- not part of the required `satellites`
-  profile pair (upscale / speech-upscale).
+  `BLENDER_RUNPOD_ENDPOINT_ID` in deploy.env. **Optional** -- not the one module in the required
+  `satellites` profile (upscale).
 
-### speech-upscale
-- **What it is:** a speech cleanup step for dialogue audio.
-- **What you get:** clearer spoken lines, which makes an audio-driven motion door land better.
-- **What it needs:** a RunPod endpoint running the `vivijure-audio-upscale` image (resemble-enhance),
-  with the four R2 env vars above set on it; its id is bound from the account Secrets Store as this
-  module's `RUNPOD_ENDPOINT_ID` (store secret `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`), alongside the shared
-  `RUNPOD_API_KEY` -- the same store-bound pattern as finish-upscale (#238), not a
-  per-module `wrangler secret put`. `deploy.sh` (satellites profile) seeds the id from
-  `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID` in `deploy.env`. Keep the `speech-upscale`
-  (`MODULE_SPEECH_UPSCALE`) binding.
-- **Provision it:** `python3 scripts/runpod-provision.py --satellite audio-upscale` sets the image +
-  the four R2 env vars from your `deploy.env`. Put the printed `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID` in deploy.env.
+### speech-upscale -- REMOVED (cf#786)
+- **Gone.** Four reasons, any one of which would do: its RunPod endpoint no longer exists
+  (cf#757), so it was bound to nothing while the finish tier booked the degrade as `completed`;
+  its only planner trigger was the `finish-lipsync` checkbox, removed with MuseTalk (cf#783);
+  its purpose was cleaning dialogue BEFORE post-hoc mouth replacement, which no longer happens
+  at all; and it is CUDA (resemble-enhance), one of the three GPU stages Cloudflare Containers
+  cannot host.
+- **What replaced it: nothing, deliberately.** Lip-sync is produced at motion time by
+  `infinitetalk`, which takes the Cast audio directly, so there is no downstream step that
+  needed the speech cleaned first. The Cast voice is muxed as recorded.
+- The `speech` HOOK still exists in `vivijure-core` and is unchanged. Nothing in this repo
+  implements it today, so a future speech module inherits a checked contract rather than a
+  rewritten one.
 
 ---
 

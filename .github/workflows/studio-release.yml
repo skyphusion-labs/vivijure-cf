@@ -156,7 +156,6 @@ jobs:
           AUDIO_MIX_URL: ""
           AUDIO_MASTER_URL: ""
           FINISH_UPSCALE_DOORS: ""
-          SPEECH_UPSCALE_DOORS: ""
           FINISH_BLENDER_DOORS: ""
         run: |
           set -euo pipefail

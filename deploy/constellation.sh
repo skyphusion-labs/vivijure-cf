@@ -38,9 +38,9 @@ say "[2/4] vivijure-backend (RunPod GPU) -- PLACEHOLDER (deploy from the vivijur
 #    running their own GPU box. e.g.  ( cd ../vivijure-local-12gb && docker compose up -d )
 say "[3/4] local-gpu doors -- PLACEHOLDER (docker compose in each vivijure-local-* repo)"
 
-# 4. FINISH SATELLITES (vivijure-upscale / -audio-upscale) -- PLACEHOLDER.
+# 4. FINISH SATELLITE (vivijure-upscale) -- PLACEHOLDER.
 #    Extra RunPod endpoints behind the studio satellites profile (finish-upscale /
-#    speech-upscale). Stood up from their own repos, then set the endpoint ids in deploy.env and
+#    Stood up from its own repo, then set the endpoint id in deploy.env and
 #    re-run the studio with VIVIJURE_PROFILE=satellites.
 say "[4/4] finish satellites -- PLACEHOLDER (per-repo endpoints; then studio VIVIJURE_PROFILE=satellites)"
 

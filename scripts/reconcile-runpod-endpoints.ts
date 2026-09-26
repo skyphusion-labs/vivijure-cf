@@ -11,7 +11,6 @@
  * Env (endpoint id + expected workersMax pairs):
  *   RUNPOD_ENDPOINT_ID + RUNPOD_WORKERS_MAX          (render backend)
  *   VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID + VIDEO_UPSCALE_RUNPOD_WORKERS_MAX
- *   AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID + AUDIO_UPSCALE_RUNPOD_WORKERS_MAX
  */
 import {
   reconcileRunpodEndpointWorkersMax,
@@ -31,7 +30,6 @@ function pairsFromEnv(): Pair[] {
   const specs: Array<{ label: string; idVar: string; maxVar: string }> = [
     { label: "render backend", idVar: "RUNPOD_ENDPOINT_ID", maxVar: "RUNPOD_WORKERS_MAX" },
     { label: "video upscale", idVar: "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID", maxVar: "VIDEO_UPSCALE_RUNPOD_WORKERS_MAX" },
-    { label: "audio upscale", idVar: "AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID", maxVar: "AUDIO_UPSCALE_RUNPOD_WORKERS_MAX" },
   ];
   const out: Pair[] = [];
   for (const s of specs) {

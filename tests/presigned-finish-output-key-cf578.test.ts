@@ -17,10 +17,16 @@
 // its own input (upscaledKey appends _up). On a derivable key, "honoured the handler output" and
 // "reconstructed it locally" are byte-identical; on this one they are not.
 //
-// POSITIVE CONTROL. speech-upscale is the in-tree reference implementation and is included
-// unchanged: it already does pollPassthrough(st, "no-output-key"). It must be GREEN on every case
-// here BOTH before and after the fix. A run where the reference also reddens is measuring the
-// harness, not the modules.
+// THE POSITIVE CONTROL THAT USED TO LIVE HERE IS GONE, AND SO IS THE DISTINCTION IT RESTED ON.
+// It was speech-upscale, included unchanged as the in-tree reference that already did
+// pollPassthrough(st, "no-output-key"), so a run where the REFERENCE also reddened was measuring
+// the harness rather than the modules. Two things happened to it. cf#604 retired the EXEMPT list
+// and made every finish door resolve finishedKey the same way, which collapsed the
+// already-correct / newly-fixed distinction the control rested on: from that point the reference
+// and the subjects were one class. cf#786 then removed speech-upscale outright. So the control
+// stopped discriminating at cf#604, not here, and this is recorded rather than quietly dropped.
+// The suite's OTHER two controls are untouched and still fail on a broken harness: the module-scan
+// floor in the census below, and the negative control asserting a non-finish module does not match.
 //
 // MEASURED SATELLITE SHAPES (cf#578, and rollins on cf#312):
 //   R2 mode        -> { ok: true, clip_key: <written key>, applied: [...] }
@@ -28,7 +34,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
-import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -60,10 +65,12 @@ interface Case {
    *  PER CASE, NOT A UNIVERSAL, and that is the point. The finish-hook degrade counter is
    *  summarizeFinish (vivijure-core src/film-model.ts:421-423) and it counts shots whose tags
    *  START WITH passthrough: -- so for the two finish doors the exact tag IS the counter, and
-   *  asserting it is asserting that the degrade is countable at all. speech-upscale records an
-   *  EMPTY applied and carries its reason in degraded; its summarizer is a different one. One
-   *  universal assertion here would pass VACUOUSLY on the empty array and prove nothing about
-   *  either module. */
+   *  asserting it is asserting that the degrade is countable at all. It stays PER CASE rather than
+   *  collapsing into one universal assertion: the speech hook used to sit in this table with an EMPTY
+   *  applied and its reason in `degraded`, counted by a different summarizer, and a universal
+   *  assertion would have passed VACUOUSLY on that empty array. speech-upscale is gone (cf#786), but
+   *  the shape that invited the mistake returns with the next non-finish hook, so the per-case form
+   *  stays. */
   degradeApplied: string[];
   /** The credentialed (R2-mode) COMPLETED payload. */
   r2: Record<string, unknown>;
@@ -87,24 +94,6 @@ const CASES: Case[] = [
     // which the R2 branch at :674 sends. That asymmetry is real and is why the module must not
     // fabricate a tag when none arrives.
     presigned: { ok: true, output_key: WRITTEN_CLIP, bytes: 1121158, frames: 80, scale: 2, model: "realesr-animevideov3", encoder: "h264_nvenc" },
-  },
-  {
-    // THE IN-TREE REFERENCE. Green before and after; see POSITIVE CONTROL above.
-    name: "speech-upscale",
-    worker: speechUpscaleWorker as unknown as Worker,
-    hook: "speech",
-    input: { shot_id: "shot_01", audio_key: AUDIO_IN },
-    config: { enable: true },
-    written: WRITTEN_AUDIO,
-    passedThrough: AUDIO_IN,
-    outField: "audio_key",
-    degradeApplied: [],
-    // MEASURED, vivijure-audio-upscale@f2b3908 handler.py:315 (R2) and :358 (presigned). The R2
-    // branch returns BOTH `output_key` and `audio_key` carrying the same value; the presigned
-    // branch returns `output_key` only. This module never had a `clip_key` shape, which is why it
-    // is the one written correctly and why it is the control here.
-    r2: { ok: true, output_key: WRITTEN_AUDIO, audio_key: WRITTEN_AUDIO, bytes: 220500, sr: 44100, applied: ["speech-upscale:resemble-enhance"] },
-    presigned: { ok: true, output_key: WRITTEN_AUDIO, bytes: 220500, sr: 44100, applied: ["speech-upscale:resemble-enhance"] },
   },
 ];
 
@@ -245,7 +234,7 @@ describe.each(CASES)("$name: a presigned satellite return (cf#578)", (c) => {
 // MEASURED SATELLITE SIDE, at the HEAD of each default branch:
 //   vivijure-upscale       d34135d  presigned returns output_key, NO clip_key   -> finish-upscale  AFFECTED
 //   vivijure-musetalk      c97bd61  presigned returns output_key, NO clip_key   -> finish-lipsync  RETIRED (cf#783)
-//   vivijure-audio-upscale f2b3908  output_key in both modes, never a clip_key  -> speech-upscale  ALREADY CORRECT
+//   vivijure-audio-upscale f2b3908  output_key in both modes, never a clip_key  -> speech-upscale  REMOVED (cf#786)
 //   vivijure-blender       4fa33fe  historically clip_key in BOTH modes; a later
 //                                   satellite / version skew can emit output_key
 //                                   and must not throw the billed artifact away -> finish-blender  AFFECTED (cf#604)
@@ -304,15 +293,16 @@ describe("the finish-class population is derived, not asserted (cf#578 denominat
     // POSITIVE CONTROL: the scan reads real files. Without it a path regression empties every set
     // and every claim below passes vacuously on empty arrays.
     expect(candidates.length, "the module scan read nothing").toBeGreaterThanOrEqual(26);
-    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(4);
+    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(3);
 
     // NO UNCLASSIFIED DOOR. Union of the two lists must be the whole class, both ways.
     expect(finishClass.slice().sort(), "a finish-class door is neither fixed nor exempt")
-      .toEqual(AFFECTED.concat(EXEMPT).concat(["speech-upscale"]).sort());
+      .toEqual(AFFECTED.concat(EXEMPT).sort());
 
-    // THE CLAIM: both affected doors read output_key at the PARSE layer, and speech-upscale, which
-    // was already correct, still does. Three of five, and the five is printed above.
-    for (const n of AFFECTED.concat(["speech-upscale"])) {
+    // THE CLAIM: every affected door reads output_key at the PARSE layer. The population is printed
+    // above rather than written here, so a door joining or leaving reddens this rather than moving
+    // the denominator quietly. It reddened on cf#786, which is the point.
+    for (const n of AFFECTED) {
       expect(readsOutputKey, n + " drops output_key at its parse layer").toContain(n);
     }
 

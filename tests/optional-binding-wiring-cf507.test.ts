@@ -61,10 +61,9 @@ describe("hosted module tomls carry no Workers VPC", () => {
     expect(deployEnv).toMatch(/VIDEO_FINISH_URL:\s*\$\{\{\s*vars\.VIDEO_FINISH_URL\s*\}\}/);
   });
 
-  it("the three door modules declare their DOORS var", () => {
+  it("the door modules declare their DOORS var", () => {
     const need: Record<string, string> = {
       "finish-upscale": "FINISH_UPSCALE_DOORS",
-      "speech-upscale": "SPEECH_UPSCALE_DOORS",
       "finish-blender": "FINISH_BLENDER_DOORS",
     };
     for (const [dir, key] of Object.entries(need)) {

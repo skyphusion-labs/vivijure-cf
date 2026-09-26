@@ -99,7 +99,7 @@ Pick a profile with `VIVIJURE_PROFILE` in `deploy.env`:
   compose tunnel token (`containers/tunnel.env`); it does NOT create Workers VPC services. You set the
   media URLs and bring the containers up with `docker compose` (section 5). This is your first deploy.
 - **satellites** -- also the 3 opt-in GPU finish modules that each need a separate RunPod endpoint:
-  upscale and speech-upscale.
+  upscale.
 
 How the split works: in `wrangler.toml.example`, opt-in blocks are wrapped in comment markers.
 `deploy.sh` strips `# >>> SATELLITE:` blocks unless the satellites profile, the `# >>> LOCAL-GPU:`
@@ -110,7 +110,7 @@ media-stack bindings (the media URL vars + the media finish modules) are uncondi
 (`film-titles`, `subtitle`, `beat-sync`, `audio-master`) reach the five containers over the
 `VIDEO_FINISH_URL` / `IMAGE_PREP_URL` / `AUDIO_BEAT_SYNC_URL` / `AUDIO_MIX_URL` / `AUDIO_MASTER_URL`
 vars (empty = that service is off), with `MEDIA_FINISH_TOKEN` bound from store secret
-`FINISH_DOOR_TOKEN`. The on-box GPU finish doors use `FINISH_UPSCALE_DOORS` / `SPEECH_UPSCALE_DOORS` /
+`FINISH_DOOR_TOKEN`. The on-box GPU finish doors use `FINISH_UPSCALE_DOORS` /
 `FINISH_BLENDER_DOORS` (comma-separated origins; empty = RunPod path). The local-GPU door stays
 opt-in because it needs your own local GPU box.
 
@@ -137,7 +137,7 @@ template carries 34 as of v1.33.9, see the DP-3 note above) (plus core, D1, R2, 
 media stack) and rendered finished 1080p24 films on all three render paths (own GPU on RunPod, cloud
 i2v, and a local-GPU door). You pay only usage: RunPod GPU seconds, cloud render API calls, AI Gateway
 credits for the planner, or $0 on your own hardware. **Workers Paid ($5/month) is required only for the
-two GPU finish satellites** (finish-upscale, speech-upscale); their fan-out at
+one GPU finish satellite** (finish-upscale); its fan-out at
 satellite scale is what needs the larger per-invocation subrequest budget. One operational rule either
 way: a plan change (free to paid, or back) only takes effect after you **redeploy the core**
 (`./deploy.sh` again), because a running Worker keeps the plan it was deployed under -- so flip the
@@ -467,7 +467,7 @@ for m in own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance
   npx wrangler deploy -c modules/$m/wrangler.toml
 done
 # The satellites profile also deploys (SATELLITE_MODULES in deploy.sh; each needs a separate RunPod
-# endpoint): finish-upscale speech-upscale. finish-blender is added only when
+# endpoint): finish-upscale. finish-blender is added only when
 # BLENDER_RUNPOD_ENDPOINT_ID is set.
 # NOTE (#764, DP-3): the core template ALSO binds kling-o1-r2v, infinitetalk, chatterbox, cf-hailuo,
 # cf-veo and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
@@ -510,11 +510,10 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 | own-gpu, keyframe, finish-rife | `BACKEND_RUNPOD_ENDPOINT_ID`           | main backend    |
 | finish-upscale                 | `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`     | video upscale   |
 | finish-blender                 | `BLENDER_RUNPOD_ENDPOINT_ID`           | compositor grade |
-| speech-upscale                 | `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`     | audio upscale   |
 
 > **The satellite ENDPOINTS themselves also need R2 credentials (#522).** The store secret above only
 > carries each satellite's endpoint *id*. Every GPU satellite (finish-upscale,
-> speech-upscale) reads its inputs from, and writes its outputs to, YOUR R2 bucket directly, so its
+> reads its inputs from, and writes its outputs to, YOUR R2 bucket directly, so its
 > RunPod endpoint template must ALSO set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
 > and `R2_BUCKET` in the endpoint env (the same R2 values the backend endpoint uses in section 4). Miss
 > them and the first full render fails at finish with the satellite's honest error (`R2 mode needs
@@ -560,7 +559,6 @@ npx wrangler secrets-store secret create $S --name R2_S3_SECRET_ACCESS_KEY      
 npx wrangler secrets-store secret create $S --name PLAN_ENHANCE_CF_AIG_TOKEN      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name BACKEND_RUNPOD_ENDPOINT_ID       --scopes workers --remote
 npx wrangler secrets-store secret create $S --name VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
-npx wrangler secrets-store secret create $S --name AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
 npx wrangler secrets-store secret create $S --name BLENDER_RUNPOD_ENDPOINT_ID      --scopes workers --remote  # optional finish-blender
 ```
 
@@ -576,7 +574,6 @@ if the feature behind it is unused. Beyond the ones seeded above:
 | `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` | core (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) | Wan 2.2 LoRA-training endpoint (cast `/train-wan-lora`) |
 | `IMAGE_GENERATE_OPENAI_API_KEY` | `image-generate` (`OPENAI_API_KEY`) | optional BYOK OpenAI key for transparent PNGs |
 | `FINISH_DOOR_TOKEN_PROPAGANDHI` | `finish-upscale` | second upscale door bearer |
-| `SPEECH_DOOR_TOKEN`, `SPEECH_DOOR_TOKEN_PROPAGANDHI` | `speech-upscale` | speech-upscale door bearers |
 | `BLENDER_DOOR_TOKEN` | `finish-blender` | blender door bearer |
 | `LOCAL_BACKEND_URL`, `LOCAL_BACKEND_TOKEN` | `local-gpu` | local-GPU door (section 6) |
 
@@ -639,7 +636,7 @@ Put the printed id in `deploy.env` as `RUNPOD_ENDPOINT_ID` and run `./deploy.sh`
 created scale-to-zero (workersMin=0): it costs nothing until a render job runs.
 
 The same script provisions the **finish satellite** endpoints (#522) with `--satellite upscale`,
-`--satellite audio-upscale`; it sets the four R2 env vars on the satellite
+`--satellite upscale`; it sets the four R2 env vars on the satellite
 template for you, and its last line prints the matching `deploy.env` key (e.g.
 `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID=<id>`) for the satellites profile.
 
