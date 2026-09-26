@@ -64,8 +64,10 @@ of these areas, update the matching doc.
 
 - `docs/module-api.md` -- prose for the typed hook contract (`vivijure-module/2`); **SoT types in vivijure-core**.
 - `docs/module-authoring.md` -- how to author a new module worker against the contract.
-- `docs/api-config-conventions.md` -- the four studio HTTP config-passing shapes (flat / nested / `config` / top-level camelCase); wrong shape fails silently (cf#390).
-- `docs/CONTRACT.md` -- the core <-> backend render contract (bundle in, artifacts out).
+- `docs/module-dispatch.md` -- Workers for Platforms transport beneath the module contract: install/uninstall routes, `installed_modules`, the `dispatch:<script>` binding ref.
+- `docs/api-config-conventions.md` -- the four studio HTTP config-passing shapes (flat / nested / `config` / top-level camelCase); a wrong shape either 400s at the door or is silently dropped/clamped, depending on the map (cf#390).
+- `docs/CONTRACT.md` -- the studio HTTP API route table and the core <-> backend render contract (bundle in, artifacts out).
+- `docs/CAST-BUNDLE.md` -- the `.vvcast` cast bundle ICD (export/import tar), referenced from `CONTRACT.md`.
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
@@ -80,8 +82,8 @@ of these areas, update the matching doc.
 ## Commands
 
 ```bash
-npm run typecheck   # tsc --noEmit && tsc -p tsconfig.scripts.json -- the CI gate; run before pushing
-npm test            # vitest run (1200+ tests)
+npm run typecheck   # tsc --noEmit && tsc -p tsconfig.scripts.json && tsc -p tsconfig.tests.json -- the CI gate; run before pushing
+npm test            # vitest run (3400+ tests)
 npm run conformance # the module conformance suites (a module must pass these to be installable)
 npm run dev         # wrangler dev
 npm run deploy      # wrangler deploy
@@ -188,8 +190,10 @@ bumps root `package.json` `version` and adds a top-of-file `CHANGELOG.md` entry 
 **TAG-GATED deploy.** `.github/workflows/ci.yml` deploys the studio Worker **only** on a pushed
 `v*` tag. A bare merge to `main` runs CI only and does **not** redeploy production.
 
-`studio-release.yml` also runs on `v*` and builds the studio release asset; it asserts
-`vX.Y.Z` == `package.json` version.
+`studio-release.yml` is a reusable workflow (`workflow_call`), not a separate trigger: the same `v*`
+CI run calls it from the `studio-release` job in `ci.yml` (gated on `ci`, `container-tests`,
+`migrations-gate`, `assert-on-main`). It builds the studio release asset, asserts `vX.Y.Z` ==
+`package.json` version, and advances the hosted studio pin.
 
 ### Dependency order
 
