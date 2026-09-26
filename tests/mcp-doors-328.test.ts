@@ -1,17 +1,16 @@
-// cf#328: two Studio MCP doors share this repo's wrangler configs; only production is CI-deployed.
+// cf#328: production Studio MCP door identity + retired propagandhi door stays gone.
 //
-// The propagandhi door (wrangler.mcp.propagandhi.toml, script vivijure-studio-mcp-flatliners) is
-// intentional and hand-deployed (fleet secrets). A hand-deployed worker has no automatic redeploy,
-// so the defect that filed this issue was "three weeks stale and serverInfo 0.1.0" with nothing to
-// flag it. This test is the package-level drift detector:
+// The second door (wrangler.mcp.propagandhi.toml, script vivijure-studio-mcp-flatliners,
+// hostname studio-mcp-propagandhi.skyphusion.org) was deleted 2026-08-17 on Conrad apply
+// word. This test is the package-level detector:
 //
-//   1. both tracked MCP wrangler configs point at @skyphusion-labs/vivijure-mcp (not a stale fork
-//      path, not vivijure-core's old mcp.js entry);
-//   2. the installed package's wire serverInfo.version matches its package.json version (the
-//      hardcoded 0.1.0 bug vivijure-mcp v1.1.0 fixed -- if the pin regresses, we fail here).
+//   1. the production wrangler template points at @skyphusion-labs/vivijure-mcp;
+//   2. the installed package's wire serverInfo.version matches its package.json version
+//      (the hardcoded 0.1.0 bug vivijure-mcp v1.1.0 fixed);
+//   3. the retired propagandhi config is not reintroduced.
 //
-// It cannot see the LIVE Cloudflare bundle without fleet API tokens. After a pin bump, redeploy
-// the propagandhi door by hand (docs/mcp.md). Production stays on the tag CI path unchanged.
+// It cannot see the LIVE Cloudflare bundle without fleet API tokens. Production stays on
+// the tag CI path.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
@@ -20,11 +19,8 @@ import { join } from "node:path";
 const ROOT = process.cwd();
 const MCP_PKG = "@skyphusion-labs/vivijure-mcp";
 const MCP_MAIN = `node_modules/${MCP_PKG}/dist/mcp.js`;
-
-const DOORS: { file: string; role: string }[] = [
-  { file: "wrangler.mcp.toml.example", role: "production template (CI-rendered)" },
-  { file: "wrangler.mcp.propagandhi.toml", role: "propagandhi / local (hand-deployed)" },
-];
+const PROD_TOML = "wrangler.mcp.toml.example";
+const RETIRED_TOML = "wrangler.mcp.propagandhi.toml";
 
 function read(rel: string): string {
   return readFileSync(join(ROOT, rel), "utf8");
@@ -40,31 +36,16 @@ function nameFromToml(toml: string): string | null {
   return m ? m[1] : null;
 }
 
-describe("cf#328 MCP doors (package identity + serverInfo pin)", () => {
-  it("both wrangler configs point at the same vivijure-mcp entry", () => {
-    for (const d of DOORS) {
-      expect(existsSync(join(ROOT, d.file)), `${d.file} missing (${d.role})`).toBe(true);
-      const toml = read(d.file);
-      const main = mainFromToml(toml);
-      expect(main, `${d.file} main=`).toBe(MCP_MAIN);
-    }
+describe("cf#328 MCP doors (package identity + retired second door)", () => {
+  it("production wrangler template points at the vivijure-mcp entry", () => {
+    expect(existsSync(join(ROOT, PROD_TOML)), `${PROD_TOML} missing`).toBe(true);
+    const toml = read(PROD_TOML);
+    expect(mainFromToml(toml), `${PROD_TOML} main=`).toBe(MCP_MAIN);
+    expect(nameFromToml(toml)).toBe("vivijure-studio-mcp");
   });
 
-  it("production template and propagandhi door keep distinct script names", () => {
-    // A shared script name would make a hand redeploy of propagandhi overwrite production MCP.
-    const prod = nameFromToml(read("wrangler.mcp.toml.example"));
-    const prop = nameFromToml(read("wrangler.mcp.propagandhi.toml"));
-    expect(prod).toBe("vivijure-studio-mcp");
-    expect(prop).toBe("vivijure-studio-mcp-flatliners");
-    expect(prod).not.toBe(prop);
-  });
-
-  it("propagandhi config documents intentional hand-deploy (cf#328 disposition)", () => {
-    const toml = read("wrangler.mcp.propagandhi.toml");
-    expect(toml).toMatch(/cf#328|cf#328/i);
-    expect(toml).toMatch(/hand[- ]deploy/i);
-    expect(toml).toMatch(/NOT CI-deployed|not CI-deployed/i);
-    expect(toml).toMatch(/vivijure-local\.skyphusion\.org/);
+  it("retired propagandhi wrangler config is not in the tree", () => {
+    expect(existsSync(join(ROOT, RETIRED_TOML))).toBe(false);
   });
 
   it("installed vivijure-mcp serverInfo.version matches package.json version", () => {
