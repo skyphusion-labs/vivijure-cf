@@ -118,6 +118,38 @@ export async function copyChatArtifactToRenders(
   return { key, mime };
 }
 
+/** Delete the portrait object that a successful replacement has superseded (local#407 parity).
+ *
+ *  ORDERING IS THE POINT. This runs only AFTER the replacement object is stored and AFTER the row
+ *  write returned a row, so anything that throws earlier leaves `portrait_key` naming an object
+ *  that still exists. The old code deleted first, so any throw in between left the row internally
+ *  consistent and pointing at nothing: a record whose validity cannot be established from the
+ *  record.
+ *
+ *  The window was never only a transient R2 fault. `copyChatArtifactToRenders` throws 404 on a
+ *  missing source, 413 over 16 MB, and 400 on a mime the allowlist or the magic-byte sniff
+ *  rejects, all BEFORE it writes a byte. Those are ordinary client errors on the request that just
+ *  deleted the portrait, not a narrow race.
+ *
+ *  A failing delete stays best-effort and never fails the request: an orphan wastes bytes, a
+ *  dangling reference wastes an investigation.
+ *
+ *  SKIPS `oldKey === newKey`. A re-upload with the same mime resolves to the same
+ *  `cast/<id>/portrait.<ext>` key and the put already overwrote it in place, so there is no
+ *  superseded object; deleting it here would destroy the object just written. */
+async function deleteSupersededPortrait(
+  env: Env,
+  oldKey: string | null | undefined,
+  newKey: string,
+): Promise<void> {
+  if (!oldKey || oldKey === newKey) return;
+  try {
+    await env.R2_RENDERS.delete(oldKey);
+  } catch {
+    /* best-effort GC: an orphan is strictly better than a dangling portrait_key */
+  }
+}
+
 export async function handleCastPortraitUpload(
   request: Request,
   env: Env,
@@ -138,15 +170,17 @@ export async function handleCastPortraitUpload(
       }
 
       if (typeof body.from_chat_artifact === "string" && body.from_chat_artifact) {
-        if (cur.portrait_key) {
-          try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
-        }
+        // local#407 parity: copy, write the row, and only then drop the superseded object.
         const { key, mime } = await copyChatArtifactToRenders(
           env,
           body.from_chat_artifact,
           `cast/${id}/portrait`,
         );
         const row = await setPortrait(env, id, key, mime);
+        // Guarded on `row` on purpose. This door still answers 200 { cast: null } when the row
+        // write produces nothing (the local#351 defect, not yet ported here and filed separately),
+        // and in that case `portrait_key` was never updated, so the old object must survive.
+        if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
         return json({ cast: row ? toPublicCast(row) : null });
       }
 
@@ -162,14 +196,13 @@ export async function handleCastPortraitUpload(
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
     if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
     const mime = requireCastImageMime(contentType, buf);
-    if (cur.portrait_key) {
-      try { await env.R2_RENDERS.delete(cur.portrait_key); } catch { /* ignore */ }
-    }
     const key = `cast/${id}/portrait.${extFromMime(mime)}`;
+    // local#407 parity: store, write the row, and only then drop the superseded object.
     await env.R2_RENDERS.put(key, new Uint8Array(buf), {
       httpMetadata: { contentType: mime },
     });
     const row = await setPortrait(env, id, key, mime);
+    if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
     return json({ cast: row ? toPublicCast(row) : null });
   });
 }
