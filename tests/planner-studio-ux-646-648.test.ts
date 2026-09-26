@@ -41,14 +41,21 @@ describe("cf#648 cast is who is in the movie", () => {
 });
 
 describe("cf#646 render is three choices then spend", () => {
-  it("Render has a first-class blender pick, and offers no MuseTalk (cf#690, cf#783)", () => {
+  it("Render has a finish-picks section, projected rather than compiled in (cf#690, cf#780)", () => {
     expect(html).toMatch(/id="planner-finish-picks"/);
-    expect(html).toMatch(/id="planner-finish-blender"/);
-    expect(html).not.toMatch(/id="planner-finish-upscale"/);
-    // cf#783: MuseTalk is ruled out permanently. The panel must not offer a finish step that
-    // cannot run, and this is the assertion that keeps the copy from creeping back.
+    expect(html).toMatch(/id="planner-finish-pick-list"/);
+    // cf#780: no per-module control id belongs in this markup. One checkbox per installed
+    // `finish` module declaring participation "opt_in" is built at render time by
+    // planner-render-config.js renderFinishPicks(), and each label is that module's own
+    // provides[0].label. A default-participation module (finish-upscale, finish-rife) still gets
+    // no control, but that is now DERIVED from its manifest rather than asserted by absence here.
     expect(html).not.toMatch(/id="planner-finish-lipsync"/);
+    // cf#783: MuseTalk is ruled out permanently, so the panel must not offer it in COPY either.
+    // The id assertion above cannot see a sentence; this is what keeps the offer from creeping
+    // back into the note now that the controls themselves are projected.
     expect(html).not.toMatch(/MuseTalk/i);
+    expect(html).not.toMatch(/id="planner-finish-blender"/);
+    expect(html).not.toMatch(/id="planner-finish-upscale"/);
   });
 
   it("motion is the default job and stills is a peer choice", () => {

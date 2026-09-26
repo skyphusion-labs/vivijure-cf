@@ -539,6 +539,10 @@ body.sw-open .planner-layout { overflow-x: hidden; }
   border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2);
 }
 .planner-finish-picks[hidden] { display: none; }
+/* cf#780: the opt-in picks are projected into this host rather than sitting in the markup, so
+   they are one level deeper than they used to be. Carry the column rhythm down, or the generated
+   checkboxes stack flush and lose the 10px gap they got as direct children of the box above. */
+.planner-finish-pick-list { display: flex; flex-direction: column; gap: 10px; }
 .planner-finish-picks-lede { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .planner-finish-picks-note { margin: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.4; }
 

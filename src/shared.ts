@@ -82,3 +82,11 @@ export function parseByteRange(header: string | null | undefined, size: number):
   if (end >= size) end = size - 1; // clamp last-byte-pos to the object end
   return { offset: start, length: end - start + 1, start, end };
 }
+
+// F4: the known artifact namespaces. The serve route is scoped to these so it can only ever return a
+// real artifact, not an arbitrary R2 object. ADD a prefix here when a feature introduces a new one
+// (a served key outside this set is rejected).
+export const ARTIFACT_PREFIXES = [
+  "audio/", "bundles/", "cast/", "cast-clean/", "cast-gen/", "character-refs/",
+  "characters/", "clips/", "loras/", "out/", "renders/", "uploads/",
+];

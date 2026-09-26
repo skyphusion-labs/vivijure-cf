@@ -428,7 +428,7 @@ function collectRenderStageState() {
     filmTitle: readVal("#planner-film-title"),
     filmSubtitle: readVal("#planner-film-subtitle"),
     filmCredits: readVal("#planner-film-credits"),
-    finishBlender: readCheck("#planner-finish-blender"),
+    finishPicks: readFinishPicks(),
     styleLock: readVal("#planner-style-lock"),
     voiceLock: readVal("#planner-voice-lock"),
     // v0.44.0: persist the render start timestamp so an elapsed +
@@ -452,6 +452,20 @@ function readVal(selector) {
 function readCheck(selector) {
   const el = $(selector);
   return el ? !!el.checked : null;
+}
+
+// cf#780: the opt-in finish choices are PROJECTED from the registry, so the draft persists a map
+// keyed by module name instead of one hand-added field per module. A new opt_in finish module
+// round-trips with no edit here. Returns {} when the picks have not rendered yet, which restore
+// reads as "nothing to say", not as "everything off".
+function readFinishPicks() {
+  const out = {};
+  const els = document.querySelectorAll(".planner-finish-pick");
+  for (const el of els) {
+    const name = el.dataset && el.dataset.finishModule;
+    if (name) out[name] = !!el.checked;
+  }
+  return out;
 }
 
 function lastKnownStatusFromPanel() {
