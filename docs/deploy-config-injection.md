@@ -16,7 +16,9 @@ If you know Jenkins, you already know this pattern under different names. The ma
 - **Structure** (safe to publish): binding *names* (`R2_RENDERS`, `DB`, `MODULE_*`), the worker name,
   route patterns, the module service names. This is the useful, readable shape of the worker.
 - **Account-specific values** (do not publish): the CF Access **AUD**, the D1 `database_id`, the
-  Workers-VPC `service_id`s, the rate-limit `namespace_id`, the Secrets Store id. None is a
+  rate-limit `namespace_id`, the Secrets Store id, and the operator's media origins (the `*_URL` /
+  `*_DOORS` vars). (Workers-VPC `service_id`s used to be in this list; the template no longer binds
+  any VPC service.) None is a
   *credential* (you still need a signed JWT / API token to do anything), but they are account-internal
   identifiers, and the AUD in particular is the thing we just spent effort getting out of the public surface.
 
@@ -42,8 +44,8 @@ change; the moving parts do not.
 
 | Jenkins | GitHub Actions | In this repo |
 |---|---|---|
-| Credentials store (Manage Jenkins -> Credentials) / secret files on the controller | **Encrypted repository secrets** (repo Settings -> Secrets and variables -> Actions) | `ACCESS_AUD`, `VPC_*_ID`, ... |
-| Non-secret build parameters | **Repository variables** (same page, Variables tab; readable in logs) | `AUTH_MODE`, `SECRETS_STORE_ID`, `ENABLE_WFP_DISPATCH`, `R2_S3_BUCKET` |
+| Credentials store (Manage Jenkins -> Credentials) / secret files on the controller | **Encrypted repository secrets** (repo Settings -> Secrets and variables -> Actions) | `ACCESS_AUD`, `D1_DATABASE_ID`, ... |
+| Non-secret build parameters | **Repository variables** (same page, Variables tab; readable in logs) | `AUTH_MODE`, `SECRETS_STORE_ID`, `ENABLE_WFP_DISPATCH`, `R2_S3_BUCKET`, `VIDEO_FINISH_URL`, ... |
 | Config File Provider / `withCredentials` writing a file at build | The **render step** (`envsubst` + `sed`) in the workflow | `Render core wrangler.toml` step in `ci.yml` |
 | Build agent / node | GitHub-hosted **runner** (here a `node:22-alpine` container on `ubuntu-latest`) | `runs-on: ubuntu-latest`, `container: node:22-alpine` |
 | Pipeline `stage { }` | A **job** (`jobs:`) made of **steps** (`steps:`) | `ci` job, `deploy` job |
@@ -75,10 +77,11 @@ a conditional uncomment of the Workers-for-Platforms block.
 | `${ACCESS_TEAM_DOMAIN}` | Zero-Trust team hostname (`<team>.cloudflareaccess.com`) -- F2 JWT `iss` check (access mode) |
 | `${ACCESS_AUD}` | the vivijure Access application AUD -- F2 JWT `aud` check (access mode) |
 | `${D1_DATABASE_ID}` | the D1 database UUID |
-| `${VPC_VIDEO_FINISH_ID}` / `${VPC_IMAGE_PREP_ID}` / `${VPC_AUDIO_BEAT_SYNC_ID}` / `${VPC_AUDIO_MIX_ID}` | Workers-VPC service IDs |
 | `${SPEND_RATE_LIMITER_NS_ID}` | the rate-limit namespace id |
 | `${R2_S3_ENDPOINT}` | the account-scoped R2 S3 API host (`https://<account-id>.r2.cloudflarestorage.com`), an identifier the render DERIVES from `CLOUDFLARE_ACCOUNT_ID` -- not stored anywhere (#238 follow-up) |
 | `${R2_S3_BUCKET}` | the render bucket name the S3 presign targets; defaults to `vivijure` (the `R2_RENDERS` bucket), overridable via the optional `R2_S3_BUCKET` repo variable |
+| `${VIDEO_FINISH_URL}` / `${IMAGE_PREP_URL}` / `${AUDIO_BEAT_SYNC_URL}` / `${AUDIO_MIX_URL}` / `${AUDIO_MASTER_URL}` | public HTTPS origins of the five media containers (repo **variables**); empty = that service is off. They replaced the old `${VPC_*_ID}` Workers-VPC tokens, which the template no longer carries |
+| `${FINISH_UPSCALE_DOORS}` / `${SPEECH_UPSCALE_DOORS}` / `${FINISH_BLENDER_DOORS}` | comma-separated HTTPS origins of the on-box GPU finish doors (repo **variables**); empty = RunPod path |
 
 **Two fills that are NOT `${}` tokens** (kept out of envsubst so the committed template stays
 free-self-host-safe by default):
@@ -114,16 +117,31 @@ of truth from now on -- **edit the `.example`, not the real file**, or your chan
 Set once. Sensitive IDs go in **secrets** (write-only; values come from the encrypted store, never
 typed into a PR); non-sensitive build parameters go in **variables** (readable in logs):
 ```
-printf '%s' "$VALUE" | gh secret set ACCESS_AUD --repo skyphusion-labs/vivijure
-gh variable set AUTH_MODE --repo skyphusion-labs/vivijure --body token
-gh variable set SECRETS_STORE_ID --repo skyphusion-labs/vivijure --body "<store-id>"
-gh secret list  --repo skyphusion-labs/vivijure        # names only; values are not readable
-gh variable list --repo skyphusion-labs/vivijure
+printf '%s' "$VALUE" | gh secret set ACCESS_AUD --repo skyphusion-labs/vivijure-cf
+gh variable set AUTH_MODE --repo skyphusion-labs/vivijure-cf --body token
+gh variable set SECRETS_STORE_ID --repo skyphusion-labs/vivijure-cf --body "<store-id>"
+gh variable set VIDEO_FINISH_URL --repo skyphusion-labs/vivijure-cf --body "https://<video-finish-origin>"
+gh secret list  --repo skyphusion-labs/vivijure-cf        # names only; values are not readable
+gh variable list --repo skyphusion-labs/vivijure-cf
 ```
-> Which is which here: `AUTH_MODE`, `SECRETS_STORE_ID`, `ENABLE_WFP_DISPATCH`, and the optional
-> `R2_S3_BUCKET` are **variables** (identifiers / switches, not sensitive -- the Secrets Store id was
-> public in the repo before #398 templated it out). The AUD, the D1/VPC/rate-limit ids stay
-> **secrets**. The workflow reads `${{ vars.NAME }}` for variables and `${{ secrets.NAME }}` for secrets.
+> Which is which here: `AUTH_MODE`, `SECRETS_STORE_ID`, `ENABLE_WFP_DISPATCH`, the optional
+> `R2_S3_BUCKET`, and the eight media vars `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
+> `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, `FINISH_UPSCALE_DOORS`, `SPEECH_UPSCALE_DOORS`,
+> `FINISH_BLENDER_DOORS` are **variables** (identifiers / switches, not sensitive -- the Secrets Store
+> id was public in the repo before #398 templated it out). The AUD, `ACCESS_TEAM_DOMAIN`, and the
+> D1 / rate-limit ids (`D1_DATABASE_ID`, `SPEND_RATE_LIMITER_NS_ID`) stay **secrets**, beside
+> `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`. The workflow reads `${{ vars.NAME }}` for variables
+> and `${{ secrets.NAME }}` for secrets. (`ci.yml` still passes `VPC_*_ID` secrets into its render and
+> module steps; nothing in the template consumes them any more, so they need not exist.)
+>
+> Other names the tag workflow reads, optional unless noted (unset = that step is a logged no-op): variables
+> `CORE_ONLY_DEPLOY` (`1` = deploy only the finish satellites in `scripts/finish-satellite-modules.txt`
+> plus the core), `CF_ZONE_ID` + `CF_PURGE_HOST` with secret `CF_CACHE_PURGE_TOKEN` (edge-cache purge
+> of `/welcome`), `MCP_HOST` + `MCP_STUDIO_URL` (Studio MCP Worker deploy, see [mcp.md](mcp.md)),
+> `R2_RELEASES_BUCKET` (release mirror bucket, default `vivijure-studio-releases`), and secret
+> `STUDIO_PIN_VARIABLE_TOKEN` (advances the hosted studio pin in vivijure-control-plane;
+> `scripts/advance-studio-pin.sh` skips it on a fork but FAILS the release on the canonical
+> `skyphusion-labs/vivijure-cf` when it is unset).
 
 ### 3d. The render step (`.github/workflows/ci.yml`, before `Apply D1 migrations`)
 The authoritative step is `ci.yml`; this is its shape (guards abbreviated). It fills all three ways
@@ -135,15 +153,19 @@ described in 3a and fails closed at each:
     ACCESS_TEAM_DOMAIN:       ${{ secrets.ACCESS_TEAM_DOMAIN }}
     ACCESS_AUD:               ${{ secrets.ACCESS_AUD }}
     D1_DATABASE_ID:           ${{ secrets.D1_DATABASE_ID }}
-    VPC_VIDEO_FINISH_ID:      ${{ secrets.VPC_VIDEO_FINISH_ID }}
-    VPC_IMAGE_PREP_ID:        ${{ secrets.VPC_IMAGE_PREP_ID }}
-    VPC_AUDIO_BEAT_SYNC_ID:   ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
-    VPC_AUDIO_MIX_ID:         ${{ secrets.VPC_AUDIO_MIX_ID }}
     SPEND_RATE_LIMITER_NS_ID: ${{ secrets.SPEND_RATE_LIMITER_NS_ID }}
     SECRETS_STORE_ID:         ${{ vars.SECRETS_STORE_ID }}       # sed-fill target (3a)
     ENABLE_WFP_DISPATCH:      ${{ vars.ENABLE_WFP_DISPATCH }}     # opt-in uncomment (3a)
     CLOUDFLARE_ACCOUNT_ID:    ${{ secrets.CLOUDFLARE_ACCOUNT_ID }} # also builds R2_S3_ENDPOINT
     R2_S3_BUCKET:             ${{ vars.R2_S3_BUCKET }}            # optional override; unset -> vivijure
+    VIDEO_FINISH_URL:         ${{ vars.VIDEO_FINISH_URL }}        # media origins; empty = off (same for the 7 below)
+    IMAGE_PREP_URL:           ${{ vars.IMAGE_PREP_URL }}
+    AUDIO_BEAT_SYNC_URL:      ${{ vars.AUDIO_BEAT_SYNC_URL }}
+    AUDIO_MIX_URL:            ${{ vars.AUDIO_MIX_URL }}
+    AUDIO_MASTER_URL:         ${{ vars.AUDIO_MASTER_URL }}
+    FINISH_UPSCALE_DOORS:     ${{ vars.FINISH_UPSCALE_DOORS }}
+    SPEECH_UPSCALE_DOORS:     ${{ vars.SPEECH_UPSCALE_DOORS }}
+    FINISH_BLENDER_DOORS:     ${{ vars.FINISH_BLENDER_DOORS }}
   run: |
     set -eu
     apk add --no-cache gettext >/dev/null                 # node:22-alpine has no envsubst; gettext provides it
@@ -153,24 +175,31 @@ described in 3a and fails closed at each:
     [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo "::error::CLOUDFLARE_ACCOUNT_ID unset"; exit 1; }
     R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
     R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
-    # 3) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
-    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
-    envsubst "$VARS" < wrangler.toml.example > wrangler.toml
-    # 4) No placeholder may survive OUTSIDE comments (a missing secret leaves a literal ${...}); comment
+    # 3) HOSTED strips first (cf#560): drop the LOCAL-GPU block and the finish-lipsync SATELLITE block,
+    #    each via its one shared script (both refuse if the strip did not do what it claims).
+    sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+    sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
+    mv .wrangler.hosted2.toml .wrangler.hosted.toml
+    # 4) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
+    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+    envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml; rm -f .wrangler.hosted.toml
+    # 5) No placeholder may survive OUTSIDE comments (a missing secret leaves a literal ${...}); comment
     #    prose mentioning ${...} is fine. -F keeps '${' literal on every grep (GNU vs busybox differ).
     if grep -v '^[[:space:]]*#' wrangler.toml | grep -qF '${'; then echo "::error::unsubstituted placeholder"; exit 1; fi
-    # 5) Mode-aware auth guard: AUTH_MODE non-empty always; access mode also needs the Access vars non-empty
-    #    (a blank would un-arm the in-worker gate -> DENY 503). Plus the R2 endpoint must be a well-formed host.
+    # 6) Mode-aware auth guard: AUTH_MODE non-empty always; access mode also needs the Access vars non-empty
+    #    (a blank would un-arm the in-worker gate -> DENY 503). Plus the R2 endpoint must be a well-formed
+    #    host and the R2 bucket non-empty.
     grep -Eq 'AUTH_MODE = ".+"' wrangler.toml || { echo "::error::AUTH_MODE empty"; exit 1; }
     if [ "$AUTH_MODE" = access ]; then
       grep -Eq 'ACCESS_AUD = ".+"' wrangler.toml && grep -Eq 'ACCESS_TEAM_DOMAIN = ".+"' wrangler.toml || { echo "::error::F2 vars empty"; exit 1; }
     fi
     grep -Eq 'R2_S3_ENDPOINT = "https://[0-9a-f]+\.r2\.cloudflarestorage\.com"' wrangler.toml || { echo "::error::R2_S3_ENDPOINT malformed"; exit 1; }
-    # 6) Opt-in WfP: uncomment the [[dispatch_namespaces]] block ONLY when ENABLE_WFP_DISPATCH=1 (namespace pre-created).
+    grep -Eq 'R2_S3_BUCKET = ".+"' wrangler.toml || { echo "::error::R2_S3_BUCKET empty"; exit 1; }
+    # 7) Opt-in WfP: uncomment the [[dispatch_namespaces]] block ONLY when ENABLE_WFP_DISPATCH=1 (namespace pre-created).
     if [ "${ENABLE_WFP_DISPATCH:-}" = 1 ]; then
       sed -i -e 's/^# \(\[\[dispatch_namespaces\]\]\)$/\1/' -e 's/^# \(binding = "MODULE_DISPATCH"\)$/\1/' -e 's/^# \(namespace = "vivijure-modules"\)$/\1/' wrangler.toml
     fi
-    # 7) sed-fill the Secrets Store id (core [[secrets_store_secrets]]) from the repo variable; fail closed on a survivor.
+    # 8) sed-fill the Secrets Store id (core [[secrets_store_secrets]]) from the repo variable; fail closed on a survivor.
     [ -n "${SECRETS_STORE_ID:-}" ] || { echo "::error::SECRETS_STORE_ID unset"; exit 1; }
     sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/${SECRETS_STORE_ID}/g" wrangler.toml
     grep -q "REPLACE_WITH_" wrangler.toml && { echo "::error::store_id placeholder survived"; exit 1; } || true
@@ -180,14 +209,23 @@ Things worth understanding:
   already present and you can drop this line.
 - **Explicit `VARS` list** (the SHELL-FORMAT arg to `envsubst`): without it, `envsubst` substitutes
   *every* `${...}` it finds, which can clobber unrelated tokens (and the commented WfP block). Listing
-  only ours means any other `${...}` in the file is left alone. Safer and self-documenting.
+  only ours means any other `${...}` in the file is left alone. Safer and self-documenting. (The real
+  `ci.yml` list and env block still name `$VPC_VIDEO_FINISH_ID` / `$VPC_IMAGE_PREP_ID` /
+  `$VPC_AUDIO_BEAT_SYNC_ID` / `$VPC_AUDIO_MIX_ID`; the template has no such tokens, so they are inert.)
 - **Three fills, all fail-closed**: envsubst for the `${}` tokens, a `sed` for the Secrets Store id,
   and a conditional uncomment for WfP. A missing secret leaves a literal `${NAME}` (caught by grep); a
   *blank* secret renders empty and the mode-aware guard rejects it where it matters (`AUTH_MODE`, and
   the Access vars in access mode); a stray `REPLACE_WITH_` marker fails the store-id fill.
-- The **module deploy loop** (earlier in the `deploy` job) does the same `SECRETS_STORE_ID` sed-fill
-  per `modules/*/wrangler.toml`, plus a `REPLACE_WITH_VPC_*_ID` fill for the media modules (#520),
-  before each `wrangler deploy` -- the same free-self-host-safe placeholder discipline as the core.
+- The **module deploy loop** (earlier in the `deploy` job, `scripts/deploy-module-workers.sh`) runs
+  `scripts/fill-module-placeholders.sh` on each `modules/*/wrangler.toml` before its `wrangler deploy`
+  -- the same free-self-host-safe placeholder discipline as the core. It fills
+  `REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID` and `REPLACE_WITH_D1_DATABASE_ID` (the `TELEMETRY_DB`
+  binding, cf#279), `REPLACE_WITH_R2_S3_ENDPOINT` (from `R2_S3_ENDPOINT` or derived from
+  `CLOUDFLARE_ACCOUNT_ID`) and `REPLACE_WITH_R2_S3_BUCKET` (default `vivijure`), and the
+  `${VIDEO_FINISH_URL}` / `${AUDIO_*_URL}` / `${IMAGE_PREP_URL}` / `${*_DOORS}` vars (unset = empty =
+  off). It REFUSES a leftover `[[vpc_services]]` block or any `${VPC_*}` / `REPLACE_WITH_VPC_*`
+  placeholder (the #520 VPC fill is gone), and any surviving non-comment `REPLACE_WITH_*` or
+  `${R2_S3_*}`.
 
 ### 3d-bis. HOW MANY PATHS RENDER THIS TEMPLATE (cf#560)
 
@@ -208,8 +246,8 @@ the workflow half automatically and refuses if a member does not call the shared
 
 | Path | Kind | local-gpu | Mechanism |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | HOSTED, prod studio deploy | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
-| `.github/workflows/studio-release.yml` | HOSTED, the tenant release artifact | forbidden | calls `scripts/strip-local-gpu.sh`, unconditionally |
+| `.github/workflows/ci.yml` | HOSTED, prod studio deploy | forbidden | calls `scripts/strip-local-gpu.sh` (then `scripts/strip-finish-lipsync.sh`), unconditionally |
+| `.github/workflows/studio-release.yml` | HOSTED, the tenant release artifact | forbidden | calls `scripts/strip-local-gpu.sh` (then `scripts/strip-finish-lipsync.sh`), unconditionally |
 | `deploy.sh` | SELF-HOST installer | **allowed** | its own strip, kept unless `INSTALL_LOCAL_GPU=1` |
 | `deploy/vivijure_deploy.py` (`render_core_toml`) | SELF-HOST installer (python) | allowed | no marker handling at all; see the note below |
 | `.dev-modbound/dev-modbound.sh` | LOCAL dev only | n/a | `wrangler dev --local`, never deploys |
@@ -229,6 +267,11 @@ that PERMITS the door defaulted it off, and the path that FORBIDS it had no swit
 base install does not create", and it has zero occurrences of `LOCAL-GPU`, `SATELLITE` or
 `SELFHOST-SKIP`, so it keeps the `MODULE_LOCAL_GPU` service binding.
 
+> **Since superseded (#764, CI-5):** `wrangler.toml.example` no longer contains a `MODULE_LOCAL_GPU`
+> binding at all; its `# >>> LOCAL-GPU:` block is comments only ("HOSTED NEVER BINDS THIS"). So no
+> render of the current template binds the door, whichever installer runs it, and the "core binding"
+> column below describes the template as it was when this note was written.
+
 **An earlier revision of this note called that a DANGLING binding. That was wrong, and the correction
 matters because the real failure mode is quieter than the one it named.** Nothing dangles:
 `module_dirs()` enumerates every `modules/*/wrangler.toml` with no exclusion, so the same installer
@@ -240,7 +283,7 @@ What actually differs is the DEFAULT, between the two self-host installers, for 
 
 | installer | local-gpu module | core binding | `LOCAL_BACKEND_*` |
 |---|---|---|---|
-| `deploy.sh` | deployed only when `INSTALL_LOCAL_GPU=1` (`:141`) | stripped unless `=1` (`:398`) | seeded only when `=1` (`:239`) |
+| `deploy.sh` | deployed only when `INSTALL_LOCAL_GPU=1` (`MODULES="$MODULES local-gpu"`) | block stripped unless `=1` (the `KEEP_LGPU` awk strip in step 5) | seeded only when `=1` (step 3, `seed_secret LOCAL_BACKEND_URL` / `LOCAL_BACKEND_TOKEN`) |
 | `deploy/vivijure_deploy.py` | **always** (no switch) | **always kept** (no marker handling) | placeholder, always |
 
 `deploy.sh` is coherent: three actions, one switch, off by default. The python installer has no switch,
@@ -285,7 +328,7 @@ point of writing it down is that six of them had never been counted at all:
 |---|---|
 | `ci.yml` core render | `scripts/strip-local-gpu.sh`, unconditional |
 | `studio-release.yml` core render (and the `--dry-run` bundle it feeds) | the same script, unconditional |
-| `scripts/deploy-module-workers.sh` (module workers to our account) | `export EXCLUDE="... local-gpu"` in `ci.yml`, honoured at `deploy-module-workers.sh:57` |
+| `scripts/deploy-module-workers.sh` (module workers to our account) | `export EXCLUDE="... local-gpu"` in `ci.yml`, read into `EXCLUDE` and honoured by the per-module skip loop in `deploy-module-workers.sh` |
 | `scripts/fill-module-placeholders.sh` | runs inside the loop above; inherits its exclusion |
 | tenant module bundles in `studio-release.yml` | `scripts/tenant-release-modules.txt`, which does not list the door |
 | `ci.yml` MCP render (`wrangler.mcp.toml.example`) | structural: that template carries **0** `MODULE_` lines, so the strip would refuse it at its own floor |
@@ -318,8 +361,11 @@ The `deploy` job only runs for a pushed version tag:
 ```yaml
 if: startsWith(github.ref, 'refs/tags/v')
 ```
-A bare merge to `main` runs `ci` (typecheck + test) but never deploys -- so a docs merge cannot
-redeploy prod or unset F2. Releases are deliberate: `git tag v0.x.y && git push origin v0.x.y`.
+and `needs: [ci, container-tests, migrations-gate, assert-on-main]` (`assert-on-main` refuses a tag
+whose commit is not on `main`). A bare merge to `main` runs `ci` (typecheck + test) but never deploys
+-- so a docs merge cannot redeploy prod or unset F2. Releases are deliberate, on the 1.x SemVer line,
+with an annotated tag that matches `package.json` (`studio-release.yml` refuses a mismatch):
+`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
 
 ---
 
@@ -328,8 +374,8 @@ redeploy prod or unset F2. Releases are deliberate: `git tag v0.x.y && git push 
    (or a `REPLACE_WITH_*` marker for anything filled by `sed` rather than envsubst). Keep binding
    names / structure literal. Decide value-vs-structure with the section-3a question: "would another
    account need a different value here?"
-2. Render locally and **diff until byte-identical** (section 6) -- proves you parameterized exactly
-   the values and nothing structural.
+2. Render locally (with the same block strips your deploy applies) and **diff until byte-identical**
+   (section 6) -- proves you parameterized exactly the values and nothing structural.
 3. `echo "/wrangler.toml" >> .gitignore` and `git rm --cached wrangler.toml`.
 4. `gh secret set` / `gh variable set` each placeholder (from your encrypted store).
 5. Add the render step before `wrangler deploy` in the workflow (copy 3d; drop `apk add` if not Alpine).
@@ -341,13 +387,21 @@ redeploy prod or unset F2. Releases are deliberate: `git tag v0.x.y && git push 
 A fresh clone has no `wrangler.toml`. Render it once (token mode needs no `ACCESS_*`; derive the R2
 endpoint from your account id, and fill the Secrets Store id):
 ```
-export AUTH_MODE=token D1_DATABASE_ID=... CLOUDFLARE_ACCOUNT_ID=...
+export AUTH_MODE=token D1_DATABASE_ID=... CLOUDFLARE_ACCOUNT_ID=... SPEND_RATE_LIMITER_NS_ID=1001
 export ACCESS_TEAM_DOMAIN= ACCESS_AUD=
 export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" R2_S3_BUCKET=vivijure
-VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+# media origins (empty = that service is off)
+export VIDEO_FINISH_URL= IMAGE_PREP_URL= AUDIO_BEAT_SYNC_URL= AUDIO_MIX_URL= AUDIO_MASTER_URL=
+export FINISH_UPSCALE_DOORS= SPEECH_UPSCALE_DOORS= FINISH_BLENDER_DOORS=
+VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
 envsubst "$VARS" < wrangler.toml.example > wrangler.toml
 sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" wrangler.toml
 ```
+
+This plain render does NOT strip any marker block: the `SELFHOST-SKIP` `tail_consumers` line (which
+needs our `vivijure-tail` worker), and every `SATELLITE` block, stay in. Fine for `wrangler dev`; for a
+real deploy use `./deploy.sh` or strip them first (the hosted CI render runs
+`scripts/strip-local-gpu.sh` + `scripts/strip-finish-lipsync.sh`, section 3d).
 
 (`./deploy.sh` performs exactly this render for you -- including the profile strip, the workers.dev
 branch, the store-id fill, and the R2 endpoint derivation -- so the manual export is only for driving
@@ -359,9 +413,15 @@ branch, the store-id fill, and the R2 endpoint derivation -- so the manual expor
 
 ## 6. Safety checks
 - **Byte-identical render** (the proof you parameterized correctly, and that the render reproduces the
-  *armed* config -- critical, since a wrong AUD or a dropped F2 var would break Access):
+  *armed* config -- critical, since a wrong AUD or a dropped F2 var would break Access). Compare like
+  with like: a config produced by a render that STRIPS blocks (the hosted CI render strips LOCAL-GPU +
+  finish-lipsync; `deploy.sh` strips SELFHOST-SKIP and, per profile, SATELLITE / LOCAL-GPU) is not
+  byte-identical to a plain `envsubst` of the template, so apply the same strips first. For the hosted
+  render:
   ```
-  envsubst "$VARS" < wrangler.toml.example > /tmp/r.toml
+  sh scripts/strip-local-gpu.sh wrangler.toml.example /tmp/s1.toml
+  sh scripts/strip-finish-lipsync.sh /tmp/s1.toml /tmp/s2.toml
+  envsubst "$VARS" < /tmp/s2.toml > /tmp/r.toml
   sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" /tmp/r.toml
   diff wrangler.toml /tmp/r.toml && echo IDENTICAL
   ```

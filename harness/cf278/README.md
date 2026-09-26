@@ -65,7 +65,8 @@ VJ_STUDIO_TOKEN=... node harness/cf278/enumerate.mjs
 ```
 
 Env: `VJ_STUDIO_TOKEN` (bearer), `VJ_STUDIO_URL` (default prod studio), `VJ_CORE_DIST`,
-`VJ_REGISTRY_FILE`. Credentials come from the environment only; no path to a secret appears in any
+`VJ_REGISTRY_FILE`, `VJ_COVERAGE_JSON` (the coverage declaration as an inline JSON STRING, not a
+path; when set it replaces `coverage.json`). Credentials come from the environment only; no path to a secret appears in any
 file here.
 
 `VJ_REGISTRY_FILE` reads the registry from disk instead of fetching it, for the case where no token
