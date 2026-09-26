@@ -122,8 +122,13 @@ function makeDocument(roots: El[]) {
 let mod: {
   renderTierPicker: (render: unknown) => void;
   renderBackendSelector: (mods: unknown[], wrap: El) => boolean;
+  defaultSpeedDoor: (mods: unknown[]) => { name?: string } | null;
+  doorCanSpeak: (mod: unknown) => boolean;
+  talkingMotionMods: (mods: unknown[]) => unknown[];
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
-  collect: () => { motion_backend?: string };
+  collect: () => { motion_backend?: string; select?: { finish?: unknown } };
+  collectFinishSelect: () => unknown;
+  __testSeedFinish: (mods: unknown[], extra?: { speech?: unknown[] }) => void;
   restore: (o: unknown) => void;
   selectTier: (tier: string) => void;
   tierDisplayLabel: (t: { value: string; label?: string; blurb?: string }) => string;
@@ -155,8 +160,36 @@ function freshWrap(): El {
   return wrap;
 }
 
-describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)", () => {
-  it("renders 2 doors with NO preselection: select unselected, no radio checked", () => {
+function cloudBackend(name: string, label: string) {
+  return { name, provides: [{ label }], config_schema: {}, ui: { locality: "cloud" } };
+}
+
+function qualityBackend() {
+  return {
+    name: "own-gpu",
+    provides: [{ label: "Own GPU (Wan2.2 i2v)" }],
+    config_schema: {},
+    ui: { locality: "byo" },
+  };
+}
+
+function talkingDoor(name: string, usage: Record<string, unknown>) {
+  return {
+    name,
+    provides: [{ label: name }],
+    config_schema: {},
+    ui: { locality: name.startsWith("cf-") ? "cloud" : "cloud", order: 20 },
+    usage: {
+      scatter_native_audio: false,
+      min_seconds: 4,
+      max_seconds: 15,
+      ...usage,
+    },
+  };
+}
+
+describe("renderBackendSelector (default RunPod speed door; any other door is pickable)", () => {
+  it("2 unlabeled doors still have NO preselection (not a RunPod cloud door)", () => {
     const wrap = freshWrap();
     const shown = mod.renderBackendSelector([backend("a", "Door A"), backend("b", "Door B")], wrap);
     expect(shown).toBe(true);
@@ -164,10 +197,81 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     const sel = doc.getElementById("planner-motion-backend") as SelectEl;
     expect(sel).not.toBeNull();
     expect(sel.selectedIndex).toBe(-1);
-    expect(sel.value).toBe(""); // the #501 core guarantee: serving[0] is NOT auto-picked
+    expect(sel.value).toBe("");
     const radios = wrap.querySelectorAll(".planner-backend-radio");
     expect(radios.length).toBe(2);
     expect(radios.some((r) => r.checked === true)).toBe(false);
+  });
+
+  it("defaults to cf-seedance when a Cast sample is kept", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = {
+      castBindings: { A: "c1" },
+      castCatalog: [{ id: "c1", voice_ref_key: "cast/1/voice-ref.mp4" }],
+      storyboard: { scenes: [{ dialogue: { text: "Hello." } }] },
+    };
+    const wrap = freshWrap();
+    const mods = [
+      qualityBackend(),
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("cf-seedance", { native_audio: true, voice_ref: true, voice: "seed_and_prompt" }),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("cf-seedance");
+    mod.renderBackendSelector(mods, wrap);
+    const doc = (globalThis as Record<string, unknown>).document as ReturnType<typeof makeDocument>;
+    const sel = doc.getElementById("planner-motion-backend") as SelectEl;
+    expect(sel.value).toBe("cf-seedance");
+    win.planState = {};
+  });
+
+  it("defaults to InfiniteTalk when a line exists and no sample is kept", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = {
+      castBindings: {},
+      castCatalog: [],
+      storyboard: { scenes: [{ dialogue: { text: "Hello." } }] },
+    };
+    const mods = [
+      qualityBackend(),
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("cf-seedance", { native_audio: true, voice_ref: true, voice: "seed_and_prompt" }),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("infinitetalk");
+    win.planState = {};
+  });
+
+  it("defaults to Wan when no sample and no spoken line", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = { castBindings: {}, castCatalog: [], storyboard: { scenes: [] } };
+    const mods = [
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("alibaba-wan");
+    win.planState = {};
+  });
+
+  it("doorCanSpeak treats driving_audio as speaking", () => {
+    expect(mod.doorCanSpeak(talkingDoor("infinitetalk", { native_audio: false, driving_audio: true }))).toBe(true);
+    expect(mod.doorCanSpeak(talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true }))).toBe(true);
+    expect(mod.doorCanSpeak(qualityBackend())).toBe(false);
+    const talkers = mod.talkingMotionMods([
+      qualityBackend(),
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true }),
+    ]) as { name?: string }[];
+    expect(talkers.map((m) => m.name)).toEqual(["infinitetalk"]);
+  });
+
+  it("does not default to own-gpu or a CF door when no RunPod cloud door is installed", () => {
+    const wrap = freshWrap();
+    const mods = [qualityBackend(), cloudBackend("cf-seedance", "Seedance 2.0 (CF AI)")];
+    expect(mod.defaultSpeedDoor(mods)).toBeNull();
+    mod.renderBackendSelector(mods, wrap);
+    const doc = (globalThis as Record<string, unknown>).document as ReturnType<typeof makeDocument>;
+    const sel = doc.getElementById("planner-motion-backend") as SelectEl;
+    expect(sel.value).toBe("");
   });
 
   it("single backend builds a hidden select carrying that backend, no radio (#502/S14 behavior)", () => {
@@ -180,7 +284,10 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     expect(sel.value).toBe("solo"); // explicit default preserved: only one serving backend
     expect(wrap.querySelectorAll(".planner-backend-radio").length).toBe(0); // nothing to pick
     // collect against the rendered single-backend state emits the explicit backend, never blocks
-    expect(mod.collectForSubmit("")).toEqual({ motion_backend: "solo" });
+    expect(mod.collectForSubmit("")).toEqual({
+      motion_backend: "solo",
+      keyframe_backend: "keyframe",
+    });
   });
 
   it("2+ doors: caption carries a 'required' cue until a door is picked, then clears", () => {
@@ -191,7 +298,7 @@ describe("renderBackendSelector (vivijure#501: no default when 2+ doors serve)",
     expect(hint.textContent).toMatch(/^Required: pick which backend/i);
     mod.restore({ motion_backend: "a" }); // pick a door via the real restore path
     expect(hint.textContent).not.toMatch(/Required/);
-    expect(hint.textContent).toMatch(/^Pick which backend/i);
+    expect(hint.textContent).toMatch(/Talking doors are the default/i);
   });
 });
 
@@ -222,14 +329,32 @@ describe("collectForSubmit (vivijure#501: block submit until a door is chosen)",
 
   it("does NOT throw once a door is picked; carries the choice through", () => {
     selectDoc("a");
-    const out = mod.collectForSubmit("") as { motion_backend?: string };
+    const out = mod.collectForSubmit("") as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("a");
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
   it("does NOT throw when the pick arrives via expert JSON", () => {
     selectDoc("");
-    const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string };
+    const out = mod.collectForSubmit('{"motion_backend":"b"}') as { motion_backend?: string; keyframe_backend?: string };
     expect(out.motion_backend).toBe("b");
+    expect(out.keyframe_backend).toBe("keyframe");
+  });
+
+  it("defaults own-gpu motion to GPU keyframe stills", () => {
+    selectDoc("");
+    const out = mod.collectForSubmit('{"motion_backend":"own-gpu"}') as {
+      motion_backend?: string;
+      keyframe_backend?: string;
+    };
+    expect(out.motion_backend).toBe("own-gpu");
+    expect(out.keyframe_backend).toBe("keyframe");
+  });
+
+  it("keeps an explicit keyframe_backend", () => {
+    selectDoc("a");
+    const out = mod.collectForSubmit('{"keyframe_backend":"keyframe"}') as { keyframe_backend?: string };
+    expect(out.keyframe_backend).toBe("keyframe");
   });
 
   it("never blocks when zero backends are installed (no select rendered)", () => {
@@ -401,5 +526,64 @@ describe("selectTier with the projection ALREADY loaded (cf#62 Lane C)", () => {
     expect(sel.dataset.pendingValue).toBe("draft");
     mod.renderTierPicker(PROJECTION);
     expect(sel.value).toBe("draft");
+  });
+});
+
+describe("collectFinishSelect (cf#690)", () => {
+  function finishDoc(opts: { lipsync: boolean; blender: boolean }) {
+    const ids: Record<string, El> = {};
+    for (const [id, checked] of [
+      ["planner-finish-lipsync", opts.lipsync],
+      ["planner-finish-blender", opts.blender],
+    ] as const) {
+      const el = new El("input");
+      el.id = id;
+      el.checked = checked;
+      ids[id] = el;
+    }
+    (globalThis as Record<string, unknown>).document = {
+      createElement: (t: string) => new El(t),
+      getElementById: (id: string) => ids[id] || null,
+      querySelector: () => null,
+      querySelectorAll: () => [] as El[],
+    };
+  }
+
+  const installed = [
+    { name: "finish-lipsync", participation: "opt_in" },
+    { name: "finish-upscale", participation: "default" },
+    { name: "finish-blender", participation: "opt_in" },
+    { name: "finish-rife", participation: "default" },
+  ];
+
+  it("unchecked lipsync is the default finish set (native AV keeps talking)", () => {
+    finishDoc({ lipsync: false, blender: false });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
+  });
+
+  it("checking lipsync names it in plus the default modules", () => {
+    finishDoc({ lipsync: true, blender: false });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({
+      mode: "named",
+      modules: ["finish-lipsync", "finish-upscale", "finish-rife"],
+    });
+  });
+
+  it("naming blender emits the default modules plus finish-blender", () => {
+    finishDoc({ lipsync: true, blender: true });
+    mod.__testSeedFinish(installed);
+    expect(mod.collectFinishSelect()).toEqual({
+      mode: "named",
+      modules: ["finish-lipsync", "finish-upscale", "finish-blender", "finish-rife"],
+    });
+  });
+
+  it("lipsync on forces speech-upscale.enable", () => {
+    finishDoc({ lipsync: true, blender: false });
+    mod.__testSeedFinish(installed, { speech: [{ name: "speech-upscale" }] });
+    const out = mod.collect() as { config?: { "speech-upscale"?: { enable?: boolean } } };
+    expect(out.config && out.config["speech-upscale"] && out.config["speech-upscale"].enable).toBe(true);
   });
 });

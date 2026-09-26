@@ -244,8 +244,8 @@ surface is public by design, and there is nothing to write.
   there is physically nothing to spend even if a request reached a spend path. The demo gate is the
   independent SECOND barrier at the front door; absent bindings are the first.
 - **Own seeded D1, no prod data.** The demo binds its own D1 seeded from
-  `migrations/demo/0001_demo_seed.sql` (the 26 captured module manifests + fictional projects/cast +
-  completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
+  `migrations/demo/0001_demo_seed.sql` (captured module manifests -- see GET /api/modules -- plus fictional
+  projects/cast + completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
   can never auto-apply to prod (see the seed file header) and carries high explicit ids (>=9000).
 - **`host.readonly` projection (`@skyphusion-labs/vivijure-core modules/registry` `isDemoEnv`, the structural twin of
   `isDemoMode`; change both together).** `GET /api/modules` projects `host.readonly = true` in demo
@@ -265,7 +265,7 @@ surface is public by design, and there is nothing to write.
 ## 2. Job ids are capabilities (possession = access)
 
 Several mutating routes are keyed by a job id (`WHERE job_id = ?`): render progress/finish updates,
-scatter-child lookup, failure marks. There is no owner column to scope them by (identity strip), so
+failure marks. There is no owner column to scope them by (identity strip), so
 the security of these routes rests on the **capability** model: holding a valid job id IS the
 authorization for that job, and the ids are unguessable.
 
@@ -273,8 +273,9 @@ Every job id the worker mints comes from `crypto.randomUUID()` (122 bits of entr
 
 - render jobs: `clips-<uuid>`
 - film jobs: `film-<uuid>`
-- scatter parents: `scatter-<uuid>` (the synthetic parent id; see `scatterParentJobId`)
 - cast-refs jobs: `refs-<uuid>`
+
+Leftover `scatter-<uuid>` parent ids are retired: poll and cancel return 410.
 
 An attacker cannot enumerate or guess a 122-bit id, so possession is a real capability. Combined
 with section 1 (the whole surface is auth-gated to the single operator), there is no privilege
@@ -337,7 +338,7 @@ schemes, and control/non-ASCII bytes from steering an object reference.
 
 The render / train / generate routes each submit a RunPod GPU job or paid AI work, so an abused
 session can burn the operator's balance (denial-of-wallet). Every such POST route
-(`/api/storyboard/render`, `/api/render/clips`, `/api/render/film`, `.../render/scatter`,
+(`/api/storyboard/render`, `/api/render/clips`, `/api/render/film`,
 `.../render-from-keyframes`, `.../renders/:id/animate-cloud|animate-hybrid`,
 `/api/cast/:id/train-lora`, `/api/cast/:id/generate-refs`, `/api/storyboard/score-bed|music-generate`)
 passes a rate limiter before dispatch (`src/rate-limit.ts`, the spend surface is the single

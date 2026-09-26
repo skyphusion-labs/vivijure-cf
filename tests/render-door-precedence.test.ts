@@ -108,19 +108,6 @@ const AGENT: Case[] = [
     status: 400, contains: "no-such-backend" },
 ];
 
-// The scatter door. Its refusals use the panel's `bundleKey` spelling but its OWN scenes contract
-// (it takes shotIds, not scenes), so it is a third contract rather than a copy of either door above.
-const SCATTER: Case[] = [
-  { name: "no bundleKey", body: { shotIds: ["shot_01", "shot_02"], motion_backend: "alibaba-wan" },
-    status: 400, contains: "bundleKey required" },
-  { name: "unsafe bundleKey", body: { bundleKey: "../../etc/passwd", shotIds: ["shot_01", "shot_02"], motion_backend: "alibaba-wan" },
-    status: 400, contains: "bundleKey must be a plain relative key under bundles/" },
-  { name: "fewer than two shotIds", body: { bundleKey: BUNDLE, shotIds: ["shot_01"], motion_backend: "alibaba-wan" },
-    status: 400, contains: "shotIds[] required" },
-  { name: "unknown motion backend", body: { bundleKey: BUNDLE, shotIds: ["shot_01", "shot_02"], motion_backend: "no-such-backend" },
-    status: 400, contains: "no-such-backend" },
-];
-
 async function run(path: string, c: Case) {
   h.started = [];
   const res = await worker.fetch(post(path, c.body), c.env ?? env, ctx);
@@ -149,15 +136,6 @@ describe("cf#334: single-defect refusals are per-door contracts and must not mov
   for (const c of AGENT) {
     it(`agent door: ${c.name}`, async () => {
       const { res, text } = await run("/api/render/film", c);
-      expect(res.status, `body: ${text}`).toBe(c.status);
-      expect(text).toContain(c.contains);
-      expect(h.started.length, "must refuse BEFORE any GPU spend").toBe(0);
-    });
-  }
-
-  for (const c of SCATTER) {
-    it(`scatter door: ${c.name}`, async () => {
-      const { res, text } = await run("/api/storyboard/render/scatter", c);
       expect(res.status, `body: ${text}`).toBe(c.status);
       expect(text).toContain(c.contains);
       expect(h.started.length, "must refuse BEFORE any GPU spend").toBe(0);

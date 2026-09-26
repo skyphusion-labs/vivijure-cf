@@ -74,7 +74,7 @@ describe("a gone job names the transport that actually ran it", () => {
     // THE assertion. Naming RunPod for a job that ran on our iron is the defect.
     expect(err).not.toContain("RunPod");
     expect(err).toContain("door");
-    expect(err).toContain("shot_01");
+    expect(err).toContain(JOB);
     const urls = (rp.mock.calls as unknown as [unknown][]).map((c) => String(c[0] ?? ""));
     expect(urls.every((u) => !u.includes("runpod"))).toBe(true);
   });

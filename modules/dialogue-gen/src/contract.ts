@@ -62,6 +62,8 @@ export interface DialogueShotAudio {
   shot_id: string;
   audio_key: string;
   voice_id: string;
+  /** OPTIONAL, additive: seconds of the written WAV after pad/trim. */
+  duration_s?: number;
 }
 
 export interface DialogueOutput {

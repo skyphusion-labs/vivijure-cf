@@ -5,23 +5,19 @@
 import type { BundleScene, RegistryCharacter } from "./bundle";
 import type { KeyframeShot } from "./contract";
 
-// The image models this module can drive. FLUX-2 klein-9b is the default: cheapest (fixed 4-step),
-// fast, identity holds well, and it honors width/height so aspect is controllable. nano-banana-pro is
-// the quality-up option (more photoreal, slightly more faithful identity), pricier + slower.
+// Cloudflare Nano Banana 2 only. No FLUX. No RunPod. Hosted default stills
+// are GPU keyframe (own-gpu); this door is the optional CF stills path.
 export const MODELS = [
-  "@cf/black-forest-labs/flux-2-klein-9b",
-  "google/nano-banana-pro",
-  "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-dev",
+  "google/nano-banana-2",
 ] as const;
 export type Model = (typeof MODELS)[number];
 
 export const MIN_DIM = 512;
 export const MAX_DIM = 1536;
 
-/** Clamp a model id to one this module drives (default flux-2-klein-9b). */
-export function clampModel(v: unknown): Model {
-  return (MODELS as readonly string[]).includes(v as string) ? (v as Model) : MODELS[0];
+/** Clamp a model id to one this module drives (Cloudflare Nano Banana 2). */
+export function clampModel(_v: unknown): Model {
+  return MODELS[0];
 }
 
 /** Clamp a keyframe dimension to the model-safe range, default `fallback`. */
@@ -61,6 +57,20 @@ export function composePrompt(
   return `${lead}${scenePrompt.trim()}${idText}`;
 }
 
+/** Edit pass for Workers AI nano-banana-2: the first image is the scene plate, later
+ *  images are faces. Do not retouch a portrait into a new still. */
+export function composeEditPrompt(scenePrompt: string): string {
+  const scene = scenePrompt.trim();
+  return (
+    "Create a new cinematic film still from this description. "
+    + "This is a new film still. The people stand in the location in the first image. "
+    + "Keep their faces, hair, skin, and wardrobe. "
+    + "Do not move them onto a studio backdrop or grey paper. "
+    + "Do not copy the reference framing. "
+    + scene
+  );
+}
+
 // --- film-wide reference conditioning (cp#32) --------------------------------------------------
 //
 // The problem this closes: the ONLY film-wide element conditioning keyframes was the text style_prefix.
@@ -87,13 +97,15 @@ export interface FilmRefPlan {
  * Modelled as a STRING (not a static enum) on purpose: the contract ConfigField enum needs fixed
  * `values`, but the cast anchor `<slot>` is a per-project character slot the static manifest cannot
  * enumerate. Returns null for a malformed value so the caller HARD-FAILS honestly (a producer stage
- * does not silently ignore a config the operator set); absent / "" / "none" is the no-op default.
+ * does not silently ignore a config the operator set). Absent / "" defaults to first_keyframe (shot 1
+ * is the scene lock after plate-first). Explicit "none" is the no-op.
  */
 export function parseFilmRef(v: unknown): FilmRefPlan | null {
-  if (v === undefined || v === null) return { mode: "none" };
+  if (v === undefined || v === null) return { mode: "first_keyframe" };
   if (typeof v !== "string") return null;
   const s = v.trim();
-  if (s === "" || s === "none") return { mode: "none" };
+  if (s === "") return { mode: "first_keyframe" };
+  if (s === "none") return { mode: "none" };
   if (s === "first_keyframe") return { mode: "first_keyframe" };
   if (s.startsWith("cast:")) {
     const slot = s.slice("cast:".length).trim();
@@ -137,6 +149,11 @@ export function stageRefKey(project: string, jobId: string, slot: string, index:
   return `keyframe-stage/${project}/${jobId}/ref_${slot}_${String(index).padStart(2, "0")}.png`;
 }
 
+/** Scene-plate sidecar for one character shot. Not the delivered keyframe. */
+export function plateKey(project: string, jobId: string, shotId: string): string {
+  return `keyframe-stage/${project}/${jobId}/plate_${shotId}.png`;
+}
+
 /** The async run-state doc for a cloud-keyframe job. */
 export function stateKey(project: string, jobId: string): string {
   return `keyframe-stage/${project}/${jobId}.state.json`;
@@ -148,7 +165,11 @@ export function stateKey(project: string, jobId: string): string {
 export interface ShotPlan {
   shot_id: string;
   prompt: string;
+  /** Style + scene only (no identity text). Present on new jobs; absent on pre-plate-then-edit state. */
+  plate_prompt?: string;
   slots: string[];
+  /** Next-tick 429/5xx budget. A persistent rate-limit still hard-fails the shot. */
+  rate_attempts?: number;
 }
 
 /** The persisted run state (an R2 json doc), advanced one shot at a time per /poll. */

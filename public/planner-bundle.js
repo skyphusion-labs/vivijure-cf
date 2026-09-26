@@ -771,14 +771,11 @@ async function renderFromKeyframes(bundleKey, btn, status) {
   body.motion_backend = gpuDoor.name;
   btn.disabled = true;
   status.textContent = "submitting i2v render...";
+  const inflight = {};
   let resp = null;
   let data = null;
   try {
-    resp = await fetch("/api/storyboard/render-from-keyframes", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    resp = await postFilmSubmit("/api/storyboard/render-from-keyframes", body, inflight);
     data = await resp.json();
   } catch (err) {
     btn.disabled = false;

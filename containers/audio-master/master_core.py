@@ -12,7 +12,25 @@ source, then a clean, consistent level. It sets level and sample rate; it does N
 import json as _json
 import os
 import re
+import signal
 import subprocess
+
+FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "1200") or "1200")
+FFPROBE_TIMEOUT = int(os.environ.get("FFPROBE_TIMEOUT", "60") or "60")
+
+
+class FfmpegTimeout(RuntimeError):
+    """Hung ffmpeg/ffprobe was killed (cf#571). Named so /master cannot look like success."""
+
+
+def _kill_process_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
 
 DEFAULT_TARGET_LUFS = -14.0           # streaming web target; two-pass loudnorm
 LOUDNORM_TP = -1.5                    # true-peak ceiling (dBTP)
@@ -25,15 +43,37 @@ MUSIC_LIFT_FREQ = 9000.0             # shelf corner (Hz) -- "air" band
 MUSIC_LIFT_Q = 0.7                   # shelf width (Q)
 
 
-def _run(cmd):
-    return subprocess.run(cmd, check=True, capture_output=True, text=True)
+def _run(cmd, timeout=None, text=True):
+    """Bounded ffmpeg/ffprobe. On expiry, kill the process group (cf#571)."""
+    if timeout is None:
+        timeout = FFMPEG_TIMEOUT
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        text=text,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+        raise FfmpegTimeout(f"ffmpeg timeout after {int(timeout)}s") from None
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def _probe_duration(path):
-    proc = subprocess.run(
+    proc = _run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True,
+        timeout=FFPROBE_TIMEOUT,
     )
     return max(0.01, float(proc.stdout.strip()))
 
@@ -42,11 +82,11 @@ def _measure_loudnorm(path, target_lufs):
     """First loudnorm pass: measure the file's loudness stats. Returns the dict of
     measured_* values the second pass needs (input_i is the integrated LUFS).
     loudnorm prints a JSON block to stderr at the end of the run."""
-    proc = subprocess.run(
+    proc = _run(
         ["ffmpeg", "-hide_banner", "-i", path,
          "-af", f"loudnorm=I={target_lufs}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}:print_format=json",
          "-f", "null", "-"],
-        capture_output=True, text=True, check=True,
+        timeout=FFMPEG_TIMEOUT,
     )
     # The JSON block is the last {...} in stderr.
     m = re.findall(r"\{[^{}]*\}", proc.stderr, re.DOTALL)

@@ -44,14 +44,37 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.1.1",
+  version: "0.2.0",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Wan 2.6 (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
   config_schema: {
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
-  ui: { section: "motion", order: 70, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 70,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Wan 2.6 stills-to-clip. Talks. Mouth follows the storyboard line when we have a Cast voice. Without a line, invents speech.",
+    limits: [
+      "5, 10, or 15 second clips",
+      "Mouth follows the storyboard line in the Cast voice.",
+      "Without a line, invents speech from the prompt.",
+      "Cannot lock the sample you kept.",
+      "One film, no scatter",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "cast_tts",
+    scatter_native_audio: false,
+    driving_audio: true,
+    min_seconds: 5,
+    max_seconds: 15,
+    duration_steps: [5, 10, 15],
+  },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -204,7 +227,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
 }
 
 export default {

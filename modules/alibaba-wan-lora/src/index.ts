@@ -65,7 +65,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud-lora", label: "Wan 2.2 (cloud i2v + custom LoRA)" }],
+  provides: [{ id: "i2v-cloud-lora", label: "Silent, your trained face (Wan)" }],
   config_schema: {
     // The LoRA lists are the whole point: control over cloud i2v. The contract's ConfigField has no
     // array type, so each list rides as a JSON STRING of [{ path, scale }] the module parses (path =
@@ -73,9 +73,30 @@ const MANIFEST: ModuleManifest = {
     high_noise_loras: { type: "string", default: "[]", label: "high-noise LoRAs -- JSON [{path,scale}]" },
     low_noise_loras: { type: "string", default: "[]", label: "low-noise LoRAs -- JSON [{path,scale}]" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
-    enable_safety_checker: { type: "bool", default: true, label: "safety checker" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
-  ui: { section: "motion", order: 75, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 75,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Detailed motion with your trained face. Silent.",
+    limits: [
+      "5 or 8 second clips",
+      "Silent, with your trained face",
+      "One film, no scatter (face lock)",
+      "Speaking is Cast voice plus MuseTalk",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: false,
+    min_seconds: 5,
+    max_seconds: 8,
+    duration_steps: [5, 8],
+    seed: true,
+  },
 };
 
 function json(body: unknown, status = 200): Response {

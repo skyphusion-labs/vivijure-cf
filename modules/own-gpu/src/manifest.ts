@@ -13,10 +13,10 @@ export const MANIFEST: ModuleManifest = {
   // of the module, and core must not branch on module identity.
   needs_tenant_r2: true,
   name: "own-gpu",
-  version: "0.2.0",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-own-gpu", label: "Own GPU (Wan2.2 i2v)" }],
+  provides: [{ id: "i2v-own-gpu", label: "Silent look (studio GPU)" }],
   config_schema: {
     quality: { type: "enum", values: ["draft", "standard", "final"], default: "standard", label: "quality" },
     fps: { type: "int", default: 16, min: 8, max: 30, label: "fps" },
@@ -24,5 +24,26 @@ export const MANIFEST: ModuleManifest = {
     negative_prompt: { type: "string", default: "", label: "negative prompt (additive)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
   },
-  ui: { section: "motion", order: 5, locality: "byo", cost: "Own keys (your RunPod endpoint)", blurb: "Renders on your own RunPod GPU endpoint -- own keys, no per-render markup; quality follows the GPU tier you rent." },
+  ui: {
+    section: "motion",
+    order: 5,
+    locality: "byo",
+    cost: "Look only, slower",
+    blurb: "Our studio GPU. Best picture, silent. No talking audio and no voice lock. Use a talking door for dialogue.",
+    limits: [
+      "About 2-8 second clips (no hard grid)",
+      "Silent motion only. Best picture, not a talking door.",
+      "Cannot lock a Cast voice sample. Spoken lines will not pick this door.",
+      "One film, no scatter (look door)",
+      "Slower than a cloud talking door",
+    ],
+  },
+  usage: {
+    native_audio: false,
+    voice: "cast_tts",
+    scatter_native_audio: false,
+    min_seconds: 2,
+    max_seconds: 8,
+    seed: true,
+  },
 };

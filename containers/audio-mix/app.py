@@ -25,7 +25,7 @@ import time
 from aiohttp import ClientSession, ClientTimeout, web
 
 from bearer import bearer_middleware
-from mix_core import DEFAULT_TARGET_LUFS, ROLES, mix_tracks
+from mix_core import DEFAULT_TARGET_LUFS, FfmpegTimeout, ROLES, mix_tracks
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -128,6 +128,9 @@ async def mix(req):
             out_path, result = await loop.run_in_executor(
                 None, mix_tracks, work, parsed, target_lufs, fmt,
             )
+        except FfmpegTimeout as e:
+            log.exception("ffmpeg timeout")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed")
             return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)

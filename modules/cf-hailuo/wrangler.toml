@@ -1,0 +1,29 @@
+# cf-hailuo: Cloudflare AI Gateway i2v motion.backend (minimax/hailuo-2.3).
+# ASYNC via Workflow (CF env.AI.run is sync-only; #155). Bound as MODULE_CF_HAILUO.
+# account_id from CLOUDFLARE_ACCOUNT_ID (env), never hardcoded.
+
+name = "vivijure-module-cf-hailuo"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[observability]
+enabled = true
+
+[ai]
+binding = "AI"
+
+[[r2_buckets]]
+binding = "R2_RENDERS"
+bucket_name = "vivijure"
+
+[[workflows]]
+name = "cf-hailuo-i2v"
+binding = "I2V_WORKFLOW"
+class_name = "CfHailuoWorkflow"
+
+[[secrets_store_secrets]]
+binding = "GATEWAY_ID"
+store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+secret_name = "GATEWAY_ID"

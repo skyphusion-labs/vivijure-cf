@@ -93,7 +93,10 @@ beforeEach(() => {
   fetchCalls = [];
   trainStatus = 200;
   g = globalThis as unknown as Record<string, unknown>;
-  g.window = { confirm: () => true, prompt: () => "", alert: () => {}, addEventListener: () => {} };
+  g.window = {
+    confirm: () => true, prompt: () => "", alert: () => {}, addEventListener: () => {},
+    location: { hash: "", href: "https://studio.test/cast", pathname: "/cast" },
+  };
   g.document = {
     querySelector: (s: string) => elFor(s),
     querySelectorAll: () => [],

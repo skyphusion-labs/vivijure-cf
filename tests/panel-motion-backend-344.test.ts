@@ -34,7 +34,12 @@ function sharedRegistry(fetchImpl: () => Promise<unknown>) {
   return scope.moduleRegistry!;
 }
 
-function registryWith(modules: { name: string; ui?: { locality?: string } }[]) {
+function registryWith(modules: {
+  name: string;
+  hooks?: string[];
+  ui?: { locality?: string; order?: number };
+  config_schema?: Record<string, unknown>;
+}[]) {
   const src = readFileSync(`${process.cwd()}/public/planner-registry.js`, "utf8");
   const payload = {
     modules,
@@ -123,5 +128,28 @@ describe("cf#344 the wire field name", () => {
     expect(BUNDLE).toContain("body.motion_backend = gpuDoor.name;");
     expect(BUNDLE, "the silent-omission branch is back; cf#344's ruling forbids it")
       .not.toContain("if (gpuDoor && gpuDoor.name) body.motion_backend");
+  });
+});
+
+describe("cf#474 Wan LoRA motion is a registry capability, not a compiled name", () => {
+  it("isWanLoraMotion keys on dual expert LoRA schema fields", async () => {
+    const wan = {
+      name: "cloud-lora-door",
+      hooks: ["motion.backend"],
+      ui: { locality: "cloud", order: 75 },
+      config_schema: { high_noise_loras: { type: "string" }, low_noise_loras: { type: "string" } },
+    };
+    const plain = {
+      name: "cloud-plain-door",
+      hooks: ["motion.backend"],
+      ui: { locality: "cloud", order: 70 },
+      config_schema: { enable_prompt_expansion: { type: "bool" } },
+    };
+    const reg = await registryWith([wan, plain]);
+    expect(reg.isWanLoraMotion(wan)).toBe(true);
+    expect(reg.isWanLoraMotion(plain)).toBe(false);
+    expect(reg.isWanLoraMotion(null)).toBe(false);
+    const mods = reg.motionBackendModules() as { name: string }[];
+    expect(mods.map((m) => m.name)).toEqual(["cloud-lora-door", "cloud-plain-door"]);
   });
 });

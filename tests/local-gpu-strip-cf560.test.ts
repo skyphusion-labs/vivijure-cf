@@ -126,11 +126,12 @@ describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render 
 
     const r = strip(template);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain("delta 1, as required");
+    // Hosted template already has no MODULE_LOCAL_GPU (markers only). Delta 0 is the clean case.
+    expect(r.stdout).toMatch(/delta 0, hosted-clean|delta 1, as required/);
     expect(r.out).not.toContain("MODULE_LOCAL_GPU");
 
     const after = (r.out.match(/MODULE_/g) ?? []).length;
-    expect(before - after).toBe(1);
+    expect(before - after).toBe(template.includes("MODULE_LOCAL_GPU") ? 1 : 0);
     // The output must still be a config, not a stub. Truncation is the failure mode the delta
     // exists to catch, and this is its cheap independent restatement.
     expect(r.out.length).toBeGreaterThan(template.length * 0.8);
@@ -147,8 +148,10 @@ describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render 
 
     const block = /^# >>> LOCAL-GPU:[\s\S]*?^# <<< LOCAL-GPU:/m.exec(template)?.[0] ?? "";
     expect(block).not.toBe("");
-    expect((block.match(/MODULE_/g) ?? []).length).toBe(1);
-    expect(block).toContain("MODULE_LOCAL_GPU");
+    // Hosted never binds this door. Markers stay so the strip still has a target;
+    // the binding itself must not return.
+    expect(block).not.toContain("MODULE_LOCAL_GPU");
+    expect((block.match(/MODULE_/g) ?? []).length).toBe(0);
   });
 
   // ---------------------------------------------------------------------------------------------
@@ -165,7 +168,7 @@ describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render 
 
     const r = strip(mutated);
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toContain("expected exactly 1");
+    expect(r.stderr).toContain("expected 0 (already clean) or 1");
     // ...and it must NOT fire the absence diagnostic, which would send a reader to the wrong file.
     expect(r.stderr).not.toContain("survived the strip");
     // The absence check really would have passed here: that is why the delta exists.
@@ -173,8 +176,14 @@ describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render 
   });
 
   it("REFUSES a vacuous strip: a renamed OPENING marker copies the block straight through", () => {
-    const mutated = template.replace(/^# >>> LOCAL-GPU:/m, "# >>> LOCALGPU:");
-    expect(mutated).not.toBe(template);
+    // Seed a binding so a missed OPENING marker is visible. The hosted template
+    // is already clean; without this seed the strip would correctly no-op.
+    const seeded = template.replace(
+      "# <<< LOCAL-GPU: local-gpu",
+      'binding = "MODULE_LOCAL_GPU"\n# <<< LOCAL-GPU: local-gpu',
+    );
+    const mutated = seeded.replace(/^# >>> LOCAL-GPU:/m, "# >>> LOCALGPU:");
+    expect(mutated).not.toBe(seeded);
 
     const r = strip(mutated);
     expect(r.status).not.toBe(0);

@@ -4,6 +4,7 @@ import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudM
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
+import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
@@ -14,6 +15,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
+import { readIdempotencyKey } from "./film-idempotency";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
@@ -43,8 +45,19 @@ import {
   deleteCastArtifacts,
 } from "./cast-media";
 import { exportCastBundle, importCastBundle } from "./cast-bundle";
+import {
+  TALKING_VOICE_HONOR,
+  startCastVoiceSample,
+  pollCastVoiceSample,
+  keepCastVoiceSample,
+  clearCastVoiceSample,
+  attachCastVoiceSample,
+  attachCastVoiceSampleFromKey,
+  voiceRefKeysFromScenes,
+  isSampleError,
+} from "./cast-voice-sample";
 import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
-import { authorizeRoute, AUTHZ_DENY_REASON, type Scope } from "./authz";
+import { authorizeRoute, AUTHZ_DENY_REASON, AUTHZ_DENY_CODE, type Scope } from "./authz";
 import { DEMO_MEDIA_ORIGIN } from "./asset-response";
 import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
@@ -65,6 +78,7 @@ import { applyResponseSecurity } from "./asset-response";
 import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
+import { handleAbuseReport, isQuarantineKey } from "./abuse-report";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
   resolveAgentFinishSelect,
@@ -85,14 +99,9 @@ import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboa
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
-import {
-  startScatterRender,
-  advanceScatterJob,
-  cancelScatterJob,
-  scatterJobToPollView,
-  isScatterJobId,
-} from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
-import { resolveShardCount, shardMaxFromEnv, scatterViewAsFilmSummary } from "./shard-count";
+import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { generateAudioOn, spokenLinesPresent, doorCanSpeakLines } from "./motion-scatter";
+import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
@@ -139,8 +148,11 @@ import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
 // Container DOs -- exported so the runtime registers them (bound in wrangler.toml).
 
 // Local JSON response helper -- status as a plain number (shared.ts's json takes a ResponseInit).
-const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8" } });
+const json = (body: unknown, status = 200, extra?: Record<string, string>): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", ...extra },
+  });
 
 // --- error model ---------------------------------------------------------
 class HttpError extends Error {
@@ -262,7 +274,10 @@ const hSaveProjectStoryboard: Handler = async (req, env, _c, p) => {
 const hListCast: Handler = async (_req, env) => json({ cast: (await listCast(env)).map(toPublicCast) });
 // The dialogue voice catalog (aura-1 speakers). Static; the cast voice picker renders from it so the
 // list of voices has one source of truth (src/voices.ts), not a hardcoded copy in the frontend.
-const hListVoices: Handler = async (_req, env) => json({ voices: catalogForDeploy(env, VOICE_CATALOG) });
+const hListVoices: Handler = async (_req, env) => json({
+  voices: catalogForDeploy(env, VOICE_CATALOG),
+  talking_doors: TALKING_VOICE_HONOR,
+});
 const hCreateCast: Handler = async (req, env) => {
   const b = await readBody<{ name?: string; bible?: string | null }>(req);
   if (!b.name) throw badRequest("name required");
@@ -289,6 +304,63 @@ const hPatchCast: Handler = async (req, env, _c, p) => {
   const row = await updateCast(env, await resolveCastId(env, p.id), patch);
   if (!row) throw notFound("cast member");
   return json({ cast: toPublicCast(row) });
+};
+const hStartCastVoiceSample: Handler = async (req, env, _c, p) => {
+  try {
+    const b = await readBody<{ seconds?: number; line?: string; motion_backend?: string }>(req);
+    const out = await startCastVoiceSample(env, await resolveCastId(env, p.id), {
+      seconds: b.seconds,
+      line: b.line,
+      motion_backend: b.motion_backend,
+    });
+    return json(out, 202);
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hPollCastVoiceSample: Handler = async (_req, env, _c, p) => {
+  try {
+    return json(await pollCastVoiceSample(env, await resolveCastId(env, p.id)));
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hKeepCastVoiceSample: Handler = async (_req, env, _c, p) => {
+  try {
+    return json(await keepCastVoiceSample(env, await resolveCastId(env, p.id)));
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hClearCastVoiceSample: Handler = async (_req, env, _c, p) => {
+  try {
+    await clearCastVoiceSample(env, await resolveCastId(env, p.id));
+    return json({ ok: true });
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
+};
+const hAttachCastVoiceSample: Handler = async (req, env, _c, p) => {
+  try {
+    const id = await resolveCastId(env, p.id);
+    const ct = (req.headers.get("content-type") || "").toLowerCase();
+    if (ct.startsWith("application/json")) {
+      const b = await readBody<{ from_chat_artifact?: string }>(req);
+      if (!b.from_chat_artifact) throw badRequest("from_chat_artifact required");
+      return json(await attachCastVoiceSampleFromKey(env, id, b.from_chat_artifact));
+    }
+    return json(await attachCastVoiceSample(env, id, {
+      bytes: await req.arrayBuffer(),
+      claimedMime: ct,
+    }));
+  } catch (e) {
+    if (isSampleError(e)) throw e.sampleStatus === 404 ? notFound(e.message) : badRequest(e.message);
+    throw e;
+  }
 };
 const hDeleteCast: Handler = async (req, env, _c, p) => {
   const row = await deleteCast(env, await resolveCastId(env, p.id));
@@ -444,7 +516,11 @@ function artifactHeaders(contentType: string, key?: string): Headers {
   h.set("x-content-type-options", "nosniff");
   const base = (key || "artifact").split("/").pop() || "artifact";
   const safeName = base.replace(/[^\w.\-]+/g, "_").slice(0, 180) || "artifact";
-  h.set("content-disposition", `attachment; filename="${safeName}"`);
+  // <audio> honors attachment and then never learns duration (00:00 / 00:00).
+  // img/video ignore it; keep attachment for non-media so a direct nav still downloads.
+  const ct = safeArtifactContentType(contentType);
+  const inline = /^(audio|video|image)\//i.test(ct);
+  h.set("content-disposition", `${inline ? "inline" : "attachment"}; filename="${safeName}"`);
   return h;
 }
 // #416: serve an artifact with HTTP byte-range support so browsers (Safari/iOS refuse to play media
@@ -463,7 +539,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // F4: the key is the untrusted URL tail. Reject an unsafe shape (traversal/absolute/scheme/control
   // bytes) and anything outside the known artifact namespaces -> 404 (not 400) so a probe learns
   // nothing. This bounds the serve to actual artifacts even if the edge Access gate ever fails.
-  if (!key || !isSafeRelKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
     throw notFound("artifact");
   }
   const isHead = req.method === "HEAD";
@@ -541,7 +617,7 @@ export function clampArtifactUrlTtl(raw: string | null): number {
 const hArtifactUrl: Handler = async (req, env, _c, p) => {
   if (!env.R2_RENDERS) throw notFound("the artifact store is not available on this deployment");
   const key = p.key;
-  if (!key || !isSafeRelKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
     throw notFound("artifact");
   }
   // Existence + real metadata from the bucket. Reported content_type is the STORED type, deliberately
@@ -581,7 +657,7 @@ const hRenderFrames: Handler = async (req, env) => {
   const asParam = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
   const key = String(body.key ?? "").trim();
   // Same guard as the serve route, so this can never read an object /api/artifact would refuse.
-  if (!key || !isSafeRelKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
     throw notFound("artifact");
   }
   // head() first so a miss is an honest 404 here, rather than the container failing to download later.
@@ -694,7 +770,12 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
   const renderId = await resolveRenderId(env, p.id);
   const row = await getRenderByIdForUser(env, renderId);
   if (!row) throw notFound("render");
-  const r = await retryFailedRender(env, row);
+  let idempotency_key: string | undefined;
+  try {
+    const b = await readBody<{ idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
+    idempotency_key = readIdempotencyKey(b);
+  } catch { /* empty body ok (pre-cf#528 clients) */ }
+  const r = await retryFailedRender(env, row, { idempotency_key });
   if (!r.ok) return json({ ok: false, error: r.error }, r.status);
   const view = r.view;
   await insertRenderBestEffort(env, {
@@ -717,24 +798,29 @@ const hFinalizePreview: Handler = async (req, env, _c, p) => {
   let audioKey: string | undefined;
   let motionBackend: string | undefined;
   let castLoras: Record<string, string> | undefined;
+  let finalizeIdempotencyKey: string | undefined;
   try {
     const b = await readBody<{
       audioKey?: string;
       castLoras?: Record<string, string>;
       motion_backend?: string;
       motionBackend?: string;
+      idempotency_key?: unknown;
+      idempotencyKey?: unknown;
     }>(req);
     audioKey = b.audioKey;
     castLoras = b.castLoras;
     // cf#347: accept snake_case (panel) or camelCase
     const raw = b.motion_backend ?? b.motionBackend;
     motionBackend = typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+    finalizeIdempotencyKey = readIdempotencyKey(b);
   } catch { /* empty body ok */ }
   return animatePreviewHandler(env, await resolveRenderId(env, p.id), {
     deriveMode: "finalized",
     audioKey,
     motionBackend,
     castLoras,
+    idempotency_key: finalizeIdempotencyKey,
   });
 };
 
@@ -813,7 +899,11 @@ const hSubmitRender: Handler = async (req, env) => {
     scenes?: unknown; motion_backend?: string;
     castLoras?: Record<string, unknown>;
     film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
+    style_prefix?: string;
+    voice_lock?: string;
     shardCount?: number; shard_count?: number;
+    idempotency_key?: unknown;
+    idempotencyKey?: unknown;
   }>(req);
   // cf#334: the guards below are the SHARED pre-flight, not this door's private copy. What stays
   // here is this door's own contract -- its field spellings, its keyframes-only mode, and its 503 on
@@ -844,6 +934,7 @@ const hSubmitRender: Handler = async (req, env) => {
   const project = resolveProjectForBundle(bundleKey, b.project);
 
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
+  b.renderOverrides = withFastestKeyframeDefault(b.renderOverrides, modules) as typeof b.renderOverrides;
   const parsedOverrides = parseModuleRenderOverrides(b.renderOverrides);
   const explicitMotionBackend = b.motion_backend ?? parsedOverrides.motion_backend;
   const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
@@ -888,32 +979,13 @@ const hSubmitRender: Handler = async (req, env) => {
       }
     } catch { /* best-effort */ }
   }
-  const panelShots = scenes.map((s) => s.shot_id).filter((id) => typeof id === "string" && id.length > 0);
-  const panelShards = resolveShardCount(
-    b.shardCount ?? b.shard_count,
-    panelShots.length,
-    shardMaxFromEnv(env.RENDER_SHARD_MAX),
-  );
-  if (!b.keyframesOnly && panelShards >= 2 && panelShots.length >= 2) {
-    if (shouldProjectWanLoras(motionBackend, wanPretrained)) {
-      const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
-      b.renderOverrides = injected.overrides;
-      await projectWanLorasIntoModuleConfig(env, motionBackend, wanPretrained, injected.config);
+  const panelMotionMod = modules.find((m) => m.name === motionBackend);
+  if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
+    if (!doorCanSpeakLines(panelMotionMod) || !generateAudioOn(mapped.motion_config)) {
+      throw badRequest(
+        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+      );
     }
-    const scatterJob = await startScatterRender(env, {
-      project,
-      bundle_key: bundleKey,
-      quality_tier: tier,
-      shot_ids: panelShots,
-      shard_count: panelShards,
-      cast_loras: b.castLoras ?? {},
-      render_overrides: b.renderOverrides,
-      motion_backend: motionBackend,
-      audio_key: b.audioKey,
-      film_titles: b.film_titles,
-      project_id: await resolveProjectRef(env, b.projectId),
-    });
-    return json(scatterJobToPollView(scatterJob), 201);
   }
   const job = await startFilmJob(env, {
     project,
@@ -940,7 +1012,11 @@ const hSubmitRender: Handler = async (req, env) => {
     pretrained_loras: Object.keys(pretrained).length ? pretrained : undefined,
     cast_loras: Object.keys(castIds).length ? castIds : undefined,
     dialogue_lines: panelDialogue,
-  }, modules);
+    style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
+    voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
+    voice_ref_keys: voiceRefKeysFromScenes(scenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], panelPre.cast.voiceRefs),
+    idempotency_key: readIdempotencyKey(b),
+  } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
   await persistWanLoraProjectionOnFilm(env, job, wanProj);
@@ -966,6 +1042,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
     motion_backend?: string; castLoras?: Record<string, unknown>;
+    idempotency_key?: unknown; idempotencyKey?: unknown;
   }>(req);
   // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
   //
@@ -1017,6 +1094,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     return json({ error: "bundle has no injected keyframes (clips/<id>_keyframe.png)" }, 400);
   }
 
+  b.renderOverrides = withFastestKeyframeDefault(b.renderOverrides, modules) as typeof b.renderOverrides;
   const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
   const motionBackend = b.motion_backend ?? mapped.motion_backend ?? defaultGpuDoorModule(modules)?.name;
   if (!motionBackend) {
@@ -1046,14 +1124,25 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
 
   // cf#334: derive dialogue from the bundle so RFK is not silent-by-default on a voiced package.
   let fromKfDialogue: DialogueLine[] | undefined;
+  let fromKfVoiceRefs: Record<string, string> | undefined;
   try {
-    const { voices } = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
-    let lines = dialogueLinesFromBundleScenes(parsedScenes, voices);
+    const resolved = await resolveCastLoras(env, b.castLoras as Record<string, unknown> | undefined);
+    let lines = dialogueLinesFromBundleScenes(parsedScenes, resolved.voices);
     if (lines.length) {
-      lines = resolveExplicitLineVoices(lines, parsedScenes, voices);
+      lines = resolveExplicitLineVoices(lines, parsedScenes, resolved.voices);
       fromKfDialogue = lines;
     }
+    fromKfVoiceRefs = resolved.voiceRefs;
   } catch { /* best-effort */ }
+
+  const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
+  if (spokenLinesPresent(fromKfDialogue)) {
+    if (!doorCanSpeakLines(fromKfMotionMod) || !generateAudioOn(mapped.motion_config)) {
+      throw badRequest(
+        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+      );
+    }
+  }
 
   const job = await startFilmFromKeyframes(env, {
     project,
@@ -1070,6 +1159,8 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     derive_mode: "finalized",
     audio_key: b.audioKey,
     dialogue_lines: fromKfDialogue,
+    voice_ref_keys: voiceRefKeysFromScenes(parsedScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], fromKfVoiceRefs),
+    idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
     return json({ error: job.error || "render from keyframes failed" }, 422);
@@ -1172,12 +1263,10 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
 };
 const hPollRender: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.jobId)) {
-    const view = await advanceScatterJob(env, p.jobId, ctx);
-    if (!view) throw notFound("render job");
-    return json(view);
+    return json({ error: "Scatter is retired. Start a single film.", jobId: p.jobId }, 410);
   }
   if (!isFilmJobId(p.jobId)) {
-    return json({ error: "unknown or legacy render job id (film-* or scatter-* only)", jobId: p.jobId }, 404);
+    return json({ error: "unknown or legacy render job id (film-* only)", jobId: p.jobId }, 404);
   }
   const r = await advanceFilmJob(env, p.jobId);
   if (!r) throw notFound("render job");
@@ -1206,133 +1295,16 @@ const hPollRender: Handler = async (_req, env, ctx, p) => {
 };
 const hCancelRender: Handler = async (_req, env, _c, p) => {
   if (isScatterJobId(p.jobId)) {
-    const view = await cancelScatterJob(env, p.jobId);
-    if (!view) throw notFound("render job");
-    await updateRenderFromView(env, view);
-    return json(view);
+    return json({ error: "Scatter is retired. Start a single film.", jobId: p.jobId }, 410);
   }
   if (!isFilmJobId(p.jobId)) {
-    return json({ error: "unknown or legacy render job id (film-* or scatter-* only)", jobId: p.jobId }, 404);
+    return json({ error: "unknown or legacy render job id (film-* only)", jobId: p.jobId }, 404);
   }
   const job = await cancelFilmJob(env, p.jobId);
   if (!job) throw notFound("render job");
   const view = filmJobToPollView(job, null);
   await updateRenderFromView(env, view);
   return json(view);
-};
-const hScatterRender: Handler = async (req, env) => {
-  const b = await readBody<{
-    project?: string; bundleKey?: string; qualityTier?: string;
-    shotIds?: string[]; shardCount?: number; castLoras?: Record<string, unknown>;
-    renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
-    motion_backend?: string;
-    film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } };
-  }>(req);
-  // cf#334: the shared pre-flight. This door's own contract stays in the profile: it addresses shots
-  // by ID rather than sending scenes, and it needs at least TWO of them because a single shard is not
-  // a scatter. It has no keyframes-only mode, so its motion leg is unconditional, and like the agent
-  // door it leaves an absent keyframe module for startScatterRender to reject rather than answering
-  // 503 itself.
-  //
-  // C2 (RULED, and this is where it lands for this door): scatter now runs the #696 config-shape
-  // gate, which it has never had. A mis-encoded renderOverrides bag previously clamped to defaults
-  // and degraded the render with no error, which is the exact failure #696 was filed for, live on
-  // this door the entire time. A request that was accepted and silently degraded is now refused with
-  // a 400 naming the field. Nothing in production history is known to be affected, and that cannot be
-  // proven either way, because a clamped request leaves no marker -- which is the defect.
-  const scatterProfile: RenderDoorProfile = {
-    door: "panel scatter",
-    bundleKeyField: "bundleKey",
-    scenesRequiredMessage: "shotIds[] required (>= 2)",
-    minSceneCount: 2,
-    hasMotionLeg: true,
-    requireExplicitMotionBackend: true,
-    scenesInBody: true,
-    checkLocalGpuPairing: true,
-    requireKeyframeModule: false,
-  };
-  const scatterShape = checkRenderRequestShape({
-    bundleKey: b.bundleKey,
-    scenes: b.shotIds,
-    configMaps: [
-      { label: "renderOverrides", value: b.renderOverrides, deep: false },
-      { label: "renderOverrides.config", value: b.renderOverrides?.config, deep: true },
-    ],
-  }, scatterProfile);
-  if (!scatterShape.ok) throw badRequest(scatterShape.refusal.message);
-  const scatterBundleKey = b.bundleKey as string;
-  const scatterShotIds = b.shotIds as string[];
-  const shardCount = resolveShardCount(b.shardCount, scatterShotIds.length, shardMaxFromEnv(env.RENDER_SHARD_MAX));
-  if (shardCount < 2) throw badRequest("shardCount 1 is a normal film; use POST /api/storyboard/render or POST /api/render/film");
-  const project = resolveProjectForBundle(scatterBundleKey, b.project);
-  const tier = coerceQualityTier(b.qualityTier) ?? "final";
-  const scatterModules = await discoverModules(env as unknown as Record<string, unknown>);
-  const scatterOverrides = parseModuleRenderOverrides(b.renderOverrides);
-  const scatterBackend = b.motion_backend ?? scatterOverrides.motion_backend;
-  const scatterMapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, scatterModules);
-  // Unlike the panel door, scatter judges #500/#504 and the local-gpu pairing rule against the SAME
-  // value: it has no separate resolved choice, because it forwards the override bag raw to the shards.
-  const scatterPre = await preflightRenderModules(productionRenderDoorDeps, env, {
-    modules: scatterModules,
-    motionBackend: scatterBackend,
-    keyframeBackend: scatterMapped.keyframe_backend,
-    motionConfig: scatterOverrides.config?.[(scatterBackend ?? "").trim()],
-    castLoras: b.castLoras ?? {},
-    finishSelect: scatterMapped.finish_select,
-  }, scatterProfile);
-  if (!scatterPre.ok) {
-    if (scatterPre.refusal.status === 503) return json({ error: scatterPre.refusal.message }, 503);
-    throw badRequest(scatterPre.refusal.message);
-  }
-  const scatterCast = scatterPre.cast;
-  // SCATTER DIVERGENCE: unlike render/film, scatter builds NO motion_config at the door -- it forwards
-  // render_overrides RAW and resolves per-shard downstream (startScatterRender ->
-  // mapRenderOverridesToModuleConfigs -> validateConfig). So project the Wan cast adapters into the RAW
-  // override bag's alibaba-wan-lora config here: high_noise_loras / low_noise_loras are DECLARED string
-  // fields in the module schema, so they survive validateConfig and reach every shard. Without this a
-  // Wan cast scatter would render LoRA-less SILENTLY while render/film worked (the exact Phase C gap).
-  // scatterCast is the same resolveCastLoras result the readiness gate above used.
-  let scatterWanProj = { injected: 0, dropped: 0, applied: false as boolean };
-  if (shouldProjectWanLoras(scatterBackend, scatterCast.wanPretrained)) {
-    const injected = ensureModuleOverrideConfig(b.renderOverrides, WAN_LORA_BACKEND);
-    b.renderOverrides = injected.overrides;
-    scatterWanProj = await projectWanLorasIntoModuleConfig(env, scatterBackend, scatterCast.wanPretrained, injected.config);
-  }
-  try {
-    const job = await startScatterRender(env, {
-      project,
-      bundle_key: scatterBundleKey,
-      quality_tier: tier,
-      shot_ids: scatterShotIds,
-      shard_count: shardCount,
-      cast_loras: b.castLoras ?? {},
-      render_overrides: b.renderOverrides,
-      motion_backend: b.motion_backend,
-      audio_key: b.audioKey,
-      film_titles: b.film_titles,
-        project_id: await resolveProjectRef(env, b.projectId),
-    });
-    const view = scatterJobToPollView(job);
-    // cf#392: scatter has no host-owned poll wrapper, so surface on the 201 + structured event.
-    // The LoRAs themselves ride render_overrides into every shard; the counts are for verification.
-    const scatterSurface = wanLoraProjectionSurface(scatterWanProj);
-    if (scatterSurface) {
-      emitWanLoraProjectionEvent({
-        scatter_id: view.jobId,
-        project,
-        result: scatterWanProj,
-      });
-    }
-    return json({
-      ok: true,
-      jobId: view.jobId,
-      status: view.status,
-      ...(scatterSurface ? { [WAN_LORA_PROJECTION_FIELD]: scatterSurface } : {}),
-    }, 201);
-  } catch (e) {
-    const msg = (e as Error).message || "scatter submit failed";
-    return json({ ok: false, error: msg }, 422);
-  }
 };
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
@@ -1591,7 +1563,7 @@ async function withFilmDownloadUrlBestEffort(
   }
 }
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1630,6 +1602,7 @@ const hStartFilm: Handler = async (req, env) => {
   // unconditional. The explicit choice is the top-level motion_backend (this endpoint carries no
   // render_overrides bag); NEVER the serving[0] default. Bounces BEFORE any keyframe dispatch.
   const filmModules = await discoverModules(env as unknown as Record<string, unknown>);
+  a.keyframe_backend = defaultKeyframeBackendName(a.keyframe_backend, a.motion_backend, filmModules);
   // cf#386: omit finish_config (and finish_select) = no finish. Do this BEFORE preflight so a
   // named-but-not-serving key 400s here (cf#593) instead of after keyframe spend.
   const filmFinishSelect = resolveAgentFinishSelect(a.finish_select, a.finish_config);
@@ -1696,41 +1669,13 @@ const hStartFilm: Handler = async (req, env) => {
     filmWanProj = await projectWanLorasIntoModuleConfig(env, a.motion_backend, resolvedLoras.wanPretrained, filmMotionConfig);
     a.motion_config = filmMotionConfig;
   }
-  const filmShards = resolveShardCount(
-    a.shard_count ?? a.shardCount,
-    filmScenes.length,
-    shardMaxFromEnv(env.RENDER_SHARD_MAX),
-  );
-  if (filmShards >= 2 && filmScenes.length >= 2) {
-    const bagConfig: Record<string, Record<string, unknown>> = {
-      ...(a.finish_config ?? {}),
-      ...(a.speech_config ?? {}),
-      ...(a.film_finish_config ?? {}),
-      ...(a.master_config ?? {}),
-    };
-    if (a.keyframe_backend && a.keyframe_config) bagConfig[a.keyframe_backend] = a.keyframe_config;
-    if (a.motion_backend && a.motion_config && !Array.isArray(a.motion_config)) {
-      bagConfig[a.motion_backend] = a.motion_config as Record<string, unknown>;
+  const filmMotionMod = filmModules.find((m) => m.name === a.motion_backend);
+  if (spokenLinesPresent(dialogue_lines)) {
+    if (!doorCanSpeakLines(filmMotionMod) || !generateAudioOn(a.motion_config as Record<string, unknown> | undefined)) {
+      throw badRequest(
+        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+      );
     }
-    const scatterJob = await startScatterRender(env, {
-      project,
-      bundle_key: filmBundleKey,
-      quality_tier: coerceQualityTier(a.qualityTier) ?? "final",
-      shot_ids: filmScenes.map((s) => s.shot_id),
-      shard_count: filmShards,
-      cast_loras: a.cast_loras ?? {},
-      render_overrides: {
-        motion_backend: a.motion_backend,
-        keyframe_backend: a.keyframe_backend,
-        config: bagConfig,
-        select: { finish: filmFinishSelect },
-      },
-      motion_backend: a.motion_backend,
-      audio_key: a.audio_key,
-      film_titles: a.film_titles,
-    });
-    const summary = scatterViewAsFilmSummary(scatterJobToPollView(scatterJob));
-    return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summary as FilmSummary)) }, 201);
   }
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
@@ -1762,6 +1707,8 @@ const hStartFilm: Handler = async (req, env) => {
     // + motion_config, unchanged here; this only makes the row match what was asked. An absent/invalid
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
+    idempotency_key: readIdempotencyKey(a),
+    voice_ref_keys: voiceRefKeysFromScenes(filmScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], resolvedLoras.voiceRefs),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -1774,10 +1721,7 @@ const hStartFilm: Handler = async (req, env) => {
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.id)) {
-    const view = await advanceScatterJob(env, p.id, ctx);
-    if (!view) throw notFound("film job");
-    const summary = scatterViewAsFilmSummary(view);
-    return json({ ok: true, ...(await withFilmDownloadUrl(env, summary as FilmSummary)) });
+    return json({ error: "Scatter is retired. Start a single film.", jobId: p.id }, 410);
   }
   const r = await advanceFilmJob(env, p.id);
   if (!r) throw notFound("film job");
@@ -1970,11 +1914,10 @@ const hInstallModule: Handler = async (req, env) => {
     throw badRequest(`script "${script}" is not resident in the namespace: ${(e as Error).message}`);
   }
   // Capture the exact manifest that gets gated + stored (so the row never drifts from what passed).
+  // Timeout + retry mirrors core readManifest; this helper keeps the RAW text and fails loud (cf#600).
   let manifestText: string;
   try {
-    const res = await fetcher.fetch("https://module/module.json");
-    if (!res.ok) throw badRequest(`GET /module.json -> ${res.status}`);
-    manifestText = await res.text();
+    manifestText = await fetchInstallManifestText(fetcher);
   } catch (e) {
     if (e instanceof HttpError) throw e;
     throw badRequest(`module unreachable: ${(e as Error).message}`);
@@ -2283,7 +2226,13 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
   { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
+  { method: "POST",   pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hStartCastVoiceSample },
+  { method: "GET",    pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hPollCastVoiceSample },
+  { method: "POST",   pattern: "/api/cast/:id/voice-sample/keep",      scope: "consumer",    handler: hKeepCastVoiceSample },
+  { method: "POST",   pattern: "/api/cast/:id/voice-sample/attach",    scope: "consumer",    handler: hAttachCastVoiceSample },
+  { method: "DELETE", pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hClearCastVoiceSample },
   { method: "POST",   pattern: "/api/upload",                          scope: "consumer",    handler: hUpload },
+  { method: "POST",   pattern: "/api/report",                          scope: "consumer",    handler: handleAbuseReport },
   { method: "GET",    pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
   { method: "HEAD",   pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
   { method: "GET",    pattern: "/api/artifact-url/*key",               scope: "consumer",    handler: hArtifactUrl },
@@ -2311,7 +2260,6 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
-  { method: "POST",   pattern: "/api/storyboard/render/scatter",       scope: "consumer",    handler: hScatterRender },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
   { method: "GET",    pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hPollRender },
   { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hCancelRender },
@@ -2447,7 +2395,11 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
           required: hit.scope,
           held: credential,
         }));
-        return json({ error: AUTHZ_DENY_REASON }, 403);
+        return json(
+          { error: AUTHZ_DENY_REASON, code: AUTHZ_DENY_CODE },
+          403,
+          { "X-Vivijure-Authz": AUTHZ_DENY_CODE },
+        );
       }
       try {
         return await hit.handler(request, env, ctx, hit.params);

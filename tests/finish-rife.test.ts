@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
-  passthroughOutput,
+  passthroughOutput, sourceClipKey,
   runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS,
 } from "../modules/finish-rife/src/finish";
 // cf#537: conformance runs against the SHIPPED manifest, not a transcribed copy. The copy
@@ -55,6 +55,23 @@ describe("finish-rife: coerceConfig", () => {
   });
 });
 
+describe("finish-rife: sourceClipKey", () => {
+  it("keeps an explicit clip_key (own-iron R2 path)", () => {
+    expect(sourceClipKey(SAMPLE_INPUT)).toBe(SAMPLE_INPUT.clip_key);
+  });
+
+  it("recovers the R2 key from a presigned video_url when clip_key was stripped", () => {
+    expect(sourceClipKey({
+      clip_key: "",
+      video_url: "https://example.r2.cloudflarestorage.com/vivijure/renders/last_call/clips/shot_01.mp4?X-Amz-Signature=abc",
+    })).toBe("renders/last_call/clips/shot_01.mp4");
+  });
+
+  it("returns undefined when there is no clip at all", () => {
+    expect(sourceClipKey({ clip_key: "" })).toBeUndefined();
+  });
+});
+
 describe("finish-rife: buildRunPodBody", () => {
   it("emits action=finish_clip with the correct project, shot_id, and clip_key", () => {
     const { input } = buildRunPodBody(SAMPLE_INPUT, coerceConfig({}), "neon_film");
@@ -62,6 +79,20 @@ describe("finish-rife: buildRunPodBody", () => {
     expect(input.project).toBe("neon_film");
     expect(input.shot_id).toBe("shot_01");
     expect(input.clip_key).toBe(SAMPLE_INPUT.clip_key);
+  });
+
+  it("forwards video_url and recovered clip_key so own iron can still read R2", () => {
+    const { input } = buildRunPodBody({
+      ...SAMPLE_INPUT,
+      clip_key: "",
+      video_url: "https://r2.example/vivijure/renders/last_call/clips/shot_01.mp4?sig=1",
+      output_url: "https://r2.example/put",
+      output_key: "renders/last_call/clips/shot_01_rife.mp4",
+    }, coerceConfig({}), "last_call");
+    expect(input.clip_key).toBe("renders/last_call/clips/shot_01.mp4");
+    expect(input.video_url).toContain("/renders/last_call/clips/shot_01.mp4");
+    expect(input.output_url).toBe("https://r2.example/put");
+    expect(input.output_key).toBe("renders/last_call/clips/shot_01_rife.mp4");
   });
 
   it("threads the caller project into the body, not a hardcoded placeholder", () => {

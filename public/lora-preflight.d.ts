@@ -22,7 +22,7 @@ export interface UnreadyLoraSlot {
 }
 
 export interface LoraPreflightOptions {
-  motionBackend?: string;
+  wanLora?: boolean;
 }
 
 export function isCastLoraReady(
@@ -37,5 +37,3 @@ export function unreadyBoundLoraSlots(
 ): UnreadyLoraSlot[];
 
 export function loraSlotSignature(unready: UnreadyLoraSlot[] | null | undefined): string;
-
-export const WAN_LORA_BACKEND: string;

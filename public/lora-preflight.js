@@ -18,39 +18,27 @@
     root.loraPreflight = api;
   }
 })(typeof self !== "undefined" ? self : this, function () {
-  var WAN_LORA_BACKEND = "alibaba-wan-lora";
-
   // A cast member's LoRA is reusable (the GPU skips training) only when the
   // adapter keys resolve for the chosen motion backend. This mirrors
   // resolveCastLoras in core (cast-loras.ts): SDXL lora_key wins on any backend;
-  // Wan renders need both wan_lora_key_high and wan_lora_key_low when
-  // motion_backend is alibaba-wan-lora.
+  // Wan dual keys satisfy readiness only when the caller says this render is a
+  // Wan LoRA motion (options.wanLora). That flag is a projection of the
+  // registry (plannerRegistry.isWanLoraMotion), never a compiled module name
+  // (cf#474).
   //
   // cf#383: prefer additive sdxl_lora_ready / wan_lora_ready when the API
   // provides them; otherwise derive from key presence. Shared lora_status
   // alone is not family-honest (Wan-only + status ready is not SDXL ready).
-  function isCastLoraReady(cast, options) {
+  function isCastLoraReady(cast, _options) {
     if (!cast) return false;
-    var motionBackend =
-      options && options.motionBackend ? String(options.motionBackend).trim() : "";
     var sdxlReady =
       typeof cast.sdxl_lora_ready === "boolean"
         ? cast.sdxl_lora_ready
         : !!(cast.lora_key && String(cast.lora_key).indexOf("loras/") === 0);
-    var wanReady =
-      typeof cast.wan_lora_ready === "boolean"
-        ? cast.wan_lora_ready
-        : !!(
-            cast.wan_lora_key_high &&
-            String(cast.wan_lora_key_high).indexOf("loras/") === 0 &&
-            cast.wan_lora_key_low &&
-            String(cast.wan_lora_key_low).indexOf("loras/") === 0
-          );
-    // Still require non-training shared status so an in-flight retrain is not treated as ready.
+    // Keyframes consume the SDXL adapter. Wan-train is motion-only and is not
+    // a substitute, even when this render's motion door is Wan.
     if (cast.lora_status === "training") return false;
-    if (sdxlReady) return true;
-    if (motionBackend === WAN_LORA_BACKEND) return wanReady;
-    return false;
+    return sdxlReady;
   }
 
   // Given the planner's {slot: cast_id} bindings and the current cast catalog
@@ -64,8 +52,9 @@
   // Keys and binding values are compared as verbatim strings -- no Number()
   // coercion, which would map every UUID to NaN and silently empty the warning.
   //
-  // options.motionBackend: when alibaba-wan-lora, Wan dual keys satisfy readiness;
-  // otherwise SDXL lora_key is required (mirrors server resolveCastLoras).
+  // options.wanLora: when true, Wan dual keys satisfy readiness; otherwise
+  // SDXL lora_key is required (mirrors server resolveCastLoras). The caller
+  // resolves that flag from the live registry, not a hardcoded name.
   function unreadyBoundLoraSlots(bindings, catalog, options) {
     const byId = new Map();
     for (const c of catalog || []) {
@@ -100,6 +89,5 @@
     isCastLoraReady,
     unreadyBoundLoraSlots,
     loraSlotSignature,
-    WAN_LORA_BACKEND,
   };
 });

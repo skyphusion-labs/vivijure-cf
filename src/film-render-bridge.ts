@@ -3,7 +3,6 @@
 // planner poll contract without a core pin bump.
 export {
   isFilmJobId,
-  mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes,
   filterScenesByShotIds,
   orderScenesByShotIds,
@@ -14,6 +13,7 @@ export {
 import {
   filmJobToPollView as coreFilmJobToPollView,
   filmRenderRowSeedFromJob,
+  mapRenderOverridesToModuleConfigs as coreMapRenderOverrides,
   type FilmRenderRowSeed,
 } from "@skyphusion-labs/vivijure-core/film-render-bridge";
 import {
@@ -29,6 +29,14 @@ import {
   WAN_LORA_PROJECTION_FIELD,
   type WanLoraProjectionSurface,
 } from "./wan-lora-projection";
+import { withFastestKeyframeDefault } from "./default-keyframe";
+
+export function mapRenderOverridesToModuleConfigs(
+  ...args: Parameters<typeof coreMapRenderOverrides>
+): ReturnType<typeof coreMapRenderOverrides> {
+  const [overrides, qualityTier, modules] = args;
+  return coreMapRenderOverrides(withFastestKeyframeDefault(overrides, modules), qualityTier, modules);
+}
 
 /** Film summary plus the optional host-owned Wan projection surface (cf#392). */
 export type FilmSummaryWithWan = FilmSummary & {

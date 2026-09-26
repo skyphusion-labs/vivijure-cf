@@ -318,17 +318,113 @@
     return mod && mod.ui && mod.ui[key] != null ? mod.ui[key] : undefined;
   }
 
+  function moduleName(mod) {
+    return mod && typeof mod.name === "string" ? mod.name.trim() : "";
+  }
+
+  function localityValue(mod) {
+    const loc = uiHint(mod, "locality");
+    return typeof loc === "string" ? loc.trim().toLowerCase() : "";
+  }
+
+  // own-gpu is the silent look door (studio GPU). RunPod cloud i2v (seedance, kling, ...)
+  // is the talking/speed door. CF Workers AI modules are cf-*. Anyone can pick any door.
+  function isQualityDoor(mod) {
+    const name = moduleName(mod);
+    const loc = localityValue(mod);
+    return name === "own-gpu" || loc === "byo";
+  }
+
+  function isCfCloudDoor(mod) {
+    return moduleName(mod).indexOf("cf-") === 0;
+  }
+
+  function isRunpodCloudDoor(mod) {
+    if (isQualityDoor(mod) || isCfCloudDoor(mod)) return false;
+    const loc = localityValue(mod);
+    return loc === "cloud" || loc === "datacenter";
+  }
+
+  function usageOf(mod) {
+    return mod && mod.usage && typeof mod.usage === "object" ? mod.usage : {};
+  }
+
+  function boundCastHasSample() {
+    const st = global.planState;
+    if (!st) return false;
+    const bindings = st.castBindings || {};
+    const catalog = st.castCatalog || [];
+    for (const slot of Object.keys(bindings)) {
+      const id = bindings[slot];
+      const c = catalog.find((x) => x && (x.id === id || String(x.id) === String(id)));
+      if (c && typeof c.voice_ref_key === "string" && c.voice_ref_key) return true;
+    }
+    return false;
+  }
+
+  function byUiOrder(a, b) {
+    const ao = Number(uiHint(a, "order"));
+    const bo = Number(uiHint(b, "order"));
+    const an = Number.isFinite(ao) ? ao : 99;
+    const bn = Number.isFinite(bo) ? bo : 99;
+    return an - bn;
+  }
+
+  // Hosted talking default: Seedance if a Cast sample is kept (usage.voice_ref);
+  // else InfiniteTalk if the board has a line (driving_audio, not native);
+  // Wan last (driving_audio + native auto-dub). Else first talking door by ui.order.
+  function defaultSpeedDoor(mods) {
+    const list = Array.isArray(mods) ? mods : [];
+    if (boundCastHasSample()) {
+      const seedance = list.find((m) => usageOf(m).voice_ref === true);
+      if (seedance) return seedance;
+    }
+    if (storyboardHasSpokenLines()) {
+      const ourFile = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === false);
+      if (ourFile) return ourFile;
+    }
+    const wan = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === true);
+    if (wan) return wan;
+    const talking = talkingMotionMods(list).slice().sort(byUiOrder);
+    return talking[0] || null;
+  }
+
+  function doorTitle(mod) {
+    if (isQualityDoor(mod)) return "Silent look (studio GPU)";
+    return moduleLabel(mod);
+  }
+
+  function doorCost(mod) {
+    if (isQualityDoor(mod)) return "Look only, slower";
+    const cost = uiHint(mod, "cost");
+    if (typeof cost !== "string") return "";
+    return filmmakerCostLine(cost).replace(/\.$/, "");
+  }
+
+  function doorBlurb(mod) {
+    if (isQualityDoor(mod)) {
+      return "Our studio GPU. Best picture, silent. No talking audio and no voice lock. Use a talking door for dialogue.";
+    }
+    const blurb = uiHint(mod, "blurb");
+    return typeof blurb === "string" ? blurb.trim() : "";
+  }
+
   // A short, human "locality" tag derived from the OPTIONAL manifest hint ui.locality.
   // Returns null when the manifest does not declare it (so we never guess local vs cloud
   // from a module name -- that is exactly the brittle coupling this replaces).
   function localityTag(mod) {
-    const loc = uiHint(mod, "locality");
-    if (typeof loc !== "string") return null;
-    const v = loc.trim().toLowerCase();
-    if (v === "local") return { text: "Local (your GPU)", kind: "local" };
-    if (v === "byo") return { text: "Your own RunPod (BYO keys)", kind: "byo" };
-    if (v === "cloud" || v === "datacenter") return { text: "Datacenter", kind: "cloud" };
-    return { text: loc.trim(), kind: "other" };
+    if (isQualityDoor(mod)) return { text: "Silent look", kind: "byo" };
+    if (isRunpodCloudDoor(mod) && !localityValue(mod)) {
+      return { text: "Faster", kind: "cloud" };
+    }
+    const loc = localityValue(mod);
+    if (!loc) return null;
+    if (loc === "local") return { text: "Local (your GPU)", kind: "local" };
+    if (loc === "byo") return { text: "Silent look", kind: "byo" };
+    if (loc === "cloud" || loc === "datacenter") {
+      return { text: isCfCloudDoor(mod) ? "Cloud" : "Faster", kind: "cloud" };
+    }
+    return { text: loc, kind: "other" };
   }
 
   // Registry-truth capability bullets: provides[1..].label (the first label is the door
@@ -405,7 +501,7 @@
     titleWrap.className = "planner-backend-title-wrap";
     const title = document.createElement("span");
     title.className = "planner-backend-title";
-    title.textContent = moduleLabel(mod);
+    title.textContent = doorTitle(mod);
     titleWrap.appendChild(title);
 
     const tags = document.createElement("span");
@@ -417,22 +513,22 @@
       t.textContent = loc.text;
       tags.appendChild(t);
     }
-    const cost = uiHint(mod, "cost");
-    if (typeof cost === "string" && cost.trim()) {
+    const cost = doorCost(mod);
+    if (cost) {
       const c = document.createElement("span");
       c.className = "planner-backend-tag is-cost";
-      c.textContent = cost.trim();
+      c.textContent = cost;
       tags.appendChild(c);
     }
     if (tags.childNodes.length) titleWrap.appendChild(tags);
     head.appendChild(titleWrap);
     card.appendChild(head);
 
-    const blurb = uiHint(mod, "blurb");
-    if (typeof blurb === "string" && blurb.trim()) {
+    const blurb = doorBlurb(mod);
+    if (blurb) {
       const p = document.createElement("p");
       p.className = "planner-backend-blurb";
-      p.textContent = blurb.trim();
+      p.textContent = blurb;
       card.appendChild(p);
     }
 
@@ -490,7 +586,7 @@
       const hint = wrap.querySelector(".planner-backend-caption-hint");
       if (hint) {
         hint.textContent = value
-          ? "Pick which backend renders the motion (image-to-video) step."
+          ? "Talking doors are the default. Studio GPU is silent look only."
           : "Required: pick which backend renders the motion (image-to-video) step.";
       }
     }
@@ -502,6 +598,20 @@
   // Render the backend selector into motionWrap. Returns true if a real CHOICE (>= 2
   // backends) was rendered (so the caller can mark the motion slot shown). One backend
   // renders an informational door; zero renders nothing.
+  function storyboardHasSpokenLines() {
+    const scenes = (global.planState && global.planState.storyboard && global.planState.storyboard.scenes) || [];
+    return scenes.some((s) => s && s.dialogue && String(s.dialogue.text || "").trim());
+  }
+
+  function doorCanSpeak(mod) {
+    const usage = usageOf(mod);
+    return usage.native_audio === true || usage.driving_audio === true;
+  }
+
+  function talkingMotionMods(mods) {
+    return (mods || []).filter(doorCanSpeak);
+  }
+
   function renderBackendSelector(mods, motionWrap) {
     if (!motionWrap || !mods || !mods.length) return false;
 
@@ -516,9 +626,12 @@
     cap.appendChild(capTitle);
     const capHint = document.createElement("span");
     capHint.className = "planner-backend-caption-hint";
-    capHint.textContent = mods.length > 1
-      ? "Pick which backend renders the motion (image-to-video) step."
-      : "This backend renders the motion (image-to-video) step.";
+    const linesOn = storyboardHasSpokenLines();
+    capHint.textContent = linesOn
+      ? "This storyboard has spoken lines. Only doors that can say them (they keep audio on our stills)."
+      : (mods.length > 1
+        ? "Talking doors are the default. Studio GPU is silent look only."
+        : "This backend renders the motion (image-to-video) step.");
     cap.appendChild(capHint);
     section.appendChild(cap);
 
@@ -544,9 +657,10 @@
       opt.textContent = moduleLabel(m);
       sel.appendChild(opt);
     }
-    sel.value = mods[0].name;
+    const speed = defaultSpeedDoor(mods);
+    sel.value = speed ? speed.name : mods[0].name;
     sel.addEventListener("change", () => {
-      if (typeof updateScatterGate === "function") updateScatterGate();
+
     });
     section.appendChild(sel);
 
@@ -554,15 +668,14 @@
     doors.className = "planner-backend-doors";
 
     if (mods.length > 1) {
-      // Multiple doors (vivijure#501): the registry order (ui.order then name) is
-      // locality-blind, so mods[0] can be a bound-but-non-operational door that would
-      // sail through the #500 submit preflight and then die deep in the render. Clear the
-      // default so NO door is preselected; every radio starts unchecked and
-      // collectForSubmit() blocks submit until the novice picks one deliberately (or
-      // supplies motion_backend via expert JSON). The single-backend case above keeps its
-      // explicit default (only one serving backend -- nothing to get wrong).
-      sel.selectedIndex = -1;
-      mods.forEach((m) => doors.appendChild(backendDoor(m, true, false)));
+      // Default: Seedance if a sample is kept, else InfiniteTalk if any line,
+      // Wan last, else first talking door. Leave the pick empty when none apply.
+      if (speed) {
+        sel.value = speed.name;
+      } else {
+        sel.selectedIndex = -1;
+      }
+      mods.forEach((m) => doors.appendChild(backendDoor(m, true, speed && m.name === speed.name)));
       section.appendChild(doors);
       motionWrap.appendChild(section);
       syncBackendDoors();
@@ -634,7 +747,17 @@
     for (const h of hooks) {
       const mods = cache[h.hook] || [];
       if (h.hook === "motion.backend") {
-        if (renderBackendSelector(mods, motionWrap)) motionShown = true;
+        const doors = storyboardHasSpokenLines() ? talkingMotionMods(mods) : mods;
+        if (storyboardHasSpokenLines() && !doors.length) {
+          if (motionWrap) {
+            motionWrap.innerHTML = "";
+            motionWrap.hidden = false;
+            const empty = document.createElement("p");
+            empty.className = "planner-backend-caption-hint";
+            empty.textContent = "This storyboard has spoken lines, but no talking door is installed. Bind Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok.";
+            motionWrap.appendChild(empty);
+          }
+        } else if (renderBackendSelector(doors, motionWrap)) motionShown = true;
       }
       for (const mod of mods) root.appendChild(renderModuleSection(mod, h.hook));
     }
@@ -645,6 +768,80 @@
     if (motionWrap && !motionShown && !motionWrap.querySelector(".planner-backend-selector")) {
       motionWrap.hidden = true;
     }
+    renderFinishPicks();
+    const styleEl = document.getElementById("planner-style-lock");
+    if (styleEl && !styleEl.value && global.planState && global.planState.storyboard
+      && typeof global.planState.storyboard.style_prefix === "string"
+      && global.planState.storyboard.style_prefix.trim()) {
+      styleEl.value = global.planState.storyboard.style_prefix.trim();
+    }
+    if (typeof global.ensureVoiceLockFilled === "function") {
+      global.ensureVoiceLockFilled();
+    }
+  }
+
+  function finishCache() {
+    const c = global.plannerRegistry && global.plannerRegistry._cacheForRenderConfig;
+    return c && typeof c === "object" ? c : {};
+  }
+
+  function finishMod(name) {
+    return (finishCache().finish || []).find((m) => m.name === name) || null;
+  }
+
+  function speechUpscaleInstalled() {
+    return (finishCache().speech || []).some((m) => m.name === "speech-upscale");
+  }
+
+  function lipsyncOn() {
+    if (!finishMod("finish-lipsync")) return false;
+    const el = document.getElementById("planner-finish-lipsync");
+    return !!(el && el.checked);
+  }
+
+  function renderFinishPicks() {
+    const box = document.getElementById("planner-finish-picks");
+    if (!box) return;
+    const pairs = [
+      ["finish-lipsync", "planner-finish-lipsync-wrap"],
+      ["finish-blender", "planner-finish-blender-wrap"],
+    ];
+    let any = false;
+    for (const [name, wrapId] of pairs) {
+      const wrap = document.getElementById(wrapId);
+      if (!wrap) continue;
+      const on = !!finishMod(name);
+      wrap.hidden = !on;
+      if (on) any = true;
+    }
+    box.hidden = !any;
+  }
+
+  function collectFinishSelect() {
+    const lipsyncEl = document.getElementById("planner-finish-lipsync");
+    const blenderEl = document.getElementById("planner-finish-blender");
+    const hasLipsync = !!finishMod("finish-lipsync");
+    const hasBlender = !!finishMod("finish-blender");
+    if (!hasLipsync && !hasBlender) return undefined;
+    const wantLipsync = hasLipsync && !!lipsyncEl && !!lipsyncEl.checked;
+    const wantBlender = hasBlender && blenderEl && blenderEl.checked;
+    // Lipsync is opt_in. Unchecked + no blender = default finish (rife/upscale).
+    const defaultsOn = !wantLipsync && !wantBlender;
+    if (defaultsOn) return { mode: "default" };
+    const named = [];
+    for (const m of finishCache().finish || []) {
+      const part = m.participation || "default";
+      if (m.name === "finish-lipsync") {
+        if (wantLipsync) named.push(m.name);
+        continue;
+      }
+      if (m.name === "finish-blender") {
+        if (wantBlender) named.push(m.name);
+        continue;
+      }
+      if (part !== "opt_in") named.push(m.name);
+    }
+    return { mode: "named", modules: named };
   }
 
   function readFieldValue(el) {
@@ -677,9 +874,15 @@
       config[mod][field] = val;
     }
     const out = {};
+    if (lipsyncOn() && speechUpscaleInstalled()) {
+      if (!config["speech-upscale"]) config["speech-upscale"] = {};
+      config["speech-upscale"].enable = true;
+    }
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;
+    const finishSelect = collectFinishSelect();
+    if (finishSelect) out.select = { finish: finishSelect };
     return out;
   }
 
@@ -738,12 +941,11 @@
     // opts.keyframesOnly so a keyframes-only preview is never falsely blocked here.
     const keyframesOnly = !!(opts && opts.keyframesOnly);
     const backendSel = document.getElementById("planner-motion-backend");
-    // Cloud i2v + GPU keyframe is the mix Conrad saw: stills on own-gpu,
-    // motion on Seedance. Pair them. Explicit keyframe_backend still wins.
-    if (overrides.motion_backend && overrides.motion_backend !== "own-gpu") {
-      if (!overrides.keyframe_backend) overrides.keyframe_backend = "cloud-keyframe";
-    } else if (overrides.motion_backend === "own-gpu") {
-      if (!overrides.keyframe_backend) overrides.keyframe_backend = "keyframe";
+    // Fastest stills path. Explicit keyframe_backend still wins. local-gpu
+    // stays omitted so core can couple it (vivijure-local#153).
+    if (!overrides.keyframe_backend && overrides.motion_backend !== "local-gpu"
+        && (overrides.motion_backend || overrides.config)) {
+      overrides.keyframe_backend = "keyframe";
     }
     if (!keyframesOnly && backendSel && !overrides.motion_backend) {
       const names = Array.from(backendSel.options || [])
@@ -772,12 +974,25 @@
   global.plannerRenderConfig = {
     renderPanel,
     renderBackendSelector,
+    defaultSpeedDoor,
+    doorCanSpeak,
+    talkingMotionMods,
     collect,
     collectForSubmit,
     restore,
     mergeExpert,
     renderTierPicker,
     selectTier,
+    collectFinishSelect,
+    renderFinishPicks,
+    __testSeedFinish: (mods, extra) => {
+      if (!global.plannerRegistry) global.plannerRegistry = {};
+      global.plannerRegistry._cacheForRenderConfig = {
+        ...(global.plannerRegistry._cacheForRenderConfig || {}),
+        finish: Array.isArray(mods) ? mods : [],
+        speech: extra && Array.isArray(extra.speech) ? extra.speech : (global.plannerRegistry._cacheForRenderConfig || {}).speech || [],
+      };
+    },
     backendChoicePending,
     tierDisplayLabel,
     filmmakerCostLine,

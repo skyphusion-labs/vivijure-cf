@@ -43,8 +43,8 @@ vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
     ...actual,
     resolveCastLoras: vi.fn(async (_env: unknown, castLoras: Record<string, unknown> | undefined) =>
       castLoras && Object.keys(castLoras).length
-        ? { pretrained: {}, voices: { A: "asteria" }, castIds: { A: 4 }, skipped: [], skippedDetail: [] }
-        : { pretrained: {}, voices: {}, castIds: {}, skipped: [], skippedDetail: [] },
+        ? { pretrained: { A: "loras/wren.safetensors" }, wanPretrained: {}, voices: { A: "asteria" }, voiceRefs: {}, speakerNames: { A: "Wren" }, castIds: { A: 4 }, skipped: [], skippedDetail: [] }
+        : { pretrained: {}, wanPretrained: {}, voices: {}, voiceRefs: {}, speakerNames: {}, castIds: {}, skipped: [], skippedDetail: [] },
     ),
   };
 });
@@ -62,13 +62,17 @@ const env = {
   // A healthy default deploy binds SPEND_RATE_LIMITER (wrangler.toml.example); model it so the
   // fail-closed spend gate (S9 F7) passes and these tests exercise the render handlers, not the gate.
   SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
-  MODULE_ALIBABA_WAN: { fetch: async () => new Response(JSON.stringify({ name: "alibaba-wan", version: "0.1.0", api: MODULE_API, hooks: ["motion.backend"], ui: { order: 10, locality: "cloud" } }), { status: 200, headers: { "content-type": "application/json" } }) },
+  DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
+  R2_RENDERS: { get: async () => null, put: async () => {}, head: async () => null },
+  MODULE_ALIBABA_WAN: { fetch: async () => new Response(JSON.stringify({ name: "alibaba-wan", version: "0.1.0", api: MODULE_API, hooks: ["motion.backend"], ui: { order: 10, locality: "cloud" }, usage: { native_audio: false, voice: "cast_tts", scatter_native_audio: true, min_seconds: 5, max_seconds: 10 } }), { status: 200, headers: { "content-type": "application/json" } }) },
+  MODULE_SEEDANCE: { fetch: async () => new Response(JSON.stringify({ name: "seedance", version: "0.1.0", api: MODULE_API, hooks: ["motion.backend"], ui: { order: 5, locality: "cloud" }, usage: { native_audio: true, voice: "seed_and_prompt", scatter_native_audio: false, min_seconds: 4, max_seconds: 12 } }), { status: 200, headers: { "content-type": "application/json" } }) },
+  MODULE_KEYFRAME: { fetch: async () => new Response(JSON.stringify({ name: "keyframe", version: "0.1.0", api: MODULE_API, hooks: ["keyframe"], ui: { order: 1 } }), { status: 200, headers: { "content-type": "application/json" } }) },
 } as unknown as Env;
 
 function postFilm(body: unknown): Request {
   // #504: a full film now requires an explicit, serving motion.backend at the door. Default it here (a
   // body that sets its own still wins) so these tests exercise dialogue behavior, not the backend preflight.
-  const withBackend = { motion_backend: "alibaba-wan", ...(body as Record<string, unknown>) };
+  const withBackend = { motion_backend: "seedance", shardCount: 1, ...(body as Record<string, unknown>) };
   return new Request("https://studio.example/api/render/film", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -224,6 +228,24 @@ describe("POST /api/render/film resolves cast voices for explicit dialogue_lines
     expect(res.status).toBe(201);
     expect((h.captured as CapturedArgs | null)?.dialogue_lines).toEqual(explicit);
   });
+
+  it("400s a silent look door when the storyboard has spoken lines", async () => {
+    h.captured = null;
+    h.bundleScenes = BUNDLE;
+    const res = await worker.fetch(
+      postFilm({
+        motion_backend: "alibaba-wan",
+        bundle_key: "bundles/wren.tar.gz",
+        scenes: SCENES,
+        dialogue_lines: [{ shot_id: "shot_01", text: "Don't open that." }],
+      }),
+      env, ctx,
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toMatch(/spoken lines/i);
+    expect(h.captured).toBeNull();
+  });
 });
 
 
@@ -236,6 +258,8 @@ describe("#738 hStartFilm rejects a bound-but-untrained cast_loras (symmetry wit
       pretrained: {},
       wanPretrained: {},
       voices: {},
+      voiceRefs: {},
+      speakerNames: {},
       castIds: { A: 4 },
       skipped: ["A"],
       skippedDetail: [{ slot: "A", name: "Wren", reason: "no trained LoRA" }],
@@ -272,6 +296,8 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
       pretrained: { A: "loras/wren.safetensors", B: "loras/salvage-robot.safetensors" },
       wanPretrained: {},
       voices: {},
+      voiceRefs: {},
+      speakerNames: {},
       castIds: { A: 4, B: 7 },
       skipped: [],
       skippedDetail: [],

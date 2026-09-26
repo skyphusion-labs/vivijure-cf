@@ -31,7 +31,7 @@ function jobWithDegrades() {
     idx: 0,
     status: "done" as const,
     applied: degraded ? [`passthrough:${degraded}`] : ["upscale:2x"],
-    ...(degraded ? { degraded } : {}),
+    ...(degraded ? { degraded: [degraded] } : {}),
   });
   return {
     film_id: "f1", project: "p", phase: "finish", scenes: [],

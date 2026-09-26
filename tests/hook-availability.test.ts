@@ -64,7 +64,7 @@ describe("GET /api/modules host.hooks_unavailable", () => {
   });
 
   it("OMITS the block entirely when the host can serve everything -- absence means available", async () => {
-    // "Serves everything" grew a second requirement in cf#118: a host with no VIDEO_FINISH_VPC
+    // "Serves everything" grew a second requirement in cf#118: a host with no VIDEO_FINISH_URL
     // cannot deliver score / master / film.finish / notify, so it is no longer a host that serves
     // everything. Binding the tier here keeps this test asserting what it was written to assert
     // (the block is OMITTED, not emptied) instead of quietly becoming a test that the video-finish

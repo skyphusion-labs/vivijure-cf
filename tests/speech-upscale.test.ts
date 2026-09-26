@@ -143,6 +143,7 @@ describe("speech-upscale: conformance (the live harness in src/modules/conforman
     version: "0.1.0",
     api: "vivijure-module/2",
     hooks: ["speech"],
+    max_invocation_seconds: 300,
     provides: [{ id: "speech-upscale", label: "Clean dialogue audio (resemble-enhance)" }],
     config_schema: {
       enable:  { type: "bool", default: false },

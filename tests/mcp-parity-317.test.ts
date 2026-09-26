@@ -280,7 +280,8 @@ interface PanelCall {
 }
 
 /** Every panel call whose URL resolves to an `/api/...` path: `fetch(...)`/`api(...)` calls (cast.js's
- * local `api()` wrapper forwards straight to fetch, so its calls carry the same shape) plus
+ * local `api()` wrapper forwards straight to fetch, so its calls carry the same shape),
+ * `postFilmSubmit(...)` (cf#528: always POST, same-click retry key), plus
  * `.href =`/`.src =` DOM assignments, which the browser always fetches with GET even though no
  * fetch() call is written for them. */
 function panelCallRecords(): PanelCall[] {
@@ -288,7 +289,7 @@ function panelCallRecords(): PanelCall[] {
   for (const f of PANEL_FILES) {
     const text = readFileSync(`${process.cwd()}/public/${f}`, "utf8");
 
-    const callRe = /\b(?:fetch|api)\s*\(/g;
+    const callRe = /\b(?:fetch|api|postFilmSubmit)\s*\(/g;
     let m: RegExpExecArray | null;
     while ((m = callRe.exec(text)) !== null) {
       const argStart = callRe.lastIndex;
@@ -296,8 +297,9 @@ function panelCallRecords(): PanelCall[] {
       const [urlExprRaw, optsExpr] = splitTopLevelComma(text.slice(argStart, closeParen));
       const template = urlTemplate(resolveAlias(text, m.index, urlExprRaw));
       if (template.startsWith("/api/")) {
+        const viaSubmit = /^postFilmSubmit\s*\($/.test(m[0]);
         const methodMatch = optsExpr?.match(/\bmethod\s*:\s*"([A-Z]+)"/);
-        records.push({ method: methodMatch ? methodMatch[1] : "GET", template });
+        records.push({ method: viaSubmit ? "POST" : (methodMatch ? methodMatch[1] : "GET"), template });
       }
       callRe.lastIndex = closeParen + 1;
     }
@@ -423,16 +425,16 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 87, // studio API route entries (method+pattern); all 87 are in API_ROUTES since cf#520 (incl. cf#353's retry route)
+  routes: 92, // studio API route entries (method+pattern); scatter submit retired
   tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
   curatedCovered: 41, // route entries reached by a CURATED tool
-  panelReachable: 67, // route entries the panel calls WITH THAT METHOD (cf#333; path-only was 70; cf#353 wired the retry button)
+  panelReachable: 71, // scatter submit retired
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
-  panelUncurated: 30, // panel-reachable entries with NO curated tool, METHOD-aware
-  panelUncuratedPathOnly: 34, // the same set under the PRE-cf#333 path-only matcher
-  hatchReachable: 84, // reachable via studio_request = routes minus the raw-body class
+  panelUncurated: 34, // scatter submit retired
+  panelUncuratedPathOnly: 38, // method-aware + the 4 uncurated path-only false positives
+  hatchReachable: 89, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously

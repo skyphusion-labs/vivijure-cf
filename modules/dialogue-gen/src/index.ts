@@ -39,6 +39,7 @@ import {
   type RunState,
   type NormalizedLine,
 } from "./dialogue-gen";
+import { normalizeLineWav } from "./wav-duration";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -128,9 +129,19 @@ async function synthLine(env: Env, project: string, line: NormalizedLine): Promi
   // Aura-1 returns a ReadableStream of audio; Response accepts it (or a raw ArrayBuffer/bytes) as a body.
   const bytes = await new Response(result as BodyInit).arrayBuffer();
   if (bytes.byteLength === 0) throw new Error(`empty audio for ${line.shot_id}`);
+  const raw = new Uint8Array(bytes);
+  const norm = normalizeLineWav(raw);
+  const written = norm ? norm.bytes : raw;
+  const body = new ArrayBuffer(written.byteLength);
+  new Uint8Array(body).set(written);
   const key = audioKey(project, line.shot_id);
-  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: AUDIO_MIME } });
-  return { shot_id: line.shot_id, audio_key: key, voice_id: line.voice };
+  await env.R2_RENDERS.put(key, body, { httpMetadata: { contentType: AUDIO_MIME } });
+  return {
+    shot_id: line.shot_id,
+    audio_key: key,
+    voice_id: line.voice,
+    ...(norm ? { duration_s: norm.seconds } : {}),
+  };
 }
 
 /** Per-shot step config. A single short line synth is fast; a generous timeout + a couple of retries

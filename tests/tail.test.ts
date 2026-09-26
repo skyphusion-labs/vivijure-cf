@@ -42,6 +42,13 @@ describe("vivijure-tail event -> Loki shaping", () => {
     expect(f).toMatchObject({ job_id: "film-q", phase: "speech", module: "speech-upscale", reason: "not configured" });
   });
 
+  it("accepts pre_clip_dialogue and pre_clip_speech as known phases", () => {
+    const d = deriveFields(JSON.stringify({ _v: 1, job_id: "film-q", phase: "pre_clip_dialogue", module: "dialogue-gen" }));
+    expect(d.phase).toBe("pre_clip_dialogue");
+    const s = deriveFields(JSON.stringify({ _v: 1, job_id: "film-q", phase: "pre_clip_speech", module: "speech-upscale" }));
+    expect(s.phase).toBe("pre_clip_speech");
+  });
+
   it("emits an invocation summary line even when logs[] is empty (routine traffic visible)", () => {
     const events = [{ scriptName: "vivijure-studio", outcome: "ok", eventTimestamp: 1_700_000_000_000,
       event: { request: { method: "GET", path: "/api/modules" }, response: { status: 200 } }, logs: [], exceptions: [] }];

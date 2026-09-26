@@ -63,6 +63,9 @@ Config (the module's `config_schema`, clamped by the core): `target_lufs` (float
   (`TBD-STRUMMER-AUDIO-MASTER-VPC`) until the Workers VPC Service is created.
 - Deploy on your container host: `docker compose -p vivijure-media -f containers/compose.yaml up -d --build audio-master`;
   health: `curl http://127.0.0.1:8784/health`.
+- Every ffmpeg/ffprobe child has a wall-clock bound (cf#571): `FFMPEG_TIMEOUT` (default 1200s),
+  `FFPROBE_TIMEOUT` (default 60s). A hang kills the process group and returns
+  `{ok:false, error:"ffmpeg timeout after Ns"}`.
 
 ## Soft-degrade
 

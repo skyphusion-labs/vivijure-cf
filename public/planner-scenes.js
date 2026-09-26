@@ -26,6 +26,21 @@ function cloneScenes(scenes) {
   return JSON.parse(JSON.stringify(scenes || []));
 }
 
+/** Speaker dropdown: Cast name + locked voice. Voice is chosen once on
+ *  /cast so the same person sounds the same every shot. */
+function slotSpeakerLabel(slot) {
+  const bindings = (typeof planState !== "undefined" && planState.castBindings) || {};
+  const catalog = (typeof planState !== "undefined" && planState.castCatalog) || [];
+  const castId = bindings[slot];
+  const cast = catalog.find((c) => c && String(c.id) === String(castId));
+  if (!cast) return slot;
+  const name = (cast.name || "").trim() || slot;
+  const hint = typeof plannerVoiceLockHint === "function" ? plannerVoiceLockHint(cast.voice_id) : "";
+  if (hint) return name + " -- " + hint;
+  if (cast.voice_id) return name + " -- " + cast.voice_id;
+  return name + " (set a voice on Cast)";
+}
+
 function setSceneStatus(text, kind) {
   const el = $("#planner-scenes-status");
   if (!el) return;
@@ -86,6 +101,7 @@ function onSceneChanged() {
   // v0.56.0: auto-preflight on edit. Debounced; in-flight runs get
   // a re-queue so the panel stays current as the user keeps editing.
   schedulePreflight();
+  document.dispatchEvent(new CustomEvent("planner:storyboard-change"));
 }
 
 function deleteScene(idx) {
@@ -233,7 +249,7 @@ function buildSceneRow(scene, idx, useChars) {
       for (const s of slots) {
         const opt = document.createElement("option");
         opt.value = s;
-        opt.textContent = s;
+        opt.textContent = slotSpeakerLabel(s);
         dlgSpeaker.appendChild(opt);
       }
       if (slots.indexOf(want) >= 0) dlgSpeaker.value = want;
@@ -272,7 +288,7 @@ function buildSceneRow(scene, idx, useChars) {
     const dlgField = document.createElement("div");
     dlgField.className = "planner-field";
     const dlgLabel = document.createElement("span");
-    dlgLabel.textContent = "dialogue (spoken line, optional)";
+    dlgLabel.textContent = "spoken line (voice is the Cast member you pick)";
     dlgField.appendChild(dlgLabel);
     const dlgRow = document.createElement("div");
     dlgRow.className = "planner-scene-dialogue";

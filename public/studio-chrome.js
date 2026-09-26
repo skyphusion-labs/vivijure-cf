@@ -87,4 +87,33 @@
     }
     if (!host.childNodes.length) host.remove();
   }
+
+  // Operator-tools escape hatch. Default OFF: filmmaker-surface hides
+  // operator chrome. Persist "1" when on so Conrad can flip it per device.
+  const OPERATOR_TOOLS_KEY = "skyphusion.planner.operatorTools";
+  function applyOperatorToolsPref() {
+    let on = false;
+    try {
+      on = localStorage.getItem(OPERATOR_TOOLS_KEY) === "1";
+    } catch (_) {}
+    document.body.classList.toggle("filmmaker-surface", !on);
+    const box = document.getElementById("pref-operator-tools");
+    if (box) box.checked = on;
+    const status = document.getElementById("pref-operator-tools-status");
+    if (status) {
+      status.textContent = on ? "Visible on this device" : "Hidden on this device";
+    }
+  }
+  applyOperatorToolsPref();
+  const operatorPref = document.getElementById("pref-operator-tools");
+  if (operatorPref) {
+    operatorPref.addEventListener("change", () => {
+      const on = !!operatorPref.checked;
+      try {
+        if (on) localStorage.setItem(OPERATOR_TOOLS_KEY, "1");
+        else localStorage.removeItem(OPERATOR_TOOLS_KEY);
+      } catch (_) {}
+      applyOperatorToolsPref();
+    });
+  }
 })();

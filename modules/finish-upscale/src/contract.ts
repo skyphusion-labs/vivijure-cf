@@ -30,6 +30,8 @@ export interface ModuleManifest {
   version: string;
   api: typeof MODULE_API;
   hooks: HookName[];
+  /** core#223: required on finish/speech. Per-invoke stall bound, seconds. */
+  max_invocation_seconds?: number;
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
@@ -99,6 +101,7 @@ export interface FinishInput {
   video_url?: string;
   output_url?: string;
   output_key?: string;
+  audio_url?: string;
   hash_url?: string;
 }
 

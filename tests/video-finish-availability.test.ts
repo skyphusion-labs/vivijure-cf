@@ -45,7 +45,7 @@ describe("videoFinishHooksUnavailable", () => {
     // thing actually absent and the only honest key for a control that does nothing but mux.
     //
     // score is ABSENT from this set on purpose and that is the whole of cf#229: bed generation
-    // (src/score-bed.ts) touches no VPC binding and the film path never calls the score hook at all,
+    // (src/score-bed.ts) touches no video-finish door and the film path never calls the score hook at all,
     // so reporting it unavailable claims more than the truth and would grey out a working control.
     expect(Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: undefined } as never)).sort()).toEqual(
       ["capability:video-finish", "film.finish", "master", "notify"],
@@ -59,7 +59,7 @@ describe("videoFinishHooksUnavailable", () => {
     // into the gated set to simplify them.
     const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: undefined } as never));
     for (const advisory of VIDEO_FINISH_ADVISORY_HOOKS) {
-      expect(named, advisory + " RUNS on a VPC-less studio; only its delivery is dead").not.toContain(advisory);
+      expect(named, advisory + " RUNS on a studio with no VIDEO_FINISH_URL; only its delivery is dead").not.toContain(advisory);
     }
     expect([...VIDEO_FINISH_ADVISORY_HOOKS]).toEqual(["score"]);
   });
@@ -74,7 +74,7 @@ describe("videoFinishHooksUnavailable", () => {
     }
   });
 
-  it("does NOT name the per-shot hooks, which are exactly what a VPC-less host still delivers", () => {
+  it("does NOT name the per-shot hooks, which are exactly what a host with no VIDEO_FINISH_URL still delivers", () => {
     const named = Object.keys(videoFinishHooksUnavailable({ VIDEO_FINISH_URL: undefined } as never));
     for (const survives of ["keyframe", "motion.backend", "finish", "speech", "dialogue", "image.generate", "cast.image"]) {
       expect(named, `${survives} still works on a clips delivery`).not.toContain(survives);

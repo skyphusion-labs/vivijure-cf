@@ -43,8 +43,10 @@ export interface SpendLimitEnv {
   // Fail-CLOSED by default for BOTH checks (broken limiter / broken ceiling check => deny 503). Set
   // to the literal "false" to opt back to fail-open (allow + warn on a broken check). See failClosed.
   SPEND_LIMIT_FAIL_CLOSED?: string;
-  // Positive integer as a string; unset/0/garbage = ceiling off.
+  // Positive integer as a string. Unset / 0 / garbage = ceiling off. Never invent a
+  // cap the operator did not set (token mode used to default to 25).
   SPEND_DAILY_CEILING?: string;
+  AUTH_MODE?: string;
   DB?: SpendCounterDb;
 }
 
@@ -66,7 +68,7 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/render$/,
   /^\/api\/render\/clips$/,
   /^\/api\/render\/film$/,
-  /^\/api\/storyboard\/render\/scatter$/,
+
   /^\/api\/storyboard\/render-from-keyframes$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-cloud$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-hybrid$/,

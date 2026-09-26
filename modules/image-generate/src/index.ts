@@ -41,15 +41,23 @@ const MODELS = [
   "@cf/black-forest-labs/flux-2-klein-9b",
   "@cf/black-forest-labs/flux-2-klein-4b",
   "@cf/black-forest-labs/flux-2-dev",
-  "@cf/black-forest-labs/flux-1-schnell",
+  "google/nano-banana-2",
   "google/nano-banana-pro",
+  "bytedance/seedream-5-pro",
+  "xai/grok-imagine-image",
+  "google/imagen-4",
   "openai/gpt-image-1.5",
   "recraft/recraftv4",
+];
+// Still runnable if a saved session names them. Not on the hosted picker.
+const LEGACY_MODELS = [
+  "@cf/black-forest-labs/flux-1-schnell",
   "@cf/leonardo/lucid-origin",
   "@cf/leonardo/phoenix-1.0",
   "@cf/lykon/dreamshaper-8-lcm",
   "@cf/stabilityai/stable-diffusion-xl-base-1.0",
 ];
+const RUNNABLE = [...MODELS, ...LEGACY_MODELS];
 
 const MANIFEST: ModuleManifest = {
   name: "image-generate",
@@ -115,7 +123,7 @@ async function runGenerate(
   // Clamp the model to what this module declared. An unknown id falls back to the default rather
   // than being passed through to the binding, where it would fail as an opaque upstream error.
   const requested = req.config?.model;
-  const model = typeof requested === "string" && MODELS.includes(requested) ? requested : MODELS[0];
+  const model = typeof requested === "string" && RUNNABLE.includes(requested) ? requested : MODELS[0];
 
   try {
     const { bytes, mime } = await generateImageBytes(

@@ -31,13 +31,44 @@ describe("alibaba-wan pure logic", () => {
       prompt: "a city at dawn",
       image: "https://r2/x.png",
       negative_prompt: "",
-      size: "720p",
+      resolution: "720p",
       duration: 5,
       shot_type: "single",
       seed: -1,
       enable_prompt_expansion: true,
-      enable_safety_checker: true,
+      enable_safety_checker: false,
     });
+    expect(body.input.audio).toBeUndefined();
+  });
+
+  it("buildWanBody ignores Cast sample voice_ref_url (audio stays undefined)", () => {
+    const body = buildWanBody(
+      { shot_id: "shot_01", keyframe_url: "https://r2/x.png", prompt: "Mara says hello.", seconds: 5, voice_ref_url: "https://r2/voice.wav" },
+      {},
+    );
+    expect(body.input.audio).toBeUndefined();
+    expect(body.input.image).toBe("https://r2/x.png");
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("https://r2/voice.wav");
+    expect(serialized).not.toMatch(/voice_ref/);
+  });
+
+  it("buildWanBody sends the shot LINE as input.audio, never the Cast sample", () => {
+    const body = buildWanBody(
+      {
+        shot_id: "shot_01",
+        keyframe_url: "https://r2/x.png",
+        prompt: "Mara says hello.",
+        seconds: 5,
+        audio_url: "https://r2/line.wav",
+        voice_ref_url: "https://r2/voice.mp4",
+      },
+      {},
+    );
+    expect(body.input.audio).toBe("https://r2/line.wav");
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("https://r2/voice.mp4");
+    expect(serialized).not.toMatch(/voice_ref/);
   });
 
   it("buildWanBody defaults enable_prompt_expansion OFF when config is empty", () => {
@@ -45,7 +76,7 @@ describe("alibaba-wan pure logic", () => {
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
       {},
     );
-    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, size: "720p", negative_prompt: "" });
+    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, resolution: "720p", negative_prompt: "" });
   });
 
   it("extractVideoUrl finds the video url across output shapes", () => {

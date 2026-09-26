@@ -37,7 +37,7 @@ export interface VpcCallRecord {
   module: string;
   /** Fleet service the binding reaches, e.g. video-finish. */
   service: string;
-  /** Binding name for grepping, e.g. VIDEO_FINISH_VPC. */
+  /** Binding name for grepping, e.g. VIDEO_FINISH_URL. */
   binding: string;
   /** Path portion of the absolute VPC URL, e.g. /film-titles or /async/status/<id>. */
   route: string;

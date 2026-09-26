@@ -69,6 +69,7 @@ export const MANIFEST: ModuleManifest = {
   version: "0.2.1",
   api: MODULE_API,
   hooks: ["finish"],
+  max_invocation_seconds: 900,
   provides: [
     { id: "upscale", label: "Upscale resolution (Real-ESRGAN)" },
   ],

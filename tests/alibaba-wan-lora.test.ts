@@ -59,7 +59,7 @@ describe("alibaba-wan-lora pure logic", () => {
       image: "https://r2/x.png", // the keyframe passed straight through as the start image
       duration: 5,
       seed: -1,
-      enable_safety_checker: true,
+      enable_safety_checker: false,
     });
     // no LoRA keys when the lists are empty
     expect("high_noise_loras" in body.input).toBe(false);

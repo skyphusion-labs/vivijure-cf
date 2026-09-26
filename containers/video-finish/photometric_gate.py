@@ -41,12 +41,16 @@ raise DecodeFailure rather than returning a skip/unknown verdict when a side yie
 degenerate (non-positive) luma; a caller that catches DecodeFailure and downgrades it to a pass is
 reintroducing the exact gap this issue is closing.
 
-NOT WIRED into the render pipeline by this change. This container (video-finish) receives only the
-ALREADY-GRADED per-shot clips for concat/mux -- it does not receive the pre-grade source, so it
-cannot itself run this check unattended today. `/photometric-check` below exposes it as a callable
-HTTP gate (any caller that holds both URLs, present or future, can invoke it), but deciding which
-layer calls it automatically, on every render or a canary, and threading a source-clip reference to
-wherever that call happens, is explicitly out of scope here -- see the PR this shipped in.
+SEMANTIC PRECONDITION (cf#567): this 2% luma check is only valid when the
+operation is supposed to PRESERVE output level. That is an identity-preset
+grade (preset=neutral at strength 1, or strength 0). A creative grade that
+darkens on purpose would read wrecked while doing exactly what it was asked.
+The natural caller is finish-blender after such a grade (it holds source and
+output). video-finish still cannot call this unattended: it never sees the
+pre-grade source.
+
+NOT WIRED into video-finish concat/mux. `/photometric-check` exposes it as a
+callable HTTP gate for any caller that holds both URLs.
 """
 import inspect_core as ic
 
@@ -54,6 +58,9 @@ import inspect_core as ic
 # the three measured ratios this is calibrated against; 0.02 is fifteen times narrower than the gap
 # to the known-bad case (0.298) and wider than both good arms (0.9926, 1.0038).
 RATIO_TOLERANCE = 0.02
+
+# cf#567: named so a caller cannot treat this as a generic quality score.
+SEMANTIC_PRECONDITION = "identity_preserving"
 
 
 class DecodeFailure(Exception):

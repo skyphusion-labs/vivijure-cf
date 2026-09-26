@@ -15,7 +15,7 @@ import {
   type RenderOutput,
 } from "../public/finish-degrade.js";
 
-// cf#118. When the video-finish tier is unavailable (VIDEO_FINISH_VPC unbound, the hosted
+// cf#118. When the video-finish tier is unavailable (VIDEO_FINISH_URL unset, the hosted
 // tenant case) the orchestrator degrades honestly: per-shot clips at assemble, the silent
 // film at mux, with a reason. The poll payload carried all of that and the panel showed a
 // green "completed" and a JSON blob.
@@ -29,7 +29,7 @@ const CLIPS_DEGRADE: RenderOutput = {
   project: "p1",
   finish_unavailable: {
     at: "assemble",
-    reason: "video-finish tier not installed (VIDEO_FINISH_VPC unbound); delivered per-shot clips",
+    reason: "video-finish tier not installed (VIDEO_FINISH_URL unset); delivered per-shot clips",
     delivered: "clips",
   },
   clips: [
@@ -54,7 +54,7 @@ describe("degradeFrom", () => {
     expect(d?.delivered).toBe("clips");
     // Verbatim: not re-worded, not softened, not truncated.
     expect(d?.reason).toBe(
-      "video-finish tier not installed (VIDEO_FINISH_VPC unbound); delivered per-shot clips",
+      "video-finish tier not installed (VIDEO_FINISH_URL unset); delivered per-shot clips",
     );
     expect(d?.clips.map((c) => c.shot_id)).toEqual(["shot_01", "shot_02"]);
   });
@@ -169,8 +169,8 @@ describe("deliveredSummary", () => {
     const d = degradeFrom(CLIPS_DEGRADE);
     const summary = deliveredSummary(d) as string;
     // The verbatim reason must not be folded into, or replaced by, our sentence.
-    expect(summary).not.toContain("VIDEO_FINISH_VPC");
-    expect(d?.reason).toContain("VIDEO_FINISH_VPC");
+    expect(summary).not.toContain("VIDEO_FINISH_URL");
+    expect(d?.reason).toContain("VIDEO_FINISH_URL");
   });
 
   it("CONTROL: no degrade -> no summary", () => {

@@ -257,6 +257,8 @@ describe("the population under test is the whole one (cf#289)", () => {
     const motion = candidates.filter((n) => /hooks:\s*\[[^\]]*"motion\.backend"/.test(read(n)));
     const mine = submitters.filter((n) => !motion.includes(n));
     const covered = CASES.map((c) => c.name);
+    // Chatterbox submits via /runsync inside a Workflow, so this file's /run stub cannot drive it.
+    const runsyncOnly = ["chatterbox"];
 
     // DENOMINATOR, printed beside the result: a matcher that returns almost everything has failed
     // as completely as one returning nothing, and only the denominator shows either.
@@ -285,6 +287,7 @@ describe("the population under test is the whole one (cf#289)", () => {
     // cf#289's table named five submitters. It is fourteen. Pinned so the corrected population
     // cannot quietly narrow back to the issue's version.
     expect(submitters.length).toBeGreaterThanOrEqual(14);
-    expect(mine.sort()).toEqual(covered.slice().sort());
+    expect(submitters).toContain("chatterbox");
+    expect(mine.filter((n) => !runsyncOnly.includes(n)).sort()).toEqual(covered.slice().sort());
   });
 });

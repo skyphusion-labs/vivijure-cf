@@ -44,15 +44,36 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "vidu-q3",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Vidu Q3 (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Vidu)" }],
   config_schema: {
-    generate_audio: { type: "bool", default: false, label: "native audio (off: core mux chain owns audio)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     bgm: { type: "bool", default: false, label: "background music (off by default)" },
+    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
-  ui: { section: "motion", order: 60, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 60,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Talking clips when you have several stills. 3-10 seconds.",
+    limits: [
+      "3-10 second clips",
+      "Same voice lock on every shot",
+      "One film, no scatter",
+      "Best when you have several stills",
+      "Cannot lock the Cast voice sample. Same description, not the same take.",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 3,
+    max_seconds: 10,
+  },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -205,7 +226,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
 }
 
 export default {

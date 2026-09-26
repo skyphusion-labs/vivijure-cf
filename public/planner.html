@@ -12,7 +12,7 @@
   <meta name="theme-color" content="#0E1730">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body class="planner-body" data-studio-page="planner">
+<body class="planner-body filmmaker-surface" data-studio-page="planner">
   <header class="topbar">
     <a class="brand brand-vivijure" href="planner" aria-label="Vivijure studio">
       <span class="brand-mark" aria-hidden="true"></span>
@@ -37,6 +37,13 @@
             <span class="account-pref-text">
               <span class="account-name">Email me when a render finishes</span>
               <span class="account-sub" id="pref-email-status">No emails when renders finish</span>
+            </span>
+          </label>
+          <label class="account-pref">
+            <input type="checkbox" id="pref-operator-tools" />
+            <span class="account-pref-text">
+              <span class="account-name">Operator tools</span>
+              <span class="account-sub" id="pref-operator-tools-status">Hidden on this device</span>
             </span>
           </label>
         </div>
@@ -176,7 +183,7 @@
       </div>
     </section>
 
-    <details class="planner-advanced" data-step="plan">
+    <details id="planner-preflight-fold" class="planner-advanced" data-step="plan">
       <summary>Preflight (operator)</summary>
       <section id="planner-preflight" class="planner-stage planner-preflight-inner" hidden>
         <header class="planner-stage-header">
@@ -337,18 +344,9 @@
         <span id="planner-bundle-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">
-        Confirm who is in the film, then assemble. A face photo per person is enough to preview.
-        You do not need a training set to make a first film.
+        Confirm who is in the film, then assemble. A portrait per person is enough for a first film.
       </p>
       <div id="planner-bundle-cast" class="planner-bundle-cast"></div>
-      <details id="planner-bundle-consistent" class="planner-bundle-consistent">
-        <summary>Make them consistent across shots</summary>
-        <p class="planner-stage-hint">
-          Optional. Extra photos and LoRA training help the same face hold from shot to shot.
-          Skip this for a first preview. Train on the Cast page when you want consistency.
-        </p>
-        <p><a href="cast">Open Cast to train</a></p>
-      </details>
       <!-- v0.149.0 (Phase 4b): optional per-scene start keyframes. Attaching an
            image here ships it as clips/<id>_keyframe.png in the bundle, which the
            GPU pod uses as that scene's i2v motion start frame. -->
@@ -402,6 +400,27 @@
            plan.enhance / score / dialogue / cast.image / notify project on their own surfaces),
            and each module renders its own config_schema. Nothing per-hook is hardcoded. -->
       <div id="planner-motion-backend-wrap" class="planner-overrides-common"></div>
+      <div id="planner-finish-picks" class="planner-finish-picks" hidden>
+        <p class="planner-finish-picks-lede">Finish this film</p>
+        <p class="planner-finish-picks-note">Motion already talks when the model can. Each shot animates toward the next still. MuseTalk is only if you want to replace the mouth.</p>
+        <label class="planner-field-check" id="planner-finish-lipsync-wrap" hidden>
+          <input id="planner-finish-lipsync" type="checkbox" />
+          <span>Replace mouths with MuseTalk (swap the voice or fix the lips)</span>
+        </label>
+        <label class="planner-field-check" id="planner-finish-blender-wrap" hidden>
+          <input id="planner-finish-blender" type="checkbox" />
+          <span>Color grade (Blender)</span>
+        </label>
+      </div>
+      <label class="planner-field" id="planner-style-lock-wrap">
+        <span>Lock the look</span>
+        <textarea id="planner-style-lock" rows="2" placeholder="cinematic 35mm, warm tungsten, shallow depth of field"></textarea>
+      </label>
+      <label class="planner-field" id="planner-voice-lock-wrap">
+        <span>Lock the speaking voice</span>
+        <textarea id="planner-voice-lock" rows="2" placeholder="Same speaker every shot: low alto, calm, slight Texas accent. Never a new voice."></textarea>
+      </label>
+      <p class="planner-overrides-hint" id="planner-voice-lock-note">Voice is chosen once on Cast for each person. We fill this lock from that so every shot is the same speaker. Edit only if you need a tighter description.</p>
       <p id="planner-render-spend" class="planner-render-spend" role="status"></p>
       <div class="planner-actions">
         <button id="planner-render-btn" type="button" class="planner-primary">Render this film</button>
@@ -445,20 +464,6 @@
       </details>
       <details class="planner-advanced" id="planner-render-advanced">
         <summary>Advanced</summary>
-        <!-- v0.162.0: scatter/gather distributed render. Enabled only when
-             the storyboard has >= 2 shots AND at least one character slot is
-             bound (scatter requires castLoras to be non-empty -- the server
-             hard-400s otherwise). updateScatterGate() enforces this dynamically
-             and shows a short reason when disabled. -->
-        <label class="planner-field-check" id="planner-scatter-wrap">
-          <input id="planner-scatter" type="checkbox" />
-          <span>distributed render (same backend on every shard)</span>
-        </label>
-        <span id="planner-scatter-reason" class="planner-status planner-scatter-reason" hidden></span>
-        <div class="planner-scatter-shard-row" id="planner-scatter-shard-wrap">
-          <label class="planner-field-check" for="planner-scatter-shards">parallelism (shards)</label>
-          <input id="planner-scatter-shards" type="number" min="1" inputmode="numeric" />
-        </div>
         <details class="planner-overrides-details">
           <summary class="planner-overrides-summary">module settings (optional)</summary>
           <p class="planner-overrides-hint">
@@ -471,10 +476,10 @@
           <summary class="planner-overrides-summary">expert: raw JSON</summary>
           <div class="planner-overrides-expert-block">
             <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
-            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"own-gpu","config":{"keyframe":{"steps":30},"own-gpu":{"fps":16}}}' spellcheck="false"></textarea>
+            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"seedance","config":{"cloud-keyframe":{"width":1344},"seedance":{"resolution":"720p"}}}' spellcheck="false"></textarea>
             <p class="planner-overrides-hint">
               optional JSON in the module wire shape:
-              <code>{ "motion_backend": "own-gpu", "config": { "keyframe": {…}, "own-gpu": {…} } }</code>.
+              <code>{ "motion_backend": "seedance", "config": { "cloud-keyframe": {…}, "seedance": {…} } }</code>.
               wins over the structured fields above on conflict.
             </p>
           </div>
@@ -497,13 +502,11 @@
              improves as the render gets further along. -->
         <div id="planner-render-progress" class="planner-render-progress" hidden>
           <!-- cf#303: explains the wait the user actually feels. Carries the
-               startup note while the keyframe phase is underway with nothing
-               drawn yet (GPU starting, model loading), and switches to the
-               server's stall warning once the phase stops advancing.
+               startup note while the poll is IN_QUEUE / delayTime / accepted
+               (worker starting), and switches to the server's stall warning
+               once the phase stops advancing. A running encode has no note.
                Deliberately words-only: we do not animate or fake progress
-               here, matching the band-floor honesty in render-eta.js. A cold
-               start and a stalled render used to render identically; this is
-               the line that tells them apart. -->
+               here, matching the band-floor honesty in render-eta.js. -->
           <div id="planner-render-coldstart" class="planner-render-coldstart" hidden></div>
           <div class="planner-render-progress-bar">
             <div id="planner-render-progress-fill" class="planner-render-progress-fill"></div>
@@ -533,7 +536,7 @@
           <h4>output</h4>
           <pre id="planner-render-output-content"></pre>
           <div class="planner-actions">
-            <a id="planner-render-download" href="#" class="planner-primary" download>download silent MP4</a>
+            <a id="planner-render-download" href="#" class="planner-primary" download>Download film</a>
             <a id="planner-render-open" href="#" target="_blank" rel="noopener" class="planner-render-link">open in new tab</a>
           </div>
           <!-- cf#118: finishing-degrade disclosure. Populated by planner-render.js from

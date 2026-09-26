@@ -54,7 +54,7 @@ describe("cf-seedance params", () => {
       fps: 24,
       camera_fixed: false,
       watermark: false,
-      generate_audio: false,
+      generate_audio: true,
       use_virtual_avatar: true,
     });
     expect(seedance.selectedModel(cfg)).toBe("bytedance/seedance-2.0-fast");
@@ -64,7 +64,19 @@ describe("cf-seedance params", () => {
     expect(seedance.clampDuration(99)).toBe(12);
   });
   it("falls back to default model on junk", () => {
-    expect(seedance.normalizeConfig({ model: "nope" }).model).toBe("bytedance/seedance-2.0");
+    expect(seedance.normalizeConfig({ model: "nope" }).model).toBe("bytedance/seedance-2.5");
+  });
+  it("omits last_frame_image when no last still", () => {
+    const p = seedance.buildParams(shot, seedance.normalizeConfig({}));
+    expect(p.last_frame_image).toBeUndefined();
+  });
+  it("passes last_frame_image from last_keyframe_url (visual continuity)", () => {
+    const p = seedance.buildParams(
+      { ...shot, last_keyframe_url: "https://r2.example/end.png" },
+      seedance.normalizeConfig({}),
+    );
+    expect(p.last_frame_image).toBe("https://r2.example/end.png");
+    expect(p.image).toBe("https://r2.example/k.png");
   });
 });
 
@@ -99,7 +111,7 @@ describe("cf-flux-3-video params", () => {
       prompt: "slow camera push-in",
       keyframes: "https://r2.example/k.png",
       resolution: "fhd",
-      generate_audio: false,
+      generate_audio: true,
     });
     expect(p.image).toBeUndefined();
     expect(Array.isArray(p.keyframes)).toBe(false);

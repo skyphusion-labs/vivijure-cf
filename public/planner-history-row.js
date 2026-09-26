@@ -111,7 +111,7 @@ function buildHistoryRow(r, childrenByParent) {
     passBadge.className = "planner-history-mode planner-history-mode-" + passLabel;
     passBadge.textContent = passLabel;
     passBadge.title = passLabel === "preview"
-      ? "stills preview; no motion / no silent MP4"
+      ? "stills preview; no motion / no film yet"
       : "motion film (preview stills were already generated)";
     meta.appendChild(passBadge);
   }
@@ -140,33 +140,6 @@ function buildHistoryRow(r, childrenByParent) {
       (failsafe.slots.length ? ": " + failsafe.slots.join(", ") : "") +
       ". Train it on the Cast page for instant reuse next time.";
     meta.appendChild(fsBadge);
-  }
-
-  // v0.162.0: scatter parent badge + shard progress. Shard children are
-  // suppressed from the top-level list in renderHistoryList; only the parent
-  // card appears. childrenByParent already indexes shards by parent numeric id.
-  if (typeof r.job_id === "string" && r.job_id.startsWith("scatter-")) {
-    const shards = childrenByParent.get(r.id) || [];
-    const nShards = shards.length;
-    const scatterBadge = document.createElement("span");
-    scatterBadge.className = "planner-history-mode planner-history-mode-scatter";
-    scatterBadge.textContent =
-      nShards ? "distributed -- " + nShards + " shards" : "distributed";
-    scatterBadge.title =
-      "scatter/gather distributed render" +
-      (nShards ? " (" + nShards + " parallel shards)" : "");
-    meta.appendChild(scatterBadge);
-
-    if (r.status === "SCATTERING" || r.status === "IN_PROGRESS" || r.status === "IN_QUEUE") {
-      const done = shards.filter((s) => s.status === "COMPLETED").length;
-      if (nShards > 0) {
-        const progBadge = document.createElement("span");
-        progBadge.className = "planner-history-mode planner-history-mode-progress";
-        progBadge.textContent = done + " of " + nShards + " shards complete";
-        progBadge.title = "shard render progress";
-        meta.appendChild(progBadge);
-      }
-    }
   }
 
   // v0.145.2: version badge for a derived animation (GPU finalize or cloud
@@ -198,7 +171,7 @@ function buildHistoryRow(r, childrenByParent) {
     // v0.154.0 (slice-3 #1): a hybrid run carries per-lane gpu/cloud counts.
     pBadge.title =
       prog && (prog.gpu || prog.cloud)
-        ? "hybrid animation in progress (GPU finalize + cloud i2v)"
+        ? "hybrid animation in progress (studio GPU + cloud motion)"
         : "cloud animation in progress (one clip per shot)";
     meta.appendChild(pBadge);
   }
@@ -417,9 +390,9 @@ function buildHistoryRow(r, childrenByParent) {
   if (r.output_key) {
     const dl = document.createElement("a");
     dl.href = artifactUrl(r.output_key);
-    dl.download = (r.project || "silent") + ".mp4";
+    dl.download = (r.project || "film") + ".mp4";
     dl.className = "planner-history-action";
-    dl.textContent = "download";
+    dl.textContent = "Download film";
     actions.appendChild(dl);
   }
 
@@ -537,7 +510,7 @@ function buildHistoryRow(r, childrenByParent) {
   del.type = "button";
   del.className = "planner-history-action planner-history-action-delete";
   del.textContent = "delete";
-  del.title = "remove this row from history and (if not shared) the silent MP4 from R2";
+  del.title = "remove this row from history and (if not shared) the film file";
   del.addEventListener("click", () => deleteHistoryRow(r));
   actions.appendChild(del);
 
@@ -759,7 +732,7 @@ function buildHistoryRow(r, childrenByParent) {
         const modelSel = document.createElement("select");
         modelSel.className = "planner-keyframe-cloud-model";
         modelSel.dataset.shotId = kf.shot_id;
-        modelSel.title = "cloud i2v model for " + kf.shot_id + " (default uses the row model)";
+        modelSel.title = "cloud motion door for " + kf.shot_id + " (default uses the row model)";
         modelSel.style.display = "none";
         const def = document.createElement("option");
         def.value = "";
@@ -882,11 +855,11 @@ function buildHistoryRow(r, childrenByParent) {
       summary.textContent += " (no motion.backend modules installed)";
     } else {
     const GPU_LABEL = "finalize (" + gpuLbl + " + assemble)";
-    const CLOUD_LABEL = "animate (cloud i2v)";
+    const CLOUD_LABEL = "animate (cloud)";
     const HYBRID_LABEL = "animate (hybrid)";
-    const GPU_TITLE = "run " + gpuLbl + " on every keyframe + assemble silent MP4 (about 20 to 30 minutes)";
-    const CLOUD_TITLE = "animate each keyframe with the selected cloud module + assemble a silent MP4";
-    const HYBRID_TITLE = "animate per-shot across BOTH backends (" + gpuLbl + " + cloud i2v) and assemble one silent MP4";
+    const GPU_TITLE = "run " + gpuLbl + " on every keyframe + put the film together (about 20 to 30 minutes)";
+    const CLOUD_TITLE = "animate each keyframe with the selected cloud module + put the film together";
+    const HYBRID_TITLE = "animate per-shot across BOTH backends (" + gpuLbl + " + cloud) and put one film together";
 
     const motion = document.createElement("div");
     motion.className = "planner-motion-backend";
@@ -1323,7 +1296,7 @@ async function finalizeRender(row, btnEl) {
   const confirmMsg =
     "finalize this preview?\n\n"
     + (lockedCount > 0
-      ? "this will assemble the silent MP4 from " + lockedCount + " of "
+      ? "this will put the film together from " + lockedCount + " of "
         + kfCount + " keyframes (only the LOCKED shots). "
       : "no shots are locked, so all " + kfCount
         + " keyframes will be included. ")
@@ -1367,12 +1340,11 @@ async function finalizeRender(row, btnEl) {
     }
     // Finalize reuses the render_overrides persisted on the originating row
     // (the backend reads row.render_overrides); no per-finalize override body.
-    const hasBody = Object.keys(finalizeBody).length > 0;
-    resp = await fetch(
+    const inflight = {};
+    resp = await postFilmSubmit(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/finalize",
-      hasBody
-        ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(finalizeBody) }
-        : { method: "POST" },
+      finalizeBody,
+      inflight,
     );
     data = await resp.json();
   } catch (err) {
@@ -1442,13 +1414,13 @@ async function animateCloudRender(row, btnEl, model, perShot) {
     data = await resp.json();
   } catch (err) {
     btnEl.disabled = false;
-    btnEl.textContent = "animate (cloud i2v)";
+    btnEl.textContent = CLOUD_LABEL;
     window.alert("cloud animate submit failed: " + err.message);
     return;
   }
   if (!resp.ok || !data || !data.ok) {
     btnEl.disabled = false;
-    btnEl.textContent = "animate (cloud i2v)";
+    btnEl.textContent = CLOUD_LABEL;
     const msg = (data && (data.error
       || (Array.isArray(data.errors) && data.errors.join(", "))))
       || ("HTTP " + (resp ? resp.status : "?"));
@@ -1491,7 +1463,7 @@ async function animateHybridRender(row, btnEl, backends) {
     : "";
   const confirmMsg =
     "animate this preview as a HYBRID film?\n\n"
-    + gpuTotal + " shot(s) on " + gpuMotionLabel() + ", " + cloudN + " on cloud i2v"
+    + gpuTotal + " shot(s) on " + gpuMotionLabel() + ", " + cloudN + " on cloud"
     + (explicitGpuN ? " (" + explicitGpuN + " GPU set explicitly)" : "")
     + ", assembled into one SILENT MP4. add a score afterward with the add-audio "
     + "action.\n\n" + (cloudN === 0
@@ -1609,7 +1581,7 @@ async function cancelHistoryRow(row, btn) {
 async function deleteHistoryRow(row) {
   const hasArtifact = !!row.output_key;
   const prompt = hasArtifact
-    ? "delete this render from history (and the silent MP4 in R2 if no other row references it)?"
+    ? "delete this render from history (and the film file if no other row references it)?"
     : "delete this render from history?";
   if (!window.confirm(prompt)) return;
 
@@ -1902,7 +1874,7 @@ function resumeRender(row) {
   refreshSteps();
   showStep("render");
   $("#planner-render-result").hidden = false;
-  $("#planner-render-job-id").textContent = row.job_id;
+  setRenderJobHeadline(row.job_id);
   setJobStatusBadge(row.status);
 
   // Reset transient panels before populating from the row.
@@ -2010,9 +1982,11 @@ async function retryFailedRender(row, btnEl) {
   let resp = null;
   let data = null;
   try {
-    resp = await fetch(
+    const inflight = {};
+    resp = await postFilmSubmit(
       "/api/storyboard/renders/" + encodeURIComponent(row.id) + "/retry",
-      { method: "POST" },
+      {},
+      inflight,
     );
     data = await resp.json();
   } catch (err) {

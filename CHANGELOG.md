@@ -5,11 +5,296 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.33.9 -- 2026-08-20
+
+### fix(motion): retry shots that died on load, 429, or 7003
+
+Pin core 1.22.5. A provider high-load or AiGateway 7003 resubmits the
+shot next tick (cap 3). A real 400 still fails closed.
+
+### fix(keyframe): retry Nano Banana 429 on the next poll tick
+
+A 14-film fan-out 429 no longer fails the whole film on shot 8.
+
+### fix(motion): Wan 2.6 resolution is 720p, not 1280*720
+
+Public wan-2-6-i2v 400s the old size field.
+
+### docs(local-gpu): door-fatmike is gone
+
+Fleet named tunnel `door-fatmike` / `door-propagandhi` was deleted
+(fleet-chezmoi #2042). Local-gpu is on-box; do not seed
+`LOCAL_BACKEND_URL` to that hostname.
+
+## v1.33.8 -- 2026-08-19
+
+### fix(motion): delete Cloudflare Wan 2.7
+
+The CF schema cannot take our line as audio. Hosted Wan is RunPod 2.6.
+Remove the module, the binding, and the talking-honor entry so the
+next tag cannot ship it.
+
+## v1.33.7 -- 2026-08-18
+
+### fix(motion): hosted Wan is RunPod 2.6, not CF 2.7
+
+Cloudflare Wan 2.7 rejected media[] and has no driving_audio.
+Unbind MODULE_CF_WAN_27. Bind MODULE_ALIBABA_WAN (wan-2-6-i2v).
+Send image + prompt + optional Cast sample as audio.
+
+## v1.33.6 -- 2026-08-18
+
+### feat(motion): send Alibaba media[] on Wan 2.7
+
+CF is a passthrough to Alibaba. We now send first_frame, last_frame,
+and driving_audio (Cast sample) plus the CF image postcard. Without
+driving_audio Alibaba invents speech. This is the prove-it rewrite.
+
+## v1.33.5 -- 2026-08-18
+
+### chore(deps): pin vivijure-core 1.22.3
+
+Incomplete films are FAILED. Every storyboard shot must return.
+
+### fix(motion): Wan 2.7 is a talking door
+
+The model invents speech even on a silent board. We labeled it silent
+and sent no script. It is native_audio. Give it the storyboard line.
+Cannot lock the Cast sample.
+
+## v1.33.4 -- 2026-08-18
+
+### fix(finish): give film-titles the video-finish URL
+
+Module deploy never passed VIDEO_FINISH_URL into
+fill-module-placeholders.sh, so vivijure-module-film-titles shipped
+VIDEO_FINISH_URL="". Title cards passthrough'd. The studio Worker
+already had the real origin. Same vars as the core render step.
+
+## v1.33.3 -- 2026-08-18
+
+### fix(spend): no implicit daily ceiling
+
+Hosted token mode used to invent SPEND_DAILY_CEILING=25 when the
+operator never set the var. Unset means off. Set the var if you
+want a cap.
+
+## v1.33.2 -- 2026-08-18
+
+### chore(deps): pin vivijure-core 1.22.2
+
+Cast LoRA keys are loras/, not project-scoped. Keyframe no longer
+fail-closes a banked adapter.
+
+## v1.33.1 -- 2026-08-18
+
+### fix(finish): RIFE keeps the clip key and does not kill the film
+
+Own-iron finish_clip needs clip_key. Core used to strip it after
+presign; RIFE then fail-closed a completed 10-shot. Recover the key
+from video_url if it is gone, forward both to RunPod, and only refuse
+when there is no clip at all.
+
+### chore(deps): pin vivijure-core 1.22.1
+
+Keep clip_key after finish presign so own-iron RIFE can read R2.
+
+## v1.33.0 -- 2026-08-18
+
+### fix(render): show cold start vs stall (cf#303)
+
+The film poll already carries `IN_QUEUE` (module `wait=accepted`) and
+the direct RunPod path already carries `delayTimeMs`. The live panel
+ignored both: it hid the progress widget for the whole queue wait, then
+inferred "startup" from "keyframe with nothing drawn", so a spinning-up
+worker and a running encode (or a stall) still read the same.
+
+The panel now reads the poll. `IN_QUEUE` / `delayTime` / `accepted`
+shows "Starting up" and the startup note. A running encode shows
+"Rendering" and no note. The stall verdict still replaces the note.
+No raw `IN_QUEUE` in the visible text; the token stays on the title.
+The bar still does not invent motion.
+
+### docs(user): 8th-grade hosted-studio how-to
+
+User-facing path for people USING a hosted studio (project, story,
+cast, render, watch). Not the installer. Closes the parked docs
+deliverable.
+
+### Fixed: scope denial is distinguishable from a dead credential (cf#525)
+
+A consumer token hitting an operator route still returns **403**. The body now
+carries `code: "scope_denied"` (and header `X-Vivijure-Authz`) so a client can
+tell authorization-failure from a missing/bad token. `AUTHZ_DENY_REASON` still
+does not trip the paste-once prompt. The panel shows a banner: re-issue with
+operator scope.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/525
+
+Panel film submits send a per-click `idempotency_key`. The host
+forwards it into core so a 5xx retry or double-post is one film,
+not two GPU bills. The 60s natural-key path stays the backstop.
+
+Also: animate-cloud error path had an extra `)` that made
+`planner-history-row.js` unparseable (found via node --check).
+
+### fix(finish): name photometric identity precondition
+
+The 2% luma check is only valid for identity-preserving operations
+(preset=neutral at strength 1, or strength 0). Named
+SEMANTIC_PRECONDITION and returned as applies_when on
+/photometric-check. Caller wiring is finish-blender after such a grade.
+
+### Fixed: hung ffmpeg no longer holds a finish-door thread forever (cf#571)
+
+`video-finish`, `audio-mix`, and `audio-master` ran every ffmpeg/ffprobe child
+with no `timeout=`. A wedged encode consumed one default-executor thread
+permanently; `/health` kept answering and the door degraded until restart.
+
+Every production invocation now goes through a bounded `_run`: default
+`FFMPEG_TIMEOUT=1200s` (encodes) / `FFPROBE_TIMEOUT=60s` (probes), process-group
+kill on expiry, named `FfmpegTimeout` (`ffmpeg timeout after Ns`). Assemble
+fails loud (it is the film; there is no passthrough). `image-prep` and
+`audio-beat-sync` have no ffmpeg subprocess.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/571
+
+### Fixed: clip-level vendors now declare every core presigned field (cf#590)
+
+`finish-rife` and `finish-blender` vendored `FinishInput` with none of the five
+credentialless transport fields core already sends (`video_url`, `output_url`,
+`output_key`, `audio_url`, `hash_url`). `finish-upscale` was missing `audio_url`.
+A field core adds is invisible to those copies on a dependency bump.
+
+The four finish doors now declare the full FinishInput set; speech-upscale stays
+on the SpeechInput set. A test reads core's interfaces from the installed
+package and goes red when a vendor has not mirrored a new `*_url` / `output_key`.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/590
+
+### fix(hygiene): install fetch timeout; ledger fake no longer wipes (cf#600, #555, #474)
+
+`hInstallModule` now times out and retries the resident `/module.json` fetch
+the same way core and the control plane do, instead of hanging. The storage
+quota test fake throws on unknown SQL instead of clearing the ledger. Wan LoRA
+preflight asks the planner registry whether a door is Wan LoRA instead of
+hardcoding a cost-door name. SECURITY.md no longer ships a hand-typed
+manifest count.
+
+### test(registry): GOLDEN bar is a derived gate
+
+Hooks (12) and quality tiers (draft/standard/final) come from core.
+First-party modules are directories with wrangler.toml. The old "30
+modules" snapshot is not pinned; the list is re-derived when it
+moves.
+
+### feat(planner): spoken lines pick talking doors and keep the Cast voice
+
+If the storyboard has a spoken line, the motion picker only offers
+doors with native audio (Seedance, Veo, Flux, Vidu, Grok). The server
+refuses a silent look door on that film. Speaker dropdown shows the
+Cast name and locked voice. Voice is chosen once on Cast.
+
+### fix(hosted): MuseTalk is not a hosted door
+
+`MODULE_LIPSYNC` is unbound on the flagship Worker. Talking films keep
+native AV from our keyframes. The finish-lipsync worker stays in the tree
+for OSS / homelab (`wrangler.toml.example` SATELLITE block).
+
+### fix(planner): own-gpu is silent look, not the full product
+
+The studio GPU door is still the best picture. It cannot talk and it
+cannot lock a Cast voice sample. Wan-train stays optional and folded
+away: keyframes use the SDXL LoRA, not Wan adapters. A bound character
+without an SDXL adapter is refused before keyframe spend.
+
+### chore(deps): pin vivijure-core 1.21.7
+
+Storyboard SPOKEN LINE now rides the i2v prompt. Tests follow the
+1.21.6 fail-closed finish bearer and the 1.21.7 presign omit.
+
+### chore(deps): pin vivijure-core 1.22.0
+
+Keyframe hook fans across KEYFRAME_PARALLEL shot chunks (default 4)
+on one film. Not scatter-*.
+
+### feat(render): retire film scatter
+
+Film scatter (split motion/film across shards) is retired. One film,
+no split. POST /api/storyboard/render/scatter is gone (404). Poll of
+leftover scatter-* ids returns 410. Keyframe parallelism is a
+single-film keyframe stage, not this door.
+
+### feat(cast): hear a 5/10s talking sample and keep it as the voice
+
+Cast can generate a short clip from the portrait, or attach a clip
+or reference audio the filmmaker already has. Cloudflare Seedance
+sends that clip as reference_video. Veo, Flux, Grok, and Vidu cannot
+lock the take; the Cast page and each door's limits say so. Pins
+vivijure-core 1.21.8 (voice_ref_url / voice_ref_keys).
+
+## v1.32.10 -- 2026-08-17
+
+### fix(security): report door, hosted spend ceiling, no quarantine GET
+
+POST /api/report copies named keys to quarantine/ (not served). Token
+mode defaults SPEND_DAILY_CEILING to 25 (set 0 to disable). Pins core
+1.21.6 when published (fail-closed finish bearer, project keys).
+
+## v1.32.9 -- 2026-08-17
+
+### feat(motion): voice/look lock, new doors, no scatter on talking
+
+Pins `@skyphusion-labs/vivijure-core` 1.21.5. Talking clips and look
+doors stay on one film. Cast voice lock. Seedance 2.5 / Grok 1.5.
+InfiniteTalk, Chatterbox, Kling O1, CF Wan 2.7 / Hailuo / Veo. Provider
+safety defaults off. Kling 2.1 and Wan 2.6 stay on disk, unbound.
+
+## v1.32.8 -- 2026-08-17
+
+### feat(motion): first+last frame + native AV default
+
+Next shot's still is the end frame on Flux 3 and HH1. Seedance / Flux /
+Veo / Vidu keep model audio. MuseTalk is opt-in replace-mouth. Pins
+core 1.21.3.
+
 ### fix(planner): pick cast before you write the shots
 
 The rail locked Cast until a storyboard existed, so the planner wrote
 shots with nobody chosen. Cast is first and always open. Plan still
 sends those people in the brief.
+
+## v1.32.7 -- 2026-08-17
+
+### fix(planner): first-class Lip-sync (MuseTalk) on Render
+
+Hosted filmmaker chrome hid Advanced, which was the only MuseTalk
+control. Render now has Lip-sync on spoken shots (default on) and
+optional Blender grade. Lip-sync still forces speech-upscale.
+
+## v1.32.6 -- 2026-08-17
+
+### fix(ci): pass door URL vars into the tag deploy render
+
+v1.32.5 parsed and ran, then died at wrangler.toml because
+`VIDEO_FINISH_URL` and the other seven door origins were never in
+the envsubst list. Repo vars already existed. Wire them.
+
+## v1.32.5 -- 2026-08-17
+
+### fix(ci): v* tags parse and deploy again
+
+`studio-release.yml` used `secrets.*` in a `workflow_call` `if:`, so
+every `ci.yml` run was a 0-job parse failure. R2 skip is in-shell now.
+Host tests speak `/async/finish`. Tag this release to ship core 1.21.2.
+
+## v1.32.4 -- 2026-08-17
+
+### fix(finish): gather is async so a 20-shot film does not 524
+
+Pin `@skyphusion-labs/vivijure-core` 1.21.2. Assemble/mux POST
+`/async/finish` and poll. `video-finish` runs that concat in the
+background so a long film is not killed by the Worker fetch budget.
 
 ## v1.32.3 -- 2026-08-16
 

@@ -7,9 +7,9 @@
 #
 # Two profiles (set VIVIJURE_PROFILE in deploy.env):
 #   standard   -> studio core + cloud/own-GPU render + the media stack (5 always-on CPU containers
-#                 reached over Workers VPC). deploy.sh AUTOMATES the media stack: it creates the
-#                 Cloudflare tunnel + the 5 VPC Services and wires their ids in; you just run
-#                 `docker compose up` for the containers (#519).
+#                 reached over VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL). deploy.sh writes
+#                 the compose tunnel token only; it does not create Workers VPC services. You set
+#                 the Traefik URLs + MEDIA_FINISH_TOKEN, then `docker compose up` (#519 leftover).
 #   satellites -> also the 3 opt-in GPU satellites (upscale / lip-sync / speech-upscale), each on
 #                 its own RunPod endpoint.
 # The render strips the wrangler.toml.example blocks this deploy does not want: SATELLITE blocks
@@ -70,7 +70,7 @@ need DEPLOY_HOSTNAME         "the hostname your studio serves on"
 # Secrets Store, so BOTH must be seeded before its deploy or a wrangler deploy hard-fails (CF 10182).
 # Their values only exist AFTER you bring your local door container up (it prints them in its banner and
 # holds them in its own .env), so there is no default to invent -- require them here, fail-closed and
-# EARLY, before any tunnel / VPC service / worker is created (mirrors the satellites + planner-token
+# EARLY, before any tunnel / worker is created (mirrors the satellites + planner-token
 # prerequisites; #534).
 if [ "$INSTALL_LOCAL_GPU" = "1" ]; then
   need LOCAL_BACKEND_URL   "bring your vivijure-local-12gb/-16gb door up FIRST, then copy its tunnel URL from the door startup banner (or the door .env) into deploy.env"
@@ -116,7 +116,7 @@ export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
 # The module workers this profile deploys. Explicit (not a glob) so a work-in-progress module in
 # modules/ is never picked up by accident, and the list matches the profile boundary in the docs.
 # STANDARD = core render modules + the media-stack finish modules (film-titles /
-# subtitle / beat-sync / audio-master), all reached over Workers VPC (provisioned in step 4, #519).
+# subtitle / beat-sync / audio-master), reached over Traefik URL vars (not Workers VPC).
 #
 # image-generate (cf#129 phase 2) is load-bearing for the CHAT IMAGE path, not an optional extra:
 # the studio hardcodes no image model names, so GET /api/models projects its image rows from this
@@ -345,36 +345,19 @@ else
   fi
 fi
 
-# ---- 4. media stack: Cloudflare tunnel + Workers VPC services ----------------
-# STANDARD as of #519. scripts/setup-media-vpc.py reuses-or-creates ONE cloudflared tunnel and the 5
-# Workers VPC Services (video-finish / image-prep / audio-beat-sync / audio-mix / audio-master), and
-# writes the tunnel CONNECTOR TOKEN to containers/tunnel.env (0600, for docker compose) -- the token
-# never touches stdout or a log. Its JSON stdout carries only the NON-secret ids, which we render into
-# the core wrangler.toml (envsubst below) and into the 5 media module tomls (the F8/#520 fix: no
-# hardcoded prod VPC ids in the tracked configs). Idempotent: a re-run reuses the tunnel + services.
-# Hosted no longer attaches vpc_services. This step still runs for self-host (tunnel token
-# for containers/compose.yaml). FLAG: it still creates VPC services nothing in this studio binds.
-say "Step 4/9: media stack -- Cloudflare tunnel + Workers VPC services (self-host leftover; hosted uses URL vars)"
-# Optional VIVIJURE_TUNNEL_NAME override (deploy.env) names the tunnel on a FIRST install; on an
-# upgrade the script adopts whatever tunnel the existing VPC services already point at (#531).
+# ---- 4. media stack: compose tunnel token (no Workers VPC) -------------------
+# The studio reaches media over VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL
+# (public HTTPS / Traefik) plus MEDIA_FINISH_TOKEN. This step only writes the
+# cloudflared connector token to containers/tunnel.env (0600) for compose.
+# It does NOT create video-finish / image-prep / audio-beat-sync / audio-mix VPC
+# services and it does not mint or inject those service ids.
+say "Step 4/9: media stack -- compose tunnel token (hosted uses Traefik URL vars + MEDIA_FINISH_TOKEN)"
 media_args=(--token-file containers/tunnel.env)
 [ -n "${VIVIJURE_TUNNEL_NAME:-}" ] && media_args+=(--tunnel-name "$VIVIJURE_TUNNEL_NAME")
-if ! MEDIA_JSON="$(python3 scripts/setup-media-vpc.py "${media_args[@]}")"; then
-  die "media-stack VPC setup failed (see the error above). The deploy token needs Cloudflare Tunnel: Write + Connectivity Directory: Admin -- see docs/DEPLOYMENT.md 2a."
+if ! python3 scripts/setup-media-vpc.py "${media_args[@]}" >/dev/null; then
+  die "media-stack tunnel setup failed (see the error above). The deploy token needs Cloudflare Tunnel: Write -- see docs/DEPLOYMENT.md 2a."
 fi
-media_id() { printf "%s" "$MEDIA_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)[\"services\"][\"$1\"])"; }
-# assign then export (separate, so a media_id failure is not masked -- SC2155); the guard below
-# then fails closed on any empty id.
-VPC_VIDEO_FINISH_ID="$(media_id video-finish)"
-VPC_IMAGE_PREP_ID="$(media_id image-prep)"
-VPC_AUDIO_BEAT_SYNC_ID="$(media_id audio-beat-sync)"
-VPC_AUDIO_MIX_ID="$(media_id audio-mix)"
-VPC_AUDIO_MASTER_ID="$(media_id audio-master)"
-export VPC_VIDEO_FINISH_ID VPC_IMAGE_PREP_ID VPC_AUDIO_BEAT_SYNC_ID VPC_AUDIO_MIX_ID
-for v in VPC_VIDEO_FINISH_ID VPC_IMAGE_PREP_ID VPC_AUDIO_BEAT_SYNC_ID VPC_AUDIO_MIX_ID VPC_AUDIO_MASTER_ID; do
-  eval "vv=\${$v:-}"; [ -n "$vv" ] || die "media stack: $v came back empty from setup-media-vpc.py"
-done
-info "media stack: tunnel token -> containers/tunnel.env (0600). Hosted studio binds no vpc_services; set VIDEO_FINISH_URL / AUDIO_*_URL / *_DOORS in deploy.env."
+info "media stack: tunnel token -> containers/tunnel.env (0600). Set VIDEO_FINISH_URL / AUDIO_*_URL / *_DOORS in deploy.env; do not mint media VPC ids."
 
 # ---- 5. render wrangler.toml from the template ------------------------------
 say "Step 5/9: render wrangler.toml ($VIVIJURE_PROFILE profile)"

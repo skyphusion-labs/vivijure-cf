@@ -9,16 +9,15 @@ import {
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
 import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
+import { voiceRefKeysFromScenes } from "./cast-voice-sample";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import {
   startFilmFromKeyframes,
   type FilmScene,
   type FilmKeyframeRef,
 } from "@skyphusion-labs/vivijure-core/film-orchestrator";
-import {
-  filmJobToPollView,
-  mapRenderOverridesToModuleConfigs,
-} from "@skyphusion-labs/vivijure-core/film-render-bridge";
+import { filmJobToPollView } from "@skyphusion-labs/vivijure-core/film-render-bridge";
+import { mapRenderOverridesToModuleConfigs } from "./film-render-bridge";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import {
   insertRender,
@@ -31,6 +30,7 @@ import { parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/rende
 import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types";
 import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import { readIdempotencyKey } from "./film-idempotency";
 
 export interface AnimateFromPreviewArgs {
   parent: RenderRow;
@@ -43,6 +43,8 @@ export interface AnimateFromPreviewArgs {
   audioKey?: string;
   /** Cast slot map for voicing derived dialogue_lines (cf#334). */
   castLoras?: Record<string, string>;
+  /** cf#528: panel-supplied submit key. Forwarded into startFilmFromKeyframes. */
+  idempotency_key?: string;
 }
 
 function resolveCloudModel(requested: string | undefined, allowed: string[]): string | undefined {
@@ -237,14 +239,16 @@ export async function animateFromPreview(
   // cf#334: from-keyframes doors dropped dialogue. Derive lines from the bundle storyboard
   // (same helper as POST /api/render/film) so a voiced bundle does not finalize silent.
   let dialogue_lines: DialogueLine[] | undefined;
+  let voice_ref_keys: Record<string, string> | undefined;
   try {
     const bundleScenes = await readBundleScenes(env, args.parent.bundle_key);
-    const { voices } = await resolveCastLoras(env, args.castLoras ?? {});
-    let lines = dialogueLinesFromBundleScenes(bundleScenes, voices);
+    const resolved = await resolveCastLoras(env, args.castLoras ?? {});
+    let lines = dialogueLinesFromBundleScenes(bundleScenes, resolved.voices);
     if (lines.length) {
-      lines = resolveExplicitLineVoices(lines, bundleScenes, voices);
+      lines = resolveExplicitLineVoices(lines, bundleScenes, resolved.voices);
       dialogue_lines = lines;
     }
+    voice_ref_keys = voiceRefKeysFromScenes(bundleScenes, resolved.voiceRefs);
   } catch {
     // best-effort: missing bundle dialogue must not block finalize
   }
@@ -273,6 +277,8 @@ export async function animateFromPreview(
       parent_render_id: args.parent.id,
       audio_key: args.audioKey,
       dialogue_lines,
+      voice_ref_keys,
+      idempotency_key: readIdempotencyKey({ idempotency_key: args.idempotency_key }),
     } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] },
     modules,
   );

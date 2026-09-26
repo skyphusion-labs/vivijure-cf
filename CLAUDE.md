@@ -16,16 +16,17 @@ Read **`@skyphusion-labs/vivijure-core` module types** first (package path `modu
 Version: see root `package.json` / latest `v*` tag / `CHANGELOG.md` (do not freeze a number here).
 
 GPU render backend: `vivijure-backend` (RunPod serverless). Production panel UI:
-**vivijure.skyphusion.org**. Local-GPU door for this panel's fleet wiring: fatmike CF door (operator
-pin; not frozen here). Demo: **demo.vivijure.com** (`AUTH_MODE=demo`; `DEMO_RENDER_ENABLED=false`
-is intentional zero-spend).
+**vivijure.skyphusion.org**. Local-GPU is opt-in and on-box; the fleet named tunnel
+(`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). Demo:
+**demo.vivijure.com** (`AUTH_MODE=demo`; `DEMO_RENDER_ENABLED=false` is intentional
+zero-spend).
 
 ## TWO panels (honesty)
 
 | Panel | Repo | Runtime |
 |-------|------|---------|
 | CF (this repo) | `vivijure-cf` | Workers, D1, R2 |
-| LOCAL | `vivijure-local` | Node, SQLite, MinIO; fleet box propagandhi |
+| LOCAL | `vivijure-local` | Node, SQLite, MinIO; self-hosted, on any GPU box (no longer the Hetzner fleet, decommissioned 2026-09-24) |
 
 **Dual-panel product parity** is required for product-facing features (same-time releases, no
 community edition). **Dependency pins may lag** between cf and local; check each `package.json`.

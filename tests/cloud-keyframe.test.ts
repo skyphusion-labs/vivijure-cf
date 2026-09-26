@@ -9,8 +9,10 @@ import {
   clampDim,
   clampRefsPerSlot,
   composePrompt,
+  composeEditPrompt,
   keyframeKey,
   stageRefKey,
+  plateKey,
   stateKey,
   selectScenes,
   usedSlots,
@@ -43,10 +45,13 @@ import {
   isFlaggedError,
   isCsamRefusal,
   isRetryableFlag,
+  isRateLimitError,
   extractGenError,
   rephraseForFlagRetry,
   FLAG_RETRY_ATTEMPTS,
   generateImage,
+  runpodNano2Input,
+  extractRunpodImageUrl,
 } from "../modules/cloud-keyframe/src/image-gen";
 
 // A storyboard.yaml in the exact deterministic shape the core's serializeStoryboardYaml emits.
@@ -80,11 +85,22 @@ const REGISTRY_JSON = JSON.stringify({
 });
 
 describe("cloud-keyframe pure logic", () => {
-  it("clampModel accepts the known models and defaults to flux-2-klein-9b", () => {
-    expect(clampModel("google/nano-banana-pro")).toBe("google/nano-banana-pro");
-    expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("@cf/black-forest-labs/flux-2-dev");
-    expect(clampModel("made-up-model")).toBe(MODELS[0]);
+  it("clampModel always lands on RunPod Nano Banana 2", () => {
+    expect(clampModel("google/nano-banana-2")).toBe("google/nano-banana-2");
+    expect(clampModel("google/nano-banana-pro")).toBe("google/nano-banana-2");
+    expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("google/nano-banana-2");
+    expect(clampModel("nano-pro-2")).toBe("google/nano-banana-2");
     expect(clampModel(undefined)).toBe(MODELS[0]);
+  });
+
+  it("composeEditPrompt tells the edit door to make a new still, not retouch the portrait", () => {
+    const p = composeEditPrompt("Wren runs down a wet alley");
+    expect(p).toMatch(/Create a new cinematic film still/);
+    expect(p).toMatch(/Wren runs down a wet alley/);
+    expect(p).toMatch(/Keep their faces/);
+    expect(p).toMatch(/location in the first image/);
+    expect(p).toMatch(/studio backdrop or grey paper/);
+    expect(p).toMatch(/Do not copy the reference framing/);
   });
 
   it("clampDim clamps to [512,1536], rounds, and falls back on junk", () => {
@@ -121,6 +137,7 @@ describe("cloud-keyframe pure logic", () => {
   it("R2 key conventions match the contract (renders/<project>/keyframes/<shot>.png)", () => {
     expect(keyframeKey("neon_film", "shot_01")).toBe("renders/neon_film/keyframes/shot_01.png");
     expect(stageRefKey("neon_film", "job-7", "A", 1)).toBe("keyframe-stage/neon_film/job-7/ref_A_01.png");
+    expect(plateKey("neon_film", "job-7", "shot_01")).toBe("keyframe-stage/neon_film/job-7/plate_shot_01.png");
     expect(stateKey("neon_film", "job-7")).toBe("keyframe-stage/neon_film/job-7.state.json");
   });
 
@@ -240,11 +257,31 @@ describe("cloud-keyframe image-gen helpers", () => {
     expect(nearestAspectRatio(768, 1344)).toBe("9:16");
   });
 
+  it("runpodNano2Input sends images + 1k/2k + aspect", () => {
+    const p = runpodNano2Input("a prompt", ["data:image/png;base64,xx"], 1344, 768);
+    expect(p.aspect_ratio).toBe("16:9");
+    expect(p.resolution).toBe("1k");
+    expect(p.output_format).toBe("png");
+    expect(p.images).toEqual(["data:image/png;base64,xx"]);
+  });
+
+  it("extractRunpodImageUrl reads output.image_url", () => {
+    expect(extractRunpodImageUrl({ status: "COMPLETED", output: { image_url: "https://x/y.png" } })).toBe("https://x/y.png");
+    expect(extractRunpodImageUrl({})).toBeNull();
+  });
+
   it("proxiedParams sends image_input + aspect_ratio for google, capped to 3", () => {
     const p = proxiedParams("google/nano-banana-pro", "a prompt", ["a", "b", "c", "d"], 1344, 768);
     expect(p.aspect_ratio).toBe("16:9");
     expect(p.output_format).toBe("png");
     expect((p.image_input as string[]).length).toBe(3);
+  });
+
+  it("proxiedParams omits image_input when the ref list is empty", () => {
+    const p = proxiedParams("google/nano-banana-2", "a prompt", [], 1344, 768);
+    expect("image_input" in p).toBe(false);
+    expect(p.prompt).toBe("a prompt");
+    expect(p.aspect_ratio).toBe("16:9");
   });
 
   it("isFlaggedError catches FLUX 3030, not real failures or CSAM", () => {
@@ -255,6 +292,11 @@ describe("cloud-keyframe image-gen helpers", () => {
     expect(isRetryableFlag("error 3030: has been flagged")).toBe(true);
     expect(isRetryableFlag("3030 CSAM child sexual content")).toBe(false);
     expect(isRetryableFlag("connection reset")).toBe(false);
+    expect(isRateLimitError("fetch proxied image -> 429")).toBe(true);
+    expect(isRateLimitError("fetch proxied image -> 500")).toBe(true);
+    expect(isRateLimitError("AiGatewayError: 7003: Model execution failed")).toBe(true);
+    expect(isRateLimitError("flux-2 returned no image")).toBe(false);
+    expect(isRateLimitError("3030 CSAM child sexual content")).toBe(false);
   });
 
   it("extractGenError reads the 3030 off a result body so it is not 'no image'", () => {
@@ -283,6 +325,7 @@ describe("cloud-keyframe conformance (the contract is the law)", () => {
     expect(MANIFEST.hooks).toEqual(["keyframe"]);
     expect(MANIFEST.name).toBe("cloud-keyframe");
     expect(MANIFEST.api).toBe("vivijure-module/2");
+    expect(MANIFEST.config_schema?.film_ref).toMatchObject({ type: "string", default: "first_keyframe" });
   });
 
   it("a well-formed KeyframeOutput passes checkHookOutput('keyframe')", () => {
@@ -362,15 +405,19 @@ function fakeR2() {
 async function makeKeyframeEnv(yaml: string = STORYBOARD_YAML, withPortraits = true) {
   const R2 = fakeR2();
   await R2.put("bundles/neon.tar.gz", await bundleTarGz(yaml, withPortraits));
-  return { AI: { run: async () => ({}) }, R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
+  return { AI: { run: async () => ({}) }, GATEWAY_ID: "gw", R2_RENDERS: R2 } as unknown as Parameters<typeof worker.fetch>[1];
 }
 
-async function invokeKeyframe(env: Parameters<typeof worker.fetch>[1], config: Record<string, unknown>) {
+async function invokeKeyframe(
+  env: Parameters<typeof worker.fetch>[1],
+  config: Record<string, unknown>,
+  shotIds?: string[],
+) {
   const req = new Request("http://m/invoke", {
     method: "POST",
     body: JSON.stringify({
       hook: "keyframe",
-      input: { project: "neon_film", bundle_key: "bundles/neon.tar.gz" },
+      input: { project: "neon_film", bundle_key: "bundles/neon.tar.gz", shot_ids: shotIds },
       config,
       context: { project: "neon_film", job_id: "j" },
     }),
@@ -411,7 +458,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
       return tinyPng;
     });
     const env = await makeKeyframeEnv(
-      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: [A]", ""].join("\n"),
+      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: []", ""].join("\n"),
     );
     const sub = await invokeKeyframe(env, { film_ref: "none" });
     expect(sub.ok, sub.error).toBe(true);
@@ -427,7 +474,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
       throw new Error("error 3030: Your output has been flagged");
     });
     const env = await makeKeyframeEnv(
-      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: [A]", ""].join("\n"),
+      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: []", ""].join("\n"),
     );
     const sub = await invokeKeyframe(env, { film_ref: "none" });
     expect(sub.ok, sub.error).toBe(true);
@@ -444,7 +491,7 @@ describe("cloud-keyframe 3030 flag retry (integration)", () => {
       throw new Error("error 3030: CSAM child sexual content");
     });
     const env = await makeKeyframeEnv(
-      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: [A]", ""].join("\n"),
+      ['scenes:', '  - prompt: "wide street at night"', '    id: "shot_01"', "    character_slots: []", ""].join("\n"),
     );
     const sub = await invokeKeyframe(env, { film_ref: "none" });
     expect(sub.ok, sub.error).toBe(true);
@@ -472,7 +519,33 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
     expect(shot3!.refCount).toBe(1);
   });
 
-  it("film_ref=none is a true no-op: the character-less shot still draws from text alone", async () => {
+  it("invoke without film_ref does not populate FILM_REF_SLOT from portraits", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, {});
+    expect(sub.ok, sub.error).toBe(true);
+    const token = JSON.parse(atob(sub.poll!)) as { project: string; job_id: string };
+    const r2 = env.R2_RENDERS as { get: (k: string) => Promise<{ text: () => Promise<string> } | null> };
+    const obj = await r2.get(stateKey(token.project, token.job_id));
+    expect(obj, "run state exists").toBeTruthy();
+    const state = JSON.parse(await obj!.text()) as CloudKeyframeState;
+    expect(state.film_ref).toEqual({ mode: "first_keyframe" });
+    expect(state.slot_refs[FILM_REF_SLOT]).toBeUndefined();
+    expect(state.slot_refs.A?.length).toBeGreaterThan(0);
+  });
+
+  it("a scatter shard with only an empty-slot shot does not steal staged portraits", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, { film_ref: "none" }, ["shot_03"]);
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    expect(genCalls.length).toBe(1);
+    expect(genCalls[0].refCount).toBe(0);
+  });
+
+  it("poll with empty refBlobs does not copy a staged portrait onto an empty-slot shot", async () => {
     genCalls.length = 0;
     const env = await makeKeyframeEnv();
     const sub = await invokeKeyframe(env, { film_ref: "none" });
@@ -480,7 +553,9 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
     const done = await drainPolls(env, sub.poll!);
     expect(done.ok, done.error).toBe(true);
     const shot3 = genCalls.find((c) => c.prompt.includes("empty landscape"));
+    expect(shot3, "shot_03 was rendered").toBeDefined();
     expect(shot3!.refCount).toBe(0);
+    expect(shot3!.prompt).toMatch(/empty landscape/);
   });
 
   it("first_keyframe: the first shot is the source (no film ref), a later character-less shot gets it", async () => {
@@ -508,10 +583,89 @@ describe("cloud-keyframe film-wide reference (cp#32, integration)", () => {
   });
 });
 
+describe("cloud-keyframe plate-then-edit", () => {
+  it("does not wire generateImageRunpod", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("modules/cloud-keyframe/src/index.ts", "utf8");
+    expect(src).not.toMatch(/generateImageRunpod/);
+  });
+
+  it("a character shot is two gens; the plate sidecar is not the output keyframe", async () => {
+    genCalls.length = 0;
+    const oneChar = [
+      "scenes:",
+      '  - prompt: "diner booth at night"',
+      '    id: "shot_01"',
+      "    character_slots: [A]",
+      "",
+    ].join("\n");
+    const env = await makeKeyframeEnv(oneChar);
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const token = JSON.parse(atob(sub.poll!)) as { project: string; job_id: string };
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    expect(genCalls.length).toBe(2);
+    expect(genCalls[0].refCount).toBe(0);
+    expect(genCalls[0].prompt).toBe("diner booth at night");
+    expect(genCalls[0].prompt).not.toMatch(/Featuring/);
+    expect(genCalls[1].refCount).toBe(2); // plate + face
+    expect(genCalls[1].prompt).toMatch(/location in the first image/);
+    expect(genCalls[1].prompt).toMatch(/diner booth at night/);
+    const out = done.output as { keyframes: { shot_id: string; keyframe_key: string }[] };
+    expect(out.keyframes).toEqual([
+      { shot_id: "shot_01", keyframe_key: "renders/neon_film/keyframes/shot_01.png" },
+    ]);
+    const plate = plateKey(token.project, token.job_id, "shot_01");
+    expect(out.keyframes[0].keyframe_key).not.toBe(plate);
+    const r2 = env.R2_RENDERS as { get: (k: string) => Promise<unknown> };
+    expect(await r2.get(plate), "plate sidecar persisted").toBeTruthy();
+    expect(await r2.get(out.keyframes[0].keyframe_key), "delivered keyframe persisted").toBeTruthy();
+  });
+
+  it("after shot 1, __film__ is the shot-1 plate and later empty shots receive it", async () => {
+    genCalls.length = 0;
+    const dinerThenWide = [
+      "scenes:",
+      '  - prompt: "diner booth at night"',
+      '    id: "shot_01"',
+      "    character_slots: [A]",
+      '  - prompt: "empty diner after close"',
+      '    id: "shot_02"',
+      "    character_slots: []",
+      "",
+    ].join("\n");
+    const env = await makeKeyframeEnv(dinerThenWide);
+    const sub = await invokeKeyframe(env, {});
+    expect(sub.ok, sub.error).toBe(true);
+    const token = JSON.parse(atob(sub.poll!)) as { project: string; job_id: string };
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    expect(genCalls.length).toBe(3); // plate, edit, empty-slot
+    expect(genCalls[0].refCount).toBe(0);
+    expect(genCalls[1].refCount).toBe(2);
+    expect(genCalls[2].prompt).toMatch(/empty diner after close/);
+    expect(genCalls[2].refCount).toBe(1);
+    const r2 = env.R2_RENDERS as { get: (k: string) => Promise<{ text: () => Promise<string> } | null> };
+    const obj = await r2.get(stateKey(token.project, token.job_id));
+    const state = JSON.parse(await obj!.text()) as CloudKeyframeState;
+    expect(state.slot_refs[FILM_REF_SLOT]).toEqual([
+      stageRefKey(token.project, token.job_id, FILM_REF_SLOT, 1),
+    ]);
+    const out = done.output as { keyframes: { shot_id: string; keyframe_key: string }[] };
+    expect(out.keyframes.map((k) => k.keyframe_key)).toEqual([
+      "renders/neon_film/keyframes/shot_01.png",
+      "renders/neon_film/keyframes/shot_02.png",
+    ]);
+    expect(out.keyframes[0].keyframe_key).not.toBe(plateKey(token.project, token.job_id, "shot_01"));
+  });
+});
+
 describe("cloud-keyframe film-wide reference (cp#32, pure logic)", () => {
   it("parseFilmRef reads the grammar and rejects junk honestly", () => {
-    expect(parseFilmRef(undefined)).toEqual({ mode: "none" });
-    expect(parseFilmRef("")).toEqual({ mode: "none" });
+    expect(parseFilmRef(undefined)).toEqual({ mode: "first_keyframe" });
+    expect(parseFilmRef(null)).toEqual({ mode: "first_keyframe" });
+    expect(parseFilmRef("")).toEqual({ mode: "first_keyframe" });
     expect(parseFilmRef("none")).toEqual({ mode: "none" });
     expect(parseFilmRef("first_keyframe")).toEqual({ mode: "first_keyframe" });
     expect(parseFilmRef("cast:A")).toEqual({ mode: "cast", slot: "A" });

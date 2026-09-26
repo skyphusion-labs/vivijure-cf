@@ -44,14 +44,37 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "google-veo",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Google Veo 3.1 Fast (cloud i2v)" }],
+  provides: [{ id: "i2v-cloud", label: "Talking clips (Veo)" }],
   config_schema: {
-    generate_audio: { type: "bool", default: false, label: "native audio (off: core mux chain owns audio)" },
+    generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
   },
-  ui: { section: "motion", order: 50, locality: "cloud", cost: "Pay per render", blurb: "Rents datacenter GPUs by the second -- top quality, scale-to-zero; you pay only for render seconds." },
+  ui: {
+    section: "motion",
+    order: 50,
+    locality: "cloud",
+    cost: "Pay per render",
+    blurb: "Photoreal talking clips. Only 4, 6, or 8 seconds. Slow and spendy.",
+    limits: [
+      "4, 6, or 8 second clips",
+      "Same voice lock on every shot",
+      "One film, no scatter",
+      "No first+last still on this door",
+      "Cannot lock the Cast voice sample. Same description, not the same take.",
+    ],
+  },
+  usage: {
+    native_audio: true,
+    voice: "prompt_lock",
+    scatter_native_audio: false,
+    min_seconds: 4,
+    max_seconds: 8,
+    duration_steps: [4, 6, 8],
+    first_last: false,
+    seed: false,
+  },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -204,7 +227,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS } };
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
 }
 
 export default {

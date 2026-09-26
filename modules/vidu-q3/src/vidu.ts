@@ -26,10 +26,10 @@ export function buildViduBody(input: MotionBackendInput, cfg: Record<string, unk
       size: "720p",
       duration: clampDuration(input.seconds),
       movement_amplitude: "auto",
-      generate_audio: cfg.generate_audio === true,
+      generate_audio: cfg.generate_audio !== false,
       bgm: cfg.bgm === true,
       seed: -1,
-      enable_safety_checker: true,
+      enable_safety_checker: cfg.enable_safety_checker === true,
     },
   };
 }

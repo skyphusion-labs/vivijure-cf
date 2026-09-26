@@ -33,8 +33,10 @@ export function buildSeedanceBody(input: MotionBackendInput, cfg: Record<string,
       aspect_ratio: String(cfg.aspect_ratio ?? "16:9"),
       resolution: String(cfg.resolution ?? DEFAULT_RESOLUTION),
       camera_fixed: !!cfg.camera_fixed,
-      generate_audio: !!cfg.generate_audio,
+      generate_audio: cfg.generate_audio !== false,
       seed: typeof cfg.seed === "number" ? cfg.seed : -1,
+      use_virtual_avatar: true,
+      ...(input.last_keyframe_url ? { last_frame_image: input.last_keyframe_url } : {}),
     },
   };
 }

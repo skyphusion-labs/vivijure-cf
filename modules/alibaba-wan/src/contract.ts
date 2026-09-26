@@ -16,6 +16,21 @@ export type ConfigSchema = Record<string, ConfigField>;
 export interface Provides { id: string; label: string; }
 export interface ModuleUi { section?: string; icon?: string; order?: number; locality?: "local" | "byo" | "cloud"; cost?: string; blurb?: string; limits?: string[]; }
 
+/** How we actually call this motion door (same shape as core MotionUsageDecl). */
+export type MotionVoiceMode = "prompt_lock" | "seed_and_prompt" | "cast_tts" | "prev_clip";
+export interface MotionUsageDecl {
+  native_audio: boolean;
+  voice: MotionVoiceMode;
+  scatter_native_audio: boolean;
+  min_seconds: number;
+  max_seconds: number;
+  duration_steps?: number[];
+  first_last?: boolean;
+  seed?: boolean;
+  /** Shot LINE file as driving audio. Never the Cast sample. */
+  driving_audio?: boolean;
+}
+
 export interface ModuleManifest {
   name: string;
   version: string;
@@ -24,6 +39,7 @@ export interface ModuleManifest {
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
+  usage?: MotionUsageDecl;
 }
 
 export interface InvokeContext {
@@ -63,10 +79,16 @@ export interface MotionBackendInput {
   keyframe_key?: string;
   prompt: string;
   seconds: number;
+  /** Cast talking sample. Seedance uses this as reference_video. Never Wan audio. */
+  voice_ref_url?: string;
+  /** Shot LINE file (Cast TTS of this storyboard line). Wan 2.6 driving audio. */
+  audio_url?: string;
+  audio_key?: string;
 }
 export interface MotionBackendOutput {
   shot_id: string;
   clip_key: string;
   fps: number;
   frames: number;
+  has_audio?: boolean;
 }

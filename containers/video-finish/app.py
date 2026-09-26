@@ -27,6 +27,7 @@ import uuid
 from aiohttp import ClientSession, ClientTimeout, web
 
 from bearer import bearer_middleware
+from ffmpeg_run import FFPROBE_TIMEOUT, FfmpegTimeout, _run
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 import photometric_gate
@@ -160,40 +161,32 @@ async def _download(session, url, path, cap):
         return False, f"blocked: {e}"
 
 
-async def finish(req):
-    t0 = time.monotonic()
-    try:
-        body = await req.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+async def _finish_work(body):
+    """The /finish work: download clips, concat or remux, PUT the film.
 
+    Shared by the synchronous route and the async job runner. Raises
+    _JobError(status, message) on any failure; returns the result dict.
+    A 17-shot concat outlives a Worker fetch; POST /async/finish is the
+    path that does not 524.
+    """
+    t0 = time.monotonic()
     clips = body.get("clips")
     output_url = body.get("outputUrl")
     output_key = body.get("outputKey", "")
     audio_url = body.get("audioUrl")
-    # v0.155.0: audio-only remux. The caller (add-audio / add-narration) feeds a
-    # single ALREADY-FINISHED render MP4 + a bed and just wants the audio track
-    # added. Stream-copy the video (no scale/pad/re-encode), so the output keeps
-    # the source's native resolution and quality. Without this the clip went
-    # through _normalize, which forced the container's default 1920x1080 and a
-    # lossy libx264 pass, upscaling a 1280x720 hybrid/cloud render.
     remux_audio_only = bool(body.get("remuxAudioOnly", False))
-    # keepClipAudio: the clips carry per-clip lip-synced dialogue (talking film) that
-    # must survive the concat. Set by the orchestrator when job.dialogue_audio is
-    # populated. Default False = the historical silent-concat behavior.
     keep_clip_audio = bool(body.get("keepClipAudio", False))
     if not isinstance(clips, list) or not clips:
-        return web.json_response({"ok": False, "error": "clips must be a non-empty array"}, status=400)
+        raise _JobError(400, "clips must be a non-empty array")
     if len(clips) > MAX_CLIPS:
-        return web.json_response({"ok": False, "error": f"too many clips (>{MAX_CLIPS})"}, status=400)
+        raise _JobError(400, f"too many clips (>{MAX_CLIPS})")
     if not output_url:
-        return web.json_response({"ok": False, "error": "outputUrl required"}, status=400)
+        raise _JobError(400, "outputUrl required")
     ok, why = validate_fetch_url(output_url)
     if not ok:
-        return web.json_response({"ok": False, "error": f"outputUrl blocked: {why}"}, status=400)
+        raise _JobError(400, f"outputUrl blocked: {why}")
     if remux_audio_only and len(clips) != 1:
-        return web.json_response(
-            {"ok": False, "error": "remuxAudioOnly requires exactly one clip"}, status=400)
+        raise _JobError(400, "remuxAudioOnly requires exactly one clip")
     try:
         width = int(body.get("width", 1920))
         height = int(body.get("height", 1080))
@@ -202,23 +195,22 @@ async def finish(req):
         crossfade = float(body.get("crossfade", 0.0))
         trim_join_frames = float(body.get("trimJoinFrames", 1))
     except (TypeError, ValueError):
-        return web.json_response({"ok": False, "error": "bad numeric input"}, status=400)
+        raise _JobError(400, "bad numeric input")
     preset = str(body.get("preset", "medium"))
 
     work = tempfile.mkdtemp(prefix="vfinish-")
     try:
-        # Download clips (in order) + optional soundtrack.
         srcs = []
         async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
             for i, c in enumerate(clips):
                 url = c.get("url") if isinstance(c, dict) else None
                 if not url:
-                    return web.json_response({"ok": False, "error": f"clips[{i}].url missing"}, status=400)
+                    raise _JobError(400, f"clips[{i}].url missing")
                 p = os.path.join(work, f"clip_{i:03d}.mp4")
                 ok, info = await _download(s, url, p, MAX_CLIP_BYTES)
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
-                    return web.json_response({"ok": False, "error": f"clips[{i}] {info}"}, status=status)
+                    raise _JobError(status, f"clips[{i}] {info}")
                 target = c.get("targetSeconds")
                 try:
                     target = float(target) if target is not None else None
@@ -230,16 +222,12 @@ async def finish(req):
                 audio_path = os.path.join(work, "audio.bin")
                 ok, info = await _download(s, audio_url, audio_path, MAX_AUDIO_BYTES)
                 if not ok:
-                    # The caller ASKED for this bed; a "finished" film that lost its music without saying so is
-                    # the exact silent-degrade of #77 / #249. The bed is trimmed to the video length downstream,
-                    # so an over-cap source is a legitimately long bed, not a reason to go silent -- fail loud and
-                    # let the core surface a real per-render error rather than ship a silent green.
                     status = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
                     log.warning("audio bed fetch failed (%s); failing loud (no silent finish)", info)
-                    return web.json_response({"ok": False, "error": f"audio bed {info}"}, status=status)
+                    raise _JobError(status, f"audio bed {info}")
 
         loop = asyncio.get_running_loop()
-        clip_durations = None  # per-clip assembled seconds (#697/#698); only the concat path reports them
+        clip_durations = None
         try:
             if remux_audio_only:
                 out_path, secs, has_audio = await loop.run_in_executor(
@@ -251,12 +239,15 @@ async def finish(req):
                     width, height, fps, crf, preset, crossfade, trim_join_frames,
                     keep_clip_audio,
                 )
+        except FfmpegTimeout as e:
+            log.exception("ffmpeg timeout")
+            raise _JobError(500, str(e))
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed")
-            return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)
+            raise _JobError(500, f"ffmpeg failed: {e}")
         except Exception as e:  # noqa: BLE001
             log.exception("assemble failed")
-            return web.json_response({"ok": False, "error": str(e)}, status=500)
+            raise _JobError(500, str(e))
 
         with open(out_path, "rb") as f:
             out_bytes = f.read()
@@ -265,31 +256,37 @@ async def finish(req):
             async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
                              headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
                 if r.status not in (200, 201, 204):
-                    return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
+                    raise _JobError(502, f"output put {r.status}")
 
-        return web.json_response({
+        return {
             "ok": True,
             "key": output_key,
             "bytes": len(out_bytes),
             "durationSeconds": round(secs, 3),
             "shots": len(srcs),
-            # [assemble] instrumentation (#287): clips received vs downloaded vs output duration,
-            # so a partial assemble is diagnosable from logs (worker-sent-fewer vs fetch-dropped).
             "clipsReceived": len(clips),
             "hasAudio": has_audio,
             "width": width,
             "height": height,
-            # ACTUAL per-clip assembled seconds in submit order (#697/#698); null on the remux path.
             "clipDurations": clip_durations,
-            # cf#268: CPU finish wall clock for capacity planning (not GPU job time).
             "elapsedMs": _elapsed_ms(t0),
-        })
+        }
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _run(cmd):
-    subprocess.run(cmd, check=True, capture_output=True)
+async def finish(req):
+    """POST /finish -- synchronous concat/mux. Unchanged body. Long films
+    should use POST /async/finish so the Worker is not sitting on the encode."""
+    try:
+        body = await req.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+    try:
+        result = await _finish_work(body)
+    except _JobError as e:
+        return web.json_response({"ok": False, "error": e.message}, status=e.status)
+    return web.json_response(result)
 
 
 async def _put_meta_sidecar(meta_url, *, duration_seconds=None, prepend_seconds=None):
@@ -342,10 +339,10 @@ async def _put_meta_sidecar(meta_url, *, duration_seconds=None, prepend_seconds=
 
 
 def _probe_duration(path):
-    proc = subprocess.run(
+    proc = _run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True,
+        timeout=FFPROBE_TIMEOUT, text=True,
     )
     return max(0.1, float(proc.stdout.strip()))
 
@@ -356,11 +353,11 @@ def _probe_audio(path):
     sample_rate and channel_layout are None when has_audio is False.
     Falls back to stereo/44100 if the layout string is absent or unknown.
     """
-    proc = subprocess.run(
+    proc = _run(
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=sample_rate,channel_layout",
          "-of", "default=noprint_wrappers=1", path],
-        capture_output=True, text=True, check=True,
+        timeout=FFPROBE_TIMEOUT, text=True,
     )
     out = proc.stdout.strip()
     if not out:
@@ -807,6 +804,9 @@ async def _film_titles_work(body):
                 work, film_path, title_spec, credits_spec,
                 width, height, fps, crf, preset,
             )
+        except FfmpegTimeout as e:
+            log.exception("ffmpeg timeout in /film-titles")
+            raise _JobError(500, str(e))
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed in /film-titles")
             raise _JobError(500, f"ffmpeg failed: {e}")
@@ -1030,6 +1030,9 @@ async def _subtitle_work(body):
             loop = asyncio.get_running_loop()
             try:
                 await loop.run_in_executor(None, _burn_subtitles, film_path, out_path, vf, crf, preset)
+            except FfmpegTimeout as e:
+                log.exception("ffmpeg timeout in /subtitle key=%s", safe_log_value(output_key))  # codeql[py/log-injection]
+                raise _JobError(500, str(e))
             except subprocess.CalledProcessError as e:
                 log.exception("ffmpeg subtitles burn failed key=%s", safe_log_value(output_key))  # codeql[py/log-injection]
                 raise _JobError(500, f"ffmpeg failed: {e}")
@@ -1118,6 +1121,9 @@ async def inspect(req):
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, inspect_core.inspect, clip_path, kf_path)
+        except inspect_core.FfmpegTimeout as e:
+            log.exception("/inspect ffmpeg timeout")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
         except Exception as e:  # noqa: BLE001
             log.exception("/inspect failed")
             return web.json_response({"ok": False, "error": f"inspect failed: {e}"}, status=500)
@@ -1184,7 +1190,11 @@ async def photometric_check(req):
             return web.json_response({"ok": False, "error": f"photometric-check failed: {e}"}, status=500)
         log.info("/photometric-check verdict=%s ratio=%.4f src_frames=%d output_frames=%d",
                  result["verdict"], result["ratio"], result["src_frames"], result["output_frames"])
-        return web.json_response({"ok": True, **result})
+        return web.json_response({
+            "ok": True,
+            "applies_when": photometric_gate.SEMANTIC_PRECONDITION,
+            **result,
+        })
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -1281,6 +1291,9 @@ async def frames(req):
         degraded = None
         try:
             duration = _probe_duration(clip_path)
+        except FfmpegTimeout as e:
+            log.exception("/frames ffprobe timeout")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
         except Exception:
             duration = None
         if not duration or duration <= 0:
@@ -1326,12 +1339,13 @@ async def frames(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
-# The film.finish routes exposed for async job+poll (#602). Assemble/mux (/finish),
-# /overlay and /inspect stay synchronous -- they are not the single-step-exceeds-budget
-# film.finish class this addresses.
+# film.finish titles/subtitle (#602) plus assemble/mux (/finish). A 17-shot
+# concat outlives the Cloudflare Worker fetch budget; /async/finish is how
+# gather survives. /overlay and /inspect stay synchronous.
 ASYNC_WORKS = {
     "film-titles": _film_titles_work,
     "subtitle": _subtitle_work,
+    "finish": _finish_work,
 }
 
 app = web.Application(

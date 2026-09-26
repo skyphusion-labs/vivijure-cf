@@ -154,6 +154,11 @@ except pg.DecodeFailure as e:
     check("the raised failure states the denominator reached before it (1 of 3)",
           "1 of 3" in str(e) and "shot 1 of 3" in str(e))
 
+check("SEMANTIC_PRECONDITION is named identity_preserving",
+      pg.SEMANTIC_PRECONDITION == "identity_preserving")
+check("module docstring states the identity-preserving precondition",
+      "identity-preset" in pg.__doc__ and "PRESERVE" in pg.__doc__)
+
 if check.failed:
     print(f"\n{check.failed} FAILED")
     sys.exit(1)

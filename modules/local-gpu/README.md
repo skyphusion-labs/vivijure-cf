@@ -57,11 +57,13 @@ honestly deliver.
 To self-host (service `vivijure-module-local-gpu`, bound into the core as `MODULE_LOCAL_GPU`):
 
 - **Env at deploy**: `CLOUDFLARE_ACCOUNT_ID` (account_id is injected, never hardcoded).
-- **Secrets** (Cloudflare Secrets Store): `LOCAL_BACKEND_URL` (the tunnel hostname terminating at your
-  homelab render box) and the optional `LOCAL_BACKEND_TOKEN`.
-- **Provision**: run `vivijure-local-12gb` or `vivijure-local-16gb` on your box, expose it via a
-  Cloudflare tunnel, and point `LOCAL_BACKEND_URL` at it. The backend shares the `vivijure` R2 bucket
-  and does the artifact I/O. No R2 binding on this worker.
+- **Secrets** (Cloudflare Secrets Store): `LOCAL_BACKEND_URL` (your door URL) and the optional
+  `LOCAL_BACKEND_TOKEN`.
+- **Provision**: run `vivijure-local-12gb` or `vivijure-local-16gb` on your box and point
+  `LOCAL_BACKEND_URL` at it (on-box, or a tunnel you own). Production fleet has no public
+  named tunnel (`door-fatmike` / `door-propagandhi` deleted, fleet-chezmoi #2042). The
+  backend shares the `vivijure` R2 bucket and does the artifact I/O. No R2 binding on this
+  worker.
 
 ## Contract
 

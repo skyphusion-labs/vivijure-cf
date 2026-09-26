@@ -30,6 +30,7 @@ const planState = {
   audioKey: null,
   audioMime: null,
   audioSourceLabel: null,
+  audioDurationSeconds: null,
   bpm: 120,
   beatsPerShot: 4,
   // In-flight score-bed job (poll token + module name from registry).
@@ -87,6 +88,11 @@ const renderState = {
   // the v0.38.0 localStorage stash so a refresh-mid-render keeps the
   // same baseline; cleared on terminal status.
   startedAt: null,
+  // Last poll output bag (progress fraction) and full poll view (status /
+  // delayTimeMs). The tick timer re-renders from these; lastPoll keeps the
+  // IN_QUEUE signal so a 1s tick cannot drop the cold-start note.
+  lastOut: null,
+  lastPoll: null,
   // v0.44.0: ms timer that re-renders the elapsed + ETA text on a
   // 1s cadence between SSE / poll updates. Without it the elapsed
   // counter only advances when a new status snapshot lands (every
@@ -102,6 +108,43 @@ const notifyState = {
   permission: "default",
   alreadyNotified: new Set(),
 };
+
+// cf#528: per-click idempotency key for film submit. A new user click mints a
+// new UUID. The same click reuses it if the fetch retries on 5xx (or a dropped
+// response), so core can collapse the retry onto one film instead of two bills.
+function mintFilmIdempotencyKey() {
+  return crypto.randomUUID();
+}
+
+function attachFilmIdempotencyKey(body, inflight) {
+  if (!inflight.key) inflight.key = mintFilmIdempotencyKey();
+  body.idempotency_key = inflight.key;
+  return inflight.key;
+}
+
+async function postFilmSubmit(url, body, inflight) {
+  attachFilmIdempotencyKey(body, inflight);
+  const init = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  };
+  let lastResp = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(url, init);
+      if (resp.status >= 500 && attempt === 0) {
+        lastResp = resp;
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      if (attempt === 0) continue;
+      throw err;
+    }
+  }
+  return lastResp;
+}
 
 // ---------- localStorage persistence (v0.38.0) ----------
 //
@@ -188,10 +231,35 @@ function hasPersistedWork(stash) {
   return false;
 }
 
-// Reload / back-forward keeps the in-tab failsafe; cross-page navigation does not.
+// Reload / back-forward keeps the in-tab failsafe. A Cast hop is a
+// document navigation (type === "navigate"), so we also treat a
+// recent same-browser hop as auto-resume (cf#691).
+const HOP_KEY = "skyphusion.planner.hop";
+const HOP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 function isSameTabReload() {
   const nav = performance.getEntriesByType("navigation")[0];
   return !!(nav && (nav.type === "reload" || nav.type === "back_forward"));
+}
+
+function markPlannerHop() {
+  try { sessionStorage.setItem(HOP_KEY, String(Date.now())); } catch {}
+}
+
+function consumeFreshHop() {
+  try {
+    const raw = sessionStorage.getItem(HOP_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(HOP_KEY);
+    const t = Number(raw);
+    return Number.isFinite(t) && (Date.now() - t) < HOP_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function shouldAutoResumeStash() {
+  return isSameTabReload() || consumeFreshHop();
 }
 
 let pendingResumeStash = null;
@@ -246,6 +314,7 @@ function startNewSession(opts) {
   planState.audioKey = null;
   planState.audioMime = null;
   planState.audioSourceLabel = null;
+  planState.audioDurationSeconds = null;
   planState.bpm = 120;
   planState.beatsPerShot = 4;
   planState.pendingMusicChatId = null;
@@ -314,6 +383,7 @@ function collectPlanResultState() {
     audioKey: planState.audioKey,
     audioMime: planState.audioMime,
     audioSourceLabel: planState.audioSourceLabel,
+    audioDurationSeconds: planState.audioDurationSeconds,
     bpm: planState.bpm,
     beatsPerShot: planState.beatsPerShot,
     pendingMusicChatId: planState.pendingMusicChatId,
@@ -358,6 +428,10 @@ function collectRenderStageState() {
     filmTitle: readVal("#planner-film-title"),
     filmSubtitle: readVal("#planner-film-subtitle"),
     filmCredits: readVal("#planner-film-credits"),
+    finishLipsync: readCheck("#planner-finish-lipsync"),
+    finishBlender: readCheck("#planner-finish-blender"),
+    styleLock: readVal("#planner-style-lock"),
+    voiceLock: readVal("#planner-voice-lock"),
     // v0.44.0: persist the render start timestamp so an elapsed +
     // ETA computation survives a page refresh. null means "no in-
     // flight render observed yet"; the updater anchors it lazily.
@@ -374,6 +448,11 @@ function collectRenderStageState() {
 function readVal(selector) {
   const el = $(selector);
   return el ? el.value : "";
+}
+
+function readCheck(selector) {
+  const el = $(selector);
+  return el ? !!el.checked : null;
 }
 
 function lastKnownStatusFromPanel() {

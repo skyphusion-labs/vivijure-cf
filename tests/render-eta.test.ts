@@ -4,12 +4,17 @@ import {
   COLD_START_NOTE,
   PHASE_LABELS,
   PIPELINE_PHASES,
+  STATUS_LABELS,
   STALL_NOTE,
+  isColdStart,
   isStalled,
   isStartupWindow,
   phaseLabel,
   progressFraction,
   remainingMs,
+  statusLabel,
+  waitCopy,
+  type RenderPollView,
   type RenderProgressOutput,
 } from "../public/render-eta.js";
 
@@ -23,9 +28,10 @@ import {
 const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput => o as RenderProgressOutput;
 
 describe("progressFraction phase bands (#115)", () => {
-  it("bands are ordered, contiguous, and sum to 1", () => {
+  it("core film bands are ordered, contiguous, and sum to 1", () => {
+    const core = new Set(["keyframe", "i2v", "finish", "assemble", "mux"]);
     let cursor = 0;
-    for (const b of PIPELINE_PHASES) {
+    for (const b of PIPELINE_PHASES.filter((p) => core.has(p.key))) {
       expect(b.start).toBeCloseTo(cursor, 6);
       cursor += b.span;
     }
@@ -131,6 +137,17 @@ describe("phaseLabel: user-facing names for pipeline tokens (cf#303)", () => {
     expect(phaseLabel("queued")).toBe("Waiting to start");
   });
 
+  it("keeps the filmmaker phase words", () => {
+    expect(PHASE_LABELS.keyframe).toBe("Drawing keyframes");
+    expect(PHASE_LABELS.i2v).toBe("Animating shots");
+    expect(PHASE_LABELS.clips).toBe("Animating shots");
+    expect(PHASE_LABELS.pre_clip_dialogue).toBe("Recording the lines");
+    expect(PHASE_LABELS.pre_clip_speech).toBe("Cleaning the voice");
+    expect(PHASE_LABELS.assemble).toBe("Putting the film together");
+    expect(phaseLabel("pre_clip_dialogue")).toBe("Recording the lines");
+    expect(phaseLabel("clips")).toBe(PHASE_LABELS.i2v);
+  });
+
   it("is case-insensitive on the token", () => {
     expect(phaseLabel("KEYFRAME")).toBe(PHASE_LABELS.keyframe);
   });
@@ -155,7 +172,7 @@ describe("phaseLabel: user-facing names for pipeline tokens (cf#303)", () => {
   });
 });
 
-describe("isStartupWindow: honest about our pipeline, silent about RunPod (cf#303)", () => {
+describe("isStartupWindow: prefers the observed queue signal (cf#303)", () => {
   const out = (o: Partial<RenderProgressOutput>): RenderProgressOutput =>
     o as RenderProgressOutput;
 
@@ -215,17 +232,18 @@ describe("the two notes are mutually exclusive (cf#303)", () => {
 });
 
 describe("cold-start copy (cf#303)", () => {
-  it("explains WHY the wait exists, not just that it exists", () => {
-    // Conrad's framing: people accept a slower time if they are told what is
-    // happening and why. The note names the cost trade; it does not apologise.
-    expect(COLD_START_NOTE).toMatch(/cost/i);
-    expect(COLD_START_NOTE).toMatch(/idle/i);
+  it("names the wait in filmmaker language, not GPU economics", () => {
+    expect(COLD_START_NOTE).toMatch(/starting up/i);
+    expect(COLD_START_NOTE).toMatch(/model coming online/i);
+    expect(COLD_START_NOTE).not.toMatch(/RunPod/i);
+    expect(COLD_START_NOTE).not.toMatch(/cost/i);
+    expect(COLD_START_NOTE).not.toMatch(/idle/i);
   });
 
-  it("does not claim to know RunPod's queue state", () => {
-    // The module /poll contract cannot distinguish queued from running, so
-    // asserting "queued" would be claiming an observation we cannot make.
+  it("does not dump IN_QUEUE or vendor names into filmmaker copy", () => {
     expect(COLD_START_NOTE).not.toMatch(/queue/i);
+    expect(COLD_START_NOTE).not.toMatch(/IN_QUEUE/);
+    expect(COLD_START_NOTE).not.toMatch(/RunPod/i);
   });
 
   it("carries no em-dash or en-dash (house style)", () => {
@@ -247,5 +265,101 @@ describe("the startup window still refuses to fabricate motion (cf#303)", () => 
 
   it("withholds an ETA during the startup window", () => {
     expect(remainingMs(progressFraction(out({ phase: "keyframe", scene_index: 1 })), 120_000)).toBeNull();
+  });
+});
+
+describe("IN_QUEUE / delayTime is a distinct visible state from a running encode (cf#303)", () => {
+  const queued: RenderPollView = {
+    status: "IN_QUEUE",
+    delayTimeMs: 12_000,
+    output: { phase: "keyframe", scene_index: 1 },
+  };
+  const running: RenderPollView = {
+    status: "IN_PROGRESS",
+    output: { phase: "i2v", progress: 0.4, scene_index: 3, scene_total: 6 },
+  };
+
+  it("a poll with delayTime / IN_QUEUE is a cold start", () => {
+    expect(isColdStart(queued)).toBe(true);
+    expect(isStartupWindow(queued)).toBe(true);
+    expect(waitCopy(queued)).toBe(COLD_START_NOTE);
+    expect(statusLabel(queued.status)).toBe("Starting up");
+  });
+
+  it("a running encode with no queue delay is not a cold start", () => {
+    expect(isColdStart(running)).toBe(false);
+    expect(isStartupWindow(running)).toBe(false);
+    expect(waitCopy(running)).toBeNull();
+    expect(statusLabel(running.status)).toBe("Rendering");
+  });
+
+  it("the two polls produce different visible words and a different bar fraction", () => {
+    expect(waitCopy(queued)).not.toBe(waitCopy(running));
+    expect(statusLabel(queued.status)).not.toBe(statusLabel(running.status));
+    expect(progressFraction(queued.output as RenderProgressOutput)).toBe(0);
+    expect(progressFraction(running.output as RenderProgressOutput)).toBeGreaterThan(0.3);
+  });
+
+  it("delayTime on IN_PROGRESS is historical, not a live cold start", () => {
+    const ranAfterQueue: RenderPollView = {
+      status: "IN_PROGRESS",
+      delayTimeMs: 45_000,
+      output: { phase: "i2v", progress: 0.2 },
+    };
+    expect(isColdStart(ranAfterQueue)).toBe(false);
+    expect(waitCopy(ranAfterQueue)).toBeNull();
+  });
+
+  it("backend_wait=accepted is the film-path equivalent of IN_QUEUE", () => {
+    expect(
+      isColdStart({
+        status: "IN_PROGRESS",
+        output: { phase: "keyframe", backend_wait: "accepted" },
+      }),
+    ).toBe(true);
+    expect(
+      isColdStart({
+        status: "IN_PROGRESS",
+        output: { phase: "keyframe", backend_wait: "running", scene_index: 1 },
+      }),
+    ).toBe(false);
+  });
+
+  it("a running keyframe with no frames yet is not called a cold start", () => {
+    // This is the hole the old heuristic could not see: IN_PROGRESS +
+    // keyframe + nothing drawn used to share the startup note with IN_QUEUE.
+    const sampling: RenderPollView = {
+      status: "IN_PROGRESS",
+      output: { phase: "keyframe", backend_wait: "running", scene_index: 1 },
+    };
+    expect(isStartupWindow(sampling)).toBe(false);
+    expect(waitCopy(sampling)).toBeNull();
+    expect(waitCopy(queued)).toBe(COLD_START_NOTE);
+  });
+});
+
+describe("statusLabel: filmmaker words, raw token as fallback (cf#303)", () => {
+  it("translates IN_QUEUE and IN_PROGRESS to different English", () => {
+    expect(statusLabel("IN_QUEUE")).toBe("Starting up");
+    expect(statusLabel("IN_PROGRESS")).toBe("Rendering");
+    expect(statusLabel("IN_QUEUE")).not.toBe(statusLabel("IN_PROGRESS"));
+  });
+
+  it("covers every STATUS_LABELS key without em-dashes", () => {
+    for (const [token, label] of Object.entries(STATUS_LABELS)) {
+      expect(statusLabel(token)).toBe(label);
+      expect(label).not.toMatch(/[\u2014\u2013]/);
+      expect(label).not.toBe(token);
+    }
+  });
+
+  it("passes an unknown status through raw", () => {
+    expect(statusLabel("SCATTER_WAIT")).toBe("SCATTER_WAIT");
+  });
+
+  it("returns null only when there is no status", () => {
+    expect(statusLabel("")).toBeNull();
+    expect(statusLabel(null)).toBeNull();
+    expect(statusLabel(undefined)).toBeNull();
   });
 });

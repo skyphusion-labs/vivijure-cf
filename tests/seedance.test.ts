@@ -26,6 +26,7 @@ describe("seedance pure logic", () => {
       camera_fixed: true,
       generate_audio: true,
       seed: 42,
+      use_virtual_avatar: true,
     });
   });
 
@@ -34,7 +35,16 @@ describe("seedance pure logic", () => {
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 8 },
       {},
     );
-    expect(body.input).toMatchObject({ resolution: "720p", aspect_ratio: "16:9", camera_fixed: false, generate_audio: false, seed: -1, duration: 8 });
+    expect(body.input).toMatchObject({ resolution: "720p", aspect_ratio: "16:9", camera_fixed: false, generate_audio: true, seed: -1, duration: 8 });
+    expect(body.input.last_frame_image).toBeUndefined();
+  });
+
+  it("passes last_frame_image from last_keyframe_url", () => {
+    const body = buildSeedanceBody(
+      { shot_id: "s", keyframe_url: "u", last_keyframe_url: "https://r2/end.png", prompt: "p", seconds: 8 },
+      {},
+    );
+    expect(body.input.last_frame_image).toBe("https://r2/end.png");
   });
 
   it("#577: the manifest's resolution enum IS the provider-accepted set (no 1080p over-promise)", async () => {

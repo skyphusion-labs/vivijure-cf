@@ -109,7 +109,7 @@ describe("cf#344 the submit path awaits and refuses before spend", () => {
     // A refusal after the confirm asks the user to approve a render that will not be submitted; a
     // refusal after the fetch is not a pre-spend refusal at all.
     const confirmAt = fn.indexOf("window.confirm(");
-    const submitAt = fn.indexOf('fetch("/api/storyboard/render-from-keyframes"');
+    const submitAt = fn.indexOf('postFilmSubmit("/api/storyboard/render-from-keyframes"');
     expect(confirmAt, "the confirm is gone; re-anchor this test").toBeGreaterThan(-1);
     expect(submitAt, "the submit is gone; re-anchor this test").toBeGreaterThan(-1);
     for (const refusal of ["cannot reach the studio module registry", "no GPU door is installed"]) {

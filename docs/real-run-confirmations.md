@@ -91,6 +91,36 @@ and this together with evidence.
 
 Refs: control-plane cp#290 / cp#291 / cp#293.
 
+### 5. 1.33.4 VIDEO_FINISH_URL inject on `film-titles` / `subtitle`
+
+**Unconfirmed:** that a hosted film after the 1.33.4 inject actually burns title cards (not
+`passthrough:no-video-finish-url`). C1 stays closed. C1 is the container path on v1.19.2
+(`film-286df3e3-...`). This entry is the MODULE worker inject, a different hop.
+
+**Why no test covers it:** settings / a served-version binding can show a nonempty URL while
+`film.finish` still passthroughs. Public `GET /ready` is off by design (`workers_dev = false`).
+
+**Measured 2026-08-19 (CF Workers settings + served version, not a public `/ready` HTTP):**
+
+| worker | served version | deployed | `VIDEO_FINISH_URL` |
+| --- | --- | --- | --- |
+| `vivijure-module-film-titles` | `acf5498d-34f9-4fa8-80de-ce5fe6105320` | 2026-08-19T16:45:36Z | present, nonempty, `https://video-finish.skyphusion.org` (2 bindings) |
+| `vivijure-module-subtitle` | `174fea86-c615-4445-8e8b-29c8ccafc4c6` | 2026-08-19T16:46:47Z | same URL (2 bindings) |
+
+- `workers.dev` `/ready` on both module names: CF 1042 (subdomain disabled). Studio
+  `https://vivijure.skyphusion.org/ready`: 404 (the studio does not proxy the module probe).
+- `GET /api/modules` lists `film-titles` 0.2.1 serving `film.finish`.
+- Same day, studio `SPEND_DAILY_CEILING` was `"25"`. Inherit-patched the **full** bindings
+  list (62 `inherit` + 1 `plain_text`) to `"0"`. Re-GET: 63/63 names equal, ceiling `"0"`,
+  `VIDEO_FINISH_URL` still nonempty. Deploy `a8e13c7c-c5b8-4b44-9614-72ebca2b1805` at
+  2026-08-19T20:30:16Z. `"0"` is off (`dailyCeiling` returns null). Do not PATCH settings
+  with a one-binding body (wiped this account to 2 bindings once). Procedure:
+  [deploy-config-injection.md](./deploy-config-injection.md) section 8.
+
+**What closes it:** one NEW film id whose `film_finish.adopted` includes `film-titles` and
+whose sidecar / `finish.title_burn` event shows a title burn (not passthrough). Do not reuse
+the C1 film id.
+
 ---
 
 ## CLOSED (positive observation recorded)

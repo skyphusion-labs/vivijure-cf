@@ -31,6 +31,32 @@ function paintPlannerError(el, raw) {
   }
 }
 
+// Filmmaker headline for the in-flight render. The raw job id stays in
+// #planner-render-job-id (polling / resume read it) but is not the headline.
+function setRenderJobHeadline(jobId) {
+  const code = $("#planner-render-job-id");
+  if (!code) return;
+  code.textContent = jobId || "";
+  if (code.closest("details")) return;
+  const wrap = code.parentElement;
+  if (!wrap) return;
+  const details = document.createElement("details");
+  details.className = "planner-render-job-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "Technical details";
+  const label = wrap.querySelector(".planner-render-label");
+  if (label) label.textContent = "id";
+  while (wrap.firstChild) details.appendChild(wrap.firstChild);
+  details.insertBefore(summary, details.firstChild);
+  wrap.appendChild(details);
+}
+
+function pinDownloadFilmLabel() {
+  const a = $("#planner-render-download");
+  if (a) a.textContent = "Download film";
+}
+pinDownloadFilmLabel();
+
 function showRenderStage() {
   const stage = $("#planner-render");
   stage.hidden = false;
@@ -41,7 +67,6 @@ function showRenderStage() {
   // the next render click re-checks against fresh cast state.
   hideLoraPreflightWarning();
   loraPreflightAck = null;
-  updateScatterGate();
   syncRenderModeUi();
 }
 
@@ -77,12 +102,12 @@ function paintLoraWarning(el, unready, proceedHint) {
   const msg = document.createElement("span");
   msg.className = "planner-lora-preflight-msg";
   msg.textContent =
-    "These characters are not trained for consistency yet: " + names + ". "
-    + (proceedHint || "Continue without consistency, or train them first.");
+    "These characters are using portraits only: " + names + ". "
+    + (proceedHint || "Faces may vary between shots.");
   const link = document.createElement("a");
   link.href = "cast";
   link.className = "planner-lora-preflight-link";
-  link.textContent = "Train on Cast";
+  link.textContent = "Open Cast";
   el.appendChild(msg);
   el.appendChild(document.createTextNode(" "));
   el.appendChild(link);
@@ -93,7 +118,7 @@ function showLoraPreflightWarning(unready) {
   paintLoraWarning(
     $("#planner-lora-preflight-warning"),
     unready,
-    "Click render again to proceed anyway (inline training takes ~15-25 min each).",
+    "Click render again to proceed anyway.",
   );
 }
 
@@ -107,6 +132,19 @@ function resolveMotionBackendForPreflight() {
   return "";
 }
 
+// Wan LoRA readiness is a registry projection (cf#474): look up the selected
+// motion.backend module and ask plannerRegistry whether its schema is the
+// dual-expert LoRA door. No compiled module name.
+function motionIsWanLora(motionBackend) {
+  const registry = window.plannerRegistry;
+  if (!motionBackend || !registry || typeof registry.isWanLoraMotion !== "function") return false;
+  const mods = typeof registry.motionBackendModules === "function"
+    ? registry.motionBackendModules() || []
+    : [];
+  const m = mods.find((x) => x.name === motionBackend);
+  return !!registry.isWanLoraMotion(m);
+}
+
 // Returns true when the render may proceed, false when it should pause on a
 // freshly-shown warning. Re-fetches /api/cast so the readiness check is fresh.
 async function loraPreflightGate() {
@@ -116,13 +154,13 @@ async function loraPreflightGate() {
     loraPreflightAck = null;
     return true;
   }
-  setRenderStatus("checking cast LoRA status...", "loading");
+  setRenderStatus("checking the cast...", "loading");
   // Refresh the catalog in place; loadCast swallows its own errors and leaves
   // the prior catalog on failure, which is an acceptable fall-back here.
   await loadCast();
   const motionBackend = resolveMotionBackendForPreflight();
   const unready = window.loraPreflight.unreadyBoundLoraSlots(bindings, planState.castCatalog, {
-    motionBackend,
+    wanLora: motionIsWanLora(motionBackend),
   });
   if (unready.length === 0) {
     hideLoraPreflightWarning();
@@ -140,57 +178,74 @@ async function loraPreflightGate() {
   showLoraPreflightWarning(unready);
   setRenderStatus(
     unready.length === 1
-      ? "1 bound character has no trained LoRA (see warning above)"
-      : unready.length + " bound characters have no trained LoRA (see warning above)",
+      ? "1 character is using a portrait only (see note above)"
+      : unready.length + " characters are using portraits only (see note above)",
     "error",
   );
   return false;
 }
 
-// Orchestrator-level parallelism (same class as qualityTier). Reads
-// #planner-scatter-shards. Omitted or invalid -> min(shotN, 20). An
-// explicit N is clamped to [1, shotN]. Writes max/value back so the
-// control matches what will be sent. 2 is not a default. shotN < 1
-// returns 1 and leaves the field empty so a later real shot count can
-// still apply the implicit default.
 function selectedMotionBackend() {
   const sel = $("#planner-motion-backend");
   return sel && typeof sel.value === "string" ? sel.value : "";
 }
 
-function plannerShardCount(shotN) {
-  const shots = Math.max(0, Math.floor(Number(shotN)) || 0);
-  const implicit = shots === 0 ? 1 : Math.min(shots, 20);
-  const input = $("#planner-scatter-shards");
-  if (!input) return implicit;
-  input.min = "1";
-  if (shots < 1) {
-    input.max = "1";
-    return 1;
+// Native AV default is on. Prefer the selected door's generate_audio checkbox;
+// if none is projected, treat as on (the door invents a speaker unless we lock one).
+function plannerGenerateAudioOn() {
+  const selected = selectedMotionBackend();
+  if (selected) {
+    const escaped = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape(selected) : selected;
+    const scoped = document.querySelector('[data-module="' + escaped + '"][data-field="generate_audio"]');
+    if (scoped) return !!scoped.checked;
   }
-  const raw = input.value;
-  const trimmed = typeof raw === "string" ? raw.trim() : "";
-  let n = implicit;
-  if (trimmed !== "") {
-    const parsed = Number(trimmed);
-    if (Number.isFinite(parsed)) n = Math.max(1, Math.min(Math.floor(parsed), shots));
-  }
-  input.max = String(shots);
-  input.value = String(n);
-  return n;
+  const el = document.querySelector('[data-field="generate_audio"]');
+  if (el) return !!el.checked;
+  return true;
+}
+
+function readPlannerVoiceLock() {
+  if (typeof ensureVoiceLockFilled === "function") return ensureVoiceLockFilled();
+  const el = $("#planner-voice-lock");
+  return el && typeof el.value === "string" ? el.value.trim() : "";
+}
+
+// Empty lock + native audio + motion = the door invents a new speaker every shot.
+// Returns the filled lock (may be "") or null when submit must stop.
+function requirePlannerVoiceLock(keyframesOnly) {
+  const voiceLock = readPlannerVoiceLock();
+  if (voiceLock) return voiceLock;
+  if (keyframesOnly || !plannerGenerateAudioOn()) return "";
+  setRenderStatus(
+    "Lock a speaking voice or pick Cast first. Without it, talking clips invent a new speaker every shot.",
+    "error",
+  );
+  const ta = $("#planner-voice-lock");
+  if (ta) ta.focus();
+  return null;
 }
 
 async function submitRender() {
   // vivijure#552: own the in-flight flag for the whole submit; cleared on jobId
   // handoff or on any bail/error path below.
   renderState.submitting = true;
-  if (!bundleState.bundleKey) {
-    setRenderStatus("no bundleKey; run 'bundle' first", "error");
+  if (!planState.storyboard || !Array.isArray(planState.storyboard.scenes) || planState.storyboard.scenes.length === 0) {
+    setRenderStatus("no storyboard scenes; plan first", "error");
     renderState.submitting = false;
     return;
   }
-  if (!planState.storyboard || !Array.isArray(planState.storyboard.scenes) || planState.storyboard.scenes.length === 0) {
-    setRenderStatus("no storyboard scenes; plan first", "error");
+  // Pack now so Render never uses a faces-only or stale bundleKey.
+  if (typeof ensureFilmBundle === "function") {
+    setRenderStatus("packing the storyboard into the bundle...", "loading");
+    const packed = await ensureFilmBundle();
+    if (!packed || packed.ok !== true) {
+      setRenderStatus((packed && packed.reason) || "could not pack the storyboard; try Render again", "error");
+      renderState.submitting = false;
+      return;
+    }
+  }
+  if (!bundleState.bundleKey) {
+    setRenderStatus("no bundleKey; pack faces after you plan", "error");
     renderState.submitting = false;
     return;
   }
@@ -217,13 +272,17 @@ async function submitRender() {
     renderState.submitting = false;
     return;
   }
+  const voiceLock = requirePlannerVoiceLock(keyframesOnly);
+  if (voiceLock === null) {
+    renderState.submitting = false;
+    return;
+  }
   // Stop any prior poll loop before starting a new render.
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
     renderState.pollTimer = null;
   }
   const qualityTier = $("#planner-quality-tier").value;
-  const shardCount = plannerShardCount(filmScenes.length);
   // v0.40.0: the checkbox (read above) is the source of truth for the next submission. The
   // Worker merges this into render_overrides.keyframes_only=true on the wire; the GPU side
   // (vivijure-serverless 0.4.2+) short-circuits the orchestrator after the SDXL pass when
@@ -237,10 +296,9 @@ async function submitRender() {
   const reqBody = {
     bundleKey: bundleState.bundleKey,
     scenes: filmScenes,
-    shardCount,
   };
-  // cf#62: omit rather than invent when the projection gave us no tiers (the scatter
-  // path below already gates the same way); the core applies its own default.
+  // cf#62: omit rather than invent when the projection gave us no tiers;
+  // the core applies its own default.
   if (qualityTier) reqBody.qualityTier = qualityTier;
   // v0.43.0: buildRenderOverrides returns {} when nothing is set, so
   // gate on key count rather than truthiness; an empty object would
@@ -255,6 +313,9 @@ async function submitRender() {
   // audio_key from the job input, downloads, and muxes via
   // export_film(with_audio=True).
   if (planState.audioKey) reqBody.audioKey = planState.audioKey;
+  const styleLock = (($("#planner-style-lock") && $("#planner-style-lock").value) || (planState.storyboard && planState.storyboard.style_prefix) || "").trim();
+  if (styleLock) reqBody.style_prefix = styleLock;
+  if (voiceLock) reqBody.voice_lock = voiceLock;
   // Forward the title / credit-card TEXT. The film.finish chain (film-titles) reads it off the job
   // (job.film_titles -> FilmFinishInput.title/credits); without this the cards never rendered from the
   // planner. Omitted when empty, and the core ignores it on a keyframes-only preview (no assembled film
@@ -276,14 +337,12 @@ async function submitRender() {
   const castLoraSubmit = buildCastLoraSubmit();
   if (Object.keys(castLoraSubmit).length > 0) reqBody.castLoras = castLoraSubmit;
 
+  // cf#528: one key for this click. postFilmSubmit reuses it on a 5xx retry.
+  const inflight = {};
   let resp = null;
   let data = null;
   try {
-    resp = await fetch("/api/storyboard/render", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(reqBody),
-    });
+    resp = await postFilmSubmit("/api/storyboard/render", reqBody, inflight);
     data = await resp.json();
   } catch (err) {
     setRenderStatus("network error: " + err.message, "error");
@@ -314,6 +373,8 @@ async function submitRender() {
   // previous render's startedAt does not leak in. updateRenderProgress
   // re-anchors on the first non-IN_QUEUE status update.
   renderState.startedAt = null;
+  renderState.lastOut = null;
+  renderState.lastPoll = null;
   if (renderState.tickTimer !== null) {
     clearInterval(renderState.tickTimer);
     renderState.tickTimer = null;
@@ -331,7 +392,7 @@ async function submitRender() {
     requestNotificationPermission();
   }
   $("#planner-render-result").hidden = false;
-  $("#planner-render-job-id").textContent = data.jobId;
+  setRenderJobHeadline(data.jobId);
   setJobStatusBadge(data.status || "IN_QUEUE");
   // v0.135.6: surface the server's LoRA reuse decision so a reused render is
   // visibly distinct from one that retrains. pretrainedSlots = slots the GPU
@@ -353,43 +414,11 @@ async function submitRender() {
   savePersistedState();
 }
 
-// v0.162.0: enable/disable the scatter checkbox based on current state.
-// Conditions: >= 2 shots in the storyboard AND castLoras non-empty (the
-// server hard-400s a scatter with no castLoras; shards would diverge
-// without a shared pre-trained LoRA). Shows a short reason when disabled.
-function updateScatterGate() {
-  const checkbox = $("#planner-scatter");
-  const reasonEl = $("#planner-scatter-reason");
-  const shardWrap = $("#planner-scatter-shard-wrap");
-  if (!checkbox) return;
-
-  const scenes =
-    planState.storyboard && Array.isArray(planState.storyboard.scenes)
-      ? planState.storyboard.scenes
-      : [];
-  const castLoras = buildCastLoraSubmit();
-  const hasLoras = Object.keys(castLoras).length > 0;
-
-  let reason = "";
-  if (scenes.length < 2) reason = "needs >= 2 shots";
-  else if (!hasLoras) reason = "every character needs a trained LoRA first";
-
-  checkbox.disabled = !!reason;
-  if (reason) checkbox.checked = false;
-
-  if (reasonEl) {
-    reasonEl.textContent = reason;
-    reasonEl.hidden = !reason;
-  }
-  if (shardWrap) shardWrap.hidden = false;
-  plannerShardCount(scenes.length);
-}
-
 // vivijure#546: gate the primary render button on a REQUIRED-but-unmade motion-backend
-// choice so the obligation is a visible disabled affordance (mirroring the distributed-
-// render checkbox), not a click-time-only block. Keyframes-only previews run no motion
-// leg and are exempt. Presentation only; the collectForSubmit throw stays the hard
-// backstop. Never fights the in-flight/streaming disable owned by the submit paths.
+// choice so the obligation is a visible disabled affordance, not a click-time-only
+// block. Keyframes-only previews run no motion leg and are exempt. Presentation
+// only; the collectForSubmit throw stays the hard backstop. Never fights the
+// in-flight/streaming disable owned by the submit paths.
 function updateRenderGate() {
   const btn = $("#planner-render-btn");
   if (!btn) return;
@@ -462,138 +491,6 @@ function paintRenderSpend() {
       ? "Stills preview; billed per render; usually a few minutes."
       : "Motion render; billed per render.");
   el.textContent = sentence;
-}
-
-// v0.162.0: POST to /api/storyboard/render/scatter and drive the existing
-// renderState poll loop with the returned scatter-<uuid> jobId. Modeled on
-// submitRender() -- reuses buildRenderOverrides, qualityTier, audioKey,
-// projectId exactly. shotIds are derived via sceneIdAt (the canonical id
-// source that matches the GPU's per-shot clip filenames).
-async function submitScatterRender() {
-  // vivijure#552: see submitRender.
-  renderState.submitting = true;
-  if (!bundleState.bundleKey) {
-    setRenderStatus("no bundleKey; run 'bundle' first", "error");
-    renderState.submitting = false;
-    return;
-  }
-  const scenes =
-    planState.storyboard && Array.isArray(planState.storyboard.scenes)
-      ? planState.storyboard.scenes
-      : [];
-  const shotIds = scenes.map((s, i) => sceneIdAt(s, i));
-  if (shotIds.length < 2) {
-    setRenderStatus("scatter requires >= 2 shots", "error");
-    renderState.submitting = false;
-    return;
-  }
-
-  const castLoras = buildCastLoraSubmit();
-  if (Object.keys(castLoras).length === 0) {
-    setRenderStatus(
-      "scatter requires at least one character with a trained LoRA bound",
-      "error",
-    );
-    renderState.submitting = false;
-    return;
-  }
-
-  // Talking characters: the scatter render reads per-shot dialogue from the SAVED storyboard in D1
-  // (last_storyboard), so flush any unsaved edits (incl. dialogue lines) before submitting. No-ops
-  // without an active project -- and dialogue needs a saved project for its projectId anyway.
-  if (planState.activeProjectId) await saveStoryboardToProject();
-
-  const shardCount = plannerShardCount(shotIds.length);
-
-  let renderOverrides;
-  try {
-    renderOverrides = collectRenderOverrides();
-  } catch (err) {
-    setRenderStatus(err.message, "error");
-    const ta = $("#planner-render-overrides");
-    if (ta) ta.focus();
-    renderState.submitting = false;
-    return;
-  }
-
-  if (renderState.pollTimer) {
-    clearTimeout(renderState.pollTimer);
-    renderState.pollTimer = null;
-  }
-
-  const qualityTier = $("#planner-quality-tier").value;
-  setRenderStatus(
-    "submitting scatter render (" + shardCount + " shards)...",
-    "loading",
-  );
-  $("#planner-render-btn").disabled = true;
-
-  const reqBody = {
-    bundleKey: bundleState.bundleKey,
-    shotIds,
-    shardCount,
-    castLoras,
-  };
-  if (qualityTier) reqBody.qualityTier = qualityTier;
-  if (renderOverrides) reqBody.renderOverrides = renderOverrides;
-  if (planState.audioKey) reqBody.audioKey = planState.audioKey;
-  if (planState.activeProjectId) reqBody.projectId = planState.activeProjectId;
-
-  let resp = null;
-  let data = null;
-  try {
-    resp = await fetch("/api/storyboard/render/scatter", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(reqBody),
-    });
-    data = await resp.json();
-  } catch (err) {
-    setRenderStatus("network error: " + err.message, "error");
-    renderState.submitting = false;
-    $("#planner-render-btn").disabled = false;
-    return;
-  }
-
-  if (!resp.ok || (data && data.ok === false)) {
-    const errs =
-      (data && data.errors) || [(data && data.error) || "HTTP " + resp.status];
-    setRenderStatus("scatter submit failed: " + errs.join("; "), "error");
-    renderState.submitting = false;
-    $("#planner-render-btn").disabled = false;
-    return;
-  }
-
-  if (!data || !data.jobId) {
-    setRenderStatus("scatter submit returned no jobId", "error");
-    renderState.submitting = false;
-    $("#planner-render-btn").disabled = false;
-    return;
-  }
-
-  renderState.jobId = data.jobId;
-  // vivijure#552: jobId set; the jobId/pollTimer guard now owns the button.
-  renderState.submitting = false;
-  renderState.startedAt = null;
-  if (renderState.tickTimer !== null) {
-    clearInterval(renderState.tickTimer);
-    renderState.tickTimer = null;
-  }
-  renderState.currentProject = deriveProjectFromKey(bundleState.bundleKey || "");
-  renderState.currentLabel = null;
-  if (notifyState.permission === "default") {
-    requestNotificationPermission();
-  }
-  $("#planner-render-result").hidden = false;
-  $("#planner-render-job-id").textContent = data.jobId;
-  setJobStatusBadge(data.status || "IN_QUEUE");
-  setRenderStatus(
-    "scatter submitted -- " + shardCount + " shards gathering...",
-    "loading",
-  );
-  startStream();
-  loadHistory();
-  savePersistedState();
 }
 
 // Render progress tracking. Polls GET /api/storyboard/render/<jobId> on an
@@ -719,8 +616,11 @@ async function pollRender() {
   // cf#515: "about every Ns" because the interval is now jittered per client.
   // Stating a flat number here would be a claim the scheduler no longer makes.
   renderState.pollErrorStreak = 0;
+  const statusWords = window.renderEta && window.renderEta.statusLabel
+    ? window.renderEta.statusLabel(data.status)
+    : data.status.toLowerCase();
   setRenderStatus(
-    data.status.toLowerCase() + "; polling about every "
+    statusWords + "; polling about every "
       + Math.round(pollSchedule.POLL_BASE_MS / 1000) + "s",
     "loading",
   );
@@ -732,17 +632,14 @@ function updateRenderProgress(data) {
 
   const out = data.output;
   if (out && typeof out === "object") {
-    if (typeof out.scene_index === "number" && typeof out.scene_total === "number") {
+    if (typeof out.scene_total === "number" && out.scene_total > 0) {
       const el = $("#planner-render-scene");
       el.hidden = false;
       el.innerHTML = "";
-      const lab = document.createElement("span");
-      lab.className = "planner-render-label";
-      lab.textContent = "scene:";
-      el.appendChild(lab);
-      el.appendChild(
-        document.createTextNode(" " + out.scene_index + "/" + out.scene_total),
-      );
+      const done = typeof out.shots_done === "number"
+        ? out.shots_done
+        : (typeof out.scene_index === "number" ? Math.max(0, out.scene_index - 1) : 0);
+      el.textContent = done + " of " + out.scene_total + " shots";
     }
     // cf#303: show a curated, user-facing phase NAME instead of the raw
     // pipeline token ("i2v", "mux"), which reads as jargon to a first-time
@@ -759,12 +656,7 @@ function updateRenderProgress(data) {
     if (phaseText) {
       const el = $("#planner-render-phase");
       el.hidden = false;
-      el.innerHTML = "";
-      const lab = document.createElement("span");
-      lab.className = "planner-render-label";
-      lab.textContent = "phase:";
-      el.appendChild(lab);
-      el.appendChild(document.createTextNode(" " + phaseText));
+      el.textContent = phaseText;
     }
     if (Array.isArray(out.log) && out.log.length > 0) {
       const wrap = $("#planner-render-log-wrap");
@@ -798,20 +690,30 @@ function updateRenderProgress(data) {
     renderState.startedAt = Date.now();
     savePersistedState();
   }
+  // cf#303: IN_QUEUE used to skip the widget because startedAt stays null
+  // (so a long queue wait does not skew ETA). That hid the only note that
+  // can tell a spinning-up worker from a stall. Show the bar + note without
+  // starting the clock.
+  const queued = data.status === "IN_QUEUE" || data.status === "SUBMITTED";
+  if (queued && renderState.startedAt === null) {
+    showQueuedProgress(data);
+    return;
+  }
   if (renderState.startedAt !== null) {
-    refreshProgressWidget(out);
+    refreshProgressWidget(out, data);
     if (renderState.tickTimer === null) {
       renderState.tickTimer = setInterval(() => {
         // No new data; just re-render the elapsed / ETA text against
         // the last-known progress fraction. cachedOut is the most
         // recent output we saw; null means we never observed one
         // (so the bar stays hidden until the first real update).
-        refreshProgressWidget(renderState.lastOut);
+        refreshProgressWidget(renderState.lastOut, renderState.lastPoll);
       }, 1000);
     }
     // Cache the last observed output so the tick timer can re-render
     // the elapsed / ETA without a fresh status snapshot.
     renderState.lastOut = out && typeof out === "object" ? out : renderState.lastOut;
+    renderState.lastPoll = data && typeof data === "object" ? data : renderState.lastPoll;
   }
 }
 
@@ -842,11 +744,49 @@ function computeProgressFraction(out) {
   return null;
 }
 
+// cf#303: one note element, driven by the FULL poll (status / delayTime /
+// backend_wait), not just data.output. Passing only the output bag is what
+// made IN_QUEUE and a running encode look the same.
+function paintWaitNote(poll) {
+  const coldEl = $("#planner-render-coldstart");
+  if (!coldEl) return;
+  const eta = window.renderEta;
+  let note = "";
+  if (eta) {
+    if (typeof eta.waitCopy === "function") note = eta.waitCopy(poll) || "";
+    else if (eta.isStalled(poll)) note = eta.STALL_NOTE;
+    else if (eta.isStartupWindow(poll)) note = eta.COLD_START_NOTE;
+  }
+  coldEl.hidden = !note;
+  coldEl.textContent = note;
+  coldEl.classList.toggle(
+    "planner-render-coldstart-stalled",
+    !!note && note === (eta && eta.STALL_NOTE),
+  );
+}
+
+// cf#303: IN_QUEUE / SUBMITTED window. The ETA clock is deliberately not
+// running (startedAt stays null). Show the bar at 0% and say the worker is
+// starting, so this is not a blank or stalled-looking panel.
+function showQueuedProgress(poll) {
+  const widget = $("#planner-render-progress");
+  if (widget) widget.hidden = false;
+  paintWaitNote(poll);
+  const pctEl = $("#planner-render-progress-pct");
+  const fillEl = $("#planner-render-progress-fill");
+  const etaEl = $("#planner-render-progress-eta");
+  const elapsedEl = $("#planner-render-progress-elapsed");
+  if (pctEl) pctEl.textContent = "0%";
+  if (fillEl) fillEl.style.width = "0%";
+  if (etaEl) etaEl.textContent = "starting up";
+  if (elapsedEl) elapsedEl.textContent = "0s";
+}
+
 // v0.44.0: paint the progress bar + ETA from the current renderState
 // + an output snapshot. Called both on a real status update and on
 // the 1s tick timer (with the cached last output) so the elapsed
 // counter advances smoothly between snapshots.
-function refreshProgressWidget(out) {
+function refreshProgressWidget(out, poll) {
   const widget = $("#planner-render-progress");
   if (!widget) return;
   const startedAt = renderState.startedAt;
@@ -859,28 +799,9 @@ function refreshProgressWidget(out) {
   const elapsedEl = $("#planner-render-progress-elapsed");
   if (elapsedEl) elapsedEl.textContent = formatDuration(elapsedMs);
 
-  // cf#303: during the startup window the bar legitimately has no signal to
-  // show, and a bare 0% is indistinguishable from a stall. Say so in words.
-  // Words ONLY: the bar stays at its band floor, because inventing motion here
-  // would be exactly the dishonesty render-eta.js refuses.
-  //
-  // The stall branch is the necessary other half: the reassuring startup note
-  // must give way to the warning once the server says the phase has stopped
-  // advancing, or it would explain away the very failure it was added to make
-  // visible. The stall signal was already in the envelope and already shown in
-  // the history list, but never in this live panel.
-  const coldEl = $("#planner-render-coldstart");
-  if (coldEl) {
-    const eta = window.renderEta;
-    let note = "";
-    if (eta) {
-      if (eta.isStalled(out)) note = eta.STALL_NOTE;
-      else if (eta.isStartupWindow(out)) note = eta.COLD_START_NOTE;
-    }
-    coldEl.hidden = !note;
-    coldEl.textContent = note;
-    coldEl.classList.toggle("planner-render-coldstart-stalled", !!note && note === (eta && eta.STALL_NOTE));
-  }
+  // cf#303: prefer the full poll so IN_QUEUE / delayTime drive the note.
+  // Fall back to the output bag on a tick that predates lastPoll.
+  paintWaitNote(poll || out);
 
   const frac = computeProgressFraction(out);
   const pctEl = $("#planner-render-progress-pct");
@@ -918,6 +839,7 @@ function hideProgressWidget() {
     renderState.tickTimer = null;
   }
   renderState.lastOut = null;
+  renderState.lastPoll = null;
   renderState.startedAt = null;
   const widget = $("#planner-render-progress");
   if (widget) widget.hidden = true;
@@ -970,7 +892,7 @@ function finalizeRenderPoll(data) {
 // The stale-link half is a correctness fix, not cosmetics. The assemble degrade leaves
 // `output_key` UNDEFINED (core film-output-key.js), and the old code only ever ASSIGNED
 // the anchors, inside `if (typeof out.output_key === "string")`. Nothing reset them, so a
-// degraded render following a good one in the same session left "download silent MP4"
+// degraded render following a good one in the same session left the download
 // pointing at the PREVIOUS render, handing the user the wrong film labelled as this one.
 // Every branch here now writes the anchors, including the empty case.
 function renderDeliverable(out, degrade) {
@@ -982,7 +904,8 @@ function renderDeliverable(out, degrade) {
   if (deliv.kind === "film") {
     const url = "/api/artifact/" + deliv.key;
     download.href = url;
-    download.download = ((out && out.project) || "silent") + ".mp4";
+    download.download = ((out && out.project) || "film") + ".mp4";
+    pinDownloadFilmLabel();
     download.hidden = false;
     open.href = url;
     open.hidden = false;
@@ -1068,7 +991,11 @@ function renderDegradeNote(degrade, deliv, out) {
 
 function setJobStatusBadge(status) {
   const el = $("#planner-render-job-status");
-  el.textContent = status;
+  const label = window.renderEta && window.renderEta.statusLabel
+    ? window.renderEta.statusLabel(status)
+    : status;
+  el.textContent = label;
+  el.title = status && label && status !== label ? status : "";
   let kind = "running";
   if (status === "COMPLETED") kind = "done";
   if (status === "FAILED" || status === "CANCELLED" || status === "TIMED_OUT") kind = "error";
@@ -1116,6 +1043,8 @@ function dismissRenderResult() {
   renderState.currentProject = null;
   renderState.currentLabel = null;
   renderState.startedAt = null;
+  renderState.lastOut = null;
+  renderState.lastPoll = null;
   $("#planner-render-result").hidden = true;
   $("#planner-render-log-wrap").hidden = true;
   $("#planner-render-output").hidden = true;

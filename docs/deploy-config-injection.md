@@ -154,7 +154,7 @@ described in 3a and fails closed at each:
     R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
     R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
     # 3) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
-    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET'
+    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
     envsubst "$VARS" < wrangler.toml.example > wrangler.toml
     # 4) No placeholder may survive OUTSIDE comments (a missing secret leaves a literal ${...}); comment
     #    prose mentioning ${...} is fine. -F keeps '${' literal on every grep (GNU vs busybox differ).
@@ -344,7 +344,7 @@ endpoint from your account id, and fill the Secrets Store id):
 export AUTH_MODE=token D1_DATABASE_ID=... CLOUDFLARE_ACCOUNT_ID=...
 export ACCESS_TEAM_DOMAIN= ACCESS_AUD=
 export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" R2_S3_BUCKET=vivijure
-VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET'
+VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
 envsubst "$VARS" < wrangler.toml.example > wrangler.toml
 sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" wrangler.toml
 ```
@@ -382,3 +382,24 @@ branch, the store-id fill, and the R2 endpoint derivation -- so the manual expor
 - Fork PRs do not get secrets -> the render/deploy only works on trusted (tag) runs, which is why
   deploy is tag-gated.
 - Edit the `.example`, never the rendered file -- the rendered one is gitignored and overwritten.
+
+---
+
+## 8. Inherit-patch a single live Worker var (never a one-binding PATCH)
+
+`PATCH /accounts/:id/workers/scripts/:name/settings` **replaces** the `bindings` array when that
+field is sent. A body that lists only the var you want to change drops every other binding. This
+account was wiped to 2 bindings that way once.
+
+To change one `plain_text` var (example: hosted `SPEND_DAILY_CEILING` must stay `"0"`):
+
+1. `GET` settings. Record the binding **count** and the **name set**.
+2. Build a new list of the **same length**: `{ "type": "inherit", "name": "<existing>" }` for
+   every binding except the one you are changing.
+3. Put the changed binding in as its real type (`plain_text` + `text` for a var). Never send
+   `secret_text` without `text`; inherit those.
+4. `PATCH` `multipart/form-data` with field `settings` = `{ "bindings": [ ...full list ] }`.
+5. `GET` again. Count and name set must match the first GET. Only the intended var changed.
+
+Do not invent a partial PATCH. Do not enable `workers.dev` to reach module `/ready` (that host
+is off on purpose; `/ready` is unauthenticated next to `/invoke`).

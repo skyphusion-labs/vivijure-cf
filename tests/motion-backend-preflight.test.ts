@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 // unaffected. The pure helper carries the message/list logic; the handler tests pin the wiring.
 
 // ---- handler-wiring stubs (same pattern as bundle-key-validation.test.ts) -------------------------
-const h = vi.hoisted(() => ({ started: 0, scatterStarted: 0 }));
+const h = vi.hoisted(() => ({ started: 0 }));
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
@@ -28,19 +28,6 @@ vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
   return { ...actual, readBundleScenes: vi.fn(async () => []) };
 });
-// #504: count scatter submits so the tests can assert ZERO jobs started on a bounced preflight, and
-// return a minimal ScatterJob the (real) scatterJobToPollView can render.
-vi.mock("@skyphusion-labs/vivijure-core/scatter-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/scatter-orchestrator")>();
-  return {
-    ...actual,
-    startScatterRender: vi.fn(async () => {
-      h.scatterStarted++;
-      return { cancelled: false, phase: "keyframe", project: "p", film_key: undefined, shard_film_ids: [], expected_shot_ids: [] };
-    }),
-  };
-});
-
 import worker from "../src/index";
 import { motionBackendPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { MODULE_API, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -204,53 +191,5 @@ describe("hStartFilm motion-backend preflight (#504 handler)", () => {
     const body = (await res.json()) as { error?: string };
     expect(body.error).toMatch(/not an installed, serving module/i);
     expect(h.started).toBe(0);
-  });
-});
-
-// ---- handler wiring (POST /api/storyboard/render/scatter -> hScatterRender; #504) -----------------
-// Scatter always runs the full keyframe -> clips chain across shards (no keyframes-only mode); an
-// omitted motion_backend used to default to defaultGpuDoorModule (an order-first door). The preflight
-// requires an explicit, serving choice: top-level motion_backend ?? render_overrides.motion_backend.
-function postScatter(body: unknown): Request {
-  return new Request("https://studio.example/api/storyboard/render/scatter", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
-const SHOT_IDS = ["shot_01", "shot_02"];
-
-describe("hScatterRender motion-backend preflight (#504 handler)", () => {
-  it("a scatter render with NO motion_backend BOUNCES 400 with the serving list, zero jobs started", async () => {
-    h.scatterStarted = 0;
-    const res = await worker.fetch(postScatter({ bundleKey: "bundles/verify.tar.gz", shotIds: SHOT_IDS }), env(), ctx);
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: string };
-    expect(body.error).toMatch(/choose a motion backend/i);
-    expect(body.error).toContain("alibaba-wan");
-    expect(h.scatterStarted).toBe(0); // bounced BEFORE any shard/keyframe dispatch
-  });
-
-  it("an explicit serving motion_backend via render_overrides is ACCEPTED (201)", async () => {
-    h.scatterStarted = 0;
-    const res = await worker.fetch(
-      postScatter({ bundleKey: "bundles/verify.tar.gz", shotIds: SHOT_IDS, renderOverrides: { motion_backend: "alibaba-wan" } }),
-      env(), ctx,
-    );
-    expect(res.status).toBe(201);
-    expect(h.scatterStarted).toBe(1);
-  });
-
-  it("an explicit but NOT-serving motion_backend bounces 400 with the DISTINCT message, zero started", async () => {
-    h.scatterStarted = 0;
-    const res = await worker.fetch(
-      postScatter({ bundleKey: "bundles/verify.tar.gz", shotIds: SHOT_IDS, motion_backend: "ghost-backend" }),
-      env(), ctx,
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: string };
-    expect(body.error).toMatch(/not an installed, serving module/i);
-    expect(h.scatterStarted).toBe(0);
   });
 });

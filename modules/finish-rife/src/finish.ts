@@ -53,14 +53,37 @@ export function coerceConfig(cfg: Record<string, unknown>): FinishConfig {
   };
 }
 
+/**
+ * Own-iron RIFE reads R2 via clip_key. Core attachFinishPresigns used to DELETE clip_key
+ * after attaching video_url, which made this module fail-close a finished 10-shot.
+ * Recover the key from the presigned GET when the field is gone.
+ */
+export function sourceClipKey(input: Pick<FinishInput, "clip_key" | "video_url">): string | undefined {
+  if (typeof input.clip_key === "string" && input.clip_key.trim()) return input.clip_key;
+  const url = typeof input.video_url === "string" ? input.video_url : "";
+  if (!url) return undefined;
+  try {
+    const path = new URL(url).pathname;
+    const i = path.indexOf("/renders/");
+    if (i < 0) return undefined;
+    return decodeURIComponent(path.slice(i + 1));
+  } catch {
+    return undefined;
+  }
+}
+
 /** The RunPod /run body for vivijure-backend action="finish_clip". */
 export function buildRunPodBody(input: FinishInput, cfg: FinishConfig, project: string): { input: Record<string, unknown> } {
+  const clip_key = sourceClipKey(input);
   return {
     input: {
       action: "finish_clip",
       project,
       shot_id: input.shot_id,
-      clip_key: input.clip_key,
+      ...(clip_key ? { clip_key } : {}),
+      ...(input.video_url ? { video_url: input.video_url } : {}),
+      ...(input.output_url ? { output_url: input.output_url } : {}),
+      ...(input.output_key ? { output_key: input.output_key } : {}),
       config: {
         interpolate: cfg.interpolate,
         interpolation_factor: cfg.interpolation_factor,

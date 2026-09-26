@@ -48,7 +48,9 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
 export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
   const params: Record<string, unknown> = {
     prompt: input.prompt,
-    images: [input.keyframe_url],
+    images: input.last_keyframe_url
+      ? [input.keyframe_url, input.last_keyframe_url]
+      : [input.keyframe_url],
     duration: clampDuration(input.seconds),
     ratio: config.ratio,
     resolution: config.resolution,

@@ -122,6 +122,7 @@ export function proxiedParams(
 ): Record<string, unknown> {
   if (model.startsWith("google/")) {
     const p: Record<string, unknown> = { prompt, output_format: "png", aspect_ratio: nearestAspectRatio(width, height) };
+    // Text-only plate: omit image_input entirely. An empty array is not the same as absent.
     if (imageInputs.length) p.image_input = imageInputs.slice(0, PROXIED_MAX_REFS);
     return p;
   }
@@ -153,6 +154,15 @@ export function isFlaggedError(msg: unknown): boolean {
 
 export function isRetryableFlag(msg: unknown): boolean {
   return isFlaggedError(msg) && !isCsamRefusal(msg);
+}
+
+/** Gateway / fetch blips worth a next-tick retry (matrix kling 429 under fan-out). CSAM never. */
+export function isRateLimitError(msg: unknown): boolean {
+  const s = String(msg || "");
+  if (isCsamRefusal(s)) return false;
+  if (/->\s*(408|429|5\d\d)\b/.test(s)) return true;
+  if (/\b7003\b/.test(s)) return true;
+  return false;
 }
 
 /** Pull an error string off a Workers-AI / gateway result so a 3030 in the body is not
@@ -236,5 +246,65 @@ export async function generateImage(
   if (!url) throw new Error("proxied image model returned no url");
   const v = await fetch(url);
   if (!v.ok) throw new Error("fetch proxied image -> " + v.status);
+  return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
+}
+
+export function runpodNano2Input(
+  prompt: string,
+  imageDataUris: string[],
+  width: number,
+  height: number,
+): Record<string, unknown> {
+  const resolution = width * height >= 1_800_000 ? "2k" : "1k";
+  return {
+    images: imageDataUris,
+    prompt,
+    resolution,
+    aspect_ratio: nearestAspectRatio(width, height),
+    output_format: "png",
+  };
+}
+
+export function extractRunpodImageUrl(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const o = result as Record<string, unknown>;
+  const out = o.output;
+  if (typeof out === "string" && /^https?:\/\//.test(out)) return out;
+  if (out && typeof out === "object") {
+    const rec = out as Record<string, unknown>;
+    for (const k of ["image_url", "url", "image"]) {
+      if (typeof rec[k] === "string" && rec[k]) return rec[k] as string;
+    }
+  }
+  return extractProxiedImageUrl(result);
+}
+
+/** RunPod public Nano Banana 2 edit. images[] is required; refs are data URIs. */
+export async function generateImageRunpod(
+  runsync: (input: Record<string, unknown>) => Promise<unknown>,
+  prompt: string,
+  refBlobs: Blob[],
+  width: number,
+  height: number,
+): Promise<{ bytes: ArrayBuffer; mime: string }> {
+  if (!refBlobs.length) throw new Error("nano-banana-2 needs a reference portrait");
+  const images: string[] = [];
+  for (const blob of refBlobs.slice(0, 14)) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    images.push("data:image/png;base64," + bytesToBase64(bytes));
+  }
+  const result = await runsync(runpodNano2Input(prompt, images, width, height));
+  if (result && typeof result === "object") {
+    const status = String((result as { status?: unknown }).status || "");
+    if (status === "FAILED") {
+      throw new Error(extractGenError(result) || "runpod nano-banana-2 failed");
+    }
+  }
+  const flagged = extractGenError(result);
+  if (flagged && isFlaggedError(flagged)) throw new Error(flagged);
+  const url = extractRunpodImageUrl(result);
+  if (!url) throw new Error(flagged || "runpod nano-banana-2 returned no image");
+  const v = await fetch(url);
+  if (!v.ok) throw new Error("fetch runpod image -> " + v.status);
   return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
 }

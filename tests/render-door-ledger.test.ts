@@ -36,7 +36,6 @@ import { describe, it, expect, vi } from "vitest";
 const h = vi.hoisted(() => ({
   film: [] as Array<Record<string, unknown>>,
   fromKeyframes: [] as Array<Record<string, unknown>>,
-  scatter: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
@@ -50,19 +49,6 @@ vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
     startFilmFromKeyframes: vi.fn(async (_e: unknown, args: Record<string, unknown>) => {
       h.fromKeyframes.push(args);
       return { film_id: "film-ledger-kf", phase: "clips", scenes: args.scenes, project: "p", created_at: 0 };
-    }),
-  };
-});
-vi.mock("@skyphusion-labs/vivijure-core/scatter-orchestrator", async (orig) => {
-  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/scatter-orchestrator")>();
-  return {
-    ...actual,
-    startScatterRender: vi.fn(async (_e: unknown, args: Record<string, unknown>) => {
-      h.scatter.push(args);
-      return {
-        scatter_id: "scatter-ledger", phase: "keyframe", project: "p", created_at: 0,
-        shard_film_ids: [], expected_shot_ids: ["shot_01", "shot_02"],
-      };
     }),
   };
 });
@@ -118,20 +104,30 @@ const PARENT_ROW = {
 };
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
-const moduleBinding = (name: string, hooks: string[], locality: string) => ({
+const TALKING_USAGE = {
+  native_audio: true, voice: "prompt_lock" as const,
+  scatter_native_audio: false, min_seconds: 4, max_seconds: 12,
+};
+const moduleBinding = (name: string, hooks: string[], locality: string, usage?: typeof TALKING_USAGE) => ({
   fetch: async () =>
-    new Response(JSON.stringify({ name, version: "0.1.0", api: MODULE_API, hooks, ui: { order: 10, locality } }),
+    new Response(JSON.stringify({
+      name, version: "0.1.0", api: MODULE_API, hooks, ui: { order: 10, locality },
+      ...(usage ? { usage } : {}),
+    }),
       { status: 200, headers: { "content-type": "application/json" } }),
 });
 const env = {
   ALLOW_UNAUTHENTICATED: "true",
   ASSETS: { fetch: async () => new Response("ASSET") },
   SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
+  DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
+  R2_RENDERS: { get: async () => null, put: async () => {}, head: async () => null },
   MODULE_KEYFRAME: moduleBinding("keyframe-sdxl", ["keyframe"], "cloud"),
   MODULE_ALIBABA_WAN: moduleBinding("alibaba-wan", ["motion.backend"], "byo"),
+  MODULE_SEEDANCE: moduleBinding("seedance", ["motion.backend"], "cloud", TALKING_USAGE),
   // A cloud motion door, so animate-cloud / animate-hybrid are DRIVEABLE. Without it those two are
   // untestable here, and an untestable door quietly becomes an undeclared one.
-  MODULE_CLOUD_I2V: moduleBinding("cloud-i2v", ["motion.backend"], "cloud"),
+  MODULE_CLOUD_I2V: moduleBinding("cloud-i2v", ["motion.backend"], "cloud", TALKING_USAGE),
   MODULE_OWN_GPU: moduleBinding("own-gpu", ["motion.backend"], "byo"),
 } as unknown as Env;
 
@@ -143,7 +139,7 @@ const post = (path: string, body: unknown) =>
 // --- the declaration --------------------------------------------------------------------------
 // yes      = the door carries it into the start function
 // no       = the door does not, and that is the divergence this issue is about
-// internal = resolved inside core rather than passed at the door (scatter reads D1 last_storyboard)
+// internal = resolved inside core rather than passed at the door
 // n/a      = does not apply to this door's phase shape, and the reason is recorded
 type Cell = "yes" | "no" | "internal" | "n/a";
 
@@ -151,7 +147,7 @@ interface DoorDecl {
   id: string;
   route: string;              // the API_ROUTES pattern, for the derivation check
   path: string;               // the concrete path to drive
-  seam: "film" | "fromKeyframes" | "scatter";
+  seam: "film" | "fromKeyframes";
   body: Record<string, unknown>;
   caps: { dialogue: Cell; quality_tier: Cell; audio_key: Cell; film_titles: Cell };
   guards: { config_shape: Cell; unsafe_bundle_key: Cell; motion_backend_preflight: Cell; motion_config_preflight: Cell };
@@ -186,7 +182,7 @@ const FROM_KF_NA = {
 const DOORS: DoorDecl[] = [
   {
     id: "1 panel MAIN render", route: "/api/storyboard/render", path: "/api/storyboard/render", seam: "film",
-    body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
+    body: { bundleKey: BUNDLE, scenes: SCENES, motion_backend: "seedance", qualityTier: "draft",
             shardCount: 1,
             audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "no", audio_key: "yes", film_titles: "yes" },
@@ -194,18 +190,9 @@ const DOORS: DoorDecl[] = [
     na_reasons: { dialogue: "derived inside hSubmitRender from the bundle storyboard when the panel omits dialogue_lines (cf#334 door 1)" },
   },
   {
-    id: "2 panel scatter", route: "/api/storyboard/render/scatter", path: "/api/storyboard/render/scatter", seam: "scatter",
-    body: { bundleKey: BUNDLE, shotIds: ["shot_01", "shot_02"], shardCount: 2, motion_backend: "own-gpu",
-            qualityTier: "draft", audioKey: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
-    caps: { dialogue: "internal", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
-    // C2 landed here: this door adopted the shared pre-flight and gained the #696 config-shape gate.
-    guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "yes", motion_config_preflight: "yes" },
-    na_reasons: { dialogue: "resolved inside startScatterRender from D1 last_storyboard, and only when project_id is non-null" },
-  },
-  {
     id: "3 panel render-from-keyframes", route: "/api/storyboard/render-from-keyframes",
     path: "/api/storyboard/render-from-keyframes", seam: "fromKeyframes",
-    body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "alibaba-wan", audioKey: "audio/bed.mp3",
+    body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "seedance", audioKey: "audio/bed.mp3",
             film_titles: { title: { text: "T" } } },
     caps: { dialogue: "internal", quality_tier: "no", audio_key: "yes", film_titles: "no" },
     // C2 landed here with the shared pre-flight. #500 did NOT and the gap is declared, not hidden.
@@ -263,7 +250,7 @@ const DOORS: DoorDecl[] = [
   },
   {
     id: "6 agent / MCP / Slate", route: "/api/render/film", path: "/api/render/film", seam: "film",
-    body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "alibaba-wan", qualityTier: "draft",
+    body: { bundle_key: BUNDLE, scenes: SCENES, motion_backend: "seedance", qualityTier: "draft",
             shardCount: 1,
             audio_key: "audio/bed.mp3", film_titles: { title: { text: "T" } } },
     caps: { dialogue: "yes", quality_tier: "yes", audio_key: "yes", film_titles: "yes" },
@@ -284,6 +271,9 @@ const NOT_DOORS = new Set<string>([
   "/api/cast/:id/source",
   "/api/cast/:id/train-lora",
   "/api/cast/:id/train-wan-lora",
+  "/api/cast/:id/voice-sample",
+  "/api/cast/:id/voice-sample/keep",
+  "/api/cast/:id/voice-sample/attach",
   "/api/cast/import",
   "/api/chat",
   "/api/demo/chat",
@@ -311,6 +301,7 @@ const NOT_DOORS = new Set<string>([
   "/api/storyboard/score-bed",
   "/api/storyboard/yaml",
   "/api/upload",
+  "/api/report",
 ]);
 
 const CAP_KEYS = ["dialogue", "quality_tier", "audio_key", "film_titles"] as const;
@@ -327,7 +318,7 @@ function observed(args: Record<string, unknown> | undefined) {
 }
 
 async function drive(d: DoorDecl) {
-  h.film = []; h.fromKeyframes = []; h.scatter = [];
+  h.film = []; h.fromKeyframes = [];
   const res = await worker.fetch(post(d.path, d.body), env, ctx);
   // Read the body on every drive, not only on failure: a refusal that does not say WHY sends the
   // next reader to the wrong file, and a verdict without its evidence cannot be audited.
@@ -493,7 +484,7 @@ describe("cf#334 render door ledger", () => {
       // the cloud door, the rest a byo door), and a bogus key filed under the wrong name is invisible
       // to that door. Encoding each door's resolution rule here is how a probe silently stops
       // reaching its subject, which reads as "no guard" rather than "no measurement".
-      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
+      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "seedance": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
       const bad = { ...d.body } as Record<string, unknown>;
       if (d.seam === "fromKeyframes" && !("bundleKey" in bad)) {
         PARENT_ROW.render_overrides = { config: BOGUS };

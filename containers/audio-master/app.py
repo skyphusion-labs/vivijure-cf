@@ -23,7 +23,7 @@ import time
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from master_core import DEFAULT_TARGET_LUFS, master_bed
+from master_core import DEFAULT_TARGET_LUFS, FfmpegTimeout, master_bed
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -121,6 +121,9 @@ async def master(req):
             out_path, result = await loop.run_in_executor(
                 None, master_bed, work, src, target_lufs, upscale, fmt, seconds,
             )
+        except FfmpegTimeout as e:
+            log.exception("ffmpeg timeout")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
         except subprocess.CalledProcessError as e:
             log.exception("ffmpeg failed")
             return web.json_response({"ok": False, "error": f"ffmpeg failed: {e}"}, status=500)
