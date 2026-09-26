@@ -128,6 +128,9 @@ let mod: {
   collectForSubmit: (expert?: string, opts?: { keyframesOnly?: boolean }) => unknown;
   collect: () => { motion_backend?: string; select?: { finish?: unknown } };
   collectFinishSelect: () => unknown;
+  renderFinishPicks: () => void;
+  setPendingFinishPicks: (map: unknown) => void;
+  optInFinishMods: () => Array<{ name: string }>;
   __testSeedFinish: (mods: unknown[], extra?: { speech?: unknown[] }) => void;
   restore: (o: unknown) => void;
   selectTier: (tier: string) => void;
@@ -529,17 +532,17 @@ describe("selectTier with the projection ALREADY loaded (cf#62 Lane C)", () => {
   });
 });
 
-describe("collectFinishSelect (cf#690)", () => {
-  function finishDoc(opts: { lipsync: boolean; blender: boolean }) {
+describe("finish picks are projected from the registry (cf#690, cf#780)", () => {
+  // cf#780: the picks used to be a hand-kept [module, wrapperId] pair list against STATIC markup,
+  // so the control ids were per-module. They are derived now, one checkbox per installed `finish`
+  // module declaring participation "opt_in", each id "planner-finish-pick-<name>".
+  function finishDoc(checked: Record<string, boolean>) {
     const ids: Record<string, El> = {};
-    for (const [id, checked] of [
-      ["planner-finish-lipsync", opts.lipsync],
-      ["planner-finish-blender", opts.blender],
-    ] as const) {
+    for (const [name, on] of Object.entries(checked)) {
       const el = new El("input");
-      el.id = id;
-      el.checked = checked;
-      ids[id] = el;
+      el.id = "planner-finish-pick-" + name;
+      el.checked = on;
+      ids[el.id] = el;
     }
     (globalThis as Record<string, unknown>).document = {
       createElement: (t: string) => new El(t),
@@ -549,21 +552,45 @@ describe("collectFinishSelect (cf#690)", () => {
     };
   }
 
+  function picksDoc(): { box: El; host: El } {
+    const box = new El("div");
+    box.id = "planner-finish-picks";
+    box.hidden = true;
+    const host = new El("div");
+    host.id = "planner-finish-pick-list";
+    (globalThis as Record<string, unknown>).document = makeDocument([box, host]);
+    return { box, host };
+  }
+
+  function inputsOf(host: El): El[] {
+    return host._descendants().filter((e) => e.tagName === "input");
+  }
+
   const installed = [
-    { name: "finish-lipsync", participation: "opt_in" },
+    { name: "finish-lipsync", participation: "opt_in", provides: [{ label: "Lip-sync to dialogue (MuseTalk)" }] },
     { name: "finish-upscale", participation: "default" },
-    { name: "finish-blender", participation: "opt_in" },
+    { name: "finish-blender", participation: "opt_in", provides: [{ label: "Color grade (Blender compositor)" }] },
     { name: "finish-rife", participation: "default" },
   ];
 
-  it("unchecked lipsync is the default finish set (native AV keeps talking)", () => {
-    finishDoc({ lipsync: false, blender: false });
+  // The module the panel has never heard of. THIS is the cf#780 defect, written as a fixture:
+  // installed, conformant, opt_in, and under the old pair list it got no control and could never
+  // be named in the submit.
+  const thirdParty = {
+    name: "finish-grain",
+    participation: "opt_in",
+    provides: [{ label: "Film grain" }],
+    config_schema: {},
+  };
+
+  it("unchecked is the default finish set (native AV keeps talking)", () => {
+    finishDoc({ "finish-lipsync": false, "finish-blender": false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({ mode: "default" });
   });
 
   it("checking lipsync names it in plus the default modules", () => {
-    finishDoc({ lipsync: true, blender: false });
+    finishDoc({ "finish-lipsync": true, "finish-blender": false });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
@@ -572,7 +599,7 @@ describe("collectFinishSelect (cf#690)", () => {
   });
 
   it("naming blender emits the default modules plus finish-blender", () => {
-    finishDoc({ lipsync: true, blender: true });
+    finishDoc({ "finish-lipsync": true, "finish-blender": true });
     mod.__testSeedFinish(installed);
     expect(mod.collectFinishSelect()).toEqual({
       mode: "named",
@@ -580,10 +607,77 @@ describe("collectFinishSelect (cf#690)", () => {
     });
   });
 
-  it("lipsync on forces speech-upscale.enable", () => {
-    finishDoc({ lipsync: true, blender: false });
+  it("lipsync on forces speech-upscale.enable (the one declared cross-module coupling)", () => {
+    finishDoc({ "finish-lipsync": true, "finish-blender": false });
     mod.__testSeedFinish(installed, { speech: [{ name: "speech-upscale" }] });
     const out = mod.collect() as { config?: { "speech-upscale"?: { enable?: boolean } } };
     expect(out.config && out.config["speech-upscale"] && out.config["speech-upscale"].enable).toBe(true);
+  });
+
+  it("only opt_in modules get a control, in registry order, labelled from the manifest", () => {
+    const { box, host } = picksDoc();
+    mod.__testSeedFinish(installed);
+    mod.renderFinishPicks();
+    expect(inputsOf(host).map((e) => e.dataset.finishModule)).toEqual(["finish-lipsync", "finish-blender"]);
+    // the two default-participation modules are deliberately absent: the core always runs them
+    expect(host.textContent).toContain("Lip-sync to dialogue (MuseTalk)");
+    expect(host.textContent).toContain("Color grade (Blender compositor)");
+    expect(box.hidden).toBe(false);
+  });
+
+  it("A THIRD opt_in finish module gets its own control (cf#780, the defect)", () => {
+    const { host } = picksDoc();
+    mod.__testSeedFinish([...installed, thirdParty]);
+    mod.renderFinishPicks();
+    expect(inputsOf(host).map((e) => e.dataset.finishModule)).toEqual([
+      "finish-lipsync",
+      "finish-blender",
+      "finish-grain",
+    ]);
+    expect(host.textContent).toContain("Film grain");
+  });
+
+  it("and the third module can be NAMED in the submit (under the pair list it could not)", () => {
+    finishDoc({ "finish-grain": true });
+    mod.__testSeedFinish([...installed, thirdParty]);
+    expect(mod.collectFinishSelect()).toEqual({
+      mode: "named",
+      modules: ["finish-upscale", "finish-rife", "finish-grain"],
+    });
+  });
+
+  it("no opt_in module installed means no picks box and no select at all", () => {
+    const { box, host } = picksDoc();
+    mod.__testSeedFinish([{ name: "finish-rife", participation: "default" }]);
+    mod.renderFinishPicks();
+    expect(inputsOf(host)).toEqual([]);
+    expect(box.hidden).toBe(true);
+    expect(mod.collectFinishSelect()).toBeUndefined();
+  });
+
+  it("a parked draft restore ticks the box on the FIRST build (the picks are built async)", () => {
+    // renderPanel waits on the registry while draft restore runs at load, so restore usually
+    // lands before any checkbox exists. The static markup this replaced had no such window.
+    const { host } = picksDoc();
+    mod.setPendingFinishPicks({ "finish-grain": true });
+    mod.__testSeedFinish([...installed, thirdParty]);
+    mod.renderFinishPicks();
+    const grain = inputsOf(host).find((e) => e.dataset.finishModule === "finish-grain");
+    expect(grain, "no control was built for the parked module").toBeTruthy();
+    expect(grain!.checked).toBe(true);
+    const lip = inputsOf(host).find((e) => e.dataset.finishModule === "finish-lipsync");
+    expect(lip!.checked).toBeFalsy();
+  });
+
+  it("a live tick survives a re-render, and outranks a stale parked restore", () => {
+    const { host } = picksDoc();
+    mod.__testSeedFinish([...installed, thirdParty]);
+    mod.renderFinishPicks();
+    const grain = inputsOf(host).find((e) => e.dataset.finishModule === "finish-grain");
+    grain!.checked = true;
+    mod.setPendingFinishPicks({ "finish-grain": false });
+    mod.renderFinishPicks();
+    const after = inputsOf(host).find((e) => e.dataset.finishModule === "finish-grain");
+    expect(after!.checked).toBe(true);
   });
 });

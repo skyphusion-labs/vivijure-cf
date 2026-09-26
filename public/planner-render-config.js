@@ -785,61 +785,123 @@
     return c && typeof c === "object" ? c : {};
   }
 
-  function finishMod(name) {
-    return (finishCache().finish || []).find((m) => m.name === name) || null;
+  function finishMods() {
+    return finishCache().finish || [];
   }
 
+  // The opt-in finish set IS the registry answer; it is not a list kept in this file. A `finish`
+  // module declares `participation: "opt_in"` in its own manifest, meaning "the core omits me from
+  // the chain unless a caller names me in this render's `select`". Every such module therefore
+  // needs exactly one checkbox and a module that does not declare it needs none, so deriving the
+  // set is the whole job. cf#780: the hand-kept pair list this replaces could not offer a THIRD
+  // opt_in module at all, so an installed, conformant module was unreachable from the panel while
+  // every gate stayed green.
+  function optInFinishMods() {
+    return finishMods().filter((m) => m && m.participation === "opt_in");
+  }
+
+  function finishPickId(name) {
+    return "planner-finish-pick-" + name;
+  }
+
+  function finishPickOn(name) {
+    const el = document.getElementById(finishPickId(name));
+    return !!(el && el.checked);
+  }
+
+  // cf#780: the picks are built ASYNCHRONOUSLY (renderPanel waits on the registry) while draft
+  // restore runs at load, so a restore usually lands before any checkbox exists. It parks the map
+  // here and the first build applies it. The static markup this replaced was present from parse
+  // time and had no such window, so dropping this would have been a silent restore regression.
+  // Parked state is consumed ONCE; after that the live DOM is the truth and `prev` carries it.
+  let pendingFinishPicks = null;
+
+  function setPendingFinishPicks(map) {
+    pendingFinishPicks = map && typeof map === "object" ? map : null;
+  }
+
+  // DECLARED EXEMPTION (cf#780). These are the only two module names this file still compiles in,
+  // and they are named here rather than buried so the hardcoded-module guard can list them as
+  // declared rather than silently miss them. finish-lipsync drives the mouth off the dialogue
+  // track, so it wants the CLEANED speech that speech-upscale produces. That is real domain
+  // coupling between two specific modules and the registry has no way to express it today; the
+  // fix is a manifest-level dependency declaration, not more panel code. Retire this pair the
+  // moment the contract can say it.
+  const LIPSYNC_MODULE = "finish-lipsync";
+  const SPEECH_UPSCALE_MODULE = "speech-upscale";
+
   function speechUpscaleInstalled() {
-    return (finishCache().speech || []).some((m) => m.name === "speech-upscale");
+    return (finishCache().speech || []).some((m) => m.name === SPEECH_UPSCALE_MODULE);
   }
 
   function lipsyncOn() {
-    if (!finishMod("finish-lipsync")) return false;
-    const el = document.getElementById("planner-finish-lipsync");
-    return !!(el && el.checked);
+    if (!optInFinishMods().some((m) => m.name === LIPSYNC_MODULE)) return false;
+    return finishPickOn(LIPSYNC_MODULE);
   }
 
   function renderFinishPicks() {
     const box = document.getElementById("planner-finish-picks");
-    if (!box) return;
-    const pairs = [
-      ["finish-lipsync", "planner-finish-lipsync-wrap"],
-      ["finish-blender", "planner-finish-blender-wrap"],
-    ];
-    let any = false;
-    for (const [name, wrapId] of pairs) {
-      const wrap = document.getElementById(wrapId);
-      if (!wrap) continue;
-      const on = !!finishMod(name);
-      wrap.hidden = !on;
-      if (on) any = true;
+    const host = document.getElementById("planner-finish-pick-list");
+    if (!box || !host) return;
+    // renderPanel runs again whenever the registry or the storyboard changes. Rebuilding blind
+    // would silently untick a choice the user already made, so carry the state across.
+    const prev = {};
+    for (const el of host.querySelectorAll(".planner-finish-pick")) {
+      const n = el.dataset && el.dataset.finishModule;
+      if (n) prev[n] = !!el.checked;
     }
-    box.hidden = !any;
+    // A parked restore only fills in what the live DOM does not already say: a choice the user
+    // just made outranks a stale draft.
+    if (pendingFinishPicks) {
+      for (const name of Object.keys(pendingFinishPicks)) {
+        if (!Object.prototype.hasOwnProperty.call(prev, name)) prev[name] = !!pendingFinishPicks[name];
+      }
+      pendingFinishPicks = null;
+    }
+    host.innerHTML = "";
+    const mods = optInFinishMods();
+    for (const m of mods) {
+      const label = document.createElement("label");
+      label.className = "planner-field-check";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.className = "planner-finish-pick";
+      input.id = finishPickId(m.name);
+      input.dataset.finishModule = m.name;
+      if (prev[m.name]) input.checked = true;
+      const span = document.createElement("span");
+      // The display string is the MODULE's to own (provides[0].label), not the panel's. That is
+      // also why removing a provider from the product is a manifest change, never an edit here.
+      span.textContent = moduleLabel(m);
+      label.appendChild(input);
+      label.appendChild(span);
+      host.appendChild(label);
+    }
+    box.hidden = !mods.length;
   }
 
   function collectFinishSelect() {
-    const lipsyncEl = document.getElementById("planner-finish-lipsync");
-    const blenderEl = document.getElementById("planner-finish-blender");
-    const hasLipsync = !!finishMod("finish-lipsync");
-    const hasBlender = !!finishMod("finish-blender");
-    if (!hasLipsync && !hasBlender) return undefined;
-    const wantLipsync = hasLipsync && !!lipsyncEl && !!lipsyncEl.checked;
-    const wantBlender = hasBlender && blenderEl && blenderEl.checked;
-    // Lipsync is opt_in. Unchecked + no blender = default finish (rife/upscale).
-    const defaultsOn = !wantLipsync && !wantBlender;
-    if (defaultsOn) return { mode: "default" };
+    const all = finishMods();
+    const optIn = optInFinishMods();
+    if (!optIn.length) return undefined;
+    const wanted = {};
+    let any = false;
+    for (const m of optIn) {
+      if (finishPickOn(m.name)) {
+        wanted[m.name] = true;
+        any = true;
+      }
+    }
+    // Nothing opted in: let the core run its own default chain rather than naming it back at it.
+    if (!any) return { mode: "default" };
     const named = [];
-    for (const m of finishCache().finish || []) {
+    for (const m of all) {
       const part = m.participation || "default";
-      if (m.name === "finish-lipsync") {
-        if (wantLipsync) named.push(m.name);
+      if (part === "opt_in") {
+        if (wanted[m.name]) named.push(m.name);
         continue;
       }
-      if (m.name === "finish-blender") {
-        if (wantBlender) named.push(m.name);
-        continue;
-      }
-      if (part !== "opt_in") named.push(m.name);
+      named.push(m.name);
     }
     return { mode: "named", modules: named };
   }
@@ -985,6 +1047,9 @@
     selectTier,
     collectFinishSelect,
     renderFinishPicks,
+    optInFinishMods,
+    finishPickId,
+    setPendingFinishPicks,
     __testSeedFinish: (mods, extra) => {
       if (!global.plannerRegistry) global.plannerRegistry = {};
       global.plannerRegistry._cacheForRenderConfig = {

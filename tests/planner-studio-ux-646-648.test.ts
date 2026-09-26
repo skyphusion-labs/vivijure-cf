@@ -41,12 +41,17 @@ describe("cf#648 cast is who is in the movie", () => {
 });
 
 describe("cf#646 render is three choices then spend", () => {
-  it("Render has first-class lip-sync and blender picks (cf#690)", () => {
+  it("Render has a finish-picks section, projected rather than compiled in (cf#690, cf#780)", () => {
     expect(html).toMatch(/id="planner-finish-picks"/);
-    expect(html).toMatch(/id="planner-finish-lipsync"/);
-    expect(html).toMatch(/id="planner-finish-blender"/);
+    expect(html).toMatch(/id="planner-finish-pick-list"/);
+    // cf#780: no per-module control id belongs in this markup. One checkbox per installed
+    // `finish` module declaring participation "opt_in" is built at render time by
+    // planner-render-config.js renderFinishPicks(), and each label is that module's own
+    // provides[0].label. A default-participation module (finish-upscale, finish-rife) still gets
+    // no control, but that is now DERIVED from its manifest rather than asserted by absence here.
+    expect(html).not.toMatch(/id="planner-finish-lipsync"/);
+    expect(html).not.toMatch(/id="planner-finish-blender"/);
     expect(html).not.toMatch(/id="planner-finish-upscale"/);
-    expect(html).toMatch(/Replace mouths with MuseTalk/);
   });
 
   it("motion is the default job and stills is a peer choice", () => {
