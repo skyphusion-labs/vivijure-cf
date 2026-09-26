@@ -13,9 +13,10 @@ posture).
 **Important framing:** Vivijure is **self-hosted AGPL software**, not a service Skyphusion Labs
 operates for the public. People run Vivijure themselves, on their own infrastructure (their own
 Cloudflare account, their own GPU/RunPod). Skyphusion Labs maintains the software and does not run a
-hosted, multi-tenant, sign-up service. The only instance Skyphusion Labs runs is Conrad's own private,
+hosted, multi-tenant, sign-up service. Skyphusion Labs runs two instances: Conrad's own private,
 gated instance at `vivijure.skyphusion.org` (for Conrad and the crew, plus the Slate Discord bot via
-an access service token), which is not a public offering anyone signs up for. These documents are
+its own named API token), which is not a public offering anyone signs up for, and the public,
+read-only demo at `demo.vivijure.com`. These documents are
 written accordingly: use terms for the software and the project, an honest privacy baseline (you
 self-host, so we never see your data), and an acceptable-use policy for the project and Conrad's
 instance.
@@ -70,8 +71,8 @@ The Privacy policy was written after reading the actual data path:
 - The access gate and in-Worker JWT backstop (`../../src/access-auth.ts`, `../SECURITY.md`).
 - The tail/logging consumer (`../../tail/`) that ships render-state (not creative payloads) to the
   operator's own self-hosted Loki.
-- The RunPod render submission and the AI-provider processing path (`../../src/runpod-submit.ts`,
-  `../../src/env.ts`, `../../src/models.ts`).
+- The RunPod render submission and the AI-provider processing path (`runpod-submit` in the
+  `@skyphusion-labs/vivijure-core` package, `../../src/env.ts`, `../../src/models.ts`).
 - Frontend: cookieless Cloudflare Web Analytics on the marketing page only; local-storage UI
   conveniences; no third-party trackers.
 

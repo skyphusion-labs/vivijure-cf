@@ -109,8 +109,9 @@ rights. That determination is between you, your facts, and your own legal advice
 ## 6. Third-party providers and pass-through terms
 
 Running Vivijure routes work through third-party infrastructure (the Privacy Policy lists them:
-Cloudflare, RunPod, and AI model providers reached via the Cloudflare AI Gateway or, for the i2v and cast
-modules, the RunPod backend). When you self-host,
+Cloudflare, RunPod, and AI model providers reached via Cloudflare (the AI Gateway or Workers AI), the
+RunPod backend for several of the i2v modules, or, for one optional image feature, the provider's own
+API). When you self-host,
 these are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
 acceptable-use policies. A provider's content rules may restrict what you can generate independently of
 this document. Skyphusion Labs is not responsible for those providers' acts, outages, or model

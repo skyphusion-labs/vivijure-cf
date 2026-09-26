@@ -137,7 +137,10 @@ The Worker emits **render-state logs** (which job is in which phase, warnings, a
 logging system (Grafana/Loki) that the operator runs on their own servers, NOT a third-party log
 vendor. These logs are designed to capture pipeline STATE, not creative payload: they record things
 like "film &lt;job-id&gt;: keyframe phase started", the request method/path/status, the job id, and
-exception messages. They are for debugging and reliability. (**Note:** logs can incidentally contain
+exception messages. They are for debugging and reliability. The shipped Worker configuration also
+enables **Cloudflare Workers observability**, so Cloudflare retains the Worker's logs in the
+operator's own Cloudflare account under Cloudflare's log retention; a self-hosted instance deployed
+without the Grafana/Loki consumer has only these Cloudflare-retained logs. (**Note:** logs can incidentally contain
 a project slug or an error string that echoes input; the operator treats logs as operational data on
 their own infrastructure and does not use them for profiling.)
 
@@ -167,7 +170,8 @@ identities:
 - **Named per-consumer tokens** (for example, one for the Slate Discord bot, one per render
   satellite), each a random token issued and revoked independently so a single credential can be
   rotated without touching the others. Only a **name and a SHA-256 hash** of each token live in the
-  operator's D1 database (table `api_tokens`); the plaintext token is never stored. A request is
+  operator's D1 database (table `api_tokens`), together with the token's access scope and its
+  creation and revocation timestamps; the plaintext token is never stored. A request is
   authenticated by hashing the presented token and matching that hash.
 
 That is the entire identity surface on the main API: a token name and a token hash. **No third-party
@@ -200,17 +204,22 @@ providers, not ours. We list them so the path is transparent.
 - **RunPod** -- the serverless GPU render backend. To render, the studio hands RunPod a job and
   RunPod pulls the render bundle (storyboard, prompts, cast images, models) from R2, does the GPU
   work (keyframes, image-to-video, model training), and writes the results back to R2. Creative
-  content passes through RunPod's GPUs during a render. For some optional modules, notably the
-  image-to-video (i2v) modules and the cast module, the RunPod backend also reaches out to external
+  content passes through RunPod's GPUs during a render. For some optional modules, notably several
+  of the image-to-video (i2v) modules, the RunPod backend also reaches out to external
   AI model providers as part of doing that work, so for those modules your content reaches those
   providers through the RunPod path (see the next entry).
 - **AI model providers (reached two ways: Cloudflare AI Gateway and RunPod)** -- for storyboard
   planning, image generation, text-to-speech, and cloud motion, the studio (and opt-in modules) send
-  prompts/text to AI providers. Most are reached through the **Cloudflare AI Gateway**; some,
-  specifically the providers behind the image-to-video (i2v) modules and the cast module, are reached
-  from the **RunPod** backend during a render (see the RunPod entry above). Depending on what is run,
-  this can include providers such as xAI, OpenAI, Deepgram, MiniMax, and cloud image-to-video services
-  (e.g. Seedance, Kling). Each provider receives only what that specific feature sends it (e.g. prompt
+  prompts/text to AI providers. Most are reached through **Cloudflare** (the **AI Gateway**, or
+  Cloudflare Workers AI directly, as for the cast module's character images); some, specifically the
+  providers behind several of the image-to-video (i2v) modules, are reached from the **RunPod** backend
+  during a render (see the RunPod entry above); and an optional image feature that needs a transparent
+  background calls OpenAI's own API directly with the operator's key. Depending on what is run, this
+  can include providers such as Anthropic (the default storyboard-planning model, via the AI Gateway),
+  Google (Veo image-to-video, via RunPod or the AI Gateway, and Google image models via the AI
+  Gateway), Black Forest Labs (FLUX image and video models, via Workers AI or the AI Gateway), xAI,
+  OpenAI, Deepgram, MiniMax, and cloud image-to-video services (e.g. Alibaba Wan, Vidu, Seedance,
+  Kling). Each provider receives only what that specific feature sends it (e.g. prompt
   text, or an image to animate). Each provider has its own terms and data practices, and the set of
   providers depends on which optional modules an instance installs.
 - **The operator's own fleet** -- some non-GPU finishing steps (assembly, audio mixing, image prep)
@@ -236,6 +245,9 @@ Labs is not in that path. None of these are advertising or data-broker relations
   counts only -- a different origin that collects no personal data and is neither advertising nor sold.
 - **The browser's local storage** holds small UI conveniences (e.g. which character was last viewed,
   a remembered training style). This stays in the browser and is not transmitted as tracking.
+- **The API token you enter is also kept in the browser's local storage** on the gated app, so the
+  studio can send it as the `Authorization` bearer header and re-mirror it into the `vivijure_token`
+  cookie on each page load. It stays in that browser until it is cleared.
 
 For Conrad's own private instance, the operator (Conrad) has determined that it does not fall under
 the GDPR; it is run from the United States for Conrad and the crew, not offered to the public. Any
