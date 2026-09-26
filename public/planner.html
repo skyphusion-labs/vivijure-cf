@@ -403,14 +403,12 @@
       <div id="planner-finish-picks" class="planner-finish-picks" hidden>
         <p class="planner-finish-picks-lede">Finish this film</p>
         <p class="planner-finish-picks-note">Motion already talks when the model can. Each shot animates toward the next still. MuseTalk is only if you want to replace the mouth.</p>
-        <label class="planner-field-check" id="planner-finish-lipsync-wrap" hidden>
-          <input id="planner-finish-lipsync" type="checkbox" />
-          <span>Replace mouths with MuseTalk (swap the voice or fix the lips)</span>
-        </label>
-        <label class="planner-field-check" id="planner-finish-blender-wrap" hidden>
-          <input id="planner-finish-blender" type="checkbox" />
-          <span>Color grade (Blender)</span>
-        </label>
+        <!-- cf#780: one checkbox per INSTALLED finish module that declares
+             participation: "opt_in", projected from GET /api/modules by
+             planner-render-config.js renderFinishPicks(). Each control's label is the
+             module's own provides[0].label. Nothing module-specific is compiled in here;
+             a new opt_in finish module needs no edit to this file. -->
+        <div id="planner-finish-pick-list"></div>
       </div>
       <label class="planner-field" id="planner-style-lock-wrap">
         <span>Lock the look</span>
