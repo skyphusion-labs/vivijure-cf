@@ -42,7 +42,7 @@ replace_in_place "s/REPLACE_WITH_D1_DATABASE_ID/${D1_DATABASE_ID:-}/g"
 # Wrangler ${VAR} interpolation of an unset var deploys the LITERAL ${VAR} (v1.31.1 class).
 # Filling here means empty-is-off rather than a hostname that is the placeholder text.
 for v in VIDEO_FINISH_URL AUDIO_MASTER_URL AUDIO_BEAT_SYNC_URL AUDIO_MIX_URL IMAGE_PREP_URL \
-         FINISH_UPSCALE_DOORS SPEECH_UPSCALE_DOORS FINISH_BLENDER_DOORS; do
+         FINISH_UPSCALE_DOORS FINISH_BLENDER_DOORS; do
   eval "val=\${$v:-}"
   escaped=$(printf '%s' "$val" | sed 's/[&|]/\\&/g')
   replace_in_place "s|\${${v}}|${escaped}|g"

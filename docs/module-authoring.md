@@ -336,7 +336,7 @@ Two gates on that, both worth knowing before you conclude your module did not de
   skipping every other module. Read as `0` on 2026-08-03, so the full set deploys today, but it is a
   mutable variable and the behaviour is a property of its value, not of this sentence.
 - `FINISH_SATELLITES_ONLY` narrows to `scripts/finish-satellite-modules.txt`
-  (`finish-rife`, `finish-upscale`, `finish-blender`, `speech-upscale`).
+  (`finish-rife`, `finish-upscale`, `finish-blender`).
 - `local-gpu` is ALWAYS skipped on this deploy: `ci.yml` exports `EXCLUDE="... local-gpu"` (cf#560),
   because that door belongs on vivijure-local, and the core's `wrangler.toml.example` does not bind it.
 

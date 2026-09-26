@@ -821,7 +821,7 @@
   }
 
   // THE cf#780 DECLARED EXEMPTION PAIR IS PAID OFF (cf#783). It compiled in exactly two module
-  // names, finish-lipsync and speech-upscale, for one reason: MuseTalk drove the mouth off the
+  // names, finish-lipsync and speech-upscale (both now removed), for one reason: MuseTalk drove the mouth off the
   // dialogue track and therefore wanted the CLEANED speech. MuseTalk is ruled out permanently
   // and finish-lipsync is removed, so the coupling has no subject and both names are gone from
   // this file. The manifest-level dependency declaration that was going to retire them is no
@@ -927,10 +927,10 @@
     const out = {};
     // speech-upscale had exactly ONE planner trigger: the finish-lipsync pick, because MuseTalk
     // wanted cleaned dialogue first. That trigger went with the module (cf#783), so the planner
-    // no longer enables speech-upscale at all. Deliberately NOT replaced with an always-on
-    // default: it is metered GPU spend, and its own RunPod endpoint is separately dead (cf#757).
-    // Re-wiring the dialogue chain to the live audio-driven door (infinitetalk) is a product
-    // decision, not a side effect of this removal.
+    // no longer enables speech-upscale at all, and as of cf#786 the module itself is REMOVED:
+    // dead endpoint, no trigger, and its purpose was feeding the post-hoc lip-sync step. Nothing
+    // replaced it, deliberately. The Cast voice is muxed as recorded, and a synced mouth comes
+    // from infinitetalk at motion time.
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;

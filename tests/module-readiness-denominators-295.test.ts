@@ -99,7 +99,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(ENTRIES.length).toBeGreaterThan(20);
     expect(READY).toContain("keyframe");
     expect(WRITES_JOB_LOG).toContain("finish-rife");
-    expect(REPORTS_JOB_LOG).toContain("speech-upscale");
+    expect(REPORTS_JOB_LOG).toContain("finish-upscale");
     expect(publishedToTenants()).toContain("plan-enhance");
 
     // cf#470: the catalog mirror is parsed, not typed. Prove the parser reads it AND that its
@@ -142,7 +142,8 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // minimax-hailuo, alibaba-wan, alibaba-wan-lora, narration-gen) wrote NO row at all, so a
     // census of the table showed six healthy lanes and could not mention the other eight.
     // cf#783: 17 -> 16 with finish-lipsync removed (MuseTalk ruled out permanently).
-    expect(WRITES_JOB_LOG.length).toBe(16);
+    // cf#786: 16 -> 15 with speech-upscale removed (endpoint dead, no trigger, purpose retired).
+    expect(WRITES_JOB_LOG.length).toBe(15);
     for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "kling-o1-r2v", "infinitetalk"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
     }
@@ -151,19 +152,20 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   it("the four populations are the sizes the published table claims", () => {
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
-    // cf#783: 36 -> 35 with finish-lipsync removed.
-    expect(ENTRIES.length).toBe(35);
+    // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
+    expect(ENTRIES.length).toBe(34);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
-    // population this counts is unchanged by this PR and 15 stands. cf#783: now 16.
-    expect(WRITES_JOB_LOG.length).toBe(16);
+    // population this counts is unchanged by this PR and 15 stands. cf#783: 16. cf#786: 15.
+    expect(WRITES_JOB_LOG.length).toBe(15);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
     // nothing, so publishing is inert until the plane adds rows; it exists to remove the
     // cross-repo serialisation, not to change behaviour. cf#783: 24 -> 23 (finish-lipsync).
-    expect(publishedToTenants().length).toBe(23);
+    // cf#786: 23 -> 22 (speech-upscale).
+    expect(publishedToTenants().length).toBe(22);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are

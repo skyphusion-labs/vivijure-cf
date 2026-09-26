@@ -81,7 +81,7 @@ a conditional uncomment of the Workers-for-Platforms block.
 | `${R2_S3_ENDPOINT}` | the account-scoped R2 S3 API host (`https://<account-id>.r2.cloudflarestorage.com`), an identifier the render DERIVES from `CLOUDFLARE_ACCOUNT_ID` -- not stored anywhere (#238 follow-up) |
 | `${R2_S3_BUCKET}` | the render bucket name the S3 presign targets; defaults to `vivijure` (the `R2_RENDERS` bucket), overridable via the optional `R2_S3_BUCKET` repo variable |
 | `${VIDEO_FINISH_URL}` / `${IMAGE_PREP_URL}` / `${AUDIO_BEAT_SYNC_URL}` / `${AUDIO_MIX_URL}` / `${AUDIO_MASTER_URL}` | public HTTPS origins of the five media containers (repo **variables**); empty = that service is off. They replaced the old `${VPC_*_ID}` Workers-VPC tokens, which the template no longer carries |
-| `${FINISH_UPSCALE_DOORS}` / `${SPEECH_UPSCALE_DOORS}` / `${FINISH_BLENDER_DOORS}` | comma-separated HTTPS origins of the on-box GPU finish doors (repo **variables**); empty = RunPod path |
+| `${FINISH_UPSCALE_DOORS}` / `${FINISH_BLENDER_DOORS}` | comma-separated HTTPS origins of the on-box GPU finish doors (repo **variables**); empty = RunPod path |
 
 **Two fills that are NOT `${}` tokens** (kept out of envsubst so the committed template stays
 free-self-host-safe by default):
@@ -126,7 +126,7 @@ gh variable list --repo skyphusion-labs/vivijure-cf
 ```
 > Which is which here: `AUTH_MODE`, `SECRETS_STORE_ID`, `ENABLE_WFP_DISPATCH`, the optional
 > `R2_S3_BUCKET`, and the eight media vars `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
-> `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, `FINISH_UPSCALE_DOORS`, `SPEECH_UPSCALE_DOORS`,
+> `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, `FINISH_UPSCALE_DOORS`,
 > `FINISH_BLENDER_DOORS` are **variables** (identifiers / switches, not sensitive -- the Secrets Store
 > id was public in the repo before #398 templated it out). The AUD, `ACCESS_TEAM_DOMAIN`, and the
 > D1 / rate-limit ids (`D1_DATABASE_ID`, `SPEND_RATE_LIMITER_NS_ID`) stay **secrets**, beside
@@ -164,7 +164,6 @@ described in 3a and fails closed at each:
     AUDIO_MIX_URL:            ${{ vars.AUDIO_MIX_URL }}
     AUDIO_MASTER_URL:         ${{ vars.AUDIO_MASTER_URL }}
     FINISH_UPSCALE_DOORS:     ${{ vars.FINISH_UPSCALE_DOORS }}
-    SPEECH_UPSCALE_DOORS:     ${{ vars.SPEECH_UPSCALE_DOORS }}
     FINISH_BLENDER_DOORS:     ${{ vars.FINISH_BLENDER_DOORS }}
   run: |
     set -eu
@@ -180,7 +179,7 @@ described in 3a and fails closed at each:
     sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
     mv .wrangler.hosted2.toml .wrangler.hosted.toml
     # 4) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
-    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
     envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml; rm -f .wrangler.hosted.toml
     # 5) No placeholder may survive OUTSIDE comments (a missing secret leaves a literal ${...}); comment
     #    prose mentioning ${...} is fine. -F keeps '${' literal on every grep (GNU vs busybox differ).
@@ -391,8 +390,8 @@ export ACCESS_TEAM_DOMAIN= ACCESS_AUD=
 export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" R2_S3_BUCKET=vivijure
 # media origins (empty = that service is off)
 export VIDEO_FINISH_URL= IMAGE_PREP_URL= AUDIO_BEAT_SYNC_URL= AUDIO_MIX_URL= AUDIO_MASTER_URL=
-export FINISH_UPSCALE_DOORS= SPEECH_UPSCALE_DOORS= FINISH_BLENDER_DOORS=
-VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+export FINISH_UPSCALE_DOORS= FINISH_BLENDER_DOORS=
+VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
 envsubst "$VARS" < wrangler.toml.example > wrangler.toml
 sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" wrangler.toml
 ```

@@ -94,7 +94,7 @@ describe("the panel compiles in no UNDECLARED module name", () => {
     expect(MODULE_NAMES.length).toBeGreaterThan(20);
     expect(MODULE_NAMES).toContain("finish-rife");
     expect(MODULE_NAMES).toContain("finish-blender");
-    expect(MODULE_NAMES).toContain("speech-upscale");
+    expect(MODULE_NAMES).toContain("finish-upscale");
     expect(CORPUS.length).toBe(MODULE_NAMES.length - MODULE_NAMES.filter((n) => HOOK_NAMES.has(n)).length);
     expect(HOOK_NAMES.has("keyframe"), "hook names must be derived, not assumed").toBe(true);
   });

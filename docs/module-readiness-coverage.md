@@ -17,7 +17,7 @@ the modules, that test fails.
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **24** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **18** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **18 of 35**.
+Population 4 is the one an operator actually sees, and it is **17 of 34**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -87,7 +87,6 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | own-gpu | yes | yes | yes | yes | yes |
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
 | seedance | yes | yes | yes | **yes** | **yes** |
-| speech-upscale | yes | yes | yes | yes | yes |
 | subtitle | yes | no | no | **yes** | no |
 | vidu-q3 | yes | yes | yes | **yes** | **yes** |
 
@@ -141,9 +140,11 @@ maintained by hand here.
 - **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
   module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
   fail every invocation.
-- **That the finish tier works end to end.** Video upscale and audio upscale each need a real
-  submission. (Post-hoc lip-sync is gone: MuseTalk was ruled out permanently and finish-lipsync
-  removed with it, cf#783. Audio-driven lip-sync is infinitetalk, a motion.backend door.)
+- **That the finish tier works end to end.** Video upscale needs a real submission.
+  (Post-hoc lip-sync is gone: MuseTalk was ruled out permanently and finish-lipsync removed
+  with it, cf#783. Audio-driven lip-sync is infinitetalk, a motion.backend door. Speech
+  enhancement is gone too, cf#786: dead endpoint, no trigger, and its purpose was feeding the
+  post-hoc lip-sync step.)
 - **Anything under load.** One probe is not a load test.
 
 ## Reporting rule

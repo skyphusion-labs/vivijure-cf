@@ -1819,7 +1819,7 @@ fails the render on a miss.
 |-------|------|-----|---------|
 | `shot_id` | string | yes | The shot. |
 | `audio_key` | string | yes | NEW cleaned key on enhancement, or the input key passed through on a soft-degrade. |
-| `applied` | string[] | yes | e.g. `["speech-upscale:resemble-enhance"]`; or `[]` on passthrough. |
+| `applied` | string[] | yes | e.g. `["<module>:<variant>"]`; or `[]` on passthrough. NO SHIPPED MODULE serves the `speech` hook since cf#786; the hook and this contract are unchanged. |
 | `degraded?` | string | no | Set ONLY when passed through (disabled / backend down / no audio); the reason. |
 
 ### 3.7 plan.enhance (chain)

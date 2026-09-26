@@ -152,7 +152,7 @@ against a properly provisioned deploy, never from this env.
 The finish media tier is no longer a set of Workers VPC services: the core reaches the CPU containers
 over public HTTPS doors named by `[vars]` URL strings (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`,
 `AUDIO_BEAT_SYNC_URL`, `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, plus the `FINISH_UPSCALE_DOORS` /
-`SPEECH_UPSCALE_DOORS` / `FINISH_BLENDER_DOORS` lists). For the media URL doors (`VIDEO_FINISH_URL`,
+`FINISH_BLENDER_DOORS` lists). For the media URL doors (`VIDEO_FINISH_URL`,
 `AUDIO_MIX_URL`, `AUDIO_BEAT_SYNC_URL`, `IMAGE_PREP_URL`) the core treats a door as installed when its
 var is a non-empty string, and as absent (the honest degrade path) when it is unset or empty.
 

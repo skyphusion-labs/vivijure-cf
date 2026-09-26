@@ -5,7 +5,7 @@
 //   PART 2, already shipped. Both modules used to return `{ ok: false }` from the MODULE routes
 //   when a COMPLETED job carried no artifact key. `ok:false` is safe at the DOOR layer and fatal
 //   at the MODULE layer. They now pass the input clip through first, same as finish-lipsync,
-//   finish-upscale and speech-upscale.
+//   finish-upscale (and speech-upscale, removed in cf#786).
 //
 //   PART 1, shipped HERE. Both modules still read `out?.clip_key` only, so a COMPLETED presigned
 //   return (`output_key`, no `clip_key`) looked like a real absence and the billed artifact was
@@ -268,12 +268,12 @@ describe("the artifact-less COMPLETED contract holds for EVERY finish-class door
     // POSITIVE CONTROL: the scan reads real files. Without it a path regression empties every set and
     // every claim below passes vacuously on empty arrays.
     expect(candidates.length, "the module scan read nothing").toBeGreaterThanOrEqual(26);
-    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(4);
+    expect(finishClass.length, "the finish-class matcher found nothing").toBeGreaterThanOrEqual(3);
 
     // THE CLAIM: all of them, NAMED so a door joining or leaving the class reddens this rather
     // than quietly moving the denominator. It reddened on cf#783, which is the point.
     expect(finishClass.slice().sort()).toEqual(
-      ["finish-blender", "finish-rife", "finish-upscale", "speech-upscale"],
+      ["finish-blender", "finish-rife", "finish-upscale"],
     );
     for (const n of finishClass) {
       expect(passesThrough, n + " fails the film on a COMPLETED job that produced no artifact").toContain(n);

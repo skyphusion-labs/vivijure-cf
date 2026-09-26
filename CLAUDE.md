@@ -50,8 +50,8 @@ Neither pin is "wrong" solely for lagging; ship the dual-panel wave deliberately
                         |
      +----------+----------+----------------+------------------+
      |          |          |                |                  |
-  upscale  audio-upscale   wan-train          local-12/16gb
-  (video)  (speech)        (cast LoRA)        (homelab i2v)
+  upscale  wan-train          local-12/16gb
+  (video)  (cast LoRA)        (homelab i2v)
 
   vivijure-control-plane = hosted multi-tenant provisioner (not this UI)
   hub vivijure = docs/legal history only; issues for the live studio go HERE

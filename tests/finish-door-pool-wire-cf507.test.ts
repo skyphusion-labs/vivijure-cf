@@ -13,7 +13,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import finishUpscale from "../modules/finish-upscale/src/index";
-import speechUpscale from "../modules/speech-upscale/src/index";
 import { DOOR_ROUTE_NAME, doorName } from "../modules/_shared/finish-door";
 
 const TOKEN_LEGACY = "lft_cf507w_legacy_probe_a41c";
@@ -40,7 +39,6 @@ const notFound = () => new Response(JSON.stringify({ status: 404, title: "Not Fo
 
 type Worker = { fetch(r: Request, e: never): Promise<Response> };
 const FINISH = finishUpscale as unknown as Worker;
-const SPEECH = speechUpscale as unknown as Worker;
 const post = (w: Worker, p: string, env: unknown, b: unknown) =>
   w.fetch(new Request("https://module.internal" + p, { method: "POST", body: JSON.stringify(b) }), env as never);
 const body = async (r: Response) => (await r.json()) as Record<string, never>;
@@ -151,24 +149,4 @@ describe("cf507 wire: two bound doors both carry jobs, and each poll goes home",
     expect(prop.calls.length).toBe(0);
   });
 
-  it("speech-upscale does the same across its two doors", async () => {
-    const { legacy, prop, env } = bothDoors(
-      (p) => (p === "/run" ? runOk("s-legacy") : done({ shot_id: "shot_01", audio_key: "p/a.wav" })),
-      (p) => (p === "/run" ? runOk("s-prop") : done({ shot_id: "shot_01", audio_key: "p/b.wav" })),
-    );
-    const speechEnv = {
-      RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      SPEECH_DOOR_TOKEN: TOKEN_LEGACY,
-      SPEECH_DOOR_TOKEN_PROPAGANDHI: TOKEN_PROP,
-      SPEECH_UPSCALE_DOORS: "https://speech-upscale-fatmike.test,https://speech-upscale-propagandhi.test",
-    };
-    const inv = { hook: "speech", input: { shot_id: "shot_01", audio_key: "p/shot_01.wav" }, config: { enable: true }, context: { project: "cf507" } };
-
-    const a = await body(await post(SPEECH, "/invoke", speechEnv, inv));
-    const b = await body(await post(SPEECH, "/invoke", speechEnv, inv));
-
-    expect(legacy.calls.filter((c) => c.path === "/run").length).toBe(1);
-    expect(prop.calls.filter((c) => c.path === "/run").length).toBe(1);
-    expect([label(a.poll as unknown as string), label(b.poll as unknown as string)].sort()).toEqual([DOOR_ROUTE_NAME, PROPAGANDHI].sort());
-  });
 });

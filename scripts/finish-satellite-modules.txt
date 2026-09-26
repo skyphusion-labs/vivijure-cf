@@ -1,3 +1,2 @@
 finish-rife
 finish-upscale
-speech-upscale

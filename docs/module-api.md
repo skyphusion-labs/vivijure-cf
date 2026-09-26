@@ -504,7 +504,8 @@ fixes (rotate a secret vs. add a binding to `wrangler.toml`).
 
 **`ok` reflects what the code actually requires, read from its own hard-fail guards, never a default.**
 Some modules hard-fail without their binding (a `film.finish` module passthroughs the film degraded
-rather than failing the chain, but `/ready` still reports `ok:false` -- the SPEECH-UPSCALE precedent:
+rather than failing the chain, but `/ready` still reports `ok:false` -- the precedent set by
+speech-upscale (removed in cf#786; the precedent it set is still the rule):
 an opt-in feature being off by default does not make "can this feature ever fire" uninteresting).
 Others hold a credential that only unlocks an optional, better path with a real fallback (`plan-enhance`
 falls back to a free local model; several AI-Gateway-adjacent modules run their default model directly,

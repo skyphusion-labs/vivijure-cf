@@ -183,7 +183,7 @@ function passthrough(
 }
 
 /** cf#594 POLL-TIME SOFT DEGRADE, the same decision finish-lipsync, finish-upscale and
- *  speech-upscale already make at their poll sites.
+ *  speech-upscale (since removed, cf#786) already made at their poll sites.
  *
  *  A finish step is POLISH. When the door reports a structured `ok:false` -- it could not polish,
  *  but it did not crash -- the honest answer is the input clip passed through with the reason
