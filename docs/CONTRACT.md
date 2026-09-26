@@ -683,7 +683,7 @@ and `400` on an empty body or over-size.
 |-------|----------------|----------|------------|
 | POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | 25 MB | `uploads/` |
 | POST `/api/storyboard/character-ref` | same image mimes | 25 MB | `character-refs/` |
-| POST `/api/storyboard/audio-upload` | `audio/mpeg|mp3|wav|x-wav|aac|mp4|x-m4a|ogg|webm` | 32 MB | `audio/` |
+| POST `/api/storyboard/audio-upload` | `audio/mpeg\|mp3\|wav\|x-wav\|aac\|mp4\|x-m4a\|ogg\|webm` | 32 MB | `audio/` |
 
 **There is no fallback extension.** Each route looks its `Content-Type` up in a fixed table and
 REFUSES a miss with `400 { "error": "unsupported content-type <mime> (png/jpeg/webp/gif only)" }`
