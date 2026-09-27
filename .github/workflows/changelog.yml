@@ -91,6 +91,17 @@ jobs:
       - name: Changelog immutability guard tests (cf#551 piece 2)
         run: python3 tests/changelog-released-immutable.test.py
 
+      # cf#901. The GATE itself runs at tag time in ci.yml (assert-tag-version), because the tag is
+      # the last boundary the artifact crosses and two of the three misses this sprint were
+      # fragments that arrived AFTER the assembler ran. Its control runs HERE, on every PR, so the
+      # gate's ability to refuse is exercised continuously rather than only on release days -- a
+      # control that runs once a release is a control nobody notices has rotted.
+      #
+      # NOT continue-on-error, unlike the advisory step below it: this asserts a property of the
+      # guard's own logic against planted fixtures, which has no pre-existing debt to tolerate.
+      - name: Unconsumed-fragment gate control (cf#901)
+        run: python3 tests/changelog-fragments-consumed.test.py
+
       - name: Changelog immutability against the live CHANGELOG.md (advisory, cf#551 piece 1 pending)
         continue-on-error: true
         run: python3 scripts/changelog-released-immutable.py .
