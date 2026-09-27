@@ -83,6 +83,12 @@ import { handleAbuseReport } from "./abuse-report";
 // as the serve guard without importing this module (that would be an import cycle). Re-exported
 // here because it has always been part of this module's public surface.
 export { ARTIFACT_PREFIXES } from "./shared";
+
+// The Durable Object class backing the video-finish Cloudflare Container (#797). This export
+// is NOT optional and is not decoration: `wrangler deploy` rejects a durable_objects binding
+// whose class is not exported from the entrypoint, so removing this line arms a deploy failure
+// that only surfaces at the next `v*` tag and takes the whole studio release with it.
+export { FinishContainer } from "./finish-container";
 import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
