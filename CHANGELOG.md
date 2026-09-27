@@ -5,6 +5,32 @@ for new features). Newest first.
 
 ## Unreleased
 
+### feat(video-finish): chunked assemble, so peak disk is a fixed cost instead of 3-4x input
+
+`/finish` normalizes every clip through libx264 before the `-c copy` join and kept every
+intermediate in one work dir until the job ended, so peak disk ran 3-4x total input. At the
+route's own contracted maximum (`MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = 20.0 GB) the download
+stage alone exceeds the 20 GB ephemeral disk of the largest Cloudflare Container.
+
+Supplying the new optional `partialUrls` pool switches to a chunked assemble: byte-bounded
+batches, each normalized and concatenated to a partial, PUT to R2, work dir freed before the next
+batch. The final pass concatenates the partials straight from their presigned GET URLs, so they
+never return to disk and peak disk at the join is one film. Measured against a range-capable
+origin at 1.1 GB: byte-identical to a local join, range-seeking throughout, peak RSS flat at
+~43 MB.
+
+The container stays credentialless; it only ever writes to a URL the Worker handed it. Omitting
+`partialUrls` leaves the single-pass path byte-for-byte unchanged, so an older Worker is
+unaffected.
+
+Refuses rather than degrading quietly: crossfade with more than one batch (a crossfade cannot span
+a batch boundary, and chunking anyway would silently drop the transition), and a pool too small for
+the film. The drop guard runs per batch AND on the final join.
+
+Also fixes an OOM on the `/finish` upload: it read the ENTIRE finished film into memory before
+PUTting it, which on a Container (no swap) fails at exactly the sizes this change makes reachable.
+The same pattern remains on `/film-titles`, `/subtitle` and `/frames` and is filed separately.
+
 ### fix(cast-media): copy and write the row before deleting the superseded portrait
 
 Both portrait replacement paths deleted the old R2 object BEFORE the
