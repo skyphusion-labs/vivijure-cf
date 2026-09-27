@@ -612,7 +612,12 @@ jobs:
           while read -r tag; do
             [ -n "${tag}" ] || continue
             echo "=== smoking ${tag}"
-            LOCAL_FINISH_TOKEN=ci-smoke-token sh scripts/container-smoke.sh "${tag}" 8000 /health 90
+            # cf#906: supply what the DEPLOYMENT supplies, not what makes the gate pass. Injecting
+            # a token here was green on an image the hosted tier cannot start, because production
+            # has no way to set one -- cf#857's own defect class reappearing inside the gate built
+            # to close it. FinishContainer.envVars sets exactly this var and nothing else reaches
+            # the container's process, so this is the production configuration.
+            LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true sh scripts/container-smoke.sh "${tag}" 8000 /health 90
             n=$((n + 1))
           done < images.txt
           echo "smoked ${n} image(s)"
