@@ -207,7 +207,9 @@ jobs:
       # container-specific and a hand-scoped subdirectory is the artifact that drifts. UNDEFINED NAMES
       # FAIL; unused imports, unused locals and placeholder-less f-strings are printed as ::warning::
       # and do NOT block, because a gate that fails a release over an unused import is one somebody
-      # deletes. Nine such findings existed when this landed and are visible in this step's log.
+      # deletes. EIGHT such findings existed when this landed and are visible in this step's log,
+      # a count read off the gate's own output line ("8 non-blocking finding(s)") rather than from my
+      # notes: I first wrote nine, having counted the undefined name itself among the non-blocking.
       - name: Python undefined-name gate (cf#874)
         run: sh scripts/lint-python-undefined.sh
 

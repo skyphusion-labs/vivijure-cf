@@ -19,8 +19,10 @@ container-specific and a hand-kept list is the artifact that drifts).
 
 - **Undefined names FAIL.** That is the class that shipped.
 - **Style is REPORTED and does not block.** Unused imports, unused locals and placeholder-less
-  f-strings print as `::warning::`. Nine such findings existed when this landed and are visible in the
-  step's log. A gate that fails a release over an unused import is a gate somebody deletes, and then it
+  f-strings print as `::warning::`. **Eight** such findings existed when this landed and are visible in
+  the step's log. That count is read off the gate's own output (`8 non-blocking finding(s)`), not from
+  my notes: I first wrote nine, having counted the blocking undefined name among the non-blocking ones.
+  Nine was the total of ALL findings on the pre-fix tree, one of which was the outage. A gate that fails a release over an unused import is a gate somebody deletes, and then it
   is a gate nobody runs.
 - **pyflakes, PINNED at 3.4.0.** A linter whose ruleset moves under you is a gate whose findings change
   with no commit. `ruff --select F` is the same ruleset plus a large surface that would need
