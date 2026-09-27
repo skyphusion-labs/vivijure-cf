@@ -212,6 +212,13 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // ASSERTED AS A SET DIFFERENCE, not as a hand-listed loop (cp#314). A loop over names somebody
     // typed re-encodes the same stale list this file was fixed for: it keeps passing as the two
     // populations move, and reports nothing about the members nobody thought to add.
+    //   - `kling` -- A SEVENTH MEMBER WITH A THIRD CAUSE, and the only one that arrived by
+    //     SUBTRACTION. cp#538 (plane #539) REMOVED its catalog row because the door's RunPod slug
+    //     `kling-v2-1-i2v-pro` returns 404, so every submit failed; cf#921. Every other member of
+    //     this set is published AHEAD of a row that is waiting on a capability. This one is
+    //     published BEHIND a row that was taken away, and the resolution is the opposite direction:
+    //     retiring modules/kling, never adding the row back. **So membership in this set no longer
+    //     implies "waiting to be enabled", and a reader must not infer that.**
     const publishedNotProvisioned = publishedToTenants().filter((m) => !CATALOG.includes(m));
     expect(publishedNotProvisioned).toEqual([
       "audio-master",
@@ -219,12 +226,19 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       "dialogue-gen",
       "film-titles",
       "image-generate",
+      "kling",
       "subtitle",
     ]);
-    for (const m of ["seedance", "kling", "google-veo"]) {
+    // `kling` deliberately leaves this loop: it is the control that a PUBLISHED module is normally
+    // also catalogued, and kling is now the documented exception, so asserting it here would assert
+    // the state this change just corrected.
+    for (const m of ["seedance", "google-veo"]) {
       expect(publishedToTenants(), m).toContain(m);
       expect(CATALOG, m).toContain(m);
     }
+    // ...and the exception is pinned in BOTH directions, so it cannot quietly become a third state.
+    expect(publishedToTenants(), "kling").toContain("kling");
+    expect(CATALOG, "kling").not.toContain("kling");
   });
 
   it("what module-readiness covers is a STRICT subset of the repo, and the page says so", () => {

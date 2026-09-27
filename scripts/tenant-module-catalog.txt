@@ -29,16 +29,16 @@
 # and correct the population-4 numbers in docs/module-readiness-coverage.md.
 #
 # provenance: skyphusion-labs/vivijure-control-plane @ main, src/tenant-modules.ts
-# read-at: 2026-09-26, plane origin/main (speech-upscale removed, cf#786; lip-sync finish
-#          satellite dropped earlier)
-# count: 17
+# read-at: 2026-09-27, plane origin/main @ 249c085d ("fix(catalog): drop the kling row -- its
+#          RunPod slug is gone, so the door fails at every submit", plane #539, cp#538/cf#921).
+#          Earlier: speech-upscale removed, cf#786; lip-sync finish satellite dropped before that.
+# count: 16
 alibaba-wan
 alibaba-wan-lora
 finish-rife
 finish-upscale
 google-veo
 keyframe
-kling
 minimax-hailuo
 narration-gen
 own-gpu

@@ -15,9 +15,9 @@ the modules, that test fails.
 | 1 | Modules in this repo | **34** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **15** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **23** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
-| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **17** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **16** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **17 of 34**.
+Population 4 is the one an operator actually sees, and it is **16 of 34**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -33,7 +33,13 @@ single further module without a studio release first. cf#394 published nine more
 cost-door modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine,
 taking 4 to 15. cf#396 published four more, taking 3 to 20. **A published bundle with no catalog row
 uploads nothing to anybody**; it exists so the plane can add a row when it is ready, instead of the
-two repos taking turns. cp#524 published `dialogue-gen`, taking 3 to 23.
+two repos taking turns. cp#524 published `dialogue-gen`, taking 3 to 23. **cp#538 took 4 from 17 back to 16** by dropping
+the `kling` row (plane #539, cf#921): the door's RunPod slug `kling-v2-1-i2v-pro` returns 404, so
+every submit failed. That is the first time population 4 has SHRUNK, and it shrank for the honest
+reason: a catalogued door that cannot render is worse than an absent one. **So populations 3 and 4
+are now SEVEN apart, not six**, and `kling` is the seventh: still published as a bundle here while
+no longer catalogued. That asymmetry is deliberate and temporary, and it resolves when `modules/kling`
+is retired (cf#921) rather than by adding the row back.
 
 The six in the gap are published-not-catalogued **for three different reasons, and none is drift.**
 
@@ -84,7 +90,7 @@ The six in the gap are published-not-catalogued **for three different reasons, a
 | image-generate | yes | no | no | **yes** | no |
 | infinitetalk | yes | yes | yes | no | no |
 | keyframe | yes | yes | yes | yes | yes |
-| kling | yes | yes | yes | **yes** | **yes** |
+| kling | yes | yes | yes | **yes** | no |
 | kling-o1-r2v | yes | yes | yes | no | no |
 | local-gpu | yes | no | no | no | no |
 | minimax-hailuo | yes | yes | yes | **yes** | **yes** |
@@ -125,7 +131,7 @@ holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, 17 of 34. A route
+`module-readiness` looks complete while speaking for population 4, 16 of 34. A route
 that reports a subset without saying so is the same defect one layer up, which is why the
 denominator is published here rather than left to be re-derived.
 
@@ -137,13 +143,19 @@ maintained by hand here.
 
 ## What a green `module-readiness` does NOT tell you
 
-- **Anything about the other 17 modules** (34 minus the 17 in population 4). They are not
+- **Anything about the other 18 modules** (34 minus the 16 in population 4). They are not
   provisioned to tenants, so a tenant provision does not reach them. **This does not include the
   GPUless cost door**: all eight cost-door modules were catalogued by cp#317 and a tenant reaches
-  them through the plane-side proxy. The 17 are `audio-master`, `beat-sync`, `cast-image`,
+  them through the plane-side proxy. The 18 are `audio-master`, `beat-sync`, `cast-image`,
   `cf-hailuo`, `cf-veo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
-  `finish-blender`, `image-generate`, `infinitetalk`, `kling-o1-r2v`, `local-gpu`, `music-gen`,
-  `notify-email`, `subtitle`.
+  `finish-blender`, `image-generate`, `infinitetalk`, `kling`, `kling-o1-r2v`, `local-gpu`,
+  `music-gen`, `notify-email`, `subtitle`.
+> One name in that list is there for a different reason than the rest, and the difference matters.
+> Every other entry is a door waiting on a capability before the plane can catalogue it. **Kling was
+> catalogued and had its row TAKEN AWAY** (cp#538 / plane #539) because its RunPod slug returns 404,
+> so it cannot render at all. Membership in this list therefore does NOT mean "waiting to be
+> enabled", and for that one door the resolution is retirement (cf#921), not a future row.
+
 - **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
   module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
   fail every invocation.
