@@ -48,8 +48,24 @@ export function videoFinishDoorOf(env: Partial<VideoFinishDoorHost>): MediaDoorF
  *  ONE, and the reason is the application ceiling, not a preference. `max_instances = 3` in
  *  wrangler.toml.example is a deliberate spend and blast-radius knob (its own comment: the platform
  *  default is 20 and this is "deliberately low to start"), and critically **a request that would
- *  exceed the cap ERRORS rather than queueing**. So the pool is not free-running: every name it can
+ *  exceed the cap does NOT queue: it fails**. So the pool is not free-running: every name it can
  *  address is one the load-bearing job path cannot have.
+ *
+ *  HOW THAT FAILURE PRESENTS, measured rather than reasoned (cf#810, film-40e0cd09, 2026-09-27).
+ *  An earlier revision of this comment said the over-cap request "ERRORS rather than queueing".
+ *  Directionally right, materially misleading about TIMING, and someone would design against it:
+ *  the refusal is NOT prompt. Watched live with the pool at 4 against a cap of 3, the job
+ *  container was created as a Durable Object and then simply never reached `running`. Core's
+ *  `submitAsync` sat on it for minutes instead of getting a fast error, so the film presented as
+ *  a HANG in `assemble`, not as a clean failure.
+ *
+ *  Two consequences worth knowing before anyone widens this constant again:
+ *    - Neither of core's assemble guards can fire on this path. `ASSEMBLE_NOTFOUND_STREAK` counts
+ *      misses on the POLL, and `ASSEMBLE_MAX_JOB_SECONDS` measures from `submittedAt`; both exist
+ *      only AFTER a successful submit. A submit that never succeeds is unguarded.
+ *    - `routingKey()` is minted per ATTEMPT, so every retry addresses a DIFFERENT object and
+ *      leaves behind another instance record that cannot start. The application's instance list
+ *      GROWS while the film is stuck. Watch the list length, not just the pool names.
  *
  *  The arithmetic, which is the whole of it:
  *
