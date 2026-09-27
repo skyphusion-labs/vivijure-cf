@@ -727,9 +727,18 @@ def _parse_partial_urls(raw):
 async def _put_file(session, url, path, content_type="video/mp4"):
     """Stream a file to a presigned PUT.
 
-    Deliberately NOT `data=f.read()`: that holds the whole artifact in RAM, and a Cloudflare
-    Container has no swap, so a large film OOMs the instance rather than uploading. Content-Length
-    is set explicitly because a presigned PUT will not accept chunked transfer-encoding.
+    Deliberately NOT `data=f.read()`. That materialises the WHOLE artifact in memory before the
+    upload starts, and THREE of this container's routes produce a full film (/finish,
+    /film-titles, /subtitle). A Cloudflare Container has no swap, so exceeding memory restarts the
+    instance rather than paging; disk is ephemeral and resets to the image on wake, so the work dir
+    dies with it and the next poll finds no job. The film does not fail loudly, it fails as though
+    it never ran.
+
+    Content-Length is set explicitly because a presigned PUT will not accept the chunked
+    transfer-encoding aiohttp would otherwise use for a file object with no length -- streaming
+    without it would trade an OOM for a 4xx.
+
+    Returns the byte count, so callers that reported a length keep reporting a real size.
     """
     size = os.path.getsize(path)
     with open(path, "rb") as f:
@@ -1123,25 +1132,19 @@ async def _film_titles_work(body):
             log.exception("/film-titles assemble failed")
             raise _JobError(500, str(e))
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
         # BEFORE the artifact, deliberately: the core adopts on the ARTIFACT's presence, so writing
         # this after would leave a window where a poll adopts and finds no measurement (#130).
         await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=secs,
                                 prepend_seconds=(title_spec or {}).get("seconds"))
 
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    raise _JobError(502, f"output put {r.status}")
+            out_size = await _put_file(s, output_url, out_path)
 
-        log.info("/film-titles ok key=%s bytes=%d dur=%.3f", safe_log_value(output_key), len(out_bytes), secs)  # codeql[py/log-injection]
+        log.info("/film-titles ok key=%s bytes=%d dur=%.3f", safe_log_value(output_key), out_size, secs)  # codeql[py/log-injection]
         return {
             "ok": True,
             "key": output_key,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "durationSeconds": round(secs, 3),
             "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         }
@@ -1349,8 +1352,6 @@ async def _subtitle_work(body):
                 log.exception("/subtitle burn failed")
                 raise _JobError(500, str(e))
 
-            with open(out_path, "rb") as f:
-                out_bytes = f.read()
             # Probe BEFORE the upload so the measurement exists in time to be written first. The
             # subtitle module never prepends (it burns in place), so only a duration is carried.
             out_secs = _probe_duration(out_path)
@@ -1358,10 +1359,7 @@ async def _subtitle_work(body):
             # sidecar written after would leave a window where a poll adopts and finds nothing (#130).
             await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=out_secs)
             async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-                async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                                 headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
-                    if r.status not in (200, 201, 204):
-                        raise _JobError(502, f"output put {r.status}")
+                await _put_file(s, output_url, out_path)
             burned = True
 
         log.info("/subtitle ok key=%s burned=%s sidecar=%s dur=%.3f",  # codeql[py/log-injection]
@@ -1619,17 +1617,16 @@ async def frames(req):
             log.exception("/frames extraction failed")
             return web.json_response({"ok": False, "error": "frame extraction failed: %s" % e}, status=500)
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": content_type}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    return web.json_response({"ok": False, "error": "output put %d" % r.status}, status=502)
+        # /frames answers with a JSON body rather than raising, so the helper's _JobError is
+        # translated here; the wire behaviour is unchanged.
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+                out_size = await _put_file(s, output_url, out_path, content_type=content_type)
+        except _JobError as e:
+            return web.json_response({"ok": False, "error": e.message}, status=e.status)
 
         log.info("/frames ok key=%s count=%d grid=%dx%d bytes=%d",
-                 safe_log_value(output_key), len(times), cols, rows, len(out_bytes))  # codeql[py/log-injection]
+                 safe_log_value(output_key), len(times), cols, rows, out_size)  # codeql[py/log-injection]
         resp = {
             "ok": True,
             "key": output_key,
@@ -1638,7 +1635,7 @@ async def frames(req):
             "rows": rows,
             "frame_times": [round(t, 3) for t in times],
             "duration": round(duration, 3) if duration else None,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "content_type": content_type,
         }
         if degraded:
