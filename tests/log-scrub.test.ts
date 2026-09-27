@@ -17,7 +17,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import worker from "../src/index";
 import { keyLabel, shortId, untrustedLabel } from "../src/log-scrub";
-import { generateOpenAIImage } from "../src/providers/openai-image";
+import { generateOpenAIImage, generateImageBytes } from "../modules/image-generate/src/image-gen";
+import { callOpus } from "../modules/plan-enhance/src/provider";
 
 /**
  * Markers that can ONLY have come from the content path. Deliberately not words that appear in the
@@ -104,9 +105,36 @@ describe("router error lines carry the route TEMPLATE, never the pathname (cf#22
   });
 });
 
-describe("provider errors do not carry provider prose (cf#223, openai-image.ts)", () => {
-  it("a moderation refusal that quotes the prompt back does NOT reach the exception message", async () => {
-    // This is the real shape of an OpenAI image refusal: the message quotes the user's prompt.
+/*
+ * THIS BLOCK USED TO TEST A FILE NOTHING IMPORTS.
+ *
+ * cf#223 hardened `src/providers/openai-image.ts` and this block asserted against THAT copy. But
+ * that file had no production importer: its only referents in the whole tree were this import and
+ * one line of docs/privacy-residual-dataset.md. The LIVE OpenAI image path is
+ * modules/image-generate/src/image-gen.ts, and it still interpolated the provider prose verbatim.
+ *
+ * So the gate was green for its entire life over an unguarded path, one directory away. That is the
+ * shape this suite exists to refuse, appearing in the suite itself. The dead copy is deleted and
+ * these assertions now run against every LIVE site that reads a provider body, enumerated by sweep
+ * rather than by memory: the two in image-generate and the one in plan-enhance.
+ *
+ * Each test drives a provider error whose prose QUOTES THE USER PROMPT BACK, which is the real shape
+ * of a moderation refusal on all three providers, and asserts the sentinel reaches neither the
+ * thrown message nor any log channel.
+ */
+describe("provider errors do not carry provider prose (cf#223, LIVE module paths)", () => {
+  /** The thrown message from `fn`, or "" if it did not throw. */
+  async function messageFrom(fn: () => Promise<unknown>): Promise<string> {
+    try {
+      await fn();
+      return "";
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  it("image-generate, OpenAI direct (BYOK): a refusal quoting the prompt does not reach the exception", async () => {
+    // The real shape of an OpenAI image refusal: `error.message` quotes the user's prompt.
     const body = {
       error: {
         message: `Your request was rejected as a result of our safety system. Your prompt "${S.prompt}" may contain content that is not allowed.`,
@@ -114,31 +142,73 @@ describe("provider errors do not carry provider prose (cf#223, openai-image.ts)"
         code: "moderation_blocked",
       },
     };
-    const fetchStub = vi.fn(async () => new Response(JSON.stringify(body), { status: 400 }));
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = fetchStub as unknown as typeof fetch;
-    try {
-      await expect(
-        generateOpenAIImage("sk-test", "openai/gpt-image-1", S.prompt),
-      ).rejects.toThrow(/moderation_blocked/);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-
-    // The throw is what a caller, a log sink and the Exceptions channel all see. Asserting on the
-    // message directly, because this leak does not need a console call to escape.
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body), { status: 400 })) as unknown as typeof fetch;
     let message = "";
     try {
-      globalThis.fetch = fetchStub as unknown as typeof fetch;
-      await generateOpenAIImage("sk-test", "openai/gpt-image-1", S.prompt);
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e);
+      message = await messageFrom(() => generateOpenAIImage("sk-test", "openai/gpt-image-1", S.prompt));
     } finally {
       globalThis.fetch = originalFetch;
     }
+    // POSITIVE: still diagnosable. The status and the provider's own ENUMERATED code survive,
+    // because they are drawn from a fixed set and cannot carry content.
+    expect(message, "the call did not throw at all").not.toBe("");
     expect(message).toContain("400");
     expect(message).toContain("moderation_blocked");
+    // NEGATIVE: the prose does not.
     expect(message, "the provider prose quotes the user prompt back").not.toContain(S.prompt);
+    expectNoSentinels();
+  });
+
+  it("image-generate, AI Gateway proxied: a provider error field quoting the prompt does not reach the exception", async () => {
+    // detectProviderFailure() lifts `result.error ?? result.message` STRAIGHT out of the AI.run
+    // result, which is a provider body. This is the second live site in the same module and it was
+    // never covered.
+    const env = {
+      AI: {
+        run: async () => ({
+          error: `Prompt rejected: "${S.prompt}" violates policy.`,
+        }),
+      },
+    } as unknown as Parameters<typeof generateImageBytes>[0];
+    const message = await messageFrom(() =>
+      generateImageBytes(env, { model: "google/nano-banana-2", prompt: S.prompt }),
+    );
+    expect(message, "the call did not throw at all").not.toBe("");
+    // POSITIVE: the operator still learns the generation was refused by the provider.
+    expect(message.toLowerCase()).toContain("failed");
+    expect(message, "the provider error field quotes the user prompt back").not.toContain(S.prompt);
+    expectNoSentinels();
+  });
+
+  it("plan-enhance, Anthropic: 300 chars of raw error body do not reach the exception", async () => {
+    // callOpus read `await resp.text()` and interpolated the first 300 characters. An Anthropic
+    // 400 echoes the offending request content, and this module's input IS the user's storyboard.
+    // Worse than the image path: plan-enhance is PROVISIONED to tenants and two of its three
+    // callers fold the exception message into `output.notes`, which is persisted and rendered.
+    const env = {
+      GATEWAY_ID: "gw-test",
+      CF_AIG_TOKEN: "tok-test",
+      AI: { gateway: () => ({ getUrl: async () => "https://gateway.example/v1" }) },
+    } as unknown as Parameters<typeof callOpus>[0];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: `messages.0.content: "${S.prompt}" is not valid` } }),
+          { status: 400 },
+        ),
+    ) as unknown as typeof fetch;
+    let message = "";
+    try {
+      message = await messageFrom(() => callOpus(env, [{ role: "user", content: S.prompt }]));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(message, "the call did not throw at all").not.toBe("");
+    // POSITIVE: status survives, so an operator can still tell a 400 from a 529.
+    expect(message).toContain("400");
+    expect(message, "the raw Anthropic error body quotes the request back").not.toContain(S.prompt);
     expectNoSentinels();
   });
 });
