@@ -79,6 +79,20 @@ jobs:
       - name: Tenant module catalog matches the control plane (cf#470)
         run: npm run check:catalog
 
+      # vivijure#824. The hub's docs/CAPABILITIES.md is the one place that states what the studio
+      # offers, and modules/ here is the authority for what exists. This is the only step that can
+      # tell those two apart, so it runs where the population is and fetches the document.
+      #
+      # DELIBERATE CONSEQUENCE: adding or removing a module in this repo turns THIS repo red until
+      # the matrix row lands at the hub. Same trade as check:catalog above and for the same reason.
+      # The alternative is a public document that quietly stops being true, which is exactly how a
+      # $5/month capability outlived its own removal. The remedy is a one-row edit.
+      #
+      # Credential-free: both repos are public, so this runs on fork PRs too. Fails closed on a
+      # fetch error, a non-200, an empty body or an unparseable one; it never degrades to a skip.
+      - name: Capability matrix matches the modules that exist (vivijure#824)
+        run: npm run check:matrix
+
       # deploy/ has a pytest suite (installer/teardown control plane). Without this step,
       # Python regressions in vivijure_deploy.py pass CI silently (#26).
       - uses: actions/setup-python@v7
@@ -171,6 +185,8 @@ jobs:
           containers/video-finish/test_photometric_gate.py
           containers/video-finish/test_async.py
           containers/video-finish/test_meta_sidecar.py
+          containers/video-finish/test_concat_guard.py
+          containers/video-finish/test_chunked_contract.py
           containers/video-finish/test_ffmpeg_timeout.py
           containers/audio-mix/test_ffmpeg_timeout.py
           containers/audio-master/test_ffmpeg_timeout.py
@@ -191,10 +207,57 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 11 ]; then
-            echo "::error::expected exactly 11 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 13 ]; then
+            echo "::error::expected exactly 13 container test scripts to run, ran ${ran}"
             exit 1
           fi
+
+  # BUNDLE GATE (#797). studio-release.yml runs `wrangler deploy --dry-run` against the real
+  # rendered config, and it is the ONLY gate that can see a durable_objects binding whose class is
+  # not exported from the entrypoint. That workflow is TAG-GATED, so on a pull request it reads
+  # SKIPPED and the defect is invisible at exactly the moment a human is reviewing.
+  #
+  # This is not hypothetical: #798 declared the FinishContainer class in wrangler.toml and was
+  # green on 13 checks with no export in src/. The failure would have fired at the next `v*` tag,
+  # in the release bundle step, taking the whole studio release down and landing on whoever tagged
+  # next for an unrelated reason.
+  #
+  # Credential-free AND Docker-free by design. `--dry-run` never contacts the account, so this runs
+  # on GitHub-hosted ubuntu-latest with no secrets and a fork PR exercises the same gate.
+  # `--containers-rollout=none` skips the container image BUILD, which otherwise requires the Docker
+  # CLI even in dry-run mode, while still validating the config, the bindings and the bundle. That
+  # split is the whole point: the class-export check runs, the image build does not.
+  #
+  # Verified both directions before this landed, because a gate never seen to fail is decoration:
+  # deleting the `export { FinishContainer }` line makes this step exit 1 with "Your Worker depends
+  # on the following Durable Objects, which are not exported in your entrypoint file:
+  # FinishContainer", and restoring it makes it pass.
+  bundle-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # The same render path studio-release.yml uses, with EMPTY substitutions on purpose: this
+      # gate checks the SHAPE of the config and the bundle, never account-specific ids, so unset
+      # vars are correct here and are what keep it credential-free and fork-safe.
+      - name: Render a throwaway wrangler.toml from the committed example
+        run: |
+          set -euo pipefail
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          envsubst < .wrangler.hosted.toml > wrangler.toml
+
+      - name: Bundle the studio worker (wrangler --dry-run, no container build)
+        run: npx wrangler deploy --dry-run --containers-rollout=none --outdir=bundle-out
 
   # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
   # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
