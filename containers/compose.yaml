@@ -136,3 +136,5 @@ networks:
   vivijure:
     name: vivijure
     external: true
+
+# cf914 case-2 live-CI demo: a repo-level containers/ file change with no service touched.
