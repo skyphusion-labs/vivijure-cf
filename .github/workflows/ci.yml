@@ -411,6 +411,44 @@ jobs:
           fi
           echo "commit ${head} is on origin/main; ancestry guard passed."
 
+  # fc#2250: TAG-VS-VERSION AS A JOB, not a step.
+  #
+  # The assert itself is not new -- studio-release.yml has carried it since cf#272 -- but it lived
+  # as a STEP inside studio-release, and a step cannot gate a SIBLING job. `deploy` and
+  # `studio-release` are siblings on the same needs: array, so:
+  #
+  #   * `v1.99.0` pushed on a commit whose package.json says 1.33.9 deployed the Worker, applied
+  #     remote D1 migrations and deployed MCP; the assert then fired in the other job, after prod
+  #     had already moved. cf#272 caught the mislabelled RELEASE and never guarded the DEPLOY.
+  #   * The fix is the same shape cf#562 used for the ordering problem: promote the thing everyone
+  #     must pass into a JOB both publishing paths depend on, rather than duplicating the step.
+  #
+  # ubuntu-latest, deliberately, and for the reason assert-on-main states one job up: the deploy job
+  # runs in `container: node:22-alpine`, whose actions/checkout falls back to the REST API and leaves
+  # no .git, so gates that need a real checkout live in their own ubuntu-latest job. This one only
+  # needs package.json, but keeping both guards the same shape means the next one is obvious.
+  #
+  # Non-v refs cannot reach here (the if: below), so unlike the studio-release step there is no
+  # notice-and-pass branch: on this trigger the ref is always a v* tag.
+  assert-tag-version:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the declared version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"
+          pkg="$(node -p "require(\"./package.json\").version")"
+          if [ "$want" != "$pkg" ]; then
+            echo "::error::tag ${TAG} does not match package.json version ${pkg} -- refusing to deploy or publish a mislabelled build"
+            exit 1
+          fi
+          echo "tag ${TAG} matches declared version ${pkg}."
+
   deploy:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
@@ -427,7 +465,10 @@ jobs:
     # Adding them cannot deadlock: both run unconditionally on this trigger, so `needs` will always
     # resolve rather than wait on a job that never starts. That is the failure mode to check before
     # widening a `needs` array, and it is why this is safe rather than merely stricter.
-    needs: [ci, container-tests, migrations-gate, assert-on-main]
+    # fc#2250: assert-tag-version added. It is tag-gated exactly like assert-on-main, so needs:
+    # always resolves on this trigger rather than waiting on a job that never starts -- the check to
+    # make before widening a needs: array, and the same argument the paragraph above makes.
+    needs: [ci, container-tests, migrations-gate, assert-on-main, assert-tag-version]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container: node:22-alpine
@@ -841,7 +882,22 @@ jobs:
   # it is skipped, and a required check that never runs blocks every merge. The required contexts on
   # this repo are ci, migrations-gate, coverage and CodeQL.
   studio-release:
-    needs: [ci, container-tests, migrations-gate, assert-on-main]
+    # fc#2250, two additions:
+    #
+    #   assert-tag-version -- the assert this workflow used to carry only as a step, promoted so it
+    #     gates the sibling deploy job too. The step inside studio-release.yml stays: it still guards
+    #     the workflow_dispatch path, where GITHUB_REF_NAME is the launch BRANCH rather than the tag,
+    #     and that path does not pass through this job at all.
+    #
+    #   deploy -- the REVERSE direction, and the one nobody had guarded. This job publishes the
+    #     artifact every hosted tenant is provisioned from and advances the hosted STUDIO_RELEASE
+    #     pin. As siblings, a FAILED deploy did not stop the pin advancing, so tenants provisioned
+    #     afterwards were pinned to a release whose Worker never shipped. The pin must never move
+    #     ahead of the prod deploy it names.
+    #
+    # No deadlock: deploy and assert-tag-version are both gated on refs/tags/v*, the same trigger
+    # this job runs on, so needs: always resolves rather than waiting on a job that never starts.
+    needs: [ci, container-tests, migrations-gate, assert-on-main, assert-tag-version, deploy]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # the called workflow uploads the release asset; nothing else
