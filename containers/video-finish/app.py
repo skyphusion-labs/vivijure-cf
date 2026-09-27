@@ -28,6 +28,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 from bearer import bearer_middleware
 from ffmpeg_run import FFPROBE_TIMEOUT, FfmpegTimeout, _run
+from concat_guard import assert_no_dropped_parts
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 import photometric_gate
@@ -508,13 +509,21 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
         _concat_hard(norms, silent)  # -c copy; preserves per-clip audio when ensure_audio kept it
 
     # Fail loud: the concat must NEVER silently drop a clip (a scatter render once shipped 1 of 3
-    # shots). If the assembled film is materially shorter than the sum of its (tail-trimmed) inputs,
-    # a clip was dropped at concat -- raise so the caller fails rather than ship a partial film.
+    # shots). Compares the assembled duration against what the inputs IMPLY -- sum for a hard cut,
+    # sum minus the crossfade overlaps otherwise -- inside a frame-scale tolerance.
+    #
+    # This replaces a flat `< sum * 0.85` ratio (cf#784). That ratio could not see a dropped part
+    # once there were 7 or more of them ((n-1)/n rises above 0.85), so it got blinder as films got
+    # longer, and chunked assemble would have inherited that blindness at the outer join where the
+    # parts are whole batches. concat_guard computes the expectation instead of tolerating a
+    # percentage, which is what lets the tolerance be tight enough to see a single dropped part.
+    # ConcatDropError subclasses RuntimeError, so the caller's existing handling is unchanged.
     _sil = _probe_duration(silent) or 0.0
-    _sum_in = sum(norm_durations)
-    if _sum_in > 0 and _sil < _sum_in * 0.85:
-        raise RuntimeError(
-            f"concat dropped clips: assembled {_sil:.2f}s < sum of {len(norms)} inputs {_sum_in:.2f}s")
+    assert_no_dropped_parts(
+        _sil, norm_durations,
+        level=f"clip concat ({len(norms)} clips)",
+        crossfade=effective_crossfade, fps=fps,
+    )
 
     out = os.path.join(work, "final.mp4")
     has_bed = bool(audio_path) and os.path.isfile(audio_path)
