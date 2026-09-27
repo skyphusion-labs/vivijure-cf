@@ -138,13 +138,14 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // If these ever diverge, one of two real bugs exists: a module that records but cannot say so
     // (invisible failures), or one that claims a job log it never writes (a false green).
     expect([...REPORTS_JOB_LOG].sort()).toEqual([...WRITES_JOB_LOG].sort());
-    // cf#305: was 6. The eight cost-door submitters (seedance, kling, vidu-q3, google-veo,
+    // cf#305: was 6. The cost-door submitters (seedance, vidu-q3, google-veo,
     // minimax-hailuo, alibaba-wan, alibaba-wan-lora, narration-gen) wrote NO row at all, so a
     // census of the table showed six healthy lanes and could not mention the other eight.
     // cf#783: 17 -> 16 with finish-lipsync removed (MuseTalk ruled out permanently).
     // cf#786: 16 -> 15 with speech-upscale removed (endpoint dead, no trigger, purpose retired).
-    expect(WRITES_JOB_LOG.length).toBe(15);
-    for (const m of ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "kling-o1-r2v", "infinitetalk"]) {
+    expect(WRITES_JOB_LOG.length).toBe(14);
+    // cf#921: `kling` left this roster by being RETIRED, not by stopping recording.
+    for (const m of ["seedance", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "kling-o1-r2v", "infinitetalk"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
     }
   });
@@ -153,12 +154,12 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
     // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
-    expect(ENTRIES.length).toBe(34);
+    expect(ENTRIES.length).toBe(33);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
     // population this counts is unchanged by this PR and 15 stands. cf#783: 16. cf#786: 15.
-    expect(WRITES_JOB_LOG.length).toBe(15);
+    expect(WRITES_JOB_LOG.length).toBe(14);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
@@ -167,7 +168,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // cf#786: 23 -> 22 (speech-upscale). cp#524: 22 -> 23 (dialogue-gen), the first `dialogue`
     // provider published to tenants -- a hosted tenant has had no way to synthesize a spoken line
     // at all, which is the first missing link in the hosted lip-sync chain.
-    expect(publishedToTenants().length).toBe(23);
+    expect(publishedToTenants().length).toBe(22);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are
@@ -213,17 +214,19 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // typed re-encodes the same stale list this file was fixed for: it keeps passing as the two
     // populations move, and reports nothing about the members nobody thought to add.
     const publishedNotProvisioned = publishedToTenants().filter((m) => !CATALOG.includes(m));
+    // cf#921: `kling` is GONE from this set, and it left the right way. It was here for one day as
+    // the only member that arrived by SUBTRACTION (cp#538 removed its catalog row while the bundle
+    // stayed published). Retiring the module unpublishes the bundle too, so the asymmetry closes
+    // instead of becoming a permanent oddity. The six that remain are all published AHEAD of a row
+    // waiting on a capability, which is the single cause this set had before kling and has again.
     expect(publishedNotProvisioned).toEqual([
       "audio-master",
       "beat-sync",
       "dialogue-gen",
       "film-titles",
       "image-generate",
-      "kling",
       "subtitle",
     ]);
-    // `kling` was in this positive-control trio until cp#538 dropped its catalog row; it is now
-    // asserted in the published-not-provisioned set above instead, which is the stronger statement.
     for (const m of ["seedance", "vidu-q3", "google-veo"]) {
       expect(publishedToTenants(), m).toContain(m);
       expect(CATALOG, m).toContain(m);
