@@ -39,10 +39,25 @@ workers_dev = false
 #     routes itself (STUDIO_PAGE_ASSETS, incl. "/" -> /modules.html). Dev-verified, no loop.
 assets = { directory = "./public", binding = "ASSETS", html_handling = "none", run_worker_first = true }
 
-# >>> SELFHOST-SKIP: tail-consumer -- core render logs -> Loki/Grafana via OUR vivijure-tail worker
+# >>> SELFHOST-SKIP: tail-consumer -- core render logs -> a Loki YOU run, via a vivijure-tail worker
 # Tail consumer -- ships core render logs + exceptions to vivijure-tail -> Loki -> Grafana.
-# DEPLOY-ORDERED: vivijure-tail must be live BEFORE this binding deploys (dangling-binding hazard).
-tail_consumers = [ { service = "vivijure-tail" } ]
+#
+# UNBOUND ON PURPOSE since cf#838, and the reason is not tidiness. The Loki this shipped to ran on a
+# host that no longer exists, so from the cut until 2026-09-27 the live studio kept a bound tail
+# consumer that delivered NOTHING and reported nothing: 549 vivijure-tail invocations in the six
+# hours before this change, every one a drop. A consumer that cannot reach its sink is worse than no
+# consumer, because it answers "are we shipping logs?" with yes. Same call the MuseTalk excision made
+# about its strip gate (ci.yml): a control with no subject comes off rather than staying on green.
+#
+# What a stock deploy has instead, which is enough to operate a single-user studio: Cloudflare
+# Workers Observability ([observability] below, invocation logs + console lines, retained by
+# Cloudflare) and the studio status routes. docs/observability.md has the map.
+#
+# TO TURN IT BACK ON (opt-in tier, docs/opt-in-tiers.md): stand up your own Loki, create a Workers
+# VPC service that reaches it, deploy your own tail worker with scripts/deploy-tail.sh, THEN uncomment
+# the line below. DEPLOY-ORDERED and it is not advisory: vivijure-tail must be live BEFORE this
+# binding deploys or `wrangler deploy` fails on a dangling tail consumer, and typecheck cannot see it.
+# tail_consumers = [ { service = "vivijure-tail" } ]
 # <<< SELFHOST-SKIP: tail-consumer
 
 # Auth for /api/* (#423, src/auth-gate.ts). AUTH_MODE picks the gate:

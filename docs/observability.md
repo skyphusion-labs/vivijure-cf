@@ -1,5 +1,23 @@
 # Observability: where logs go, and how to query them
 
+> **STATUS 2026-09-27 (cf#838). The Loki half of this document is a SETUP GUIDE, not a description
+> of a running system.** The host that ran the reference Loki and Grafana is deleted;
+> `grafana.skyphusion.org` is NXDOMAIN (measured). `wrangler.toml.example` no longer binds
+> `tail_consumers`, so a fresh deploy of the core ships console lines to Cloudflare Workers Logs and
+> nowhere else.
+>
+> Why it is called out this loudly: for the quarter before this change the binding was still live and
+> still green. `vivijure-tail` was invoked 549 times in the six hours before the fix (measured from
+> the Workers observability API) and delivered nothing, and no surface anywhere said so. That is the
+> failure worth remembering: an absent sink read exactly like a working one.
+>
+> The shipper itself is generic and supported. If you run your own Loki, follow
+> [opt-in-tiers.md](opt-in-tiers.md) and the sections below. Since cf#838 a misconfigured sink is
+> observable instead of silent: `vivijure-tail` emits one `{"ev":"tail.sink.drop","reason":...}` line
+> per dropped batch into ITS OWN Workers Logs (`reason` is `sink_unbound`, `sink_unreachable`,
+> `sink_rejected` or `shape_failed`, with a `lines` count of what did not arrive). A quiet tail worker
+> with live invocations now means delivery; before cf#838 it meant nothing at all.
+
 There are **two** observability surfaces for the Vivijure workers, and they hold
 different things. Querying the wrong one is the single most common diagnosability
 trap on this project, so read this before you conclude "the logs are missing."
@@ -29,14 +47,17 @@ setup, written against our reference instance.
 | You want...                                                              | Use                                   |
 |--------------------------------------------------------------------------|---------------------------------------|
 | Request line, status, duration, cron/fetch trigger, invocation outcome   | **CF Workers Observability** (query API / dashboard "Observability" tab) |
-| Your `console.log` lines, structured `{ "ev": ... }` events, app state    | **Grafana / Loki** (`grafana.skyphusion.org`) |
+| Your `console.log` lines, structured `{ "ev": ... }` events, app state    | **CF Workers Observability** logs view, plus **your own Grafana / Loki** if you run the opt-in tail tier (there is no reference instance; `grafana.skyphusion.org` is NXDOMAIN) |
 
 **The gotcha:** the CF observability **query API** returns ONLY invocation-summary
 events (`type: cf-worker-event` -- the request line, status, and the cron/fetch
 trigger), even when `observability.logs.enabled = true`. Your `console.log`
 content does **not** come back through that API. If you filter the CF obs API for
 a token that only exists in a log body (e.g. `film.render.terminal`) you get `[]`, and
-it looks like the log was dropped. It was not. It is in Loki.
+it looks like the log was dropped. It was not: with `[observability.logs] enabled = true` it is in
+the Workers Logs view (dashboard, or the `/telemetry/query` endpoint against the logs dataset), and
+additionally in Loki IF you run the opt-in tail tier. Do not read an empty result from the
+invocation-summary query as a missing log line, and do not read it as proof a tail sink is working.
 
 ## The pipeline
 
@@ -61,17 +82,23 @@ enabled = true
 tail_consumers = [ { service = "vivijure-tail" } ]
 ```
 
-That is exactly what `wrangler.toml.example` ships. `head_sampling_rate` is NOT set in the template
-(Cloudflare's default of `1`, i.e. sample every invocation, applies); add `head_sampling_rate = 1`
-under `[observability]` only if you want it explicit. Both are live on the deployed `vivijure-studio` worker today
-(`observability.logs.enabled = true, persist = true, invocation_logs = true`;
-`tail_consumers = [{ service = "vivijure-tail" }]`). The tail worker is
-**OUR-fleet-only** (stripped for self-host / WfP tenants) and is deployed by hand
-via `scripts/deploy-tail.sh`, which renders `tail/wrangler.toml` from
+`[observability]` is what `wrangler.toml.example` ships; the `tail_consumers` line is present but
+COMMENTED OUT (cf#838). `head_sampling_rate` is NOT set in the template (Cloudflare's default of `1`,
+i.e. sample every invocation, applies); add `head_sampling_rate = 1` under `[observability]` only if
+you want it explicit.
+
+Measured on the live `vivijure-studio` worker 2026-09-27, before this change landed:
+`observability.logs = {enabled: true, persist: true, invocation_logs: true, head_sampling_rate: 1}`
+and `tail_consumers = [{ service = "vivijure-tail" }]`. The first stays and is the surface that
+actually holds your log lines. The second is what cf#838 unbinds, because `vivijure-tail` still
+carried its `LOKI_VPC` binding to a service whose Loki no longer exists.
+
+The tail worker is an **opt-in tier** (stripped for a self-host default and for WfP tenants) deployed
+by hand via `scripts/deploy-tail.sh`, which renders `tail/wrangler.toml` from
 `tail/wrangler.toml.example` (`LOKI_VPC_ID` injected; cf#294 / PR #309). It is not
-part of `deploy.sh` or the tag-gated CI release job -- it changes rarely and has
-no meaning outside this fleet. The worker reaches Loki through its `LOKI_VPC`
-`vpc_service` binding.
+part of `deploy.sh` or the tag-gated CI release job -- it changes rarely. The worker reaches your Loki
+through its `LOKI_VPC` `vpc_service` binding, at `LOKI_PUSH_URL` or the
+`http://loki:3100/loki/api/v1/push` default.
 
 ## Loki labels (the tail derives these per line)
 
@@ -413,6 +440,10 @@ for a missing measurement. Query the failures with `{worker="vivijure-studio"} |
 
 ## Reaching Loki when it is network-isolated
 
+> Written against the retired reference instance (both hostnames below are NXDOMAIN as of
+> 2026-09-27). The TOPOLOGY generalises to any operator running Loki on a private network, which is
+> why it is kept rather than deleted; substitute your own hostnames.
+
 Loki and Grafana run self-hosted on the operator's monitoring host, on a private
 network. Two facts decide how you query them:
 
@@ -472,10 +503,12 @@ Optional correlation fields `project` and `context_job_id` appear when the calle
 
 > **Known deviation (#764, OB-3):** no module `wrangler.toml` in this repo declares
 > `tail_consumers`, so these module-worker `vpc.call` lines are NOT shipped to vivijure-tail / Loki by
-> the committed config (only the studio core is a tail producer). Unless an operator added a tail
-> consumer to the module workers out of band, the LogQL below returns nothing; the lines are visible
-> only in each module worker's own Workers Observability logs (dashboard; each module ships
-> `[observability] enabled = true`). Reaching Loki is unverified.
+> the committed config. Since cf#838 the studio core does not ship them either by default: its
+> `tail_consumers` line is commented out, so NO worker in this repo is a tail producer out of the box.
+> The LogQL below returns nothing unless you run the opt-in tail tier and add the consumer yourself;
+> the lines are visible in each worker's own Workers Observability logs (dashboard; every worker here
+> ships `[observability] enabled = true`). Reaching Loki is unverified and, on the reference instance,
+> now impossible.
 
 | field | meaning |
 |---|---|

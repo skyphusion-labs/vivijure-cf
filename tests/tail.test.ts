@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { shapeEventsToLoki, deriveFields } from "../tail/src/index";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import handler, { shapeEventsToLoki, deriveFields, reportSinkDrop } from "../tail/src/index";
+import type { Env } from "../tail/src/index";
 
 describe("vivijure-tail event -> Loki shaping", () => {
   it("maps a film.finish soft-degrade warn to the right labels + job_id in the line", () => {
@@ -146,5 +147,112 @@ describe("vivijure-tail event -> Loki shaping", () => {
     const n = noT.flatMap((s) => s.values.map((v) => v[1])).find((l) => l.includes('"invocation"'));
     expect(n).toBeTruthy();
     expect("truncated" in JSON.parse(n!)).toBe(false);
+  });
+});
+
+// cf#838: the sink was DARK AND GREEN. A tail consumer that drops every batch is indistinguishable
+// from one that ships, so these tests exist to make the quiet state impossible to reintroduce. They
+// assert on the REPORT, not on the push: what failed before was not delivery (the host was deleted,
+// nothing could have delivered), it was that nothing said so.
+//
+// The seam is the real `tail()` handler with a real env shape, not a stub of the push. A stub would
+// encode my own assumption about which branch runs; driving the handler makes the branch choice the
+// thing under test.
+describe("cf#838: a dropped batch reports itself", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  afterEach(() => warn.mockClear());
+
+  const EVENTS = [{
+    scriptName: "vivijure-studio", outcome: "ok", eventTimestamp: 1_700_000_000_000,
+    logs: [{ timestamp: 1_700_000_000_001, level: "warn", message: ["film film-abc: master degraded"] }],
+    exceptions: [],
+  }];
+
+  /** Collects ctx.waitUntil promises so a test can await the push the handler backgrounded. */
+  function fakeCtx(): { ctx: ExecutionContext; settled: () => Promise<unknown[]> } {
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => { pending.push(p); }, passThroughOnException: () => {} };
+    return { ctx: ctx as unknown as ExecutionContext, settled: () => Promise.all(pending) };
+  }
+
+  function drops(): Record<string, unknown>[] {
+    return warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('"tail.sink.drop"'))
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  it("says sink_unbound, with the line count, when there is no LOKI_VPC binding", async () => {
+    const { ctx, settled } = fakeCtx();
+    await handler.tail(EVENTS, {} as Env, ctx);
+    await settled();
+    const d = drops();
+    expect(d).toHaveLength(1);
+    expect(d[0].reason).toBe("sink_unbound");
+    // the denominator: an under-delivery must not read as an empty pipeline
+    expect(d[0].lines).toBeGreaterThan(0);
+  });
+
+  it("says sink_unreachable when the VPC fetch throws (the deleted-host case)", async () => {
+    const { ctx, settled } = fakeCtx();
+    const env = { LOKI_VPC: { fetch: () => Promise.reject(new Error("connection refused")) } } as unknown as Env;
+    await handler.tail(EVENTS, env, ctx);
+    await settled();
+    const d = drops();
+    expect(d).toHaveLength(1);
+    expect(d[0].reason).toBe("sink_unreachable");
+    expect(String(d[0].detail)).toContain("connection refused");
+  });
+
+  it("says sink_rejected on a non-2xx, which used to look identical to an accept", async () => {
+    const { ctx, settled } = fakeCtx();
+    const env = { LOKI_VPC: { fetch: () => Promise.resolve(new Response("too large", { status: 413 })) } } as unknown as Env;
+    await handler.tail(EVENTS, env, ctx);
+    await settled();
+    const d = drops();
+    expect(d).toHaveLength(1);
+    expect(d[0].reason).toBe("sink_rejected");
+    expect(String(d[0].detail)).toContain("413");
+  });
+
+  it("stays SILENT on a 204 accept, so the drop line means something", async () => {
+    const { ctx, settled } = fakeCtx();
+    const env = { LOKI_VPC: { fetch: () => Promise.resolve(new Response(null, { status: 204 })) } } as unknown as Env;
+    await handler.tail(EVENTS, env, ctx);
+    await settled();
+    expect(drops()).toHaveLength(0);
+  });
+
+  it("honours LOKI_PUSH_URL and defaults to the compose service name when unset", async () => {
+    const seen: string[] = [];
+    const mk = (url?: string) => ({
+      LOKI_VPC: { fetch: (u: string) => { seen.push(String(u)); return Promise.resolve(new Response(null, { status: 204 })); } },
+      LOKI_PUSH_URL: url,
+    }) as unknown as Env;
+    const a = fakeCtx();
+    await handler.tail(EVENTS, mk("http://logs.internal:3100/loki/api/v1/push"), a.ctx);
+    await a.settled();
+    const b = fakeCtx();
+    await handler.tail(EVENTS, mk(undefined), b.ctx);
+    await b.settled();
+    expect(seen[0]).toBe("http://logs.internal:3100/loki/api/v1/push");
+    expect(seen[1]).toBe("http://loki:3100/loki/api/v1/push");
+  });
+
+  it("never throws back into the producer, even when shaping itself fails", async () => {
+    const { ctx, settled } = fakeCtx();
+    // a poisoned event: `logs` is not iterable, so shapeEventsToLoki throws
+    const poison = [{ scriptName: "x", logs: 7 } as unknown as Parameters<typeof shapeEventsToLoki>[0][0]];
+    await expect(handler.tail(poison, {} as Env, ctx)).resolves.toBeUndefined();
+    await settled();
+    const d = drops();
+    expect(d).toHaveLength(1);
+    expect(d[0].reason).toBe("shape_failed");
+  });
+
+  it("reportSinkDrop itself cannot throw (a report failure is not a render failure)", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => reportSinkDrop("probe", [], circular)).not.toThrow();
   });
 });
