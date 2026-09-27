@@ -8,6 +8,7 @@ import {
 } from "@skyphusion-labs/vivijure-core";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
+import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { voiceRefKeysFromScenes } from "./cast-voice-sample";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -249,8 +250,14 @@ export async function animateFromPreview(
       dialogue_lines = lines;
     }
     voice_ref_keys = voiceRefKeysFromScenes(bundleScenes, resolved.voiceRefs);
-  } catch {
-    // best-effort: missing bundle dialogue must not block finalize
+  } catch (e) {
+    // fc#2250: the original intent here ("missing bundle dialogue must not block finalize") is
+    // PRESERVED and did not need the blanket catch to hold -- readBundleScenes returns [] for a
+    // missing bundle or a bundle with no storyboard.yaml, so the missing case never reaches here
+    // and still finalizes silent. Reaching this catch means a real failure (R2 error, corrupt
+    // gzip, unparseable YAML, or cast resolution), so whether this film has spoken lines is
+    // UNDETERMINED. Swallowing it finalized a voiced film silent and called it success.
+    return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
   }
 
   // dialogue_lines is runtime-supported on startFilmFromKeyframes (core >=1.6.0); published
