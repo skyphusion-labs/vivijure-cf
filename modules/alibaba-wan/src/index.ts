@@ -20,7 +20,7 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildWanBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./wan";
+import { buildWanBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./wan";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
@@ -40,7 +40,6 @@ interface Env {
 }
 
 const ENDPOINT_ID = "wan-2-6-i2v";
-const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
@@ -236,7 +235,12 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
+  // cf#923: measured off the delivered container. This door previously reported frames as
+  // `st.seconds * 24` -- the REQUESTED seconds times an assumed rate, never opening the file. It
+  // returns 30fps, so a 5s clip reported 120 frames against an actual 150. 0/0 means unparseable;
+  // core skips recording rather than storing an invented rate.
+  const timing = deliveredTiming(bytes);
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: timing.fps, frames: timing.frames, has_audio: true } };
 }
 
 export default {
