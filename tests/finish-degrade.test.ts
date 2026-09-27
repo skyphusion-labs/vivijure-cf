@@ -8,12 +8,20 @@ import {
   clipFinishBand,
   clipFinishFrom,
   clipFinishSummary,
+  combineBands,
   degradeBand,
   degradeFrom,
   deliverable,
   deliveredSummary,
+  STAGE_KEYS,
+  stageBand,
+  stageFrom,
+  stageSummary,
+  stagesNote,
   type RenderOutput,
 } from "../public/finish-degrade.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // cf#118. When the video-finish tier is unavailable (VIDEO_FINISH_URL unset, the hosted
 // tenant case) the orchestrator degrades honestly: per-shot clips at assemble, the silent
@@ -362,5 +370,209 @@ describe("clipFinishSummary (cf#595)", () => {
     expect(s).toContain("2 shots");
     expect(s).not.toContain("no detectable face");
     expect(s).not.toContain("passthrough:");
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// cf#853 / core#317: the per-stage degrade keys, and THE LADDER.
+//
+// core#317 emits `speech`, `master` and `dialogue` as top-level payload keys in the same
+// `{ degraded, reasons }` vocabulary `output.finish` already uses, and OMITS the key entirely
+// when the stage was never reached. So there are three states, not two, and the whole value of
+// the field is in keeping them apart:
+//
+//   key ABSENT       the stage was never reached. NOT MEASURED.
+//   degraded: 0      it ran and ran clean. Measured, and NOT a limit.
+//   degraded: n > 0  it ran and degraded.
+//
+// Every test below that asserts a band was checked against a PLANTED COLLAPSE before being
+// trusted: making stageBand() treat an absent key as "none-reported" turns the ladder tests red.
+// A test that cannot observe the collapse it exists to prevent is decoration.
+const ROOT = join(import.meta.dirname, "..");
+
+describe("cf#853 the ladder: absent, clean and degraded are three different states", () => {
+  for (const stage of STAGE_KEYS) {
+    describe(stage, () => {
+      it("ABSENT key is UNMEASURED, and is not a limit", () => {
+        const out = { output_key: "renders/film-x/film.mp4" } as RenderOutput;
+        expect(stageBand(out, stage)).toBe(DEGRADE_BANDS.UNMEASURED);
+        expect(stageFrom(out, stage)).toBeNull();
+      });
+
+      it("degraded 0 is NONE-REPORTED, which is measured and still not a limit", () => {
+        const out = { [stage]: { degraded: 0, reasons: [] } } as unknown as RenderOutput;
+        expect(stageBand(out, stage)).toBe(DEGRADE_BANDS.NONE_REPORTED);
+        // Not a limit: the live view must stay silent on a clean stage.
+        expect(stageFrom(out, stage)).toBeNull();
+      });
+
+      it("ABSENT and degraded 0 are DIFFERENT -- the distinction the core pays a field to keep", () => {
+        const absent = { output_key: "k" } as RenderOutput;
+        const clean = { [stage]: { degraded: 0, reasons: [] } } as unknown as RenderOutput;
+        expect(stageBand(absent, stage)).not.toBe(stageBand(clean, stage));
+      });
+
+      it("degraded n > 0 is REPORTED, and the reasons come back VERBATIM", () => {
+        const out = {
+          [stage]: { degraded: 1, reasons: ["MODULE_X: invoke failed: 503"] },
+        } as unknown as RenderOutput;
+        expect(stageBand(out, stage)).toBe(DEGRADE_BANDS.REPORTED);
+        const info = stageFrom(out, stage);
+        expect(info).not.toBeNull();
+        expect(info!.stage).toBe(stage);
+        expect(info!.degraded).toBe(1);
+        // Never rewritten, never softened.
+        expect(info!.reasons).toEqual(["MODULE_X: invoke failed: 503"]);
+      });
+
+      it("present but malformed is UNREADABLE, never silently clean", () => {
+        const out = { [stage]: { degraded: "lots", reasons: "nope" } } as unknown as RenderOutput;
+        expect(stageBand(out, stage)).toBe(DEGRADE_BANDS.UNREADABLE);
+        // The live view still stays quiet: a parse failure must not scare a good film.
+        expect(stageFrom(out, stage)).toBeNull();
+      });
+    });
+  }
+
+  it("an unknown stage key is UNMEASURED rather than throwing or guessing", () => {
+    const out = { speech: { degraded: 3, reasons: ["x"] } } as unknown as RenderOutput;
+    expect(stageBand(out, "film_finish")).toBe(DEGRADE_BANDS.UNMEASURED);
+    expect(stageFrom(out, "film_finish")).toBeNull();
+  });
+
+  it("junk payloads resolve to UNMEASURED on every stage", () => {
+    for (const bad of [null, undefined, 42, "x", []] as unknown[]) {
+      for (const stage of STAGE_KEYS) {
+        expect(stageBand(bad as RenderOutput, stage)).toBe(DEGRADE_BANDS.UNMEASURED);
+        expect(stageFrom(bad as RenderOutput, stage)).toBeNull();
+      }
+    }
+  });
+});
+
+describe("cf#853 `degraded` is the COUNT and `reasons` is DEDUPED", () => {
+  // Measured against core#317's own test: two shots failing for the SAME reason plus one clean
+  // shot yields { degraded: 2, reasons: [<one reason>] }. So degraded >= reasons.length, and
+  // anything deriving the count from reasons.length under-reports exactly when several shots
+  // fail the same way -- which is the common case, not the edge.
+  const out = {
+    speech: { degraded: 2, reasons: ["speech module MODULE_SPEECH not bound"] },
+  } as unknown as RenderOutput;
+
+  it("keeps the count from `degraded`, not from `reasons.length`", () => {
+    const info = stageFrom(out, "speech");
+    expect(info!.degraded).toBe(2);
+    expect(info!.reasons).toHaveLength(1);
+  });
+
+  it("the summary counts SHOTS, not distinct reasons", () => {
+    expect(stageSummary(stageFrom(out, "speech"))).toContain("2 shots");
+  });
+
+  it("falls back to reasons.length only when `degraded` is unusable (a pre-field payload)", () => {
+    const legacy = { master: { reasons: ["A", "B"] } } as unknown as RenderOutput;
+    expect(stageFrom(legacy, "master")!.degraded).toBe(2);
+  });
+});
+
+describe("cf#853 stageSummary is OUR sentence, and never paraphrases a reason", () => {
+  it("names the stage and pluralises the unit", () => {
+    const one = stageFrom({ master: { degraded: 1, reasons: ["a"] } } as unknown as RenderOutput, "master");
+    const two = stageFrom({ master: { degraded: 2, reasons: ["a", "b"] } } as unknown as RenderOutput, "master");
+    expect(stageSummary(one)).toContain("1 step.");
+    expect(stageSummary(two)).toContain("2 steps.");
+    expect(stageSummary(one)).toContain("audio master");
+  });
+
+  it("dialogue carries NO count, because the leg has exactly one declared degrade", () => {
+    const info = stageFrom(
+      { dialogue: { degraded: 1, reasons: ["no dialogue module installed"] } } as unknown as RenderOutput,
+      "dialogue",
+    );
+    const summary = stageSummary(info)!;
+    expect(summary).toContain("without generated voices");
+    // A count here would read as false precision: every other dialogue failure FAILS the
+    // render now (core#314 / cf#834) rather than shipping as a limit.
+    expect(summary).not.toMatch(/\d/);
+  });
+
+  it("returns null rather than a contentless sentence when there is nothing to report", () => {
+    expect(stageSummary(null)).toBeNull();
+    expect(stageSummary({ stage: "speech", degraded: 0, reasons: [] } as never)).toBeNull();
+  });
+});
+
+describe("cf#853 the combining rule is NOT worst-of", () => {
+  const B = DEGRADE_BANDS;
+
+  it("partially measured is its OWN fact, not folded into either neighbour", () => {
+    const partial = combineBands([B.NONE_REPORTED, B.UNMEASURED]);
+    const allClean = combineBands([B.NONE_REPORTED, B.NONE_REPORTED]);
+    // Neither reports a limit...
+    expect(partial.limited).toBe(false);
+    expect(allClean.limited).toBe(false);
+    // ...and they are still DISTINGUISHABLE, which is the whole point. A worst-of collapse
+    // would make these two identical and erase the fact that one stage was never measured.
+    expect(partial.fullyMeasured).toBe(false);
+    expect(allClean.fullyMeasured).toBe(true);
+    expect(partial.unmeasured).toBe(1);
+    expect(allClean.unmeasured).toBe(0);
+  });
+
+  it("`limited` means a signal REPORTED a limit, and unreadable is not that", () => {
+    expect(combineBands([B.REPORTED, B.UNMEASURED]).limited).toBe(true);
+    // An unreadable signal must not light the badge as though the studio had named a limit.
+    expect(combineBands([B.UNREADABLE, B.NONE_REPORTED]).limited).toBe(false);
+    expect(combineBands([B.UNREADABLE, B.NONE_REPORTED]).unreadable).toBe(1);
+  });
+
+  it("reports the composition, and an empty set is never fullyMeasured", () => {
+    const c = combineBands([B.REPORTED, B.UNREADABLE, B.NONE_REPORTED, B.UNMEASURED]);
+    expect(c).toMatchObject({ reported: 1, unreadable: 1, noneReported: 1, unmeasured: 1, total: 4 });
+    // Nothing measured is not "everything measured".
+    expect(combineBands([]).fullyMeasured).toBe(false);
+    expect(combineBands(null).total).toBe(0);
+  });
+});
+
+describe("cf#853 stagesNote names the right stage", () => {
+  it("names a single stage, so the badge does not send the reader to the wrong place", () => {
+    const info = stageFrom({ master: { degraded: 1, reasons: ["x"] } } as unknown as RenderOutput, "master");
+    const note = stagesNote([info!])!;
+    expect(note.label).toContain("audio master");
+    expect(note.title).toContain("audio master");
+    // bandNote()'s wording says "the finishing step", which is false for these stages.
+    expect(note.label).not.toContain("finishing");
+  });
+
+  it("returns null when nothing reported", () => {
+    expect(stagesNote([])).toBeNull();
+    expect(stagesNote(null)).toBeNull();
+  });
+});
+
+// THE SEAM, STATED PLAINLY. Everything above tests the pure decision logic, which is where all
+// of the deciding happens. The DOM wiring is NOT exercised by a rendered-DOM test here, so these
+// two assertions check that the wiring EXISTS rather than that it paints correctly -- a weaker
+// claim, and it is named as weaker rather than left to look like coverage. `node --check` and
+// `npm run guard:resolve` cover the syntax and the script resolution.
+describe("cf#853 the panel is actually wired to the new signals", () => {
+  const src = (f: string) => readFileSync(join(ROOT, "public", f), "utf8");
+
+  it("planner-render.js folds the stage signals into `limited`", () => {
+    const js = src("planner-render.js");
+    expect(js).toContain("stageDegradesOf(out)");
+    // The flag itself, not just the helper: a helper nothing consumes is the defect shape.
+    expect(js).toMatch(/const limited = !!\(degrade \|\| clipFinish \|\| stageDegrades\.length\)/);
+  });
+
+  it("planner-history-row.js records a band per stage and renders the reasons", () => {
+    const js = src("planner-history-row.js");
+    for (const attr of ["speechDegrade", "masterDegrade", "dialogueDegrade"]) {
+      expect(js, `history row does not record ${attr}`).toContain(`li.dataset.${attr}`);
+    }
+    expect(js).toContain("stagesNote(stageInfos)");
+    expect(js).toContain("window.finishDegrade.stageSummary(info)");
   });
 });
