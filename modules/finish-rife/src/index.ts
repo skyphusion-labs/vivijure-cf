@@ -55,6 +55,29 @@ export const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["finish"],
+  // max_invocation_seconds: the ceiling THIS module declares to the core (core#182 / core#223).
+  //
+  // BASIS (cf#762): UNIFORM BY DECLARATION, and deliberately so -- there is no worker limit to
+  // derive from. This module dispatches to the vivijure-backend endpoint (t9wcvlxh8rc5la, live), and
+  // that endpoint's per-request execution timeout reads timeout: 0 (RunPod v2 get-endpoint,
+  // 2026-09-27): no endpoint-level execution timeout is configured. vivijure-backend deploy.sh omits
+  // executionTimeoutMs entirely when EXECUTION_TIMEOUT_MS is empty, which is what its
+  // deploy.env.example ships, and this Worker sends no per-request policy.executionTimeout either.
+  // So nothing on the RunPod side terminates a long invocation, and a number claimed as "measured"
+  // here would be invented. 900 is held as a conservative declaration that matches finish-blender's
+  // configured door and stays under the crossover below.
+  //
+  // RAISING THIS IS A GLOBAL DECISION, NOT A LOCAL ONE. The core derives its phase stall ceiling
+  // from the largest declared ceiling in the chain (vivijure-core phaseCeiling, src/film-model.ts):
+  //     required  = FINISH_STEP_MAX_ATTEMPTS(3) * max(declared ceiling over the steps that run next)
+  //     effective = max(PHASE_HARD_DEADLINE_SECONDS(5400), required)
+  // At 900, required is 2700: under the floor, so the floor wins and this number changes nothing.
+  // 1800 IS THE CROSSOVER. At 1800, required is exactly 5400 and basis stays "floor". At 1801 it is
+  // 5403, basis flips to "derived", and the deadline moves for EVERY film whose finish chain can
+  // reach this module -- the derivation takes the max over the steps that COULD run next, not the
+  // one that did. Past 1800 is a deliberate, acknowledged act: register it in
+  // ACKNOWLEDGED_ABOVE_CROSSOVER (modules/_shared/finish-ceiling.ts) or the gate in
+  // tests/finish-ceiling-crossover-cf762.test.ts fails. cf#762.
   max_invocation_seconds: 900,
   provides: [
     { id: "interpolate", label: "Smooth motion (RIFE frame interpolation)" },

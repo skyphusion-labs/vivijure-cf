@@ -164,6 +164,9 @@ What each optional field means:
   one whole invocation, relayed from the guard it actually runs with. The core sizes the phase stall
   ceiling from it. Declare the whole invocation or nothing; never a rate, never an aspiration. An
   absent value is reported (`FilmJob.ceiling_undeclared`, `film.ceiling_undeclared` event), not guessed.
+  A declared value ABOVE `PHASE_HARD_DEADLINE_SECONDS / FINISH_STEP_MAX_ATTEMPTS` (5400/3 = **1800**)
+  makes the core's effective phase deadline derived rather than floored, which moves it globally;
+  see `modules/_shared/finish-ceiling.ts` (cf#762).
 - **`cancelable`**: the module serves `POST /cancel` (see "Async + cancel").
 - **`usage`** (`motion.backend`): how the door is actually called (native audio, voice mode, min/max
   seconds, duration steps, first/last frame, seed, voice ref, driving audio). Absent = undeclared.
