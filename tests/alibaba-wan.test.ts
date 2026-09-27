@@ -31,7 +31,7 @@ describe("alibaba-wan pure logic", () => {
       prompt: "a city at dawn",
       image: "https://r2/x.png",
       negative_prompt: "",
-      resolution: "720p",
+      size: "720p",
       duration: 5,
       shot_type: "single",
       seed: -1,
@@ -76,7 +76,33 @@ describe("alibaba-wan pure logic", () => {
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 },
       {},
     );
-    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, resolution: "720p", negative_prompt: "" });
+    expect(body.input).toMatchObject({ enable_prompt_expansion: false, duration: 5, size: "720p", negative_prompt: "" });
+    // cf#922: wan-2-6-i2v publishes `size` with values `1280*720` / `1920*1080`. The door hardcoded
+    // `resolution: "720p"`, so both the key AND the value format were wrong, and the endpoint fell
+    // back to its own default, which happens to be 1280*720. That coincidence is why the 1270x726
+    // clip measured last sprint looked correct: it was the vendor default, never a configured outcome.
+    expect(body.input.resolution).toBeUndefined();
+  });
+
+  // cf#922: these pin the VENDOR's value space against RunPod's own docs, which print `1280*720`
+  // for this field. Submitting the documented form returns the vendor enum
+  // `field "resolution" must be one of ["720p", "1080p"]`, so shipping the documented value would
+  // 400 every shot. A future reader "correcting" this back to the docs must go red here.
+  it("size uses the VENDOR enum (720p/1080p), never the 1280*720 form RunPods docs print", () => {
+    const at720 = buildWanBody({ shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 }, {});
+    expect(at720.input.size).toBe("720p");
+    expect(at720.input.size).not.toBe("1280*720");
+
+    const at1080 = buildWanBody({ shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 }, { size: "1080p" });
+    expect(at1080.input.size).toBe("1080p");
+    expect(at1080.input.size).not.toBe("1920*1080");
+  });
+
+  it("an out-of-enum size falls back to 720p rather than forwarding a value the vendor rejects", () => {
+    for (const bad of ["1280*720", "1920*1080", "480p", "9999*9999", "", undefined, 1080]) {
+      const b = buildWanBody({ shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 5 }, { size: bad });
+      expect(["720p", "1080p"]).toContain(b.input.size);
+    }
   });
 
   it("extractVideoUrl finds the video url across output shapes", () => {
