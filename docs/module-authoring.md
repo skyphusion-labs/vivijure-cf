@@ -374,6 +374,41 @@ The bundle is **not** built by a parallel bundler: it comes from `wrangler deplo
 against the module's own `wrangler.toml`, so the artifact is the deploy shape and cannot drift from
 it. The plane then fetches by `(tag, module)` and uploads into the tenant dispatch namespace.
 
+#### If your module declares a binding the PLANE has to emit (cf#942)
+
+The manifest carries a `bindings_required` object, read out of your own `wrangler.toml` by
+`build-module-release.ts`. Today it holds `workflows`, one entry per `[[workflows]]` block:
+
+```json
+"bindings_required": {
+  "workflows": [
+    { "binding": "DIALOGUE_WORKFLOW", "class_name": "DialogueGenWorkflow", "name": "dialogue-gen" }
+  ]
+}
+```
+
+**You declare it once, in your wrangler.toml, and nothing else needs telling.** The split is by who
+can possibly know each part: your module knows WHAT it needs (that it has a Workflow, its entrypoint
+class, and a logical name), and only the plane knows WHO it is for, so the plane composes the
+account-scoped resource name from the tenant. A triple typed into the plane's catalog would be a
+hand-maintained list that goes stale the first time you rename a class, and this estate has lost two
+of those in a month.
+
+Three things follow that are worth knowing before you add a `[[workflows]]` block:
+
+- **The field is always present, even empty.** `"workflows": []` means "this module declares none".
+  A manifest with NO `bindings_required` at all means the artifact predates this contract and cannot
+  say -- a different answer, and the only one that is a reason to refuse.
+- **A partial block is refused at BUILD.** Missing `class_name`, `binding` or `name` fails the
+  release build rather than publishing a requirement the plane cannot act on.
+- **A declared Workflow does not make the door work by itself.** Measured against the live API
+  (vivijure-control-plane cp#526): a WfP user Worker accepts a `workflow` binding and reads it back,
+  the upload does NOT create the account-scoped Workflow, and a script exporting a
+  `WorkflowEntrypoint` uploads perfectly happily with no binding at all. So a catalog row added
+  before the plane can emit AND provision gives a tenant a door that installs, passes `/ready` and
+  throws at the first invoke, with the keyframe pass already paid for. Publish the bundle; let the
+  row wait.
+
 **Which modules take this path is `scripts/tenant-release-modules.txt`, and that is the whole
 answer** (cf#394). Adding a module to it publishes a bundle; it does NOT provision anything, because
 provisioning is a row in the control plane's `TENANT_MODULE_CATALOG` (mirrored here at
