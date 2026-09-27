@@ -331,8 +331,17 @@ binding = "R2_S3_SECRET_ACCESS_KEY"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "R2_S3_SECRET_ACCESS_KEY"
 
-# Fleet media containers (video-finish / audio-mix / audio-beat-sync). Reuses the GPU door
-# store secret so we do not mint a second bearer. Unset is fail-open.
+# Media containers (video-finish / audio-mix / audio-beat-sync / image-prep / audio-master).
+# Reuses the GPU door store secret so we do not mint a second bearer.
+#
+# UNSET IS FAIL-CLOSED, and this comment used to say the opposite (cf#893). With a door URL set and
+# no token, `mediaDoorFetch` THROWS `MediaFinishAuthError` rather than calling the door
+# unauthenticated -- core's media-finish-auth.ts, and it has behaved that way the whole time.
+#
+# The old wording was wrong in the SAFE direction, which is still wrong: a reader trusting it
+# concludes the media path is reachable without a credential and reasons about the entire auth
+# posture from there. A comment that under-claims a control is how the control gets "simplified"
+# by someone who believes it is not load-bearing.
 [[secrets_store_secrets]]
 binding = "MEDIA_FINISH_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"

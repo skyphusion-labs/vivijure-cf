@@ -696,7 +696,20 @@ Docker on your own box. The studio reaches them over **public HTTPS origins**, n
 core and the media finish modules read `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
 `AUDIO_MIX_URL` and `AUDIO_MASTER_URL` (empty = that service is off) and send the `MEDIA_FINISH_TOKEN`
 bearer (store secret `FINISH_DOOR_TOKEN`; the `video-finish`, `audio-mix` and `audio-beat-sync`
-containers check it as `LOCAL_FINISH_TOKEN`, and leave the gate open when that is unset). As of #519
+containers check it as `LOCAL_FINISH_TOKEN`). **Every media container now REFUSES TO START when
+`LOCAL_FINISH_TOKEN` is unset** (cf#893, GHSA-v8g8-gmcm-22gr) -- it used to leave the gate open, which
+was defensible behind the private Workers VPC that no longer exists and is not defensible on the
+public HTTPS origins above. Set it in the environment `compose.yaml` reads:
+
+```bash
+export LOCAL_FINISH_TOKEN="$(openssl rand -hex 32)"   # must match the store secret FINISH_DOOR_TOKEN
+docker compose -f containers/compose.yaml up -d
+```
+
+A container with no token exits at startup naming both this variable and the opt-out; it does not
+come up and serve. If your deployment is genuinely loopback-only and wants no authentication, ask
+for that **by name** with `LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true`. Unset is not a request for it.
+`GET /health` stays open either way, so swarm and Traefik healthchecks are unaffected. As of #519
 this is part of the **standard** install: `deploy.sh` (`scripts/setup-media-vpc.py`) reuses or creates
 one Cloudflare tunnel (default name `vivijure-media`, override with `VIVIJURE_TUNNEL_NAME`) and writes
 its connector token to `containers/tunnel.env` (0600). It creates NO Workers VPC services and renders

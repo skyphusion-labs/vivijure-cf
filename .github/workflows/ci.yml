@@ -229,7 +229,28 @@ jobs:
       - name: Container image file-set guard (cf#857)
         run: python3 tests/container-image-file-set.test.py
 
+      # cf#893 / GHSA-v8g8-gmcm-22gr. Two halves: the gate fails CLOSED, and EVERY container that
+      # serves HTTP has it. The second is why this is a repo-level step rather than a per-container
+      # script -- image-prep and audio-master shipped with no gate at all, and a per-container test
+      # can only ever check the containers that remembered to add one.
+      - name: Container bearer gate (cf#893)
+        run: python3 tests/container-bearer-gate.test.py
+
+      # cf#893: containers/{video-finish,audio-mix}/test_bearer.py EXISTED and were never in this
+      # list, which is how an assertion labelled fail-open survived the gate being closed: it kept
+      # passing because the new refusal is 503 and 503 is also not 401. A test outside the runner is
+      # a file, not a gate. audio-beat-sync/test_bearer.py is deliberately NOT added -- it imports
+      # librosa, and installing an audio-analysis stack to assert an HTTP status is a worse trade
+      # than the structural coverage tests/container-bearer-gate.test.py already gives all five.
       - name: Run container test scripts
+        env:
+          # cf#893: these scripts drive container routes IN-PROCESS and send no credential, which
+          # is exactly the loopback case the explicit opt-out exists for. A token here would make
+          # every uncredentialed request a 401 and would be testing the auth header rather than the
+          # route. The files that are ABOUT auth -- the three test_bearer.py and
+          # tests/container-bearer-gate.test.py -- pop and restore BOTH vars themselves, so the
+          # fail-closed and armed cases stay reachable underneath this.
+          LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true"
         run: |
           set -eu
           scripts="
@@ -237,6 +258,8 @@ jobs:
           containers/audio-mix/test_url_guard.py
           containers/image-prep/test_url_guard.py
           containers/image-prep/test_decode_bound.py
+          containers/video-finish/test_bearer.py
+          containers/audio-mix/test_bearer.py
           containers/video-finish/test_url_guard.py
           containers/video-finish/test_inspect.py
           containers/video-finish/test_photometric_gate.py
@@ -268,8 +291,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 18 ]; then
-            echo "::error::expected exactly 18 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 20 ]; then
+            echo "::error::expected exactly 20 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
@@ -589,7 +612,7 @@ jobs:
           while read -r tag; do
             [ -n "${tag}" ] || continue
             echo "=== smoking ${tag}"
-            sh scripts/container-smoke.sh "${tag}" 8000 /health 90
+            LOCAL_FINISH_TOKEN=ci-smoke-token sh scripts/container-smoke.sh "${tag}" 8000 /health 90
             n=$((n + 1))
           done < images.txt
           echo "smoked ${n} image(s)"

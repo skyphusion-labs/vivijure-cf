@@ -91,7 +91,15 @@ echo "container-smoke: starting ${IMAGE}, expecting ${PATH_} on container port $
 
 # Bind to loopback only and let the daemon pick the host port, so concurrent jobs on one runner
 # cannot collide on a fixed number.
-cid="$(docker run -d --pull=never -p 127.0.0.1::"${PORT}" "${IMAGE}" 2>&1)" || {
+# cf#893: forward the bearer configuration into the container. The media containers now REFUSE TO
+# START without LOCAL_FINISH_TOKEN, so smoking them unconfigured tests an unsupported deployment and
+# reports exit 4 ("started and died") for a container that is behaving exactly as designed. Passed
+# through from the ambient environment rather than invented here: a smoke test that mints its own
+# credential is not smoking the thing operators run.
+cid="$(docker run -d --pull=never \
+  -e LOCAL_FINISH_TOKEN="${LOCAL_FINISH_TOKEN:-}" \
+  -e LOCAL_FINISH_ALLOW_UNAUTHENTICATED="${LOCAL_FINISH_ALLOW_UNAUTHENTICATED:-}" \
+  -p 127.0.0.1::"${PORT}" "${IMAGE}" 2>&1)" || {
   echo "--- docker run output"
   echo "${cid}" | sed 's/^/    /'
   cid=""

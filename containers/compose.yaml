@@ -19,6 +19,17 @@ x-common: &common
   restart: unless-stopped
   environment:
     PORT: "8000"
+    # cf#893 / GHSA-v8g8-gmcm-22gr. On the SHARED anchor deliberately, not per service: the gate
+    # went missing from image-prep and audio-master because it was something each container had to
+    # remember. Here a new service inherits it by using *common, which is the same reason
+    # tests/container-bearer-gate.test.py DERIVES its container list instead of carrying one.
+    #
+    # Passed through empty rather than made mandatory with `:?`. That is not laxity: the CONTAINER
+    # owns this policy and refuses to start with a message naming both this var and the explicit
+    # opt-out, and a `:?` here would make compose reject the supported no-auth loopback mode before
+    # the container ever got to allow it. One authority, not two disagreeing ones.
+    LOCAL_FINISH_TOKEN: "${LOCAL_FINISH_TOKEN:-}"
+    LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "${LOCAL_FINISH_ALLOW_UNAUTHENTICATED:-}"
   networks:
     - vivijure
 
