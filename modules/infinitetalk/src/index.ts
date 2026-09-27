@@ -42,12 +42,14 @@ const ENDPOINT_ID = "infinitetalk";
 
 const MANIFEST: ModuleManifest = {
   name: "infinitetalk",
-  version: "0.1.1",
+  version: "0.2.0",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (InfiniteTalk)" }],
+  // cf#935: the size knob is GONE, not defaulted. The provider ignores it -- 480p and 720p both
+  // deliver 832x464 -- so offering the choice charged the user a published $0.50 against $0.25 for
+  // byte-identical pixels. Removing a published config field is a breaking contract change: 0.1.1 -> 0.2.0.
   config_schema: {
-    size: { type: "enum", values: ["480p", "720p"], default: "480p", label: "resolution" },
     enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
@@ -59,6 +61,7 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet.",
       "Clip length follows that audio.",
+      "480p only (832x464). The provider ignores any other resolution request.",
       "One film, no scatter",
     ],
   },
