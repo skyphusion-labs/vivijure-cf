@@ -182,6 +182,38 @@ function isAsyncSubmit(path: string, method: string): boolean {
  * rather than assumed: `submitAsync` accepts any non-empty string and `pollOne` only
  * `encodeURIComponent`s it.
  */
+/** One structured line per submit ATTEMPT, so a 32-hex instance record can be traced to the attempt
+ *  that created it (cf#843).
+ *
+ *  WHY THIS EXISTS. `routingKey()` is minted per submit ATTEMPT, so every attempt addresses a fresh
+ *  Durable Object and creates a fresh container instance record. During film-40e0cd09 the
+ *  application's instance list grew by one roughly every five minutes while assemble was stuck, and
+ *  when the records were read back afterwards **nothing could say which attempt had created which**:
+ *  the instances endpoint carries only `{application_id, id, image, name, status}`. cf#843 could not
+ *  attribute `0706ec71...` to either a second attempt or a first request landing late, and declined to
+ *  guess. This is the line that makes the next occurrence answerable.
+ *
+ *  Measured 2026-09-27: 6 of the application's 10 instance records carry 32-hex names. That is NOT a
+ *  leak count, and reading it as one would be the mistake this logging exists to prevent -- a
+ *  SUCCESSFUL submit also mints a key and creates a record. Attribution is the only way to tell the
+ *  two apart, which is why this ships before any change to how the key is minted.
+ *
+ *  TWO LINES, ONE BEFORE THE CALL. The pre-call line is the one that cannot be lost: the record is
+ *  created by ADDRESSING the object, so if the fetch throws or the isolate dies, the record exists and
+ *  a post-hoc-only line would be exactly the missing evidence again.
+ *
+ *  NEVER THE BODY, NEVER `init`. The submit payload carries SigV4-presigned R2 URLs, and
+ *  tests/tenant-r2-forward.test.ts exists because console output is the leak vector for them. Fields
+ *  are enumerated explicitly rather than spread, so there is no shape through which a payload can
+ *  arrive here. The routing key is our own random hex and identifies an instance, not a credential. */
+function logSubmitAttempt(fields: Record<string, unknown>): void {
+  try {
+    console.log(JSON.stringify({ ev: "finish.submit", ...fields }));
+  } catch {
+    /* logging must never break a submit */
+  }
+}
+
 export function videoFinishDoor(
   ns: FinishNamespace,
   deps: VideoFinishDoorDeps = productionDoorDeps,
@@ -195,21 +227,38 @@ export function videoFinishDoor(
 
       if (isAsyncSubmit(p, method)) {
         const rk = deps.routingKey();
-        const resp = await stub(rk).fetch(CONTAINER_ORIGIN + p, init);
+        // BEFORE the call: addressing the object is what creates the instance record, so this line
+        // must exist even if the fetch never returns.
+        logSubmitAttempt({ phase: "attempt", routing_key: rk, path: p });
+        let resp: Response;
+        try {
+          resp = await stub(rk).fetch(CONTAINER_ORIGIN + p, init);
+        } catch (e) {
+          // Rethrown unchanged: core reads a thrown submit as a failed submit and that behaviour is
+          // not altered here. The line is the only new thing.
+          logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "threw", detail: e instanceof Error ? e.message : String(e) });
+          throw e;
+        }
         // Anything that is not the documented 202 accept is passed through UNTOUCHED. Rewriting a
         // failure body would invent a job id for a job that does not exist.
-        if (resp.status !== 202) return resp;
+        if (resp.status !== 202) {
+          logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "rejected", status: resp.status });
+          return resp;
+        }
         let body: AsyncSubmitBody | null = null;
         try {
           body = (await resp.clone().json()) as AsyncSubmitBody;
         } catch {
+          logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "unparseable", status: resp.status });
           return resp;
         }
         if (!body || body.ok !== true || typeof body.jobId !== "string" || !body.jobId) {
           // Same reasoning: no id to make routable, so do not manufacture one. Core reads this as
           // a failed submit, which is the honest outcome.
+          logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "malformed", status: resp.status });
           return resp;
         }
+        logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "accepted", status: resp.status, container_job_id: body.jobId });
         const rewritten = { ...body, jobId: rk + COMPOUND_SEPARATOR + body.jobId };
         return new Response(JSON.stringify(rewritten), {
           status: resp.status,
