@@ -49,18 +49,22 @@ dies with it, so the job fails as though it never ran (cf#802, #808, cf#814).
   that buffer directly; nothing is ever written to disk. Streaming here would mean spilling the
   result to a temp file solely so it could be read back, which is a redesign of the route, not the
   call-site swap the audio containers took.
-- **The buffer is bounded, and by a small number.** The download is capped at `MAX_INPUT_BYTES`
-  (32 MB) and rejects with 413 the moment the running total crosses it, so the request body cannot
-  grow unbounded. The subject is a single cast reference portrait, which in practice is a few MB.
-  Peak is on the order of the input plus its decoded bitmap plus the output PNG, all one image --
-  not a function of film length, which is what makes the audio and video paths dangerous.
+- **The buffer is bounded on BOTH axes, and this took two gates rather than one.** The download is
+  capped at `MAX_INPUT_BYTES` (32 MB) and rejects with 413 the moment the running total crosses it,
+  so the request body cannot grow unbounded. But that bounds the COMPRESSED bytes only, and the
+  decoded bitmap is a function of PIXEL DIMENSIONS, which nothing constrained until cf#869: a
+  crafted 69-byte PNG claiming 20000x20000 decodes to about 1.5 GiB. `MAX_INPUT_PIXELS`
+  (4096x4096, env-tunable) now bounds the decode, checked from the image HEADER before `rembg`
+  touches the bytes -- rembg decodes the input itself, so a guard in front of `Image.open` would
+  have sat behind the allocation it was meant to prevent. Over-ceiling images are refused 413
+  naming the decoded dimensions, so "too large to decode" and "the container fell over" are
+  distinguishable without reading logs. Peak is therefore the input plus its bounded decoded bitmap
+  plus the output PNG, all one image -- not a function of film length, which is what makes the
+  audio and video paths dangerous.
 - **It is not on the no-swap path today.** `wrangler.toml.example` binds only `video-finish` to
-  Cloudflare Containers. This container runs as a compose service on a host with real swap.
-
-The residual, stated rather than hidden: `MAX_INPUT_BYTES` bounds the COMPRESSED bytes, and the
-decoded bitmap is a function of pixel dimensions, so a small, highly compressed image still decodes
-large. That is a decode-time bound this container does not have; it is a separate question from the
-upload shape cf#814 closed, and it is not fixed here.
+  Cloudflare Containers. This container runs as a compose service on a host with real swap. That
+  bounds the blast radius; it is not what makes the buffer safe, and it is deliberately not relied
+  on as if it were.
 
 ## Operations
 
