@@ -51,11 +51,30 @@ jobs:
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
       count: ${{ steps.pick.outputs.count }}
+      # cf#914: build (a service resolved, the board is meaningful) or skip (only a repo-level
+      # file directly under containers/, e.g. compose.yaml, changed -- legitimately nothing to
+      # build, NOT a failure). See scripts/discover-changed-containers.sh for the third state
+      # (a containers/<x>/ change that maps to no known service), which stays a hard job failure
+      # and never reaches this output.
+      state: ${{ steps.pick.outputs.state }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      # THE CONTROL RUNS FIRST, same shape as tests/lint-python-undefined.test.sh and
+      # tests/container-smoke.test.sh elsewhere in this repo: a fix that arrives without a proof
+      # it can fail is the same hole in a new shape. This drives scripts/discover-changed-
+      # containers.sh against a synthetic containers/ tree and asserts a repo-level-only change
+      # (e.g. compose.yaml) reads as skip, a per-service change still builds, and -- the case that
+      # must never regress -- a containers/<x>/ change mapping to no known service still refuses.
+      - name: Control -- discover-changed-containers distinguishes build/skip and still refuses an unmapped subdirectory (cf#914)
+        run: sh tests/discover-changed-containers.test.sh
+
+      # The selection logic itself lives in scripts/discover-changed-containers.sh, not inline
+      # here, so the control above can drive it from a workstation. This step is just plumbing:
+      # give it the changed paths on stdin, take its stdout contract (state=/count=/matrix=)
+      # straight into $GITHUB_OUTPUT.
       - name: Pick the changed containers
         id: pick
         env:
@@ -63,52 +82,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-
-          # THE STRUCTURAL DENOMINATOR. Every container that exists, by glob. If this is empty
-          # the tree moved under the workflow (a rename, a reorganisation) and every downstream
-          # answer would be a confident zero. An empty glob is the one result this job must never
-          # report as a pass, so it is a hard failure, not a skip.
-          # Portable on purpose (no `find -printf`, no `mapfile`), so this exact logic can be
-          # driven red on a workstation instead of only on the runner.
-          ALL=()
-          for d in containers/*/; do
-            [ -f "${d}Dockerfile" ] || continue
-            ALL+=("$(basename "$d")")
-          done
-          echo "containers discovered: ${#ALL[@]} -> ${ALL[*]:-<none>}"
-          if [ "${#ALL[@]}" -eq 0 ]; then
-            echo "::error::the containers/*/Dockerfile glob matched ZERO paths. Either the tree moved or this workflow is looking in the wrong place; refusing to report a pass over an empty set."
-            exit 1
-          fi
-
-          # What this PR changed, three-dot against the merge base so commits that landed on the
-          # base branch after the branch point are not attributed to this PR.
           CHANGED="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")"
-          echo "changed paths:"; echo "${CHANGED}" | sed 's/^/  /'
-
-          SELECTED=()
-          for svc in "${ALL[@]}"; do
-            if echo "${CHANGED}" | grep -qE "^containers/${svc}/"; then SELECTED+=("${svc}"); fi
-          done
-
-          # A change to THIS workflow with no container touched builds everything, so a change to
-          # the gate is tested by the gate rather than merged on the claim that it still works.
-          if [ "${#SELECTED[@]}" -eq 0 ] && echo "${CHANGED}" | grep -q '^\.github/workflows/container-pr-build\.yml$'; then
-            echo "this workflow changed and no container did: building all ${#ALL[@]} as a self-test"
-            SELECTED=("${ALL[@]}")
-          fi
-
-          # The paths filter fired, so SOMETHING under containers/** or this file changed. An
-          # empty selection here means the filter and this mapping disagree, which is exactly the
-          # silent-empty-matrix failure this job exists to make loud.
-          if [ "${#SELECTED[@]}" -eq 0 ]; then
-            echo "::error::the paths filter triggered this workflow but no container matched the changed files. The trigger and the matrix mapping disagree; refusing to pass on an empty matrix."
-            exit 1
-          fi
-
-          echo "selected: ${#SELECTED[@]} of ${#ALL[@]} -> ${SELECTED[*]}"
-          printf 'matrix=%s\n' "$(printf '%s\n' "${SELECTED[@]}" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
-          printf 'count=%s\n' "${#SELECTED[@]}" >> "$GITHUB_OUTPUT"
+          OUT="$(printf '%s\n' "${CHANGED}" | sh scripts/discover-changed-containers.sh containers .github/workflows/container-pr-build.yml)"
+          printf '%s\n' "${OUT}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: discover
@@ -145,26 +121,45 @@ jobs:
           provenance: false
 
   # A matrix that selects nothing produces zero build jobs and a green board, which is the same
-  # false-zero shape one level up. This job cannot be skipped by an empty matrix, so it is where
-  # the count is asserted.
+  # false-zero shape one level up -- EXCEPT when discover said state=skip (cf#914): a repo-level
+  # file directly under containers/ (compose.yaml) changed and no service did, which is legitimately
+  # nothing to build, not a failure. That is the one case this job is allowed to read as done
+  # without a build having run; every other empty-matrix shape still fails here, unconditionally.
   verify:
     needs: [discover, build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: A build must actually have run
+      - name: A build must actually have run, unless there was legitimately nothing to build
         run: |
           set -eu
           echo "containers selected: ${{ needs.discover.outputs.count }}"
+          echo "state: ${{ needs.discover.outputs.state }}"
           echo "discover result: ${{ needs.discover.result }}"
           echo "build result: ${{ needs.build.result }}"
           if [ "${{ needs.discover.result }}" != "success" ]; then
             echo "::error::discover did not succeed, so no claim is made about any container."
             exit 1
           fi
+          if [ "${{ needs.discover.outputs.state }}" = "skip" ]; then
+            if [ "${{ needs.discover.outputs.count }}" != "0" ]; then
+              echo "::error::state=skip but count is not 0; discover's own output contract is inconsistent, refusing to trust either."
+              exit 1
+            fi
+            # needs.build.result is NOT checked here, deliberately, and this is a measured fact
+            # rather than an assumption: on cf#914's own case-2 demo run (PR #918, run
+            # 36316476819) an empty JSON-array matrix produced ZERO build job instances, and
+            # GitHub Actions reported needs.build.result as failure, not skipped, in the
+            # downstream job's context. Gating on it here would fail the exact case this branch
+            # exists to let through. state=skip is trustworthy on its own: it comes from the same
+            # single script invocation as matrix=[], proven by tests/discover-changed-containers.test.sh,
+            # so there is nothing build's result could tell us that state does not already say.
+            echo "SKIPPED: only a repo-level containers/ file (e.g. compose.yaml) changed; no service subdirectory did. Nothing to build here, and that is not a failure (cf#914). (needs.build.result reads '${{ needs.build.result }}' here -- expected for an empty matrix, not itself asserted.)"
+            exit 0
+          fi
           if [ "${{ needs.discover.outputs.count }}" -lt 1 ]; then
-            echo "::error::zero containers selected; a green board here would mean nothing was built."
+            echo "::error::zero containers selected and state is not 'skip'; a green board here would mean nothing was built."
             exit 1
           fi
           if [ "${{ needs.build.result }}" != "success" ]; then
