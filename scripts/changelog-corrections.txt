@@ -19,11 +19,12 @@
 #
 # FORMAT: one version per line, `vX.Y.Z` first, free text after it, `#` starts a comment.
 #
-# EMPTY ON PURPOSE as of this port. No vivijure-cf release has a declared, marker-carrying
-# correction yet. The known drift under released headings on main right now (cf#551 piece 1) is
-# UNDECLARED debt, not a correction, so it does not belong in this file: adding a version here
-# without the column-0 marker in CHANGELOG.md itself would still refuse (see declared-but-unlisted
-# and allowed-but-undeclared in the script), which is the correct outcome until piece 1 makes an
-# actual editorial call about what each of those releases notes should say.
+# STATE (cf#820). Two declared, marker-carrying corrections are listed below. The remaining known
+# drift under a released heading on main (v1.2.5, cf#551 piece 1) is UNDECLARED debt, not a
+# correction, so it does not belong in this file: adding a version here without the column-0
+# marker in CHANGELOG.md itself would still refuse (see declared-but-unlisted and
+# allowed-but-undeclared in the script), which is the correct outcome until piece 1 makes an
+# actual editorial call about what that release note should say.
 
 v1.20.1  section was a bare heading at the tag; body written retroactively in 5451215 (#419). cf#820.
+v1.27.0  six entries the tag contains (cf#387, cf#383, cf#392, cf#24 x2, cf#31) were stranded in the v1.21.0 section; moved here. cf#820.
