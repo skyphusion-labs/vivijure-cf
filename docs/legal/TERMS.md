@@ -108,14 +108,50 @@ rights. That determination is between you, your facts, and your own legal advice
 
 ## 6. Third-party providers and pass-through terms
 
-Running Vivijure routes work through third-party infrastructure (the Privacy Policy lists them:
-Cloudflare, RunPod, and AI model providers reached via the Cloudflare AI Gateway or, for the i2v and cast
-modules, the RunPod backend). When you self-host,
-these are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
-acceptable-use policies. A provider's content rules may restrict what you can generate independently of
-this document. Skyphusion Labs is not responsible for those providers' acts, outages, or model
-behavior. (**Operator note:** confirm the specific provider terms that apply to the exact providers
-your instance calls.)
+Running Vivijure routes work through third-party infrastructure and AI model providers (the Privacy
+Policy lists them: Cloudflare, RunPod, and the AI model providers reached via the Cloudflare AI
+Gateway or, for the i2v and cast modules, the RunPod backend). Whose contract those providers sit
+under depends on which door you came in by, and the two answers are different.
+
+### 6.1 If you self-host (the operator door)
+
+These are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
+acceptable-use policies, which bind you directly and independently of this document. A provider's
+content rules may restrict what you can generate independently of this document. Skyphusion Labs is
+not a party to those contracts and is not responsible for those providers' acts, outages, or model
+behavior.
+
+Two of those providers publish use restrictions that are worth reading before you rely on a given
+path, so they are pointed to here rather than left to discovery (texts read 2026-09-26; the
+provider's current text controls, and how it applies to your use is between you and your own legal
+advice):
+
+- **Black Forest Labs (FLUX models on Cloudflare Workers AI).** Cloudflare's model pages for
+  `@cf/black-forest-labs/*` link their "Terms and License" to BFL's Terms of Service, and
+  Cloudflare's own terms say that by using a partner model you agree to the model licensor's terms.
+  Those terms include, among other things, a restriction on using Output "to train, distill or
+  fine-tune any other AI models" (1.3(n)); require the consent of any real, identifiable individual an Output depicts
+  (1.2(c)); forbid presenting Output as human-made or as a real photograph (1.3(m)); forbid
+  stripping AI content marking (1.3(p)); and incorporate BFL's Usage Policy (no CSAM or NCII, no
+  military, surveillance, law-enforcement or biometric-inference use). This document does not
+  interpret how those terms apply to Cloudflare partner consumption or to any particular downstream
+  use such as cast LoRA training; read them against your own setup. The locally hosted Apache-2.0
+  FLUX.2 Klein 4B path is under its own weight licence instead.
+- **Google (Gemini API: `google/nano-banana-pro` and other Google models via the AI Gateway).** The
+  Gemini API Additional Terms require you to be 18 or older, forbid offering the Services as part of
+  a website, application or service "directed towards or is likely to be accessed by individuals
+  under the age of 18", and forbid using the Services to develop models that compete with them.
+
+### 6.2 If you use a studio Skyphusion Labs hosts for you (the tenant door)
+
+On a hosted studio, Cloudflare (Workers, D1, R2, AI Gateway, Workers AI) and the AI model providers
+reached through the AI Gateway run on Skyphusion Labs' accounts. Those providers' terms therefore
+bind Skyphusion Labs, not you, and you are not a party to them. Because we are bound, we pass the
+same conduct rules to you as conditions of the hosted studio, through the versioned hosted
+Acceptable Use Policy you accept at signup (Section 3.2 of that policy states them). GPU rendering
+is different: on the dedicated tier it runs on your own RunPod account under your own RunPod
+contract; on the shared tier it runs on capacity we operate. Nothing about the hosted door changes
+Section 6.1 for anyone who self-hosts.
 
 ---
 
