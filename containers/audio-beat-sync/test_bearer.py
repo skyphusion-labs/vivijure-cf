@@ -31,8 +31,15 @@ async def _client():
 
 async def main():
     prev = os.environ.get(bearer.TOKEN_ENV)
+    # cf#893: control BOTH bearer vars, not just the token. The CI step that runs these scripts sets
+    # LOCAL_FINISH_ALLOW_UNAUTHENTICATED so the other container tests can drive routes without
+    # credentials; leaving it ambient here would turn this file's fail-closed case into a
+    # pass-through and it would pass while asserting nothing. A test about auth configuration has to
+    # own its auth configuration.
+    prev_allow = os.environ.get(bearer.ALLOW_UNAUTH_ENV)
     try:
         os.environ.pop(bearer.TOKEN_ENV, None)
+        os.environ.pop(bearer.ALLOW_UNAUTH_ENV, None)
         client = await _client()
         try:
             r = await client.get("/health")
@@ -66,6 +73,10 @@ async def main():
         finally:
             await client.close()
     finally:
+        if prev_allow is None:
+            os.environ.pop(bearer.ALLOW_UNAUTH_ENV, None)
+        else:
+            os.environ[bearer.ALLOW_UNAUTH_ENV] = prev_allow
         if prev is None:
             os.environ.pop(bearer.TOKEN_ENV, None)
         else:

@@ -244,12 +244,13 @@ jobs:
       # than the structural coverage tests/container-bearer-gate.test.py already gives all five.
       - name: Run container test scripts
         env:
-          # cf#893: the media containers refuse to serve without this, so the scripts that drive
-          # their routes need one. Set for the STEP rather than edited into each test file: these
-          # tests exercise a configured container, which is what an operator runs. test_bearer.py
-          # and tests/container-bearer-gate.test.py manipulate and restore this themselves, so the
-          # fail-closed cases are still reachable.
-          LOCAL_FINISH_TOKEN: ci-container-test-token
+          # cf#893: these scripts drive container routes IN-PROCESS and send no credential, which
+          # is exactly the loopback case the explicit opt-out exists for. A token here would make
+          # every uncredentialed request a 401 and would be testing the auth header rather than the
+          # route. The files that are ABOUT auth -- the three test_bearer.py and
+          # tests/container-bearer-gate.test.py -- pop and restore BOTH vars themselves, so the
+          # fail-closed and armed cases stay reachable underneath this.
+          LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true"
         run: |
           set -eu
           scripts="
