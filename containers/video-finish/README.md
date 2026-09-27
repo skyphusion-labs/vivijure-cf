@@ -65,9 +65,37 @@ old module keeps working.
 
 `/finish` normalizes every clip through libx264 before the cheap `-c copy` join, and the single-pass
 path keeps the downloads, the normalized copies, the concat and the muxed film in ONE work dir until
-the job ends. Peak disk is therefore 3-4x total input. At the route's own contracted maximum
-(`MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = 20.0 GB) the DOWNLOAD STAGE ALONE exceeds the 20 GB
-ephemeral disk of the largest Cloudflare Container before a normalized byte is written.
+the job ends. Peak disk is therefore 3-4x total input.
+
+#### Sizing this route: bitrate x duration x count, NOT `MAX_CLIPS x MAX_CLIP_BYTES` (cf#813)
+
+This section used to quote `MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = **20.0 GB** as "the route's
+own contracted maximum". **That product is not a payload and never was.** `MAX_CLIP_BYTES` is a
+**reject ceiling** -- the argument to `_download(s, url, dst, MAX_CLIP_BYTES)`, the size at which a
+download is REFUSED -- so 20.0 GB is the largest input the route will not reject, not one it expects.
+
+At this container's settings a 256 MB clip is **3.2 to 15.6 minutes** of video. Clips are **4 to 8
+seconds**. Measured, a 32-clip film normalizes to roughly **70-350 MB** and a full 80-clip film to
+about **750 MB**, so the product sits **23x to 120x** above a real film and nothing approaches the
+20 GB ephemeral disk.
+
+**Why this is worth correcting rather than leaving:** a disk gate written against 20 GB could never
+fire, which is the "green that cannot go red" shape. Size instead by bitrate x duration x count:
+
+| target | measured normalized bitrate | realistic band |
+|---|---|---|
+| 1080p24 crf 18 medium | 0.40 - 11.16 Mbps | ~2.3 - 9.3 Mbps |
+| 720p24 crf 18 medium | 0.17 - 4.82 Mbps | ~0.9 - 4.8 Mbps |
+
+**Provenance, because these are proxies and not real output.** Measured on slow pans over a real
+photographic still at 8.0 s / 16 fps in four complexity brackets, encoded then normalized through
+this container's exact command; **zero real rendered clips were reachable to the seat that measured
+them.** Pan brackets UNDERESTIMATE (no subject deformation, no per-frame generative shimmer) and
+injected-noise brackets OVERESTIMATE, so real generated video most likely lands in the upper half of
+the band. **The verdict does not depend on that precision:** reaching 256 MB in 8 seconds needs about
+**256 Mbps** and the worst bracket reached **11 Mbps**, so the conclusion survives a 20x proxy error.
+
+Keep `MAX_CLIP_BYTES` as what it is: a per-clip reject ceiling.
 
 Supply **`partialUrls`** and `/finish` switches to a chunked assemble that bounds peak disk to a fixed
 working set:
