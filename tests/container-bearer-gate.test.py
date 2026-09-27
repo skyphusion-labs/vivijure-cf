@@ -203,6 +203,77 @@ try:
 finally:
     pass
 
+# ---------------------------------------------------------------- THE DEPLOYMENT
+print("\n  DEPLOYMENT: the env the hosted container is actually given must satisfy the gate")
+
+# cf#906. The gate and the deployment were verified separately and the seam between them was not:
+# cf#893 made the container refuse to start, and NOTHING gave the hosted container a bearer
+# configuration, so the fix would have killed the hosted tier on deploy with `Container crashed
+# while checking for ports`. Two halves each correct, and nobody ran the real gate against the real
+# deployment env.
+#
+# This closes that seam by CROSSING the language boundary: parse what src/finish-container.ts
+# declares, then drive the actual Python require_bearer_config with exactly those variables. A
+# TypeScript test could assert the property exists; only this can assert it SATISFIES the gate.
+FC = ROOT / "src" / "finish-container.ts"
+fc_src = FC.read_text()
+
+m = re.search(r"envVars\s*=\s*\{(.*?)\}", fc_src, re.S)
+check("src/finish-container.ts declares envVars at all", m is not None)
+
+declared = {}
+if m:
+    for k, v in re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"', m.group(1)):
+        declared[k] = v
+    print(f"    declared envVars: {declared}")
+
+# Nothing else reaches the container's process: the base class defaults envVars to {}, the
+# [[containers]] block carries no env, and the Dockerfile sets none. So this dict IS the container's
+# bearer configuration.
+check("the hosted container is given at least one bearer variable", bool(declared))
+
+if declared:
+    saved_dep = {k: os.environ.get(k) for k in (bearer.TOKEN_ENV, bearer.ALLOW_UNAUTH_ENV)}
+    try:
+        for k in (bearer.TOKEN_ENV, bearer.ALLOW_UNAUTH_ENV):
+            os.environ.pop(k, None)
+        for k, v in declared.items():
+            os.environ[k] = v
+        try:
+            bearer.require_bearer_config()
+            check("THE HOSTED ENV STARTS THE CONTAINER: require_bearer_config accepts it", True)
+        except Exception as e:  # noqa: BLE001
+            check(f"THE HOSTED ENV STARTS THE CONTAINER: require_bearer_config accepts it ({e})", False)
+
+        # CONTROL. If this passed with the declaration removed, the case above would be asserting
+        # nothing -- it has to be the declared env doing the work, not an ambient one.
+        for k in declared:
+            os.environ.pop(k, None)
+        try:
+            bearer.require_bearer_config()
+            check("CONTROL: with those vars REMOVED the container would refuse to start", False)
+        except Exception as e:  # noqa: BLE001
+            check("CONTROL: with those vars REMOVED the container would refuse to start",
+                  type(e).__name__ == "BearerConfigError")
+    finally:
+        for k, v in saved_dep.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+# The smoke gate has to run the DEPLOYMENT configuration, or it goes green on an image the hosted
+# tier cannot start -- which it did. Pinned so the token form cannot come back.
+ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+smoke_line = [l for l in ci.splitlines() if "container-smoke.sh" in l and "sh scripts/" in l]
+check("the smoke gate invokes the smoke script exactly once", len(smoke_line) == 1)
+if smoke_line:
+    line = smoke_line[0]
+    check("the smoke gate does NOT inject a token production cannot set",
+          "LOCAL_FINISH_TOKEN=" not in line)
+    check("the smoke gate supplies the same var the deployment supplies",
+          all(k in line for k in declared) if declared else False)
+
 for _k, _v in saved.items():
     if _v is None:
         os.environ.pop(_k, None)

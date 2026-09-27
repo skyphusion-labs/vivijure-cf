@@ -20,6 +20,31 @@ export class FinishContainer extends Container<Env> {
   // containers/video-finish/Dockerfile sets ENV PORT=8000 and app.py binds 0.0.0.0:8000.
   defaultPort = 8000;
 
+  // cf#893 made the container REFUSE TO START without a bearer configuration, and NOTHING reaches
+  // this container's process except this property: `envVars` defaults to `{}` in the base class,
+  // the [[containers]] block carries no env, and the Dockerfile sets none. Without this line the
+  // hosted tier dies before binding and the platform reports `Container crashed while checking for
+  // ports`. Measured, not inferred: `python app.py` with neither var exits 1 at
+  // require_bearer_config, and exits 0 and binds with this one set.
+  //
+  // WHY THE OPT-OUT AND NOT A TOKEN, which is the part to read before "hardening" this. A token
+  // here would break every call. `mediaDoorFetch` takes the BOUND branch first --
+  // `if (bound) return bound.fetch(...)` -- and returns before the token lookup, so the binding
+  // path never attaches an Authorization header (src/video-finish-binding.ts:15 says so in its own
+  // words: "the door is the BINDING. No hostname, no DNS, no edge hop, no bearer required"). Set a
+  // token and the Worker gets 401 on every request.
+  //
+  // AND IT IS RIGHT ON THE MERITS, not merely the only thing that works. GHSA-v8g8 found that a
+  // fail-open default is defensible behind a private network boundary and indefensible on a public
+  // hostname. The [[containers]] binding IS that private boundary: no hostname, no DNS, no edge
+  // hop. This is the one deployment where the old docstring was telling the truth -- so the
+  // insecure-looking state is CHOSEN here, by name, with the reason beside it, instead of being
+  // the silent default everywhere including the public hostnames the advisory was about.
+  //
+  // Authenticating the binding hop itself is a real improvement and a contract change on core's
+  // bound path. It is tracked separately; it is not this.
+  envVars = { LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true" };
+
   // sleepAfter is the IDLE timeout, and for this stage it is a contract with the job loop, not a
   // free knob.
   //
