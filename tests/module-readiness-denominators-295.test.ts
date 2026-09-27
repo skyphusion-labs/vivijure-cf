@@ -164,8 +164,10 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
     // nothing, so publishing is inert until the plane adds rows; it exists to remove the
     // cross-repo serialisation, not to change behaviour. cf#783: 24 -> 23 (finish-lipsync).
-    // cf#786: 23 -> 22 (speech-upscale).
-    expect(publishedToTenants().length).toBe(22);
+    // cf#786: 23 -> 22 (speech-upscale). cp#524: 22 -> 23 (dialogue-gen), the first `dialogue`
+    // provider published to tenants -- a hosted tenant has had no way to synthesize a spoken line
+    // at all, which is the first missing link in the hosted lip-sync chain.
+    expect(publishedToTenants().length).toBe(23);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are
@@ -192,6 +194,14 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     //
     //   - `image-generate` -- gated on #401, because it reads OPENAI_API_KEY, an operator-scoped
     //     credential.
+    //   - `dialogue-gen` -- THE SAME TRADE ONE BINDING OVER (cp#524 / cp#526). It declares a
+    //     Workflows binding (DIALOGUE_WORKFLOW) and the plane cannot emit one yet: cp#526 grew the
+    //     `workflow` variant in the plane's WorkerBinding union and live-proved Workers for
+    //     Platforms accepts it, but nothing EMITS it, and the same run measured that the upload
+    //     does not create the account-scoped Workflow either. Catalogue it before that exists and
+    //     the door provisions, passes /ready (which reports only gateway_id) and throws at the
+    //     first invoke. Published first so the bundle exists and the plane can add the row in one
+    //     repo when the emitter lands, instead of the two repos taking turns.
     //   - `audio-master`, `beat-sync`, `film-titles`, `subtitle` -- each reaches the finishing
     //     swarm over a Workers VPC service binding, and `uploadTenantModules` binds no
     //     `vpc_service` (measured: zero occurrences of "vpc" in the plane's tenant-modules.ts,
@@ -206,6 +216,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     expect(publishedNotProvisioned).toEqual([
       "audio-master",
       "beat-sync",
+      "dialogue-gen",
       "film-titles",
       "image-generate",
       "subtitle",
