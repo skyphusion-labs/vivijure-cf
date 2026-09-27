@@ -771,6 +771,47 @@ render bucket bound answers `404 { "error": "the artifact store is not available
 > Render outputs mutate (a render can re-finish in place), so artifact serving is short-lived caching
 > only. History-preview bursts limit concurrency client-side, not via long caching.
 
+#### Served-space membership across the two repos (the ICD) -- cf#789
+
+The rule "which R2 prefixes are served, and therefore what may be copied into them" is enforced in
+**two repos by two different lists**, and they are **deliberately not the same list**. This is the
+ICD statement for that difference. It is the contract; `tests/served-prefix-icd-789.test.ts` is the
+mechanism that keeps it honest, and it checks BOTH lists by execution against the real functions.
+
+| list | repo | question it answers |
+| --- | --- | --- |
+| `ARTIFACT_PREFIXES` (`src/shared.ts`) | `vivijure-cf` | may a key here be **served** to a caller? |
+| `RENDERS_AUDIO_PREFIXES` (`src/audio-stage.ts`) | `vivijure-core` | may a key here be **staged** as an audio source into renders? |
+
+The two are connected and not interchangeable: `cfPlatformFromEnv` wires both `platform.renders` and
+`platform.chatBucket` to `env.R2_RENDERS` (cf#140), so inside `vivijure-core` `env.R2` **is** the
+served bucket, and `stageAudioKeyForRenders` copies a caller-supplied key into `audio/<uuid>.<ext>`
+-- which cf serves. Same copy-into-served-space shape as the paths closed by
+GHSA-5fj8-6pc2-x9p5, guarded by a different list in a different repo.
+
+**Why two lists rather than one.** `RENDERS_AUDIO_PREFIXES` is a module-private `const` in core and
+is not exported, so cf cannot import it; making it importable is a core change plus a publish plus a
+dependency bump before any drift becomes visible. More importantly the lists answer different
+questions, so collapsing them would either widen cf's serve surface or break core's staging.
+
+**The declared delta, as of cf#789.** Two asymmetries are intended and pinned:
+
+- **`dialogue/` -- core stages it, cf does not serve it.** A dialogue key can be staged into a space
+  it cannot be read back from. Harmless today because nothing serves it.
+- **`cast/` -- cf serves it, core refuses to stage it.** This is the direction that matters. The
+  concrete failure the check prevents: someone adds `cast/` to core's list so a voice reference can
+  be staged, and reopens the copy-into-served-space class in a file with no connection to the
+  advisory that closed it.
+
+**`quarantine/` is outside served space on both sides, and that is now an assertion rather than an
+accident.** cf#789 observed that a held key was safe only because `quarantine/` happened to sit
+outside core's four-prefix list. The ICD test pins it, so a fifth prefix added to core cannot
+quietly make held objects stageable.
+
+**Changing either list is a contract change.** Add or remove a prefix in `src/shared.ts` or in
+core's `RENDERS_AUDIO_PREFIXES` and the ICD test fails until the table here and the row there are
+updated together. That is the point: drift that nobody can see becomes drift that CI can.
+
 ### 2.11.1 GET /api/artifact-url/*key
 
 Return a **short-lived presigned GET URL** for one R2 object, plus its real content type and size.
