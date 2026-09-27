@@ -79,6 +79,20 @@ jobs:
       - name: Tenant module catalog matches the control plane (cf#470)
         run: npm run check:catalog
 
+      # vivijure#824. The hub's docs/CAPABILITIES.md is the one place that states what the studio
+      # offers, and modules/ here is the authority for what exists. This is the only step that can
+      # tell those two apart, so it runs where the population is and fetches the document.
+      #
+      # DELIBERATE CONSEQUENCE: adding or removing a module in this repo turns THIS repo red until
+      # the matrix row lands at the hub. Same trade as check:catalog above and for the same reason.
+      # The alternative is a public document that quietly stops being true, which is exactly how a
+      # $5/month capability outlived its own removal. The remedy is a one-row edit.
+      #
+      # Credential-free: both repos are public, so this runs on fork PRs too. Fails closed on a
+      # fetch error, a non-200, an empty body or an unparseable one; it never degrades to a skip.
+      - name: Capability matrix matches the modules that exist (vivijure#824)
+        run: npm run check:matrix
+
       # deploy/ has a pytest suite (installer/teardown control plane). Without this step,
       # Python regressions in vivijure_deploy.py pass CI silently (#26).
       - uses: actions/setup-python@v7
@@ -172,6 +186,7 @@ jobs:
           containers/video-finish/test_async.py
           containers/video-finish/test_meta_sidecar.py
           containers/video-finish/test_concat_guard.py
+          containers/video-finish/test_chunked_contract.py
           containers/video-finish/test_ffmpeg_timeout.py
           containers/audio-mix/test_ffmpeg_timeout.py
           containers/audio-master/test_ffmpeg_timeout.py
@@ -192,8 +207,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 12 ]; then
-            echo "::error::expected exactly 12 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 13 ]; then
+            echo "::error::expected exactly 13 container test scripts to run, ran ${ran}"
             exit 1
           fi
 

@@ -29,6 +29,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json && tsc -p tsconfig.tests.json",
     "guard:resolve": "node scripts/resolve-guard.mjs",
     "check:catalog": "node scripts/check-tenant-module-catalog.mjs",
+    "check:matrix": "node scripts/check-capability-matrix.mjs",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
     "test:watch": "vitest",
