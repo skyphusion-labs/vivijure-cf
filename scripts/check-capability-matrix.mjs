@@ -17,6 +17,16 @@
  * whether a provider's endpoint is alive. Green here means the POPULATION matches. It does not mean
  * the film renders.
  *
+ * WHEN THIS PATTERN IS THE WRONG ONE TO COPY, recorded because it nearly was (cp#541, 2026-09-27).
+ * A cross-repo gate like this is correct ONLY when the two sides are genuinely THE SAME SET. Here
+ * they are: every module in modules/ should appear in the matrix and vice versa. The control
+ * plane's PUBLIC_ENDPOINT_ALLOWLIST looked like the same shape and is not: nine cf modules declare
+ * a literal ENDPOINT_ID while `narration-gen` is catalogued and allow-listed and declares none, so
+ * a gate equating that allow-list with cf's module-declared slugs would be RED ON A CORRECT ESTATE,
+ * in both directions at once. strummer read this file before deciding not to copy it, and asserted
+ * the allow-list against the PLANE'S catalog instead, which is the set it actually mirrors.
+ * Ask what the two populations ARE before reusing this shape, not what they look like.
+ *
  * CREDENTIAL-FREE BY CONSTRUCTION. Both repos are public, so this reads raw.githubusercontent.com
  * with no token and runs on fork PRs.
  *

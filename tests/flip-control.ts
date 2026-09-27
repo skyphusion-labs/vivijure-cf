@@ -82,10 +82,35 @@ export function endFrameReport(r: FlipReadings): FlipReport {
   return { verdict, readings: r, controlSeparation: r.startVsEnd, controlOk: verdict !== "void" };
 }
 
-// NOTE ON SOURCING THE FRAMES, measured by joan on seedance-v1-5-pro-i2v, 2026-09-27:
-//  - The images must be reachable BY THE VENDOR, not merely by us. A Wikimedia thumb URL 400s; a
-//    resolved direct URL worked. If a caller presigns or hosts the flipped frame, that is the part
-//    most likely to fail, and it fails as a render error rather than as a bad verdict.
+// HOW TO SUPPLY THE FLIPPED FRAME. DEFAULT TO A `data:` URI. Measured by joan on
+// seedance-v1-5-pro-i2v, 2026-09-27, after doing it the hard way first.
+//
+// The flipped frame does not exist anywhere public: you make it locally, so you have to get local
+// bytes to the vendor. The obvious move is to host or proxy it, and that is the move that fails.
+//
+//   THE EVIDENCE, in the endpoint's own words. A bad value on the end-frame key returns:
+//     "Input must be a public http(s) URL, a data: URI, or a base64-encoded file"
+//   A `data:` URI is a FIRST-CLASS accepted form. It needs no bucket, no presigning, no proxy, and
+//   no public URL, and the bytes the vendor reads are byte-identical to the ones you measure
+//   against, which removes re-encoding from the comparison as well.
+//
+//   WHAT HAPPENS IF YOU HOST IT INSTEAD, measured rather than predicted: serving the flip through
+//   images.weserv.nl was verified from the caller (HTTP 200, and 2.71 mean-abs-diff against the
+//   local flip, i.e. re-encode noise only) and the VENDOR answered
+//     "Could not download the input from images.weserv.nl (HTTP 403)"
+//   Reachable by us, 403 to them. That cost a render, and it cost it to the person who had already
+//   written the warning on the line below. The compliant path was more expensive than the
+//   convenient one, so the convenient one got used; a default in this file is the fix for that,
+//   because a warning that costs more to obey than to ignore is not a mechanism.
+//
+// SIZE IS THE ONLY REAL CONSTRAINT: keep the flip small (256x144 at moderate JPEG quality is about
+// 4KB, ~5.4KB base64) so the request body stays sane. Scale it to match the start frame, or the
+// door may reject or letterbox the pair.
+//
+// OTHER SOURCING NOTES, same measurement session:
+//  - If you DO use a URL, it must be reachable BY THE VENDOR, not merely by us. A Wikimedia thumb
+//    URL 400s; a resolved direct URL worked. That failure arrives as a render error rather than as
+//    a bad verdict, so it is loud, but it is still a wasted render.
 //  - RunPod public endpoints do NO submit-time validation of the envelope. `{"input": {}}` is
 //    ACCEPTED, starts a worker, retries, and FAILS after ~47s. Unknown input keys are silently
 //    ignored because the worker model does not forbid extras. So a malformed probe is NOT free,
