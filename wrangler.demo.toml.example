@@ -71,7 +71,7 @@ DEMO_ASSISTANT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
 # The dedicated DEMO D1 (binding name DB). Provision + seed OUT OF BAND, NEVER touching prod:
 #   wrangler d1 create vivijure-demo                                    # paste the id below / into CI var
-#   wrangler d1 migrations apply vivijure-demo --remote                 # base schema migrations/0001..0010
+#   wrangler d1 migrations apply vivijure-demo --remote                 # base schema: every migrations/*.sql file
 #   wrangler d1 execute vivijure-demo --remote --file=migrations/demo/0001_demo_seed.sql   # the seed (idempotent)
 #   wrangler d1 execute vivijure-demo --remote --file=migrations/demo/0002_demo_render.sql   # Phase B: menu + queue + counters (idempotent)
 # The seed's render rows carry ABSOLUTE assets.skyphusion.net URLs, so the demo needs NO R2 binding to

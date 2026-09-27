@@ -6,9 +6,9 @@
 // The caller (the core / an orchestrator) polls /poll until it is no longer pending. Each call is
 // fast (a status check; only the final one downloads), so nothing holds a multi-minute request.
 //
-// Phase 1 (#172): video-only. generate_audio defaults false; the core's score/mux chain owns audio,
-// exactly like the seedance/hailuo reference. Expose generate_audio as an opt-in config bool so
-// native Veo audio is a one-line enable later.
+// generate_audio defaults TRUE (config_schema default + `cfg.generate_audio !== false`): Veo's
+// own talking audio ships by default, and the config bool is an opt-OUT (off: silent clip) rather
+// than the opt-in #172 first specced.
 
 import {
   MODULE_API,
