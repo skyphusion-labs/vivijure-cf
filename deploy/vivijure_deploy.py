@@ -1130,7 +1130,6 @@ def deploy_workers(repo: Path, s: Secrets, st: State) -> None:
     log(f"deploying {len(mods)} module workers, then the core (media-less base install)"
         f"{' (isolated: ' + DEPLOY_PREFIX.strip() + ')' if isolate else ''} ...")
     env = cf_env_for(s)
-    acct, d1_id, store_id = s.cf_account_id, str(st.resource_id("d1_id") or ""), str(st.resource_id("store_id") or "")
     for m in mods:
         mp = repo / "modules" / m / "wrangler.toml"
         text = mp.read_text()

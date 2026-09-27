@@ -80,7 +80,7 @@ def main():
     # 1. exactly one audio stream.
     n = mix_core._count_audio_streams(out_path)
     if n == 1:
-        print(f"[PASS] output has exactly 1 audio stream")
+        print(f"[PASS] output has exactly {n} audio stream")
     else:
         failures.append(f"expected 1 audio stream, got {n}")
 
