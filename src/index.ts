@@ -108,6 +108,7 @@ import {
 import { stageBundleInjectedKeyframes } from "./bundle-keyframes";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
+import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
@@ -972,16 +973,26 @@ const hSubmitRender: Handler = async (req, env) => {
   if (!b.keyframesOnly) {
     try {
       const bundleScenes = await readBundleScenes(env, bundleKey);
-      let lines = dialogueLinesFromBundleScenes(bundleScenes, {});
-      // Prefer cast voices when cast was resolved above
-      const voiceMap: Record<string, string> = {};
-      // cast voices live on resolveCastLoras; panelPre.cast may only expose pretrained/castIds.
-      // Empty voices still yield default voice ids via dialogueLinesFromBundleScenes.
+      // fc#2250: panelPre.cast.voices IS the resolved slot -> voice_id map (ResolvedCast, see
+      // src/render-door.ts). This was hardcoded `{}` behind a comment claiming the preflight may
+      // expose only pretrained/castIds, which was never true of this door: the preflight returns
+      // voices and voiceRefs, and voiceRefs is already read a few lines below for voice_ref_keys.
+      // So every panel render spoke in DEFAULT_VOICE_ID even when the cast member had a voice
+      // resolved -- the #582 shape, re-entered through the panel door.
+      const voiceMap = panelPre.cast.voices;
+      let lines = dialogueLinesFromBundleScenes(bundleScenes, voiceMap);
       if (lines.length) {
         lines = resolveExplicitLineVoices(lines, bundleScenes, voiceMap);
         panelDialogue = lines;
       }
-    } catch { /* best-effort */ }
+    } catch (e) {
+      // fc#2250: NOT best-effort. readBundleScenes returns [] for a missing bundle, so reaching
+      // this catch means the dialogue state is UNDETERMINED, not absent. Swallowing it left
+      // panelDialogue undefined, which reads as "silent storyboard", skipped the talking-door
+      // guard below, and returned 201 on a billed film that comes back silent. See
+      // src/dialogue-derivation.ts.
+      return json({ error: dialogueUndeterminedMessage(e) }, 503);
+    }
   }
   const panelMotionMod = modules.find((m) => m.name === motionBackend);
   if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
@@ -1137,7 +1148,12 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
       fromKfDialogue = lines;
     }
     fromKfVoiceRefs = resolved.voiceRefs;
-  } catch { /* best-effort */ }
+  } catch (e) {
+    // fc#2250, same reasoning as the panel door above: parsedScenes is already read OUTSIDE this
+    // try, so reaching here means the CAST resolution failed and the voices are undetermined.
+    // Proceeding would render this bundle in DEFAULT_VOICE_ID, or silent, and report 201.
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
+  }
 
   const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
   if (spokenLinesPresent(fromKfDialogue)) {
