@@ -48,6 +48,10 @@ const MANIFEST: ModuleManifest = {
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
   config_schema: {
+    // cf#922: values are the VENDOR's enum (720p / 1080p), NOT the `1280*720` form RunPod's docs
+    // print for this field. Proven live: a 1080p request delivered 1920x1080. RunPod bills 1080p at
+    // $0.15/s against $0.10/s at 720p, so this knob costs real money and 720p stays the default.
+    size: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "output size" },
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
     enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
