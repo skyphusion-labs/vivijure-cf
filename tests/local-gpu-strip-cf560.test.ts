@@ -321,9 +321,18 @@ describe("cf#560 -- the strip OUTPUT is what gets rendered, not merely that the 
       calls++;
       const out = t.split(/\s+/)[3];
       if (!out) continue;
-      const feeds = lines
-        .slice(i + 1)
-        .some((l) => l.includes("< " + out) && />\s*wrangler\.toml\b/.test(l));
+      // SCOPED TO THIS STEP, not to end-of-file. cf#797 added a second hosted render path to
+      // ci.yml, and an unbounded forward scan let one job's invocation be "satisfied" by a
+      // DIFFERENT job's render line: breaking the bundle gate's own envsubst left this reporting
+      // consumed === calls, green, while that job rendered from the unstripped template. Measured,
+      // not theorised -- the break was made and this suite stayed green. With a single pair the
+      // weakness was unreachable, which is why it survived until a second path existed. The render
+      // must live in the SAME step as the strip that produced its input, so the scan stops at the
+      // next step boundary.
+      const rest = lines.slice(i + 1);
+      const boundary = rest.findIndex((l) => /^\s*- name:/.test(l));
+      const scope = boundary === -1 ? rest : rest.slice(0, boundary);
+      const feeds = scope.some((l) => l.includes("< " + out) && />\s*wrangler\.toml\b/.test(l));
       if (feeds) consumed++;
     }
     return { calls, consumed };
@@ -337,7 +346,13 @@ describe("cf#560 -- the strip OUTPUT is what gets rendered, not merely that the 
     expect(real.calls).toBeGreaterThan(0);
     expect(real.consumed).toBe(real.calls);
 
-    const reverted = ci.replace(
+    // replaceAll, NOT replace. cf#797 added a second hosted render path to ci.yml (the bundle
+    // gate), and `String.replace` with a string pattern mutates only the FIRST occurrence: the
+    // second render line survived, `consumed` came back 2 instead of 0, and this control could no
+    // longer reach the answer it exists to produce. The control's intent is to break the data path
+    // EVERYWHERE, so it has to mutate every occurrence or it silently weakens as render paths are
+    // added. Caught by this test failing on that change, which is the control doing its job.
+    const reverted = ci.replaceAll(
       "< .wrangler.hosted.toml > wrangler.toml",
       "< wrangler.toml.example > wrangler.toml",
     );

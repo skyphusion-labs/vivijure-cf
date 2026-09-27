@@ -66,6 +66,12 @@ R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
 R2_S3_BUCKET = "${R2_S3_BUCKET}"
 # Public HTTPS origins for CPU media + on-iron finish doors. Empty = that service is off.
 # Filled at deploy from operator config (deploy.env). Never a baked production hostname.
+# VIDEO_FINISH_URL keeps its HTTP shape on purpose (#797): a Worker route fronts the
+# Cloudflare Container through the FINISH_CONTAINER Durable Object binding and this var
+# points at THAT route, so vivijure-core's contract is untouched and the
+# HOSTED_FINISH_POLL_BOXES swap stays a one-line change rather than a protocol change.
+# Repoint it only AFTER the container answers a real /async/finish -- these are URL vars,
+# so typecheck cannot catch a dangling target and a deploy succeeds against nothing.
 VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"
 IMAGE_PREP_URL = "${IMAGE_PREP_URL}"
 AUDIO_BEAT_SYNC_URL = "${AUDIO_BEAT_SYNC_URL}"
@@ -159,6 +165,68 @@ tag = "v2-drop-cpu-containers"
 # deleting them hard-fails the deploy (API code 10074). Prod created all three in its real history;
 # an outsider deploying from this example does not.
 deleted_classes = ["VideoFinishContainer"]
+
+# --- RESTORED to Cloudflare Containers 2026-09-26 (#797; decision fleet-chezmoi#2234). -------
+# v1 created VideoFinishContainer; v2 deleted it when the CPU stages moved to always-on fleet
+# iron. The fleet is gone (2026-09-24), so video-finish comes back to Containers -- under a
+# NEW class name.
+#
+# WHY A NEW NAME, deliberately, not an oversight: the current Durable Object docs state a
+# tombstone delete is PERMANENT with no trash, so re-declaring VideoFinishContainer may be
+# refused outright. Measured 2026-09-26 with the audit-read token: 8 DO namespaces on the
+# account, ZERO belonging to vivijure and ZERO Finish/Container classes, so nothing is being
+# reconnected here and this is a clean create either way. A fresh name cannot collide with a
+# tombstone, costs nothing (the class name is internal; nothing outside this config references
+# it), and avoids spending a real deploy to discover the answer. Do NOT "tidy" this back to
+# VideoFinishContainer.
+[[migrations]]
+tag = "v3-finish-container"
+new_sqlite_classes = ["FinishContainer"]
+
+# The Durable Object that fronts the container. class_name MUST equal the [[containers]]
+# class_name below or the deploy is rejected.
+#
+# ADDRESSING IS LOAD-BEARING (#797): /async/finish submits and GET /async/status/{jobId} polls,
+# and every Container instance sits behind its OWN Durable Object. A poll that lands on a
+# different instance than the one running the encode does not find the job at all. So the DO id
+# is derived from the JOB ID (idFromName(jobId)) and NEVER from getRandom(). This does not
+# replace externalised job state (#784): state surviving a restart and the poll reaching the
+# right box are different problems, and both are required.
+[[durable_objects.bindings]]
+name = "FINISH_CONTAINER"
+class_name = "FinishContainer"
+
+# The container itself.
+#
+# instance_type standard-4 is the LARGEST Cloudflare offers (4 vCPU / 12 GiB / 20 GB disk) and
+# it is chosen for MEMORY first, disk second. That is a CORRECTION to fleet-chezmoi#2234, which
+# concluded disk was the binding limit: streaming concat was then measured on real ffmpeg at
+# peak RSS 43 MB over 1.1 GB of input across 4 partials, LOWER than a local-disk join, so
+# partials never land on disk at the final join and memory is the real ceiling. Containers have
+# NO SWAP and an OOM restarts the instance, and 12 GiB is the top of the range, so there is
+# nothing bigger to escape to. Size against the memory line, not the 20 GB line.
+#
+# sleepAfter is NOT short for this stage, and the 30-60s that #2234 recommended for one-shot
+# stages would BREAK it. /async/finish returns immediately, so no request is in flight while the
+# encode runs and the idle timer runs against a WORKING container; disk is reset to the image on
+# wake, so a sleep mid-encode destroys the work dir and the subsequent poll finds nothing. The
+# real mechanism is renewActivityTimeout() from the job loop (#784), which is why sleepAfter only
+# has to exceed the gap between renewals rather than the whole job. It is set in the Container
+# class, not here. Deploying this container before that hook exists is the ordering error #797
+# calls out.
+#
+# image is a LOCAL Dockerfile path on purpose: wrangler builds it and pushes to the Cloudflare
+# managed registry, which is what we want. A ghcr.io reference would work but third-party
+# registry pulls are NOT cached, so it would pay a pull on every cold start.
+#
+# max_instances is deliberately low to start. The default is 20, and a request that would exceed
+# the cap ERRORS rather than queueing, so this is a spend and blast-radius knob before it is a
+# throughput one.
+[[containers]]
+class_name = "FinishContainer"
+image = "./containers/video-finish/Dockerfile"
+instance_type = "standard-4"
+max_instances = 3
 
 # --- Credential secrets via the Cloudflare Secrets Store (#238). Seeded ONCE by the operator
 # --- (npx wrangler secrets-store secret create <STORE_ID> --name <NAME> ...); values never touch
