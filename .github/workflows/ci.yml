@@ -181,6 +181,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r containers/video-finish/requirements.txt
+          # cf#869: image-prep's decode bound is a Pillow header read, so the test that proves it
+          # needs Pillow. Pinned to the version image-prep itself ships (containers/image-prep/
+          # requirements.txt) so CI is testing against what runs, not against whatever is newest.
+          # NOT the whole image-prep requirements file: that pulls rembg + onnxruntime, hundreds of
+          # MB of ML runtime this test never touches.
+          python -m pip install "Pillow==12.3.0"
           # PINNED on purpose (cf#874). A linter whose ruleset moves under you is a gate whose
           # findings change without a commit, and this one decides by matching text in that output.
           # Bump it deliberately, like any other pin.
@@ -230,6 +236,7 @@ jobs:
           containers/audio-beat-sync/test_url_guard.py
           containers/audio-mix/test_url_guard.py
           containers/image-prep/test_url_guard.py
+          containers/image-prep/test_decode_bound.py
           containers/video-finish/test_url_guard.py
           containers/video-finish/test_inspect.py
           containers/video-finish/test_photometric_gate.py
@@ -261,8 +268,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 17 ]; then
-            echo "::error::expected exactly 17 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 18 ]; then
+            echo "::error::expected exactly 18 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
@@ -777,6 +784,28 @@ jobs:
             exit 1
           fi
           echo "tag ${TAG} matches declared version ${pkg}."
+
+      # cf#901. THREE times in one night a change shipped inside a tag with no changelog entry and
+      # nothing refused: v1.34.1 was hand-written so two fragments were never consumed (804 had to be
+      # folded back afterwards as a post-publication correction), and then v1.34.2 was assembled
+      # correctly and TWO more PRs merged before the tag, twice, so cf#858 -- a child-safety fix --
+      # rode a tag undescribed.
+      #
+      # IT RUNS HERE, AT TAG TIME, AND THAT IS THE POINT. A cut-time check would have caught the
+      # first instance and sailed past the other two, because those fragments did not exist when the
+      # assembler ran. The tag is the last boundary the artifact crosses, so it is the one that has
+      # to ask. It is NOT continue-on-error: a gate that cannot refuse is documentation with a tick
+      # next to it, which this repo has now demonstrated the hard way more than once.
+      #
+      # The control runs FIRST, as everywhere else in this file, because a gate whose failing state
+      # has never been observed is decoration. It plants an unconsumed fragment and requires a
+      # refusal, and it plants a fragment that merely QUOTES the hold marker in its prose and
+      # requires that to be refused too -- the cp#245 self-disarm case.
+      - name: Control -- the unconsumed-fragment gate can refuse (cf#901)
+        run: python3 tests/changelog-fragments-consumed.test.py
+
+      - name: Every changelog fragment is consumed or deliberately held (cf#901)
+        run: python3 scripts/changelog-fragments-consumed.py .
 
   deploy:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
