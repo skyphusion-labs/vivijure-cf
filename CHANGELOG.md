@@ -5,6 +5,348 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.34.3 -- 2026-09-27
+
+### fix(containers): stream the audio-master and audio-mix uploads instead of reading them into RAM (cf#814)
+
+`audio-master` and `audio-mix` each did `out_bytes = f.read()` and then `data=out_bytes`, so the whole
+produced artifact was materialised in memory before the PUT began. Both now stream from a file handle
+through a vendored `_put_file` helper, the same fix #808 applied to `video-finish`.
+
+**Why it matters most in `audio-master`.** Its output `format` defaults to **`wav`**, not mp3, and the
+source bed is bounded only by `MAX_BED_BYTES` (256 MB), which makes it the largest buffer of the CPU
+set. `audio-mix` accepts `wav` too, and a film-length stereo WAV runs about 10 MB per minute.
+
+**`Content-Length` is set explicitly, and that is the part that is easy to get wrong.** aiohttp falls
+back to chunked transfer-encoding for a file object with no length, and a presigned PUT will not accept
+chunked -- streaming without the header trades an OOM for a 4xx. The behavioural half of each new test
+asserts the header, so a future refactor cannot drop it silently.
+
+The helper is **vendored per directory**, matching how `url_guard.py` already lives in each container.
+No shared import path is introduced across `containers/`; each image builds from its own directory.
+
+**The wire contract is unchanged.** A non-2xx PUT still answers 502 with the exact string `output put
+<status>`; it now travels as a `_PutFailed` the route catches rather than an inline early return. The
+reported `bytes` is the real file size from `os.path.getsize`, not the length of a buffer that no
+longer exists.
+
+**The control is carried across with the fix, which is the point.** Each container gets its own
+`test_upload_streams.py`, registered in the `container-tests` CI list (the executed-script floor moves
+14 -> 16). Each pairs a behavioural check, driving the real `_put_file` against a fake session and
+inspecting what reaches `session.put`, with an **`ast`-based structural scan** that refuses the
+read-then-upload shape anywhere in `app.py`. Parsed, not grepped, deliberately: a line-regex version of
+this scan was measured blind to a handle named anything other than `f` and to a `guarded_put(` whose
+`data=` sat on a continuation line, and both are ordinary hand-written formatting. Each scan carries
+its own planted-violation positive control, so it cannot pass vacuously.
+
+That half is not decoration. This shape reached four sites in `video-finish` by being copied from a
+neighbouring route, and it reached both audio containers the same way -- `audio-master/app.py` says in
+its own docstring that it is "Modeled on `containers/audio-mix/app.py`", and that file says it is
+modeled on `video-finish`. A fix without the scan is one copy-paste from being undone.
+
+**`image-prep` is documented, not changed.** Its bytes are produced in memory by rembg and never
+written to disk, so streaming there needs a spill-to-disk first; that is a redesign, not a call-site
+swap, and bundling it here would have hidden it. Its README now carries a written note on why the
+buffer is acceptable (bounded by `MAX_INPUT_BYTES`, 32 MB, one portrait, not a function of film
+length), and states the residual it does NOT cover: that bound is on compressed bytes, so a small,
+highly compressed image still decodes large.
+
+No behaviour change for callers, no new runtime dependency.
+
+### fix(config): retire a dead shim, delete an unimplemented promised key, and document two live vars
+
+Three findings from the cf#839 census, each verified with a positive control before being acted on.
+
+**`src/shard-count.ts` is retired.** It had no production importer, and its own header named its
+sunset condition: "keep in sync with vivijure-core until the host pins a core that exports it
+(1.19.0)". Core is pinned at **1.24.0** and does export `resolveShardCount`, so the condition fired
+four minors ago. Retired only after enumerating **every** invocation path rather than on one
+zero-reference count: static import, dynamic import, all **four** exported symbols by name, the route
+table, the `scheduled` cron handler, the one Durable Object class, and the fact that this Worker
+declares no `queue`, `email` or `tail` handler at all. `RENDER_SHARD_MAX` went with it, having
+appeared exactly once in the tree: its own declaration.
+
+The census had said the file held two exports. It holds four; `scatterViewAsFilmSummary` was missed,
+and scatter is retired behind a 410, so it had no live subject either.
+
+**`XAI_API_KEY` is deleted.** It was declared in `Env` and documented to operators in three places,
+one of them a literal `wrangler secret put` recipe, and **read by no code**. An operator who followed
+the instruction set a secret, got no error, and gained nothing. A documented instruction for a
+capability that does not exist is worse than an undocumented one, because it terminates the reader's
+search. xAI **is** reachable and always was, by this estate's normal route: the AI Gateway on Unified
+Billing, keyless, which is exactly why no per-provider key is needed.
+
+**Two live vars now appear in the file an operator edits.** `ALLOW_UNAUTHENTICATED` is read by live
+code and is in the canonical var contract (`src/platform/orchestrator-vars.ts`, which flows to the
+release manifest), so the hosted control plane knew about it while it appeared in **none** of the five
+committed wrangler examples. `VIDEO_FINISH_TIER_STATE` is read by the host, written by the control
+plane, and is not in that canonical list at all. A var that is live and undocumented is worse than a
+documented dead one: the dead one wastes a reader's time, the undocumented live one means a deploy
+silently lacks a capability with nothing saying so.
+
+**And the denominator is now asserted, so it cannot drift back.**
+`tests/orchestrator-vars-documented-cf839.test.ts` derives the population from
+`ORCHESTRATOR_VAR_KEYS` and requires every entry to be visible in some example or carry a declared
+reason for its absence (two do: a dev-only mock gate and a control-plane-owned URL). Measured: 27
+canonical vars, 11 absent from the main example, 8 of those living in the demo example, leaving
+exactly three with no home anywhere.
+
+### ci(deploy): report which media doors the core render actually BOUND, and refuse the one contradiction (cf#850)
+
+cf#840 closed the module render's silent-strip. **The CORE render had the same shape and nothing reported
+there.** Its fail-closed check is `grep -qF '${'` over non-comment lines, which catches a var MISSING
+from the `envsubst` shell-format list because the literal `${FOO}` survives. It cannot catch a var that
+is **listed and empty**: `envsubst` substitutes it to `""`, the config reads `FINISH_UPSCALE_DOORS = ""`,
+every guard in the step passes, and the deploy is green with the door off. A deliberate opt-out and a
+forgotten variable render byte-identically, so nothing downstream can tell them apart.
+
+**Measured on the real committed template rather than a fixture**, which is also the proof of the gap:
+render `wrangler.toml.example` through `strip-local-gpu.sh` and `envsubst` with the live repo-variable
+values and the new reporter prints `7 bound, 0 empty`, exit 0. Unset one var and line 110 renders
+`VIDEO_FINISH_URL = ""`; the reporter warns, then refuses, exit 1. **And the pre-existing placeholder
+guard PASSES on that same file** -- it is structurally blind to the state, which is what this closes.
+
+**It reports rather than fails on empty, and that is deliberate.** The template documents empty as
+meaningful ("Empty = that service is off") and the three door-list modules read an empty list as "use
+RunPod", so a self-host legitimately ships most of these empty. A gate that is wrong about the ordinary
+case gets routed around, and a routed-around gate costs more than no gate because it also costs the next
+author an argument. So every door is named `BOUND` or `EMPTY`, each empty one gets a `::warning::`, the
+denominator is printed, and the exit status is unchanged.
+
+**The one hard fail is a contradiction inside a single config, not an opinion about which tiers we run.**
+If the config binds `[[containers]]` while `VIDEO_FINISH_URL` renders empty, the finish container IS the
+door (cf#810: `MEDIA_DOOR_FETCHERS` is keyed by the var NAME and synthesised from the binding, so the
+value is never fetched) but `src/video-finish-availability.ts` reads a non-empty var as "the tier is
+installed". That deploy degrades the assemble phase while a working door sits bound. The two halves of
+one file disagree, which is a state an operator arrives at by accident rather than chooses.
+
+**Both directions are pinned, because a one-sided control is the defect this issue is about.**
+`tests/origin-vars-report-cf850.test.ts` drives the shipped script: a fully bound config passes naming
+every door; an optional door left empty stays GREEN and is reported; the same empty `VIDEO_FINISH_URL`
+goes RED **with** a `[[containers]]` block and stays GREEN **without** one, which is the pair that
+matters -- identical var state, opposite verdicts, decided by the other half of the config. Without that
+second case the refusal would read as "empty VIDEO_FINISH_URL is banned", which would be wrong about
+every self-host. Plus: a render with no door vars at all is could-not-measure rather than a pass, a
+missing file fails rather than skips, and no origin VALUE is ever printed on any path.
+
+**Wired to the render that uses REAL values, and deliberately to no other.** `bundle-gate`,
+`container-deploy-shape` and `studio-release` render the same template with EMPTY or dummy
+substitutions on purpose, so all three would hit the contradiction refusal for a reason that is not a
+defect. The test pins the single live invocation in the deploy job AND its absence from the others,
+because **this is a control that would be WRONG if generalised** -- worth pinning rather than leaving to
+whoever reads the file next.
+
+## The reachability question, PRICED and not built
+
+A `BOUND` report is about the CONFIG, not the world: measured 2026-09-27, **eleven of the thirteen
+hostnames across these seven vars were NXDOMAIN while every var was non-empty**. Three options, with
+what each buys and costs:
+
+1. **DNS resolve per door host, report-only, in the deploy log.** ~7 lookups, under a second, no egress,
+   no auth. Would have caught all eleven. Cannot see a host that resolves but is dead. Roughly five
+   lines next to the reporter.
+2. **HTTP HEAD/GET per door with a short timeout.** Catches a dead host too, but needs
+   `MEDIA_FINISH_TOKEN` to avoid 401s, and it puts a **network dependency in a release gate**: a door
+   being down would block an unrelated release.
+3. **Readiness instead of CI.** The studio already has a hook/availability surface; reachability is a
+   property of the running system, and asking it there answers "is the tier up now" rather than "was it
+   up when we deployed".
+
+Recommendation: (1) as a non-blocking report, and (3) for the real answer. **Not (2) in a deploy gate.**
+Left to a ruling rather than assumed, because adding a network dependency to the release path is a
+posture decision, not a tweak.
+
+### fix(video-finish): `_finish_work` passed an undefined name, so every assemble failed (cf#851)
+
+With the container finally able to START (the `concat_guard.py` COPY fix in v1.34.2), the next
+request down the `/async/finish` path failed with `name 'raw' is not defined`. Film
+`film-443ae588` reached `assemble`, the job container reached `running` for the first time, ran
+for **620 seconds**, and then the handler raised.
+
+`app.py`, inside `async def _finish_work(body)`:
+
+```python
+partial_urls = _parse_partial_urls(raw)   # `raw` is never bound anywhere in app.py
+```
+
+The enclosing parameter is `body`, every other read in the function uses `body`, and the next line
+passes `body` to `_finish_chunked(body, partial_urls, t0)`. One call site, one word.
+
+**The line is unconditional, above the chunked branch, so it broke every assemble and not only the
+chunked path.** Introduced by `0cdd5fca6` (#801) at 2026-09-27T01:52:20Z, **34 minutes after the
+COPY defect that made it unreachable** -- two container-breaking bugs from the same hour, the
+first masking the second for six hours, because nothing could reach this line while the process
+was dying at `app.py:32`.
+
+**WHY THE SUITE DID NOT CATCH IT, which is the part worth keeping.**
+
+```
+_parse_partial_urls   3 references in test_chunked_contract.py, 2 in test_local_chunked.py
+_finish_chunked       5 references in tests
+_finish_work          0 references anywhere in the suite
+```
+
+The helper was proven correct and passing all night. **The single line that invokes it was never
+executed by a test.** Both components either side of the defect were covered; the wiring between
+them was not.
+
+`tests/../test_finish_work_call_site.py` now enters `_finish_work` for real and reaches that line.
+`_finish_chunked` is the ONLY thing stubbed, so `_parse_partial_urls` and all the validation above
+the call site run for real; stubbing the helper would have re-tested the half that already worked.
+**Driven RED against the shipped line first** (6 failures, exit 1) and green after (exit 0), and it
+carries two controls: a NameError planted at the call site must be caught and reported, and that
+planted failure must stop the run before `_finish_chunked`, so the assertions cannot pass on a run
+that never reached the line at all.
+
+**A draft of that test made a real network call while its own docstring said "no network".** The
+no-pool branch falls through to the download path; it failed with an SSL handshake error against
+`r2.cloudflarestorage.com` and **still reported PASS**, because the assertion was "did not raise
+NameError" and any other exception satisfies that. It would have gone on passing with the call
+site arbitrarily broken. That case is removed and its absence is documented in the file rather
+than left as a silent gap.
+
+**A linter catches this class for nothing and there is no Python linter in CI at all**
+(`app.py:443:40: undefined name 'raw'`, measured on the unfixed file). `py_compile` passes,
+because a `NameError` is runtime and not syntax, so "it imports" was never evidence. cf#874 tracks
+the gate.
+
+### ci(containers): start the image and make it SERVE, because BUILT was never the property we wanted (cf#857)
+
+`container-deploy-shape` was built in cf#817/cf#818 and it proves an image was **built**.
+`container-tests` runs the container's python scripts against the **repo checkout**. Neither one ever
+starts the image. So the one property anybody wants from a container gate, does this boot and bind its
+port, was unasserted, and the `v1.34.1` tag run (`36296493766`) went green on all ten jobs over an
+image that crashes on every startup (cf#851: `Container crashed while checking for ports`, 12
+occurrences in one tail session, assemble to failure in 3,211 ms). Built and runs are different
+properties, and only the second one is the product.
+
+**`scripts/container-smoke.sh`** starts an image, maps its port on loopback, and polls `/health`.
+Distinct exit codes, because a control that accepts any non-zero cannot tell a working guard from one
+broken in a new way: `2` instrument unavailable, `3` image will not run at all, `4` container exited
+before serving (the cf#851 shape), `5` running but nothing bound, `6` bound but not 2xx. An exited
+container is answered in milliseconds rather than after the full timeout, so a red here never trains
+the reader to think "slow". It passes NO env, deliberately: the deployed `[[containers]]` block sets
+none, so a boot that depends on an env var must fail here exactly as it does in production. Every
+unavailable instrument is a FAILURE, never a skip, including a missing docker CLI, because a gate
+whose cheapest satisfaction is not running the container is the same defect one level up.
+
+**`tests/container-smoke.test.sh`** is the control, and cf#857 is precisely a gate that could not
+fail, so it is not optional. It builds three fixtures and asserts the exact exit code AND the reason
+text for each: one that serves (`0`, the POSITIVE control, without which "it went red on the broken
+image" would not distinguish a working gate from one that always fails), one whose entry script
+imports a module the image does not contain (`4`, the cf#851 shape planted in two lines), one that
+stays up bound to a port nothing probes (`5`), plus a non-existent image ref (`3`, an instrument
+failure is a failure). The fixtures are built in the test rather than committed as a directory so the
+planted failure sits next to the assertion about it.
+
+**It cites the artifact it judged.** Both the pass and the failure paths print the image id read off
+the CONTAINER (`docker inspect --format '{{.Image}}'`), i.e. the bytes this run actually used, rather
+than resolving the mutable tag a second time, plus RepoDigests where the image has been pushed and an
+explicit `(none: locally built, never pushed)` where it has not, because an empty field reads like a
+missing value. A verdict nobody can attach to a specific image cannot be checked later, and "the broken
+one versus the fixed one" is the comparison this gate exists to make. The control asserts the citation
+on every case where a container actually started, so the capability is proven rather than hoped for.
+
+**`tests/container-image-file-set.test.py`** is the fast, docker-free half, and it is the gate that
+would have caught cf#851 in the PR that caused it. For every `containers/*/Dockerfile` on disk (the
+denominator read from the tree, never a hand-kept list) it walks the import graph from the entry
+script named by `CMD`/`ENTRYPOINT` and fails if any reachable LOCAL sibling module is not `COPY`ed
+into the image. Imports at any scope count: a function-scope import of a missing sibling fires on the
+first request down that path instead of at boot, which is strictly worse to debug. It names the
+missing file, which is the difference between a red gate and a red gate you can act on. Three controls
+run first: a fully-copied image reports nothing (it does not cry wolf), a planted missing module is
+reported, and a function-scope import two hops from the entry is still caught.
+
+**The detect denominator was too narrow, and that is a second finding.** `container-deploy-shape-detect`
+matched only the Dockerfile PATH, but a Dockerfile's build context is its DIRECTORY, so every file
+copied into the image can change what the image contains without the Dockerfile appearing in the diff.
+Proven against real history by running the SHIPPED detect text out of each `ci.yml` version against
+`3802502` (#712, which touched `containers/video-finish/app.py`, `photometric_gate.py` and a test, and
+no Dockerfile): the old text returns `needed=false`, so that PR ran NEITHER container gate; the new
+text returns `needed=true` and names each context file. Negative control on a docs-and-modules commit
+(`c7b5850`): still `false`, so the widening adds the context rather than selecting everything.
+
+**And the release now waits for it.** `deploy` listed `container-tests` and `migrations-gate` but
+nothing that starts the container, and `container-deploy-shape` is not in that array either, so a tag
+could deploy with it RED and the deploy job would never look. `container-smoke` is added, with the
+deadlock check that belongs on any `needs:` widening: it is the only member carrying an `if:`, and a
+SKIPPED dependency skips the dependent job, which would silently turn a release into a no-op, so its
+condition includes `startsWith(github.ref, 'refs/tags/v')` explicitly rather than trusting a shell
+script's output two hops away. `container-deploy-shape` is deliberately not added: it proves a BUILD,
+and the smoke job builds each image itself before starting it.
+
+### test(panel): the stage-degrade projection is now asserted to reach the screen, in both directions
+
+Four stage signals (`speech`, `master`, `dialogue`, `film_finish`) were decided by thoroughly tested
+logic and rendered by DOM code nothing asserted. The gap is closed, and the half that mattered is the
+negative one: **a clean stage and a never-reached stage must render nothing.** A block that appears on
+a healthy render is worse than none, because people learn to ignore it and then it reads as coverage.
+
+**A new shared seam, `public/stage-degrade-view.js`.** cf#853 wired the signals into two surfaces by
+writing the same block-building loop twice, in `planner-render.js` and `planner-history-row.js` -- two
+loops that must agree forever with nothing asserting they do. There is now one place a stage degrade
+becomes DOM, both consumers go through it, and a ratchet asserts no third copy comes back.
+
+It also made the rendering testable at all. Neither host function can be unit-called
+(`buildHistoryRow` is ~980 lines reaching ~40 helpers declared in sibling planner files;
+`renderDegradeNote` resolves live DOM through `$()`), which is why the wiring had only been asserted
+by grep. `document` is a parameter rather than a global read, so the builder runs under plain Node
+with a small element stub, the same pattern `finish-degrade.js` uses.
+
+**The enumeration moved into the seam too, and that is load-bearing.** `stageBlocks()` alone can only
+ever be handed already-reported stages, so asserting it returns nothing for an empty list is trivially
+true and proves nothing about a clean payload. With `reportedStages()` in the same module, a test
+drives a RAW payload end to end and watches the negative direction actually hold. It also means the
+`limited` flag and the blocks share one enumeration and cannot disagree about which stages reported.
+
+**Every zero-block assertion carries a witness that the path ran.** A negative assertion is the
+easiest kind to make hollow: "no block rendered" passes just as happily when the enumeration was never
+entered as when it ran and correctly declined. Each such case therefore asserts either that a spy saw
+all four stage keys interrogated, or that a sibling stage in the same call DID render. Seven planted
+defects were each driven red first, including one that short-circuits the enumeration -- which is what
+proves the witness can tell those two states apart.
+
+### docs(video-finish): stop quoting a reject ceiling as an expected payload, and correct the finalize peak-disk claim (cf#813)
+
+Comment and docstring only. **The executable AST with docstrings stripped is byte-identical**, so
+there is no behaviour change in this PR at all.
+
+**`MAX_CLIPS x MAX_CLIP_BYTES` is not a payload, in three places that said it was**
+(`app.py:49-50`, `app.py:184`, `README.md:69`). That product is 20.0 GB and was presented as the
+route's "contracted maximum", i.e. an input size to design against. `MAX_CLIP_BYTES` is a **reject
+ceiling** -- the argument to `_download(s, url, dst, MAX_CLIP_BYTES)` at `:285` and `:416`, the size
+at which a download is REFUSED -- so the product is the largest input the route will not reject, not
+one it expects.
+
+At this container's settings a 256 MB clip is 3.2 to 15.6 minutes of video; clips are 4 to 8
+seconds. Measured, a 32-clip film normalizes to roughly 70-350 MB and a full 80-clip film to about
+750 MB, so the product sits **23x to 120x above a real film** and nothing approaches the 20 GB
+ephemeral disk. That is the part worth fixing rather than tidying: **a disk gate written against
+20 GB could never fire.** The README now sizes the route by bitrate x duration x count with the
+measured bands, and carries the proxy provenance and its direction of error, because those numbers
+came from pans over a photographic still rather than from real generated clips.
+
+**The 3x peak-disk multiplier is a budget, not a measurement**, and is now labelled as one. It is
+only right if a normalized copy is about the size of its source; the measured ratio spans 0.98x to
+5.09x and is dominated by the source's own bitrate. One component of it WAS structural, the fixed
+1920x1080 upscale worth about 1.95x on a 720p source, and `vivijure-core#322` removes that at its
+cause by matching the assemble target to the measured source.
+
+**Peak disk at finalize is TWO full-length copies, not one.** `_silent.mp4` is written at `:315`
+(chunked) and `:864` (single-pass), `_mux_bed_onto` (`:780`) writes `final.mp4` FROM it, and nothing
+deletes the silent cut: `grep -n "os.remove" app.py` returns exactly `:266` and `:270`, both reaping
+batch partials. **Those two hits are the positive control that the zero for `_silent.mp4` is a real
+zero rather than a broken pattern.** `_remux_audio_only` (`:650`) has the same shape.
+
+Not a correctness bug today: a real film measures in the hundreds of MB against a 20 GB disk.
+
+**The removal of `_silent.mp4` is deliberately DEFERRED, and this inverts the usual rule.** Normally
+the fix is the code, not a comment corrected to match it. It is held because this container is being
+repaired and re-deployed right now, and an unrelated allocation change does not belong in front of
+the first confirmed-serving build. The comment is corrected **now** because a wrong comment in this
+directory has already cost a live debugging effort real time. The deferral and its reason are stated
+at the site, so whoever lands the removal finds the argument rather than re-deriving it.
+
 ## v1.34.2 -- 2026-09-27
 
 ### fix(cast-media): a failed cast-row write answers 404 with a diagnostic, not `200 { cast: null }`
