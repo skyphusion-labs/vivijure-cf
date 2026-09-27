@@ -269,21 +269,27 @@ jobs:
   # arming a deploy failure that only a v* tag could reach. A gate that passes by not performing the
   # step it is supposed to cover is the failure mode, and this job is the missing step.
   #
-  # WHAT THIS ACTUALLY RUNS, corrected after measuring it rather than trusting the plan.
+  # THE REAL BUILD, and it is `wrangler deploy --dry-run` with the rollout flag OMITTED. MEASURED on
+  # the runner, not assumed: that job's log carries 1317 buildkit step lines, 394 apt-get lines, and
+  # all three of the Dockerfile's ffmpeg sanity-encode markers (libx264, drawtext, libass). --dry-run
+  # keeps it credential-free and fork-safe -- nothing contacts the account, nothing is pushed -- and
+  # it still builds, because the image is an input to the bundle wrangler is asked to produce.
   #
-  # The first draft of this gate was `wrangler deploy --dry-run` with the rollout flag omitted, on
-  # the theory that omitting it performs the build. IT DOES NOT. On the runner that job went green
-  # in 40 seconds and its log contains no build at all -- no apt-get, no layers, just "The following
-  # containers are available" and "--dry-run: exiting now". What wrangler does in dry-run is CHECK
-  # that the Docker CLI can be launched; the local RC=1 that started cf#809 was that launch check
-  # failing, not a build failing. On a runner that has Docker the check passes and nothing is built.
-  # A gate asserting "the image builds" on the strength of that would have been decoration.
+  # TWO THINGS I GOT WRONG HERE FIRST, recorded so the next reader does not repeat either.
   #
-  # So the build is explicit: `wrangler containers build <dir> --tag <name>` executes the real
-  # Dockerfile through WRANGLER's own container path, which is the path a deploy takes. --push
-  # defaults to false, so this stays credential-free and fork-safe: nothing contacts the account and
-  # nothing is pushed. The --dry-run below is kept as well, because it is the step that resolves the
-  # [[containers]] config and would catch a block pointing at a Dockerfile that is not there.
+  #   1. I briefly concluded this dry-run does NOT build, from a 40-second duration plus a `grep ...
+  #      | tail -40` of the log. Both were bad instruments: 40s is ample for this image on a runner,
+  #      and a truncated, filtered view is not evidence of absence. Counting over the WHOLE log
+  #      settled it in the opposite direction.
+  #   2. The replacement I reached for, `wrangler containers build <dir> --push=false`, CANNOT be
+  #      used here: it requires CLOUDFLARE_API_TOKEN even when it pushes nothing, and this gate must
+  #      run on fork PRs with no secrets. It exits 1 with "In a non-interactive environment, it's
+  #      necessary to set a CLOUDFLARE_API_TOKEN environment variable".
+  #
+  # WHICH IS WHY THE BUILD IS ASSERTED, not assumed, in the step below. The whole point of this gate
+  # is that bundle-gate passes by skipping the build; a future wrangler that stops building in
+  # dry-run would turn THIS gate into the same decoration without anything going red. I could not
+  # tell those two states apart by eye, so the job is not allowed to either.
   #
   # WHY IT IS PATH-FILTERED, and why the filter is NARROWER than container-pr-build.yml's. This job
   # asks "does the DEPLOY SHAPE still assemble", which changes when the wrangler config changes or
@@ -306,7 +312,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       needed: ${{ steps.pick.outputs.needed }}
-      dirs: ${{ steps.pick.outputs.dirs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -358,16 +363,8 @@ jobs:
             NEEDED=true
           fi
 
-          # The DIRECTORIES holding those Dockerfiles, which is what `wrangler containers build`
-          # takes. Derived from the same parsed lines, so the build set cannot drift from the
-          # detection set.
-          DIRS=""
-          for img in ${IMAGES}; do DIRS="${DIRS} $(dirname "${img}")"; done
-          DIRS="$(echo ${DIRS} | tr -s ' ')"
-
           echo "needed=${NEEDED}" >> "$GITHUB_OUTPUT"
-          echo "dirs=${DIRS}" >> "$GITHUB_OUTPUT"
-          echo "deploy-shape gate needed: ${NEEDED}; build dirs: ${DIRS}"
+          echo "deploy-shape gate needed: ${NEEDED}"
 
   container-deploy-shape:
     needs: container-deploy-shape-detect
@@ -401,35 +398,35 @@ jobs:
           grep -q '^\[\[containers\]\]' wrangler.toml || { echo "::error::no [[containers]] block survived the render, so a green result here would mean nothing was built"; exit 1; }
           echo "docker OK and a [[containers]] block is present; the real build below is a real assertion."
 
-      # Resolves the [[containers]] config against the real tree. Catches a block naming a
-      # Dockerfile that does not exist. It does NOT build -- see the header.
-      - name: Resolve the container config (wrangler deploy --dry-run)
-        run: npx wrangler deploy --dry-run --outdir=shape-out
+      # NO --containers-rollout=none. That omission IS the gate: it is what makes wrangler build the
+      # [[containers]] image instead of skipping it.
+      - name: wrangler deploy --dry-run WITH the container build
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --dry-run --outdir=shape-out 2>&1 | tee shape-build.log
 
-      # THE ASSERTION. A real Dockerfile build through wrangler's own container path, no push.
-      # The Dockerfile RUN layers execute, including video-finish's three ffmpeg sanity encodes
-      # (libx264, drawtext, libass), so this goes red on an image that cannot build -- which is the
-      # thing the deploy does and no other PR check exercises through wrangler.
-      - name: Build the container image through wrangler (no push)
-        env:
-          DIRS: ${{ needs.container-deploy-shape-detect.outputs.dirs }}
+      # THE CONTROL ON THE CONTROL. A pass here must mean an image was BUILT, and nothing in the
+      # step above distinguishes "built it" from "quietly skipped it" -- which is precisely how
+      # bundle-gate came to be read as covering a step it skips. So the build is proven from the
+      # log's own evidence, and the absence of that evidence is a failure rather than a pass.
+      - name: Prove an image was actually built
         run: |
           set -eu
-          if [ -z "${DIRS:-}" ]; then
-            echo "::error::no build directories were derived, so a green result here would mean nothing was built"
+          if [ ! -s shape-build.log ]; then
+            echo "::error::no build log was produced, so nothing can be claimed about the image"
             exit 1
           fi
-          built=0
-          for d in $DIRS; do
-            echo "--- building $d"
-            npx wrangler containers build "$d" --tag "ci-shape-$(basename "$d"):pr"
-            built=$((built + 1))
-          done
-          if [ "$built" -lt 1 ]; then
-            echo "::error::zero images built; refusing to report a pass over an empty set"
-            exit 1
+          # Any ONE of these only appears when buildkit really ran. CACHED counts: a cache hit is
+          # still a resolved, buildable image, and this runner has no cache on a first run anyway.
+          if grep -qE "exporting to image|sanity-encode OK|^#[0-9]+ (CACHED|DONE)| CACHED$" shape-build.log; then
+            echo "build evidence found:"
+            grep -oE "exporting to image|[a-z0-9()]+ sanity-encode OK" shape-build.log | sort -u | sed 's/^/  /'
+            exit 0
           fi
-          echo "OK: ${built} image(s) built through wrangler without pushing."
+          echo "::error::wrangler exited 0 but produced NO container build output. Either --containers-rollout=none crept back in, or wrangler no longer builds during --dry-run. Do not merge on this green: the gate is not covering the step it claims to. See the header comment above this job."
+          echo "--- last 40 lines of the build log"
+          tail -40 shape-build.log
+          exit 1
 
   # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
   # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
