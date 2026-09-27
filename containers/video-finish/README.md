@@ -61,6 +61,55 @@ satellites). Jobs live IN-PROCESS: a container restart drops them, at which poin
 the R2 artifact if the encode had finished. The synchronous routes are UNCHANGED, so an old core / an
 old module keeps working.
 
+### Chunked assemble and the `partialUrls` pool (#784)
+
+`/finish` normalizes every clip through libx264 before the cheap `-c copy` join, and the single-pass
+path keeps the downloads, the normalized copies, the concat and the muxed film in ONE work dir until
+the job ends. Peak disk is therefore 3-4x total input. At the route's own contracted maximum
+(`MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = 20.0 GB) the DOWNLOAD STAGE ALONE exceeds the 20 GB
+ephemeral disk of the largest Cloudflare Container before a normalized byte is written.
+
+Supply **`partialUrls`** and `/finish` switches to a chunked assemble that bounds peak disk to a fixed
+working set:
+
+```json
+{
+  "clips": [{ "url": "https://...r2.../shot_01.mp4" }],
+  "outputUrl": "https://...r2.../film.mp4",
+  "partialUrls": [{ "put": "https://...r2.../partial_000.mp4?sig=...",
+                    "get": "https://...r2.../partial_000.mp4?sig=..." }]
+}
+```
+
+1. Clips are partitioned into batches bounded by SOURCE BYTES (`MAX_BATCH_BYTES`, default 1 GiB, env
+   tunable). A batch closes on reaching the bound, so it may overshoot by at most one clip.
+2. Each batch is downloaded, normalized, hard-concatenated to a partial, PUT to its pool URL, and its
+   work dir deleted before the next batch starts.
+3. The final pass concatenates the partials **straight from their presigned GET URLs**, so they never
+   return to disk. Peak disk at that stage is one film.
+
+Peak disk becomes `max(3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES), one film)`.
+
+**Why a pool and not R2 credentials.** The container is credentialless on purpose, so it can only write
+to a URL it was handed; the Worker mints at most `MAX_CLIPS` pairs and the container consumes only as
+many as its byte-batching needs. Unused presigns expire harmlessly. **Mint the GET URLs with a TTL that
+covers the WHOLE job**, not just the join: the final pass runs after every batch has encoded, so a TTL
+sized to the join alone will already have expired by the time it is used.
+
+**Behaviour worth knowing before you send a pool:**
+
+- **Omit `partialUrls` and nothing changes.** The single-pass path is untouched, so an older Worker is
+  unaffected.
+- **A film that fits in one batch uploads no partials at all** and finalizes from the local concat.
+- **Crossfade is refused with more than one batch** (`400`). A crossfade join spans two adjacent clips
+  and cannot cross a batch boundary; chunking anyway would silently drop the transition at every
+  boundary. Send `crossfade: 0` for a hard-cut film.
+- **A pool too small for the film is refused** (`400`) rather than silently truncating.
+- **The drop guard runs at BOTH levels** (see `concat_guard.py`), per batch and on the final join. A
+  lost PARTIAL is a film short by a whole batch, and the flat-ratio guard this replaced could not see
+  one once there were 7 or more parts.
+- The response carries `batches`, the number of partials the film was assembled from.
+
 ### `/finish` response + the duration honesty gate (#697/#698)
 
 `/finish` returns the assembled film`s key/bytes plus per-assemble instrumentation, and -- on the concat

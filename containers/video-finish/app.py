@@ -18,6 +18,7 @@ import json as _json
 import logging
 import math
 import os
+import functools
 import shutil
 import subprocess
 import tempfile
@@ -42,6 +43,19 @@ MAX_AUDIO_BYTES = 256 * 1024 * 1024   # 256 MB: match the per-clip bound. A loss
 # (_assemble / _remux_audio_only, `-t vdur`), so a long source yields a film-length track, not a bloated one.
 # A too-tight 64 MB cap silently dropped a legitimate multi-minute lossless bed -> silent film (the #77/#249 bug).
 MAX_CLIPS = 80
+
+# cf#784: bound the working set so peak disk is a fixed cost rather than a function of film
+# length. A batch is closed once it reaches this many SOURCE bytes, so the batch may overshoot
+# by at most one clip (MAX_CLIP_BYTES). Peak while batching is roughly
+# 3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES): the batch's sources, their normalized copies, and the
+# batch partial. Tunable per instance type without a rebuild; the default targets the 20 GB
+# ephemeral disk of the largest Cloudflare Container with room to spare.
+MAX_BATCH_BYTES = int(os.environ.get("MAX_BATCH_BYTES", str(1024 * 1024 * 1024)))
+
+# The final join reads the partials straight from their presigned R2 URLs, so they never land on
+# disk and peak disk at that stage is one film. ffmpeg refuses a non-file protocol unless it is
+# whitelisted (the default is file,crypto,data), and https needs BOTH https and tls listed.
+CONCAT_PROTOCOL_WHITELIST = "file,http,https,tcp,tls"
 MAX_KEYFRAME_BYTES = 32 * 1024 * 1024   # keyframe PNG for content-inspect (#523 Layer 2)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -162,6 +176,189 @@ async def _download(session, url, path, cap):
         return False, f"blocked: {e}"
 
 
+async def _finish_chunked(body, partial_urls, t0):
+    """Chunked assemble (cf#784): bound peak disk to a fixed working set.
+
+    The single-pass path holds every downloaded clip, every normalized copy, the concat and the
+    muxed film in ONE work dir until the job ends, so peak disk is 3-4x total input. At the
+    contracted maximum (MAX_CLIPS x MAX_CLIP_BYTES = 20.0 GB) the download stage alone exceeds the
+    20 GB ephemeral disk of the largest Cloudflare Container before a normalized byte is written.
+
+    Here the film is partitioned into byte-bounded batches. Each batch is downloaded, normalized,
+    hard-concatenated to a partial, PUT to R2, and its work dir deleted before the next batch
+    starts. The final pass concatenates the partials straight from their presigned URLs, so they
+    never return to disk. Peak disk becomes max(batch working set, one film).
+
+    Two properties this must not break, both of which chunking makes easier to get wrong:
+      * The drop guard runs at BOTH levels. A second concat level doubles the places a clip can
+        vanish, and a lost PARTIAL is a film short by a whole batch.
+      * The tail-trim is global. Only the film's true last clip keeps its tail (see
+        _normalize_batch), or every batch boundary gains a duplicated frame.
+    """
+    clips = body.get("clips")
+    output_url = body.get("outputUrl")
+    output_key = body.get("outputKey", "")
+    audio_url = body.get("audioUrl")
+    keep_clip_audio = bool(body.get("keepClipAudio", False))
+    width = int(body.get("width", 1920))
+    height = int(body.get("height", 1080))
+    fps = int(body.get("fps", 24))
+    crf = int(body.get("crf", 18))
+    preset = str(body.get("preset", "medium"))
+    crossfade = float(body.get("crossfade", 0.0))
+    trim_join_frames = float(body.get("trimJoinFrames", 1))
+
+    effective_crossfade = 0.0 if keep_clip_audio else crossfade
+    trim_tail = (trim_join_frames / max(1, fps)) if effective_crossfade <= 0 else 0.0
+    total = len(clips)
+
+    root = tempfile.mkdtemp(prefix="vfinish-chunk-")
+    partial_gets, partial_durs, clip_durs = [], [], []
+    pending = None  # (local_path, get_url, put_url) for the first partial, not yet uploaded
+    batch, batch_bytes, batch_dir, batch_no = [], 0, None, 0
+
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+
+            async def flush():
+                nonlocal batch, batch_bytes, batch_dir, batch_no, pending
+                if not batch:
+                    return
+                if batch_no >= 1 and effective_crossfade > 0:
+                    # A crossfade join spans two adjacent clips, so it cannot cross a batch
+                    # boundary. Chunking anyway would silently drop the transition at every
+                    # boundary and ship a film that is subtly not what was asked for.
+                    raise _JobError(
+                        400,
+                        "crossfade is not supported with chunked assemble: the film needs "
+                        f"{batch_no + 1} batches and a crossfade cannot span a batch boundary. "
+                        "Send crossfade=0 for a hard-cut film, or fewer/smaller clips.",
+                    )
+                if batch_no >= len(partial_urls):
+                    raise _JobError(
+                        400,
+                        f"partialUrls pool exhausted: the film needs more than {len(partial_urls)} "
+                        "batches. The Worker must mint a larger pool.",
+                    )
+                loop = asyncio.get_running_loop()
+                norms, durs = await loop.run_in_executor(
+                    None, functools.partial(
+                        _normalize_batch, batch_dir, batch, total,
+                        width=width, height=height, fps=fps, crf=crf, preset=preset,
+                        trim_tail=trim_tail, keep_clip_audio=keep_clip_audio),
+                )
+                clip_durs.extend(durs)
+                partial = os.path.join(root, f"partial_{batch_no:03d}.mp4")
+                await loop.run_in_executor(None, _concat_hard, norms, partial)
+                pdur = _probe_duration(partial) or 0.0
+                # INNER guard: this batch must not have lost a clip.
+                assert_no_dropped_parts(pdur, durs, level=f"batch {batch_no + 1}", fps=fps)
+
+                put_u, get_u = partial_urls[batch_no]
+                if batch_no == 0:
+                    # Hold the first partial locally: a film that fits in ONE batch needs no R2
+                    # round trip at all, and this is the only way to know that without lookahead.
+                    pending = (partial, get_u, put_u)
+                else:
+                    if pending is not None:
+                        pp, pg, ppu = pending
+                        await _put_file(s, ppu, pp)
+                        os.remove(pp)
+                        partial_gets.append(pg)
+                        pending = None
+                    await _put_file(s, put_u, partial)
+                    os.remove(partial)
+                    partial_gets.append(get_u)
+                partial_durs.append(pdur)
+
+                shutil.rmtree(batch_dir, ignore_errors=True)
+                batch, batch_bytes, batch_dir = [], 0, None
+                batch_no += 1
+
+            for i, c in enumerate(clips):
+                url = c.get("url") if isinstance(c, dict) else None
+                if not url:
+                    raise _JobError(400, f"clips[{i}].url missing")
+                if batch_dir is None:
+                    batch_dir = tempfile.mkdtemp(prefix=f"batch{batch_no:03d}-", dir=root)
+                dst = os.path.join(batch_dir, f"clip_{i:03d}.mp4")
+                ok, info = await _download(s, url, dst, MAX_CLIP_BYTES)
+                if not ok:
+                    status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
+                    raise _JobError(status, f"clips[{i}] {info}")
+                target = c.get("targetSeconds")
+                try:
+                    target = float(target) if target is not None else None
+                except (TypeError, ValueError):
+                    target = None
+                batch.append((dst, target, i))
+                batch_bytes += os.path.getsize(dst)
+                # Close on reaching the bound. The batch may overshoot by at most one clip, which
+                # is why the peak-disk budget is written against MAX_BATCH_BYTES + MAX_CLIP_BYTES.
+                if batch_bytes >= MAX_BATCH_BYTES:
+                    await flush()
+            await flush()
+
+            if not partial_durs:
+                raise _JobError(400, "clips must be a non-empty array")
+
+            audio_path = None
+            if audio_url:
+                audio_path = os.path.join(root, "audio.bin")
+                ok, info = await _download(s, audio_url, audio_path, MAX_AUDIO_BYTES)
+                if not ok:
+                    status = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                    log.warning("audio bed fetch failed (%s); failing loud (no silent finish)", info)
+                    raise _JobError(status, f"audio bed {info}")
+
+            loop = asyncio.get_running_loop()
+            silent = os.path.join(root, "_silent.mp4")
+            try:
+                if pending is not None:
+                    # Single batch: the partial IS the silent cut. No upload, no re-download.
+                    shutil.move(pending[0], silent)
+                else:
+                    await loop.run_in_executor(
+                        None, _concat_hard_urls, partial_gets, silent,
+                        os.path.join(root, "partials.txt"),
+                    )
+                    # OUTER guard: a dropped PARTIAL is a film short by a whole batch, and the
+                    # ratio guard this replaced could not see one past 7 batches.
+                    assert_no_dropped_parts(
+                        _probe_duration(silent) or 0.0, partial_durs,
+                        level=f"final join of {len(partial_durs)} partials", fps=fps,
+                    )
+                out_path, secs, has_audio = await loop.run_in_executor(
+                    None, _mux_bed_onto, root, silent, audio_path, keep_clip_audio,
+                )
+            except FfmpegTimeout as e:
+                log.exception("ffmpeg timeout")
+                raise _JobError(500, str(e))
+            except subprocess.CalledProcessError as e:
+                log.exception("ffmpeg failed")
+                raise _JobError(500, f"ffmpeg failed: {e}")
+
+        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+            size = await _put_file(s, output_url, out_path)
+
+        return {
+            "ok": True,
+            "key": output_key,
+            "bytes": size,
+            "durationSeconds": round(secs, 3),
+            "shots": total,
+            "clipsReceived": total,
+            "hasAudio": has_audio,
+            "width": width,
+            "height": height,
+            "clipDurations": clip_durs,
+            "batches": len(partial_durs),
+            "elapsedMs": _elapsed_ms(t0),
+        }
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 async def _finish_work(body):
     """The /finish work: download clips, concat or remux, PUT the film.
 
@@ -198,6 +395,14 @@ async def _finish_work(body):
     except (TypeError, ValueError):
         raise _JobError(400, "bad numeric input")
     preset = str(body.get("preset", "medium"))
+
+    # cf#784: when the Worker supplies a partial-URL pool, take the chunked path, which bounds
+    # peak disk to a fixed working set instead of 3-4x total input. Absent a pool the behaviour
+    # is exactly as before, so an older Worker is unaffected. remuxAudioOnly is a single-clip
+    # remux with nothing to batch.
+    partial_urls = _parse_partial_urls(raw)
+    if partial_urls and not remux_audio_only:
+        return await _finish_chunked(body, partial_urls, t0)
 
     work = tempfile.mkdtemp(prefix="vfinish-")
     try:
@@ -250,19 +455,16 @@ async def _finish_work(body):
             log.exception("assemble failed")
             raise _JobError(500, str(e))
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
+        # cf#784: stream the upload. This previously read the ENTIRE finished film into memory
+        # before PUTting it, which on a Cloudflare Container (no swap) OOMs the instance at
+        # exactly the film sizes chunked assemble exists to make possible.
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    raise _JobError(502, f"output put {r.status}")
+            out_size = await _put_file(s, output_url, out_path)
 
         return {
             "ok": True,
             "key": output_key,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "durationSeconds": round(secs, 3),
             "shots": len(srcs),
             "clipsReceived": len(clips),
@@ -474,6 +676,150 @@ def _remux_audio_only(work, video_path, audio_path):
     return out, _probe_duration(out), True
 
 
+def _concat_hard_urls(urls, out, list_path):
+    """Hard-concat parts read straight from their presigned URLs -- they never land on disk.
+
+    This is what keeps peak disk at roughly ONE film at the final join instead of the partials
+    plus the film. Verified against a range-capable origin at 1.1 GB of input: byte-identical to
+    the same join done from local files, 206 responses throughout (ffmpeg range-seeks rather than
+    downloading), and peak RSS flat at ~43 MB, slightly BELOW the local-disk join. So this trades
+    disk for neither memory nor fidelity.
+
+    ffmpeg refuses a non-file protocol unless whitelisted, and https needs https AND tls listed.
+    """
+    with open(list_path, "w") as f:
+        f.write("\n".join(f"file '{u}'" for u in urls) + "\n")
+    _run([
+        "ffmpeg", "-y",
+        "-protocol_whitelist", CONCAT_PROTOCOL_WHITELIST,
+        "-f", "concat", "-safe", "0", "-i", list_path,
+        "-c", "copy", out,
+    ])
+
+
+def _parse_partial_urls(raw):
+    """The cf#784 URL pool: [{put, get}, ...] minted by the Worker.
+
+    The container holds no R2 credentials by design (see README), so it can only write a partial
+    to a URL it was handed. The Worker mints at most MAX_CLIPS pairs and the container consumes
+    only as many as its byte-batching needs; the rest go unused and expire. Returns [] when absent,
+    which selects the single-pass path.
+    """
+    pool = raw.get("partialUrls") or raw.get("partial_urls")
+    if not isinstance(pool, list) or not pool:
+        return []
+    out = []
+    for i, e in enumerate(pool):
+        if not isinstance(e, dict):
+            raise _JobError(400, f"partialUrls[{i}] must be an object with put and get")
+        put_u = e.get("put") or e.get("putUrl")
+        get_u = e.get("get") or e.get("getUrl")
+        if not isinstance(put_u, str) or not isinstance(get_u, str) or not put_u or not get_u:
+            raise _JobError(400, f"partialUrls[{i}] needs both put and get")
+        for label, u in (("put", put_u), ("get", get_u)):
+            ok, why = validate_fetch_url(u)
+            if not ok:
+                raise _JobError(400, f"partialUrls[{i}].{label} blocked: {why}")
+        out.append((put_u, get_u))
+    return out
+
+
+async def _put_file(session, url, path, content_type="video/mp4"):
+    """Stream a file to a presigned PUT.
+
+    Deliberately NOT `data=f.read()`: that holds the whole artifact in RAM, and a Cloudflare
+    Container has no swap, so a large film OOMs the instance rather than uploading. Content-Length
+    is set explicitly because a presigned PUT will not accept chunked transfer-encoding.
+    """
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        async with guarded_put(session, url, allow_redirects=False, data=f,
+                               headers={"content-type": content_type,
+                                        "content-length": str(size)}) as r:  # codeql[py/full-ssrf]
+            if r.status not in (200, 201, 204):
+                raise _JobError(502, f"partial put {r.status}")
+    return size
+
+
+def _normalize_batch(batch_dir, batch, total_clips, *, width, height, fps, crf, preset,
+                     trim_tail, keep_clip_audio):
+    """Normalize one batch. `batch` is [(src_path, target_seconds, global_index)].
+
+    The tail-trim is decided on the GLOBAL index, not the position in the batch: only the film's
+    true last clip keeps its tail. Trimming per batch would leave an untrimmed frame at every batch
+    boundary, which is a continuity artefact chunking must not introduce.
+    """
+    norms, durs = [], []
+    for src, target, gidx in batch:
+        cap = target
+        tail = trim_tail if (trim_tail > 0 and gidx < total_clips - 1) else 0.0
+        if tail > 0:
+            base = cap if cap else _probe_duration(src)
+            cap = max(0.1, base - tail)
+        dst = os.path.join(batch_dir, f"norm_{gidx:03d}.mp4")
+        _normalize(src, dst, width=width, height=height, fps=fps, crf=crf, preset=preset,
+                   cap=cap, ensure_audio=keep_clip_audio)
+        norms.append(dst)
+        durs.append(round(_probe_duration(dst) or 0.0, 3))
+    return norms, durs
+
+
+def _mux_bed_onto(work, silent, audio_path, keep_clip_audio):
+    """Mux the optional music/dialogue bed onto an assembled silent cut and finalize.
+
+    Extracted from _assemble unchanged (cf#784) so the chunked path finalizes through exactly the
+    same code rather than a copy that can drift. Returns (out_path, duration, has_audio).
+    """
+    out = os.path.join(work, "final.mp4")
+    has_bed = bool(audio_path) and os.path.isfile(audio_path)
+    if has_bed and keep_clip_audio:
+        # Talking film WITH a music/score bed: MIX the bed under the per-clip
+        # dialogue (amix) rather than replacing it. Pin to the video length, same
+        # bulletproof `-t vdur` as the bed-only path below; `apad` fills a short bed.
+        vdur = _probe_duration(silent)
+        cmd = [
+            "ffmpeg", "-y", "-i", silent, "-i", audio_path,
+            "-filter_complex",
+            "[1:a]apad[bed];[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            "-map", "0:v:0", "-map", "[a]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        ]
+        if vdur and vdur > 0:
+            cmd += ["-t", f"{vdur:.3f}"]
+        else:
+            cmd += ["-shortest"]
+        cmd += ["-movflags", "+faststart", out]
+        _run(cmd)
+    elif has_bed:
+        # v0.137.3: pin the output to the VIDEO length, bulletproof. The earlier
+        # `-af apad -shortest` did not hold: `-shortest` cut the output to the
+        # (shorter) audio, truncating the video. Probe the video duration and
+        # force it with `-t`, padding the audio with silence (`apad`) to fill a
+        # short bed; a long bed is cut to the video. Explicit `-map` so the right
+        # streams are selected. Output is always exactly the video's duration.
+        vdur = _probe_duration(silent)
+        cmd = [
+            "ffmpeg", "-y", "-i", silent, "-i", audio_path,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-af", "apad",
+        ]
+        if vdur and vdur > 0:
+            cmd += ["-t", f"{vdur:.3f}"]
+        else:
+            cmd += ["-shortest"]
+        cmd += ["-movflags", "+faststart", out]
+        _run(cmd)
+    else:
+        # Web-playable: stream-copy with faststart (no re-encode). Preserves the
+        # per-clip dialogue when ensure_audio kept it on the concat; silent otherwise.
+        _run(["ffmpeg", "-y", "-i", silent, "-c", "copy", "-movflags", "+faststart", out])
+    # Honest: probe the actual output rather than assuming bed == audio (a talking
+    # film has audio with no bed; a failed bed mux would not).
+    has_audio = _probe_audio(out)[0]
+    return out, _probe_duration(out), has_audio
+
+
 def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade, trim_join_frames,
               keep_clip_audio=False):
     # keep_clip_audio: the clips carry per-clip lip-synced dialogue (talking film).
@@ -525,54 +871,8 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
         crossfade=effective_crossfade, fps=fps,
     )
 
-    out = os.path.join(work, "final.mp4")
-    has_bed = bool(audio_path) and os.path.isfile(audio_path)
-    if has_bed and keep_clip_audio:
-        # Talking film WITH a music/score bed: MIX the bed under the per-clip
-        # dialogue (amix) rather than replacing it. Pin to the video length, same
-        # bulletproof `-t vdur` as the bed-only path below; `apad` fills a short bed.
-        vdur = _probe_duration(silent)
-        cmd = [
-            "ffmpeg", "-y", "-i", silent, "-i", audio_path,
-            "-filter_complex",
-            "[1:a]apad[bed];[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0[a]",
-            "-map", "0:v:0", "-map", "[a]",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        ]
-        if vdur and vdur > 0:
-            cmd += ["-t", f"{vdur:.3f}"]
-        else:
-            cmd += ["-shortest"]
-        cmd += ["-movflags", "+faststart", out]
-        _run(cmd)
-    elif has_bed:
-        # v0.137.3: pin the output to the VIDEO length, bulletproof. The earlier
-        # `-af apad -shortest` did not hold: `-shortest` cut the output to the
-        # (shorter) audio, truncating the video. Probe the video duration and
-        # force it with `-t`, padding the audio with silence (`apad`) to fill a
-        # short bed; a long bed is cut to the video. Explicit `-map` so the right
-        # streams are selected. Output is always exactly the video's duration.
-        vdur = _probe_duration(silent)
-        cmd = [
-            "ffmpeg", "-y", "-i", silent, "-i", audio_path,
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-af", "apad",
-        ]
-        if vdur and vdur > 0:
-            cmd += ["-t", f"{vdur:.3f}"]
-        else:
-            cmd += ["-shortest"]
-        cmd += ["-movflags", "+faststart", out]
-        _run(cmd)
-    else:
-        # Web-playable: stream-copy with faststart (no re-encode). Preserves the
-        # per-clip dialogue when ensure_audio kept it on the concat; silent otherwise.
-        _run(["ffmpeg", "-y", "-i", silent, "-c", "copy", "-movflags", "+faststart", out])
-    # Honest: probe the actual output rather than assuming bed == audio (a talking
-    # film has audio with no bed; a failed bed mux would not).
-    has_audio = _probe_audio(out)[0]
-    return out, _probe_duration(out), has_audio, norm_durations
+    out, _out_dur, has_audio = _mux_bed_onto(work, silent, audio_path, keep_clip_audio)
+    return out, _out_dur, has_audio, norm_durations
 
 
 
