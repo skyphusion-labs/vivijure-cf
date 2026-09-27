@@ -23,8 +23,15 @@ would otherwise use for a file object).
 
 Covered by `test_upload_streams.py`, which asserts the upload body is never a materialised buffer
 AND scans the source for the read-then-upload shape, so the pattern cannot be reintroduced by
-copying a neighbouring route -- which is how it reached four sites. The scan carries its own
-planted-violation control.
+copying a neighbouring route -- which is how it reached four sites. The scan parses app.py with
+`ast` rather than grepping it: a line-regex version was measured blind to a read handle named
+anything but `f` and to a `guarded_put(` wrapped over several lines, both of which are ordinary
+formatting. It carries its own planted-violation control, which plants BOTH the shape that shipped
+and that evasion, and asserts the catch as a delta so a real violation cannot corrupt the control.
+
+`_put_file` also takes a `label` so its failure names the artifact it was actually uploading.
+Reusing the helper had made every route report `partial put <status>`, including `/frames`, which
+uploads a contact sheet and no partial at all.
 
 ### feat(video-finish): chunked assemble, so peak disk is a fixed cost instead of 3-4x input
 

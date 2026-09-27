@@ -5,8 +5,9 @@ Runs in container-tests CI. No ffmpeg, no network, no big files -- deliberately.
 slow, flaky, and impossible to run in CI. The invariant is not about size, it is about SHAPE: the
 bytes must reach the socket from a file handle, never from a `bytes` object.
 
-WHY THIS CONTROL EXISTS. Three routes here produce a full film and all four PUT sites read the
-whole artifact with `f.read()` before uploading it. A Cloudflare Container has no swap, so
+WHY THIS CONTROL EXISTS. Three routes here produce a full film, and all four PUT sites USED to
+read the whole artifact into a `bytes` before uploading it (`/finish` was fixed alongside chunked
+assemble in #801; the other three are fixed here). A Cloudflare Container has no swap, so
 exceeding memory restarts the instance; disk is ephemeral and resets to the image on wake, so the
 work dir dies with it and the next poll finds no job. The film does not fail loudly, it fails as
 though it never ran. Nothing in the suite could observe that, and the peak-RSS measurement that
@@ -19,9 +20,9 @@ TWO LAYERS, because either alone is escapable:
 
     python3 test_upload_streams.py
 """
+import ast
 import asyncio
 import os
-import re
 import sys
 import tempfile
 
@@ -92,45 +93,105 @@ except app._JobError as e:
 os.remove(path)
 
 # ---------------------------------------------------------------- 2. STRUCTURAL
+#
+# PARSED, not grepped. The first version of this scan was line-regex based and was MEASURED blind
+# to two one-line evasions: a read handle named anything other than `f`, and a `guarded_put(`
+# whose `data=` sat on a continuation line. Both are ordinary hand-written formatting, so a scan
+# that misses them does not cover the case it exists for. `ast` sees the call, not the layout.
 src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.py")
 src = open(src_path, encoding="utf-8").read()
 
-# The exact shape that caused this: a whole-file read bound to a name, then handed to a PUT.
-reads = [i for i, l in enumerate(src.split("\n"), 1) if re.search(r"=\s*f\.read\(\)\s*$", l)]
-check(not reads, "no whole-file read feeds an upload,", "offending lines: %r" % reads)
+# Functions allowed to hold a whole-file read. Empty on purpose: no route needs one. An entry
+# here is a written, reviewable exemption, which is the only way one should ever appear.
+READ_EXEMPT_FUNCS = ()
 
-# Every inline `data=` handed to guarded_put, minus the forms that are BOUNDED BY CONSTRUCTION.
-# An artifact upload must go through _put_file; anything else has to earn its exemption here,
-# in writing, which is the point -- a new unbounded upload cannot slip in unnoticed.
-EXEMPT = (
-    "data=f,",                  # _put_file itself: the streaming helper every artifact uses
-    "data=_json.dumps(",        # meta sidecar: a two-field JSON blob
-    "data=srt_text.encode(",    # SRT sidecar: subtitle text, capped at MAX_SRT_BYTES (512 KB)
+# `data=` expressions that are BOUNDED BY CONSTRUCTION, matched on the unparsed expression.
+# Anything else must go through _put_file. A new unbounded upload cannot slip in unnoticed.
+EXEMPT_DATA = (
+    "_json.dumps(",      # meta sidecar: a two-field JSON blob
+    "srt_text.encode(",  # SRT sidecar: subtitle text, capped at MAX_SRT_BYTES (512 KB)
 )
+
+
+def _owners(tree):
+    """Map every node to the name of the function that lexically contains it."""
+    owner = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(fn):
+                owner.setdefault(child, fn.name)
+    return owner
+
+
+def whole_file_reads(text):
+    """Every zero-argument `<anything>.read()`: the shape that materialises an artifact in RAM.
+
+    `.read(n)` is bounded and fine. The receiver's NAME is irrelevant, which is the whole point:
+    this sees `fh.read()` exactly as it sees `f.read()`. Prose in a docstring is not a call, so
+    the helper's own "Deliberately NOT `data=f.read()`" comment cannot trip it either.
+    """
+    tree = ast.parse(text)
+    owner = _owners(tree)
+    return sorted(n.lineno for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                  and n.func.attr == "read" and not n.args and not n.keywords
+                  and owner.get(n) not in READ_EXEMPT_FUNCS)
 
 
 def inline_puts(text):
-    return [i for i, l in enumerate(text.split("\n"), 1)
-            if "guarded_put(" in l and "data=" in l
-            and not any(e in l.replace(" ", "") or e in l for e in EXEMPT)]
+    """Every `guarded_put(data=...)` that is neither _put_file itself nor a written exemption."""
+    tree = ast.parse(text)
+    owner = _owners(tree)
+    out = []
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "guarded_put"):
+            continue
+        data = next((kw.value for kw in n.keywords if kw.arg == "data"), None)
+        if data is None:
+            continue
+        if owner.get(n) == "_put_file":
+            continue  # the streaming helper every artifact upload is required to use
+        if any(ast.unparse(data).startswith(e) for e in EXEMPT_DATA):
+            continue
+        out.append(n.lineno)
+    return sorted(out)
 
 
-check(inline_puts(src) == [],
-      "every artifact upload goes through _put_file,", "unexempted inline puts at %r" % inline_puts(src))
+base_reads, base_puts = whole_file_reads(src), inline_puts(src)
+check(not base_reads, "no whole-file read anywhere in app.py,", "offending lines: %r" % base_reads)
+check(not base_puts, "every artifact upload goes through _put_file,", "unexempted puts at %r" % base_puts)
 
-# Positive control: the structural scan must be able to FAIL. If it cannot see a planted
-# violation, it is decoration and the two checks above prove nothing.
-planted = src + (
-    '\n\nasync def _planted(s, u, p):\n'
-    '    with open(p, "rb") as f:\n'
-    '        out_bytes = f.read()\n'
-    '    async with guarded_put(s, u, data=out_bytes) as r:\n'
-    '        return r\n'
-)
-planted_reads = [i for i, l in enumerate(planted.split("\n"), 1) if re.search(r"=\s*f\.read\(\)\s*$", l)]
-check(len(planted_reads) == 1 and len(inline_puts(planted)) == 1,
-      "the structural scan DOES catch a planted violation,",
-      "read@%r put@%r" % (planted_reads, inline_puts(planted)))
+# POSITIVE CONTROL. The scan must be able to FAIL, or the two checks above prove nothing. Both
+# shapes are planted: the one that actually happened, and the evasion that defeated the regex
+# version. Asserted as a DELTA against the real file, so a genuine violation in app.py makes the
+# checks above go red without also corrupting the control into a confusing second failure.
+PLANTS = {
+    "the shape that actually shipped": (
+        '\n\nasync def _planted_a(s, u, p):\n'
+        '    with open(p, "rb") as f:\n'
+        '        out_bytes = f.read()\n'
+        '    async with guarded_put(s, u, data=out_bytes) as r:\n'
+        '        return r\n'
+    ),
+    "a renamed handle with the call wrapped over lines": (
+        '\n\nasync def _planted_b(s, u, p):\n'
+        '    with open(p, "rb") as fh:\n'
+        '        out_bytes = fh.read()\n'
+        '    async with guarded_put(\n'
+        '        s, u,\n'
+        '        data=out_bytes,\n'
+        '    ) as r:\n'
+        '        return r\n'
+    ),
+}
+for _label, _body in PLANTS.items():
+    _planted = src + _body
+    _dr = len(whole_file_reads(_planted)) - len(base_reads)
+    _dp = len(inline_puts(_planted)) - len(base_puts)
+    check(_dr == 1 and _dp == 1,
+          "the scan catches %s," % _label,
+          "read delta %d, put delta %d" % (_dr, _dp))
 
 print("\n%d failures" % len(failures))
 for f in failures:

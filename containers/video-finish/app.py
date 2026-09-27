@@ -262,11 +262,11 @@ async def _finish_chunked(body, partial_urls, t0):
                 else:
                     if pending is not None:
                         pp, pg, ppu = pending
-                        await _put_file(s, ppu, pp)
+                        await _put_file(s, ppu, pp, label="partial")
                         os.remove(pp)
                         partial_gets.append(pg)
                         pending = None
-                    await _put_file(s, put_u, partial)
+                    await _put_file(s, put_u, partial, label="partial")
                     os.remove(partial)
                     partial_gets.append(get_u)
                 partial_durs.append(pdur)
@@ -724,8 +724,12 @@ def _parse_partial_urls(raw):
     return out
 
 
-async def _put_file(session, url, path, content_type="video/mp4"):
+async def _put_file(session, url, path, content_type="video/mp4", label="output"):
     """Stream a file to a presigned PUT.
+
+    `label` only names the artifact in the error. It defaults to "output" because every route
+    except chunked assemble uploads a finished output, and calling a contact sheet a "partial"
+    is a wire-visible lie that #802 introduced by reusing this helper.
 
     Deliberately NOT `data=f.read()`. That materialises the WHOLE artifact in memory before the
     upload starts, and THREE of this container's routes produce a full film (/finish,
@@ -746,7 +750,7 @@ async def _put_file(session, url, path, content_type="video/mp4"):
                                headers={"content-type": content_type,
                                         "content-length": str(size)}) as r:  # codeql[py/full-ssrf]
             if r.status not in (200, 201, 204):
-                raise _JobError(502, f"partial put {r.status}")
+                raise _JobError(502, f"{label} put {r.status}")
     return size
 
 
