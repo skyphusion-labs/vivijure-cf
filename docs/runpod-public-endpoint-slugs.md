@@ -23,9 +23,56 @@ Unauthenticated `GET https://api.runpod.ai/v2/<slug>/health`:
 Never `POST .../run` for this check. Script:
 
 ```bash
-./scripts/probe-runpod-public-slugs.sh
-# optional: ./scripts/probe-runpod-public-slugs.sh other-slug ...
+./scripts/probe-runpod-public-slugs.sh            # census: every slug modules/ declares
+./scripts/probe-runpod-public-slugs.sh some-slug  # ad-hoc: exactly these, no census
 ```
+
+### What the script does now (cf#934), and what it refuses to do
+
+**The population is `modules/` on the checkout, never a list inside the script.** It used to carry a
+hardcoded `DEFAULT_SLUGS` array, which is the defect the sibling capability-matrix gate's header names:
+a checker holding its own copy of the population cannot detect that population changing. That array had
+also gone stale in both directions, still listing `kling-v2-1-i2v-pro` and never gaining `infinitetalk`
+or `kling-video-o1-r2v`. The slugs are now read from each module's `ENDPOINT_ID`, including one
+indirection (`narration-gen` declares `ENDPOINT_ID = MODEL`, resolved from its own `src/`).
+
+**Every module lands in exactly one of three classes, and the arithmetic is asserted.** A module that
+fell out of all three would mean the sweep covered an unknown population, so that is a hard failure
+rather than a smaller table:
+
+| class | meaning | probed? |
+| --- | --- | --- |
+| `PROBED` | `const ENDPOINT_ID = "<slug>"`, a public slug this repo dispatches to | yes |
+| `OWN-ENDPOINT` | a `RUNPOD_ENDPOINT_ID` binding: our serverless endpoint, id supplied per install | no |
+| `NO-ENDPOINT` | no RunPod endpoint at all, routed elsewhere (Cloudflare, Workers AI, local) | no |
+
+The not-probed doors are **named** in the output, not left to subtraction, because a sweep that hides
+its own edges reports on a population the reader believes is larger than it is.
+
+**Two controls, in the same invocation, because one is not enough.** A negative control (a bogus slug,
+which must read 404) and a positive control (a slug known to exist and deliberately not one we
+dispatch to, which must read 401). The negative control alone is one-sided: it stays healthy when the
+base URL is wrong and *every* path 404s, which made an early version of this script report ten
+simultaneous dead doors as a FINDING instead of a broken probe. There is also a backstop: if every
+probed slug reads MISSING at once, that is an instrument failure, not a credible finding.
+
+**Exit codes, decided rather than discovered.** It never degrades to a skip:
+
+| exit | meaning |
+| --- | --- |
+| 0 | every slug this repo dispatches to still resolves |
+| 1 | **a slug is GONE.** Renders routed to that door fail at submit |
+| 2 | unusable instrument: unexpected HTTP, positive control failed, or everything read MISSING |
+| 3 | the negative control did not fire, so a clean sweep would not be believable |
+| 4 | the population could not be accounted for (unparseable `ENDPOINT_ID`, or the classes do not sum) |
+
+**It runs on a schedule, and it is NOT a CI gate.** `.github/workflows/endpoint-liveness.yml` runs the
+census daily and opens or updates ONE tracking issue on a finding; a clean run closes that issue. It
+must never become a required check: this depends on a third party being reachable, so as a gate a
+RunPod outage would freeze merges on unrelated work. Ruled on cf#934.
+
+**What it still cannot tell you: vendor liveness.** A 401 proves a RunPod endpoint *object* exists, not
+that the upstream model does. See the section below.
 
 ### Measured 2026-08-05 (this doc; free health probe)
 
@@ -49,6 +96,8 @@ arguments to check them): `kling-o1-r2v` (`ENDPOINT_ID = "kling-video-o1-r2v"`) 
 
 **A dated probe proves the endpoint existed on that date, and nothing more.** RunPod deletes public
 endpoints, so re-run the probe before relying on any row above rather than reading a past 401 as current.
+Since cf#934 the daily `endpoint-liveness` workflow does that re-running, so the tables below are
+history and the workflow is the current answer.
 
 Measured 2026-09-27, same free `/health` probe, with the negative control in the same run:
 

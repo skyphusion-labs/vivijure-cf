@@ -209,6 +209,20 @@ jobs:
       - name: Control -- the undefined-name gate can fail, and refuses a silent linter (cf#874)
         run: sh tests/lint-python-undefined.test.sh
 
+      # cf#934. The endpoint-liveness probe itself is NOT run here and must never be: it depends on
+      # RunPod being reachable, so as a required check an outage there would freeze merges on unrelated
+      # work. It runs on a schedule (.github/workflows/endpoint-liveness.yml) and reports by issue.
+      #
+      # What DOES belong in ci is the offline half: the census that decides which modules get probed.
+      # That is pure parsing of modules/, it makes no network calls, and it is where the dangerous
+      # failure lives -- a module silently falling out of the population while the sweep still prints a
+      # denominator and an all-clear. The control drives that parser against fixtures and requires it
+      # to REFUSE an ENDPOINT_ID it cannot resolve and a module it cannot classify, rather than
+      # dropping either. Verified by mutation: making the unresolvable-indirection path guess a slug
+      # instead of failing turns exactly this control red and nothing else.
+      - name: Control -- the slug census refuses a module it cannot parse, and probes nothing (cf#934)
+        run: sh tests/probe-runpod-slugs.test.sh
+
       # Population is every tracked *.py (68 at cf#874), not just containers/: the defect class is not
       # container-specific and a hand-scoped subdirectory is the artifact that drifts. UNDEFINED NAMES
       # FAIL; unused imports, unused locals and placeholder-less f-strings are printed as ::warning::
