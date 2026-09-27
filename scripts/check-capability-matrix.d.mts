@@ -17,6 +17,13 @@ export interface MatrixVerdict {
   notes: string[];
 }
 
+/** The files that make a directory a module. Shared by the population and the hook count. */
+export const MODULE_ENTRY_FILES: string[];
+
+/** True when a directory really holds a module. `exists` is injected so both answers are testable
+ *  without touching disk (vivijure#831). */
+export function isModuleDirectory(name: string, exists: (path: string) => boolean): boolean;
+
 export function parseMatrixModules(markdown: string): { found: string[]; rows: number };
 
 export function parseTransitions(text: string): {

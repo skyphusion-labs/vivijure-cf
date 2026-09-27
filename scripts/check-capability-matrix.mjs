@@ -127,9 +127,31 @@ export function parseMatrixModules(markdown) {
   return { found, rows };
 }
 
+/** The files that make a directory a MODULE. Shared with declaredHookCount below on purpose: the
+ *  population and the hook count must agree on what a module is, or they describe different sets. */
+export const MODULE_ENTRY_FILES = ["src/index.ts", "src/manifest.ts"];
+
+/** True when this directory actually contains a module, not merely a directory that is named like one.
+ *
+ *  WHY THIS IS NOT PARANOIA (vivijure#831). Git does not track empty directories, so when a module's
+ *  tracked files are removed by a merge, `git pull` leaves the parent directory behind. The tree is
+ *  then WRONG in a way no git instrument will tell you about: `git status` is clean, `git ls-files`
+ *  lists nothing, `git check-ignore` says not-ignored. `readdirSync` still counts it, so this gate
+ *  reports modules that do not exist and fails LOCALLY while CI, which is a fresh checkout, is green.
+ *  A developer cannot debug that with git, because every git command agrees the tree is correct.
+ *
+ *  Measured 2026-09-27: `finish-lipsync` and `speech-upscale` survived as empty directories in a
+ *  clone after their retirement merges, and produced exactly that unexplainable local red.
+ *
+ *  `exists` is injected so the rule can be driven to both answers in a test without touching disk. */
+export function isModuleDirectory(name, exists) {
+  if (name.startsWith("_")) return false;
+  return MODULE_ENTRY_FILES.some((f) => exists(`modules/${name}/${f}`));
+}
+
 function realModules() {
   return readdirSync("modules", { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.name.startsWith("_"))
+    .filter((e) => e.isDirectory() && isModuleDirectory(e.name, existsSync))
     .map((e) => e.name)
     .sort();
 }
@@ -143,7 +165,7 @@ function realModules() {
  * to flag an extra appearance for a human, not to wave it through.
  */
 function declaredHookCount(name) {
-  for (const rel of [`modules/${name}/src/index.ts`, `modules/${name}/src/manifest.ts`]) {
+  for (const rel of MODULE_ENTRY_FILES.map((f) => `modules/${name}/${f}`)) {
     if (!existsSync(rel)) continue;
     const m = readFileSync(rel, "utf8").match(/hooks:\s*\[([^\]]*)\]/);
     if (!m) continue;
