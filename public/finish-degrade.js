@@ -236,15 +236,61 @@
   //
   // The band vocabulary is UNCHANGED (cf#549's four bands), because the ladder IS that
   // vocabulary with a third rung for the malformed case.
-  var STAGE_KEYS = ["speech", "master", "dialogue"];
+  // cf#860: `film_finish` is the SAME LADDER IN A DIFFERENT SHAPE, so it joins this list through
+  // an adapter rather than a fourth parser. Core emits it as
+  // `{ applied, adopted, degraded: string | null }` (film-model.js filmFinishView), where a
+  // non-empty `degraded` string is the one reason, `null` means the chain ran and applied
+  // cleanly, and the whole object is `null` when the chain was never reached.
+  //
+  // This is the unfinished half of cf#549, which was filed about exactly this case: a film that
+  // ships without its title card being indistinguishable from one that shipped complete.
+  var STAGE_KEYS = ["speech", "master", "dialogue", "film_finish"];
 
-  // OUR structural noun for each stage. Never a paraphrase of a reason: the reasons are
-  // rendered verbatim beside this, never instead of it.
+  /** Tolerant string-list read for the STRUCTURAL ledgers (`applied` / `adopted`). Deliberately
+   *  forgiving where the degrade parse is strict: a malformed ledger must not decide the band,
+   *  because the band is a statement about the DEGRADE and nothing else. */
+  function stringList(v) {
+    var out = [];
+    if (!Array.isArray(v)) return out;
+    for (var i = 0; i < v.length; i++) {
+      if (isNonEmptyString(v[i])) out.push(String(v[i]).trim());
+    }
+    return out;
+  }
+
+  /** `film_finish` -> the shared `{ degraded, reasons }` form, carrying its two ledgers.
+   *
+   *  STRICT ON THE DEGRADE KEY ON PURPOSE. A `degraded` key that is absent entirely is
+   *  UNREADABLE, not clean: core always emits the key (null when clean), so a payload missing it
+   *  is a shape we do not recognise, and reading an unrecognised shape as "ran clean" is the one
+   *  direction this projection must never fail in. `null` present IS clean. */
+  function parseFilmFinish(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (!Object.prototype.hasOwnProperty.call(raw, "degraded")) return null;
+    // fc#1662: `adopted` counts the RECOVERED re-encodes -- steps whose artifact was found in R2
+    // rather than run. It is the wasted-work signal and it is NOT a degrade; it is carried here so
+    // a later surface can show it without re-deriving it, and it must never affect the band.
+    var ledgers = { applied: stringList(raw.applied), adopted: stringList(raw.adopted) };
+    var d = raw.degraded;
+    if (d === null) return { degraded: 0, reasons: [], applied: ledgers.applied, adopted: ledgers.adopted };
+    if (!isNonEmptyString(d)) return null;
+    return { degraded: 1, reasons: [String(d).trim()], applied: ledgers.applied, adopted: ledgers.adopted };
+  }
+
+  // OUR structural noun for each stage, and the raw-shape parser it needs. Never a paraphrase of
+  // a reason: the reasons are rendered verbatim beside this, never instead of it.
   var STAGE_LABELS = {
     speech: { noun: "speech cleanup", unit: "shot" },
     master: { noun: "audio master", unit: "step" },
     dialogue: { noun: "dialogue", unit: "stage" },
+    film_finish: { noun: "title cards and captions", unit: "pass", parse: parseFilmFinish },
   };
+
+  /** The raw-shape parser for a stage: its own, or the shared `{ degraded, reasons }` one. */
+  function stageParser(key) {
+    var label = STAGE_LABELS[key];
+    return (label && label.parse) || parseStageDegrade;
+  }
 
   /** Live-view parse for one stage: a degrade to SHOW, or null. Clean and junk both null,
    *  the same one-directional forgiveness degradeFrom() uses -- a parse failure must never
@@ -252,10 +298,14 @@
   function stageFrom(output, key) {
     if (!output || typeof output !== "object" || Array.isArray(output)) return null;
     if (!key || !Object.prototype.hasOwnProperty.call(STAGE_LABELS, key)) return null;
-    var parsed = parseStageDegrade(output[key]);
+    var parsed = stageParser(key)(output[key]);
     if (!parsed) return null;
     if (parsed.degraded <= 0 && parsed.reasons.length === 0) return null;
-    return { stage: key, degraded: parsed.degraded, reasons: parsed.reasons };
+    var info = { stage: key, degraded: parsed.degraded, reasons: parsed.reasons };
+    // Structural ledgers ride along when the shape carries them. They are not degrades.
+    if (parsed.applied) info.applied = parsed.applied;
+    if (parsed.adopted) info.adopted = parsed.adopted;
+    return info;
   }
 
   /** The four-band projection for one stage, implementing the ladder above. */
@@ -265,7 +315,7 @@
     var raw = output[key];
     // Absent: the stage was never reached. This is the rung that must not collapse.
     if (raw === null || raw === undefined) return BAND_UNMEASURED;
-    var parsed = parseStageDegrade(raw);
+    var parsed = stageParser(key)(raw);
     if (!parsed) return BAND_UNREADABLE;
     if (parsed.degraded <= 0 && parsed.reasons.length === 0) return BAND_NONE_REPORTED;
     return BAND_REPORTED;
@@ -278,6 +328,11 @@
     if (!label) return null;
     var n = info.degraded > 0 ? info.degraded : (info.reasons ? info.reasons.length : 0);
     if (!n) return null;
+    if (info.stage === "film_finish") {
+      // Always exactly one reason (core carries a single `degraded` string), so a count here
+      // would read as false precision. "uncarded" is core's own word for this state.
+      return "The title-card and caption pass degraded, so this film shipped without part of it.";
+    }
     if (info.stage === "dialogue") {
       // core#317: the post-clips leg has exactly ONE declared degrade, so n is always 1
       // here and a count would read as false precision. Every other dialogue failure now
@@ -398,6 +453,7 @@
     stageBand: stageBand,
     stageSummary: stageSummary,
     stagesNote: stagesNote,
+    parseFilmFinish: parseFilmFinish,
     combineBands: combineBands,
   };
 });

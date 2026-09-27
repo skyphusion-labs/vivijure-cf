@@ -355,6 +355,172 @@ servers, NOT a third-party log vendor". With the consumer unbound, the hosted ti
 live in Cloudflare Workers Logs with `persist = true`. That is a published privacy representation
 about the hosted door, not an infra comment, so it is not edited in an infra PR.
 
+### feat(modules): vendor `reason?: InvokeFailureReason` into all 34 module contracts, with one test holding them identical
+
+core#291 added an optional `reason?: InvokeFailureReason` to the module contract's `/invoke` failure
+arm: a closed union of eleven fault classes. This adopts it on the module side. **ABSENT still means
+the module has not adopted the field, and is never defaulted to a class.**
+
+**Why 34 copies rather than one import.** All 34 `modules/*/src/contract.ts` files are **import-free**,
+measured (`grep -l "^import "` returns 0), and four of them state the rationale: *"Dependency-free,
+which is the point: a module must be buildable and deployable without the core package."* So the union
+cannot be imported into them. Sharing a file would have been one line each and was rejected for
+breaking an invariant that currently holds in 34 of 34.
+
+**Why 34 of the 65 identical failure arms, which is a decision and not a partial migration.** The
+string `| { ok: false; error: string };` appears **65** times and serves **three** types:
+`InvokeResponse` 34, `PollResponse` 29, `CancelResponse` 2. The string cannot tell you which; only the
+enclosing declaration can, so a global replace would have widened the contract in **31** places with a
+diff that looked uniform and correct.
+
+`PollResponse` is excluded on core#306's own reasoning: it already carries a closed `outcome` set, and
+adding `reason` beside it would put two closed unions on one object **sharing two spellings with
+different meanings** (`backend-error` and `cancelled` are members of both, meaning "RunPod reported a
+backend error" in one and "our module classified this as a backend error" in the other). A shared
+spelling is not a shared meaning. That exclusion is now **asserted**, not merely omitted, so 34-of-65
+cannot be misread as unfinished.
+
+**The drift surface is closed by a test rather than a generator.** 34 copies of a closed vocabulary is
+the structure that produced GHSA-qgx2-5crw-9m4j earlier today: two copies of one safety rule that
+diverged, with the narrower copy's docstring asserting they were the same. A generator only helps if
+someone runs it, and a generator nobody runs is a rule with no mechanism. So
+`tests/invoke-failure-reason-vendored.test.ts` **derives the expected block from core's own
+`INVOKE_FAILURE_REASONS` at test time** and compares it byte-for-byte against all 34 files, printing
+the exact expected text on failure so the fix is a paste.
+
+Verified by watching it fail, not by assuming:
+
+- a **hand-edited copy** with the near-miss `not_configured` in one contract went red and named
+  `modules/cf-veo/src/contract.ts`
+- **core drift** went red end to end: a twelfth member added to the installed core's
+  `INVOKE_FAILURE_REASONS` failed both the count assertion and all 34 comparisons, and printed the new
+  canonical block including the new member
+
+Also asserted: the 34-contract denominator, so a shrinking sweep cannot pass; that the four plausible
+non-members (`not_configured`, `quota`, `rate_limited`, `backendError`) are rejected; and the bare-arm
+count **in both instruments**, because 31 arms are owned by the excluded types while only 30 are a
+standalone line (one `CancelResponse` is declared inline). Which number is "wrong" depends entirely on
+the instrument, so both are pinned and named.
+
+Core pin moves to `^1.24.0`, which is what makes the test able to read the canonical set from core.
+The 34 contract edits themselves need no pin, being vendored; the single-source **mechanism** does.
+
+### fix(video-finish): COPY `concat_guard.py` into the image, without which the container cannot start (cf#851)
+
+The video-finish container **could not start at all**, on every invocation, and had not been able
+to since 2026-09-27T01:18:31Z. Every film that reached `assemble` failed with
+`video-finish async submit failed (no jobId)`.
+
+`app.py` imports `concat_guard` at column 0:
+
+```
+app.py:32   from concat_guard import assert_no_dropped_parts
+app.py:1665 app.router.add_get("/health", health)
+app.py:1678 web.run_app(app, host="0.0.0.0", port=PORT, ...)
+```
+
+The module is in the repo. It was missing from the image, because the Dockerfile's only source
+COPY line never listed it. The interpreter therefore died at an import roughly 1,600 lines before
+anything bound port 8000, and the platform reported what it saw:
+
+```
+Container error: Error: Container crashed while checking for ports,
+did you start the container and setup the entrypoint correctly?
+```
+
+`cfa321f2d` (#792) ADDED `concat_guard.py` and never touched the Dockerfile, so **every image built
+after that commit was unstartable.** Both v1.34.0's image (`sha256:5ad58793...`) and v1.34.1's
+(`sha256:324167ae...`) were built from trees containing the module and a COPY line without it; the
+defect is one release older than the image roll that made it visible.
+
+The fix is the filename. What earns a changelog entry is the rest:
+
+**The test that covers this module made the suite greener while the image got worse.** #792 added
+`containers/video-finish/test_concat_guard.py` to `ci.yml` **in the same commit that broke the
+image**. That test runs against the repo checkout, where `concat_guard.py` is present, so it passed
+then and passes now. The image is never involved. A container whose every startup crashes shipped
+through a fully green tag run, and the commit that introduced the crash is the one that added a
+passing test for the module at the centre of it.
+
+**The gap is structural, not clerical:** nothing compares the set of local modules `app.py` imports
+against the set the Dockerfile copies. That comparison is a static check anybody can run, and today
+it reports 6 imported, 5 copied, 1 missing. cf#857 tracks the acceptance gate, which now has a real
+two-directional proof available for free: red against the broken image, green against this one.
+
+**A comment beside the sanity-encode block is corrected in the same change.** It asserted "Bind is
+immediate at runtime: app.py registers /health and binds :8000 before any ffmpeg subprocess (no
+startup warm thread to starve the port-ready check)." True about the ordering it names, no
+guarantee that the port ever comes up, and it steers a reader of a port-ready failure toward ffmpeg
+startup and away from the imports, which is precisely the wrong direction here. The replacement
+says to check the COPY line first.
+
+### fix(panel): read the speech, master and dialogue degrade keys, so completed-with-limits can light for them
+
+The panel now projects the three per-stage degrade keys `vivijure-core` emits (`speech`, `master`,
+`dialogue`), in the same `{ degraded, reasons }` vocabulary it already parses for `output.finish`. A
+film that was never mastered, whose speech chain passed everything through, or that shipped without
+generated voices is now separable from a clean one, on the live render view and in render history.
+
+**The ladder is three states, not two**, and keeping them apart is the whole point:
+
+    key ABSENT        the stage was never reached. NOT MEASURED. Show nothing.
+    degraded: 0       it ran and ran clean. Measured, and NOT a limit.
+    degraded: n > 0   it ran and degraded; the reasons are the studio's own words, rendered verbatim.
+
+The core omits the key entirely rather than writing a zero, so a parse that read a missing key as a
+clean run would throw away the distinction the core is spending a field to preserve. Absent maps to
+`unmeasured` and never to `none-reported`.
+
+`degraded` is the COUNT and `reasons` is DEDUPED, so `degraded >= reasons.length` and the two are not
+interchangeable: two shots failing for the same reason report `{ degraded: 2, reasons: [one] }`.
+Deriving the count from `reasons.length` under-reports exactly when several shots fail the same way.
+
+The existing clip-finish parser is GENERALISED rather than copied three times, since the shape is
+identical: one parse per stage, not a parser per stage. The combining rule is deliberately **not
+worst-of** -- it returns the composition, so "every stage measured, none degraded" stays
+distinguishable from "some stage never measured", and an unreadable signal does not light the badge
+as though the studio had named a limit.
+
+No user-visible change until `vivijure-core` #317 lands and the pin bumps: with the keys absent every
+stage reads `unmeasured` and nothing renders, which is the ladder's first rung working as designed.
+
+Also corrects a stale claim in `public/finish-degrade.d.ts` that `film_finish.degraded` "does not
+exist yet". It exists, `vivijure-core` emits it on both the single-film and scatter paths; what is
+true is that nothing in `public/` reads it yet. Wiring that is tracked separately.
+
+### fix(panel): read film_finish, so a film that shipped without its title cards stops looking complete
+
+`vivijure-core` has been projecting `film_finish` onto the render payload and nothing in `public/`
+read it, so title-card and caption degrades were outside every band on every row. This is the
+unfinished half of cf#549, which was filed about exactly that case.
+
+Unlike cf#853 this takes effect **immediately**: the field is already on the installed core, on both
+the single-film and the scatter path.
+
+**The same three-state ladder in a different shape.** Core emits
+`{ applied, adopted, degraded: string | null }`, and the whole object is `null` when the chain was
+never reached:
+
+    null / absent      the chain was never reached        -> unmeasured
+    degraded: null     it ran and applied cleanly         -> none-reported
+    degraded: "..."    it ran and SHIPPED UNCARDED        -> reported
+
+So this is an **adapter into the generic path**, not a fourth parser: one normalising function plus
+one entry in the stage list, and both panel surfaces pick it up through the machinery cf#853 landed
+with no new rendering code.
+
+**Strict on the degrade, forgiving on the ledgers.** An object with no `degraded` key at all reads as
+`unreadable`, not clean: core always emits that key, so its absence is a shape we do not recognise,
+and reading an unrecognised shape as "ran clean" is the one direction this projection must never fail
+in. A malformed `applied` / `adopted` does NOT decide the band, because the band is a statement about
+the degrade and nothing else.
+
+**`adopted` is carried, and cannot light a badge (fc#1662).** It counts the recovered re-encodes,
+steps whose artifact was found in R2 rather than run. That is the wasted-work signal and it is real,
+but it is not a degrade: a film that reused every step and applied its cards cleanly is not a limited
+film. It rides on the parsed info so a later surface can show it without re-deriving it, with a test
+whose job is to fail if it ever starts lighting the badge.
+
 ### fix(abuse-report): attribute reported keys by derived ownership, and record unbound reports honestly
 
 The report door now derives a reported key's owning project instead of assuming one, and says so in
@@ -399,6 +565,40 @@ of the twelve `ARTIFACT_PREFIXES` members is classified derivable or not and tha
 partition the list, so a thirteenth prefix cannot arrive without someone deciding which side it is
 on. Controls in both directions: an in-project key is accepted and removed, an out-of-project key is
 refused and its original survives, and a broken lookup still files the report.
+
+### fix(finish): a single shared CSAM needle, and a guard that keeps it single (GHSA-qgx2-5crw-9m4j)
+
+The CSAM refusal discriminator is now declared **once**, in `modules/_shared/finish-soft-degrade.ts`,
+and `modules/cloud-keyframe/src/image-gen.ts` imports it instead of declaring its own. A refusal is a
+HARD FAIL and never a polish degrade; that was always the intent, and it is now enforced by one
+predicate rather than promised by a docstring.
+
+Details of the prior behaviour are in advisory **GHSA-qgx2-5crw-9m4j**.
+
+**The drift surface is closed, not just the drift.** `tests/csam-needle-one-copy.test.ts` scans the
+shipped trees and fails if any file other than the single source applies a string test to a CSAM
+needle, so a second copy cannot be reintroduced. It carries its own controls: a positive control that
+the scanner can still see the real needle, so the count cannot pass vacuously on an empty population
+if the predicate is ever renamed out of its reach; a check that it does NOT flag the three `finish-*`
+modules that legitimately BUILD a `"csam refusal: "` message after calling the shared discriminator,
+because a guard that cries wolf on a legitimate caller is a guard someone disables; and it was
+verified by injecting a second matcher into a real file and confirming it named the exact file and
+line rather than only passing on synthetic input.
+
+**Widening is one-way, and that is documented in the code.** A false negative on this predicate is a
+missed refusal; a false positive is a film that hard-fails and gets looked at. Those costs are not
+comparable, so the needle only ever grows.
+
+**Two structural lessons kept in the code rather than here**, because they generalise past this fix:
+
+- `BACKEND_SOFT_DEGRADE` exists in that same file so "the four call sites cannot drift into four
+  spellings of it". Sharing a constant to prevent drift while duplicating the predicate beside it is
+  the shape to watch for; the comment says so at the point where someone would repeat it.
+- The existing suite was green throughout, because its positive cases were written against the same
+  single spelling as the implementation. **A test that shares its input vocabulary with the code it
+  tests cannot observe a divergence from a second implementation elsewhere.** That reasoning is now a
+  header comment in `tests/finish-soft-degrade-csam.test.ts` so the pattern is not restored. The new
+  cases were driven RED before the fix, against all three consumers rather than the predicate alone.
 
 ### fix(modules): drop provider response bodies from thrown errors and returned error strings, keeping enumerated fields
 
