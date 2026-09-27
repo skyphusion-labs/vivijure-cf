@@ -176,8 +176,17 @@ export async function callOpus(
   });
 
   if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`anthropic ${resp.status}: ${errText.slice(0, 300)}`);
+    // cf#223: this body is NOT ours. An Anthropic 4xx echoes the offending request content, and
+    // this module's input is the user's STORYBOARD -- so 300 raw characters of it were reaching a
+    // thrown message, and from there both the `error` string this module returns AND
+    // `output.notes`, which is persisted and rendered in the planner. Anthropic's own error `type`
+    // is drawn from an enumerated set and is safe; the prose is dropped.
+    let detail = "";
+    try {
+      const e = (await resp.json()) as { error?: { type?: string } };
+      if (e?.error?.type) detail = ` (${e.error.type})`;
+    } catch { /* non-JSON error body; status alone is enough */ }
+    throw new Error(`anthropic ${resp.status}${detail}`);
   }
   const text = extractAnthropicText(await resp.json());
   if (!text) throw new Error("anthropic returned no text content");
