@@ -17,7 +17,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 from PIL import Image
 
 from bearer import bearer_middleware, require_bearer_config
-from url_guard import guarded_get, guarded_put, validate_fetch_url
+from url_guard import guarded_get, guarded_put
 
 # rembg is intentionally NOT imported at module load. `import rembg` pulls in
 # pymatting, which JIT-compiles numba kernels on import (~46s on a cold cache,
