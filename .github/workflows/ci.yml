@@ -388,9 +388,9 @@ jobs:
   # SECURITY GATE (fc#859): a v* tag can point at ANY commit, including one that never merged.
   # The org tag ruleset enforces deletion + non_fast_forward only, so `git tag v9.9.9 <unmerged>
   # && git push origin v9.9.9` would deploy unreviewed code to prod, routing around branch
-  # protection. This refuses that. It runs on ubuntu-latest -- NOT the deploy job's
-  # node:22-alpine container, which ships without git -- so actions/checkout produces a real
-  # repository and merge-base can walk main. Same tag-only condition as `deploy`: this repo
+  # protection. This refuses that. It has always run on ubuntu-latest with a real git checkout, so
+  # merge-base can walk main; before cf#809 the deploy job could not host this check at all, because
+  # it ran in a container image without git and actions/checkout fell back to the REST API. Same tag-only condition as `deploy`: this repo
   # publishes ONLY on a v* tag (deploy is itself gated on refs/tags/v*), so there is no
   # branch-dispatch publish path to guard.
   assert-on-main:
@@ -472,23 +472,60 @@ jobs:
     needs: [ci, container-tests, migrations-gate, assert-on-main, assert-tag-version]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    container: node:22-alpine
-    timeout-minutes: 15
+    # cf#809: this job used to run in `container: node:22-alpine`, and #798 broke it the moment it
+    # merged. The [[containers]] block added there sets `image` to a LOCAL Dockerfile path, and
+    # `wrangler deploy` builds that image with the Docker CLI before it uploads anything -- the
+    # alpine image has neither the CLI nor a daemon, so the FIRST v* tag after #798 would have died
+    # at "Deploy core worker", whatever that tag was cut for.
+    #
+    # Measured on b531015, same tree, same command, one flag apart:
+    #   npx wrangler deploy --dry-run --containers-rollout=none  -> RC=0, names the container app
+    #   npx wrangler deploy --dry-run                            -> RC=1, "The Docker CLI is needed
+    #                                                               to build the configured image
+    #                                                               before deploying (even in
+    #                                                               dry-run mode)"
+    #
+    # And NO gate could see it: bundle-gate passes --containers-rollout=none, which is exactly the
+    # flag that skips the build. Green everywhere, reachable only by pushing a tag.
+    #
+    # So the job runs natively on the runner, which ships Docker. Node comes from setup-node instead
+    # of from the image. The steps below were written for BusyBox ash and are plain POSIX, which
+    # bash runs unchanged; the package installs they did at runtime are now presence assertions.
+    timeout-minutes: 30 # the ffmpeg image build is now part of this job, not just the upload
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      # Ancestry gate lives in assert-on-main (ubuntu-latest + real git checkout). Do NOT repeat it
-      # here: node:22-alpine checkout falls back to REST API (no .git), so git fetch always fails.
+      # Ancestry gate lives in assert-on-main. Do NOT repeat it here -- one definition of that
+      # invariant, in the job whose whole purpose is to assert it.
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # The 3 CPU containers (video-finish / image-prep / audio-beat-sync) are NOT built or deployed
-      # here. CF Containers were dropped in wrangler.toml migration v2-drop-cpu-containers (issue #83);
-      # they run always-on on the operator's container host as Docker services, deployed out of band via
-      # containers/compose.yaml. `wrangler deploy` ships ONLY the workers, so no Docker/buildx needed.
+      # Prove the container toolchain BEFORE anything is deployed. `wrangler deploy` needs the
+      # Docker CLI for the [[containers]] image, and a missing CLI must stop the job here rather
+      # than halfway through, with the module workers already live and the core not.
+      - name: Assert the container build toolchain is present
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing on this runner -- wrangler cannot build the [[containers]] image (cf#809)"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon not reachable -- wrangler cannot build the [[containers]] image (cf#809)"; exit 1; }
+          echo "docker OK: $(docker --version)"
+
+      # SUPERSEDED by #797/#798, and left here corrected rather than deleted because the old text
+      # said the exact opposite and someone will come looking for it. video-finish is BACK on
+      # Cloudflare Containers (migration v3-finish-container, class FinishContainer), so the
+      # "Deploy core worker" step below DOES build and push containers/video-finish/Dockerfile --
+      # that is why this job needs Docker (cf#809). The other CPU containers (image-prep,
+      # audio-mix, audio-beat-sync, audio-master) are still out-of-band images and are not built
+      # here; only the one declared in a [[containers]] block is.
 
       # Module workers deploy BEFORE the core. The core binds each module as a [[services]] dependency,
       # and a binding to a not-yet-deployed service makes the core `wrangler deploy` fail. Deploying
@@ -501,11 +538,11 @@ jobs:
       # [[services]] target the list omits, turning the next core deploy into a dangling-binding
       # failure. Deploying every module dir closes both gaps. If a module ever must be skipped, add
       # its dir name to EXCLUDE below (explicit, reviewable) -- do NOT reintroduce an include-list.
-      # POSIX sh ONLY: this job runs in `container: node:22-alpine`, whose /bin/sh is BusyBox ash, and
-      # GitHub's default `run:` shell there is `sh` (not bash). No bash-isms -- no `shopt`, no `arr=()`
-      # arrays, no `${#arr[@]}` -- or the step dies with exit 127 (v0.6.1 failed exactly this way:
-      # `shopt: not found`). A plain glob `for` loop is portable; an unmatched glob stays literal, so
-      # we test `[ -f "$toml" ]` to handle the empty case.
+      # POSIX sh, KEPT DELIBERATELY after cf#809 moved this job off `container: node:22-alpine`.
+      # The alpine shell that forced it is gone (bash runs this unchanged), but v0.6.1 died here
+      # with `shopt: not found` and portable is the cheaper default -- no `shopt`, no `arr=()`
+      # arrays, no `${#arr[@]}`. A plain glob `for` loop is portable; an unmatched glob stays
+      # literal, so we test `[ -f "$toml" ]` to handle the empty case.
       # No secret step here BY DESIGN: module secrets (RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID / GATEWAY_ID)
       # are bound declaratively from the account-level Cloudflare Secrets Store via [[secrets_store_secrets]]
       # in each module's wrangler.toml, so `wrangler deploy` re-establishes them every run. A fresh-create
@@ -602,7 +639,8 @@ jobs:
       # (so the account AUD / resource IDs are not in the public repo); it is rendered fresh here.
       # MUST run BEFORE "Apply D1 migrations": wrangler d1 needs the rendered wrangler.toml to
       # resolve the D1 binding + migrations_dir (the gitignored config does not exist until here).
-      # node:22-alpine has no envsubst, so add gettext (POSIX sh). The explicit SHELL-FORMAT var list
+      # envsubst comes from the runner image now, not from a package install (cf#809); it is asserted
+      # present rather than installed. The explicit SHELL-FORMAT var list
       # means ONLY these placeholders substitute -- any other ${...} in the file is left untouched.
       - name: Render core wrangler.toml
         env:
@@ -644,7 +682,7 @@ jobs:
           FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
         run: |
           set -eu
-          apk add --no-cache gettext >/dev/null
+          command -v envsubst >/dev/null 2>&1 || { echo "::error::envsubst (gettext) missing on this runner"; exit 1; }
           # Fail loud on an unset AUTH_MODE (do NOT default): a silent default mis-postures prod, and
           # since the v0.12.0 flip removed the whole-hostname Access app, an accidental var deletion must
           # break the render rather than quietly ship the wrong door. Mirrors deploy.sh (requires AUTH_MODE).
@@ -751,11 +789,11 @@ jobs:
       # back a deploy; it turns an accidentally-OPEN studio into a RED CI run instead of a silent
       # ship (the automatic version of the v0.12.0 live matrix). No new secrets: the hostname is the
       # route pattern already in the rendered wrangler.toml. Edge propagation can lag, so a non-403
-      # is retried for ~60s. POSIX sh (BusyBox ash in node:22-alpine); no bash-isms.
+      # is retried for ~60s. Plain POSIX sh; no bash-isms (cf#809).
       - name: Post-deploy gate self-check
         run: |
           set -eu
-          command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl missing on this runner -- cannot run the post-deploy gate self-check"; exit 1; }
           # Derive the hostname from the rendered route pattern; strip a trailing /* if it is a path
           # pattern. A workers.dev / route-less deploy has no pattern -- skip rather than false-alarm.
           HOST="$(grep -oE 'pattern = "[^"]+"' wrangler.toml | head -1 | sed -E 's/^pattern = "([^"]+)"$/\1/' | sed -E 's#/\*?$##')"
@@ -790,7 +828,7 @@ jobs:
       # edge until purged. Gated exactly like ENABLE_WFP_DISPATCH: a community
       # self-host sets none of the three values below, so this is a clean no-op (exit 0). Only when a
       # zone id, purge host, and a purge-scoped token (NOT the deploy token) are all set do we purge.
-      # POSIX sh (BusyBox ash in node:22-alpine); no jq/python in the image, so we grep the JSON.
+      # Plain POSIX sh, and we grep the JSON rather than take a jq dependency (cf#809).
       - name: Purge Cloudflare edge cache (/welcome)
         env:
           CF_ZONE_ID: ${{ vars.CF_ZONE_ID }}
@@ -801,7 +839,7 @@ jobs:
             echo "cache purge not configured, skipping"
             exit 0
           fi
-          command -v curl >/dev/null 2>&1 || apk add --no-cache curl
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl missing on this runner -- cannot purge the edge cache"; exit 1; }
           echo "Purging edge cache for https://${CF_PURGE_HOST}/welcome and https://${CF_PURGE_HOST}/ (zone ${CF_ZONE_ID})"
           CODE="$(curl -s -o /tmp/cf_purge_resp.json -w "%{http_code}" -X POST \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
@@ -825,8 +863,8 @@ jobs:
       # no-op. Only when BOTH MCP_HOST (the MCP hostname) and MCP_STUDIO_URL (the studio base URL the
       # MCP proxies to) are set do we render wrangler.mcp.toml and deploy. Its two secrets
       # (STUDIO_API_TOKEN, MCP_TOKEN) are seeded ONCE out-of-band (see docs/mcp.md), never in CI --
-      # same doctrine as the module secrets, so no secret value passes through GitHub. POSIX sh
-      # (BusyBox ash in node:22-alpine); no bash-isms.
+      # same doctrine as the module secrets, so no secret value passes through GitHub. Plain POSIX
+      # sh; no bash-isms (cf#809).
       #
       # cf#328: this job deploys ONLY vivijure-studio-mcp (production). The propagandhi / local
       # door (wrangler.mcp.propagandhi.toml, script vivijure-studio-mcp-flatliners) is INTENTIONAL,
@@ -845,7 +883,7 @@ jobs:
             echo "MCP deploy not configured (MCP_HOST / MCP_STUDIO_URL unset), skipping"
             exit 0
           fi
-          apk add --no-cache gettext >/dev/null
+          command -v envsubst >/dev/null 2>&1 || { echo "::error::envsubst (gettext) missing on this runner"; exit 1; }
           export MCP_HOST MCP_STUDIO_URL
           envsubst '$MCP_HOST $MCP_STUDIO_URL' < wrangler.mcp.toml.example > wrangler.mcp.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing var would leave a
