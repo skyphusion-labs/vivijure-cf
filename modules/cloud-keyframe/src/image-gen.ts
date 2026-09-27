@@ -9,6 +9,8 @@
 // reference portraits as Blobs (staged in R2, read via the binding), so generateImage takes Blobs
 // directly. The small helpers are pure + unit-tested.
 
+import { isCsamRefusalReason } from "../../_shared/finish-soft-degrade";
+
 /** Minimal AI binding shape: `.run(model, params, opts?)`. The gateway opt is omitted for FLUX-2
  *  (multipart + gateway-incompatible) and passed for the proxied path. */
 export interface AiRun {
@@ -139,13 +141,19 @@ export function proxiedParams(
  *  storyboard stills. A persistent 3030 is still a HARD FAIL. CSAM refusals are never retried. */
 export const FLAG_RETRY_ATTEMPTS = 3;
 
-export function isCsamRefusal(msg: unknown): boolean {
-  const s = String(msg || "").toLowerCase();
-  return s.includes("csam")
-    || s.includes("child sexual")
-    || s.includes("child pornography")
-    || s.includes("sexual content involving a minor");
-}
+/**
+ * The house CSAM needle, imported rather than reimplemented (GHSA-qgx2-5crw-9m4j).
+ *
+ * This file used to declare the WIDE form while `_shared/finish-soft-degrade.ts` declared a narrow
+ * one that claimed to be "the same as the keyframe door". Two copies of one safety rule, and they
+ * had drifted. The alias keeps the local name so the two call sites below and
+ * `tests/cloud-keyframe.test.ts` are unchanged, but there is now exactly ONE implementation and
+ * `tests/csam-needle-one-copy.test.ts` fails if a second reappears.
+ *
+ * Note the widening direction: the shared needle took THIS file's four wordings, not the other
+ * file's one. The safety matcher that sees more wins.
+ */
+export const isCsamRefusal = isCsamRefusalReason;
 
 export function isFlaggedError(msg: unknown): boolean {
   const s = String(msg || "").toLowerCase();
