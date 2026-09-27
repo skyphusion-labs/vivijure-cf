@@ -36,9 +36,15 @@ async def main():
         client = await _client()
         try:
             r = await client.get("/health")
+            # /health stays open with no credential, always. Swarm and Traefik healthchecks depend
+            # on it, so closing it would break orchestration rather than the auth hole.
             check("unset token: /health 200", r.status == 200)
             r = await client.post("/analyze", json={})
-            check("unset token: work route still reachable (fail-open)", r.status != 401)
+            # cf#893: this case used to assert `r.status != 401` under the label "(fail-open)".
+            # It KEPT PASSING after the gate was closed, because the new refusal is 503 and 503 is
+            # also != 401 -- a test passing for the wrong reason while asserting the opposite of the
+            # behaviour it now covers. Asserting the exact status is what makes it mean something.
+            check("unset token: work route is REFUSED 503, never served", r.status == 503)
         finally:
             await client.close()
 
