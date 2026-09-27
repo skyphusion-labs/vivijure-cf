@@ -16,13 +16,17 @@ function audioUrl(input: MotionBackendInput, cfg: Record<string, unknown>): stri
 export function buildKlingBody(input: MotionBackendInput, cfg: Record<string, unknown>): {
   input: Record<string, unknown>;
 } {
-  const size = cfg.size === "720p" ? "720p" : "480p";
   return {
     input: {
       prompt: input.prompt,
       image: input.keyframe_url,
       audio: audioUrl(input, cfg),
-      size,
+      // cf#935: CONSTANT, not a knob. The provider ignores this field: 480p and 720p both deliver
+      // 832x464. Measured three ways, including a direct submit that bypassed this worker entirely
+      // (RunPod job d159bf34-3f84-41fa-a472-1d3875178638-u1, size 720p requested -> 832x464 returned).
+      // RunPod DOCUMENTS the parameter as required with both values valid, and prices 720p at double,
+      // so do not re-add the enum from their docs: the docs are wrong and the knob costs the user money.
+      size: "480p",
       enable_safety_checker: cfg.enable_safety_checker === true,
     },
   };
