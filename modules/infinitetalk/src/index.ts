@@ -1,7 +1,10 @@
-// infinitetalk: a motion.backend module worker (vivijure-module/2), Kuaishou Kling V2.1 I2V Pro on RunPod.
+// infinitetalk: an audio-driven motion.backend module worker (vivijure-module/2), MeiGen-AI
+// InfiniteTalk on the RunPod PUBLIC endpoint api.runpod.ai/v2/infinitetalk. Portrait plus Cast
+// audio: the mouth follows a line we synthesized, so this door needs a `dialogue` render to have
+// produced audio_url first (see kling.ts audioUrl) and is the only door that lip-syncs rather
+// than inventing speech.
 // Async (same shape as seedance): GET /module.json, POST /invoke (submit -> poll token), POST /poll
-// (check GET /status, finalize to R2 on completion). The second motion.backend backend -> the UI's
-// pick_one hook now has a real choice. Failures are DATA.
+// (check GET /status, finalize to R2 on completion). Failures are DATA.
 
 import {
   MODULE_API,
