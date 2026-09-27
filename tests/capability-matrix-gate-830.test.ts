@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateMatrix,
+  isModuleDirectory,
+  MODULE_ENTRY_FILES,
   type MatrixTransition,
   parseMatrixModules,
   parseRetiredNames,
@@ -189,5 +191,37 @@ describe("vivijure#830 parsers fail closed", () => {
     );
     expect(found.sort()).toEqual(["a", "b"]);
     expect(rows).toBe(1);
+  });
+});
+
+describe("vivijure#831 an empty directory left by a merge is not a module", () => {
+  // Git does not track empty dirs, so a retirement merge leaves the parent behind and every git
+  // instrument reports the tree as correct while readdirSync counts a module that does not exist.
+  // The gate then fails LOCALLY while CI, a fresh checkout, is green.
+  const has = (...paths: string[]) => (p: string) => paths.includes(p);
+
+  it("counts a directory that holds an entry file", () => {
+    expect(isModuleDirectory("seedance", has("modules/seedance/src/index.ts"))).toBe(true);
+    expect(isModuleDirectory("oddball", has("modules/oddball/src/manifest.ts"))).toBe(true);
+  });
+
+  it("CONTROL: does NOT count a directory with no entry file -- the whole defect", () => {
+    expect(isModuleDirectory("ghost", () => false)).toBe(false);
+    // A leftover that still holds junk but no entry file is equally not a module.
+    expect(isModuleDirectory("ghost", has("modules/ghost/README.md"))).toBe(false);
+  });
+
+  it("still skips the _shared helper directory", () => {
+    expect(isModuleDirectory("_shared", () => true)).toBe(false);
+  });
+
+  it("the population and the hook count read the SAME entry-file list, so they cannot describe different sets", () => {
+    expect(MODULE_ENTRY_FILES).toEqual(["src/index.ts", "src/manifest.ts"]);
+    // The discriminator: if someone adds an entry-file kind to one reader and not the other, a module
+    // could be counted by the population and report zero hooks, or the reverse. One list, both callers.
+    expect(MODULE_ENTRY_FILES.length).toBeGreaterThan(0);
+    for (const f of MODULE_ENTRY_FILES) {
+      expect(isModuleDirectory("x", has(`modules/x/${f}`)), f).toBe(true);
+    }
   });
 });

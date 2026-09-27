@@ -26,6 +26,13 @@
 # So the steady state of this file is EMPTY, and a non-empty line is a claim with an expiry.
 #
 # TO USE: add the line, land it, then make the two repo edits in either order, then DELETE the line
-# in the same PR as the second edit (or the gate fails on the stale entry, which is the point).
+# (or the gate fails on the stale entry, which is the point).
+#
+# COUNT THE PRs BEFORE YOU START. This file lives in vivijure-cf, so the line can only be deleted by
+# a vivijure-cf PR. If the SECOND of the two edits is the hub one, deleting the line cannot ride with
+# it and the sequence is THREE PRs, not two:
+#   cf-first : (1) cf edit + line   (2) hub edit   (3) cf PR that deletes the line
+#   hub-first: (1) hub edit         (2) cf edit + line deleted in the same PR   -- two PRs
+# Neither order is wrong and both stay green throughout; hub-first is simply one PR shorter.
 
 kling retiring cf#921
