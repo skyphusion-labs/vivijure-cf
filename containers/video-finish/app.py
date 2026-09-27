@@ -440,7 +440,7 @@ async def _finish_work(body):
     # peak disk to a fixed working set instead of 3-4x total input. Absent a pool the behaviour
     # is exactly as before, so an older Worker is unaffected. remuxAudioOnly is a single-clip
     # remux with nothing to batch.
-    partial_urls = _parse_partial_urls(raw)
+    partial_urls = _parse_partial_urls(body)
     if partial_urls and not remux_audio_only:
         return await _finish_chunked(body, partial_urls, t0)
 
