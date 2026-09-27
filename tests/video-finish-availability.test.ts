@@ -228,3 +228,32 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     expect(videoFinishReason("provisionable")).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
   });
 });
+
+describe("cf#810 the bound tier reports AVAILABLE with no URL", () => {
+  // This is the guard on the repoint. The end state unsets VIDEO_FINISH_URL because the door
+  // replaces it, and without this the panel greys out a film tier that works.
+  const door = { fetch: async () => new Response("{}") };
+
+  it("a door with NO url is available, and reports no unavailability reason", () => {
+    const env = { VIDEO_FINISH_DOOR: door } as never;
+    expect(videoFinishState(env)).toBe("available");
+    expect(videoFinishReason(videoFinishState(env))).toBeNull();
+    // ABSENT KEY MEANS AVAILABLE. A bound tier must say nothing at all.
+    expect(videoFinishHooksUnavailable(env)).toEqual({});
+  });
+
+  it("the negative: no door and no url is NOT available", () => {
+    const env = {} as never;
+    expect(videoFinishState(env)).toBe("provisionable");
+    expect(videoFinishReason(videoFinishState(env))).not.toBeNull();
+    expect(Object.keys(videoFinishHooksUnavailable(env)).length).toBeGreaterThan(0);
+  });
+
+  it("a door beats an unprovisionable LABEL, because an observation beats a label", () => {
+    const labelled = { VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never;
+    expect(videoFinishState(labelled)).toBe("unprovisionable");
+
+    const bound = { VIDEO_FINISH_TIER_STATE: "unprovisionable", VIDEO_FINISH_DOOR: door } as never;
+    expect(videoFinishState(bound)).toBe("available");
+  });
+});

@@ -58,6 +58,7 @@
 // Scope note: this describes the FILM path. A clips-only render is unaffected by construction, and
 // the scatter path degrades through its own gates in the same family.
 
+import type { VideoFinishDoorHost } from "./video-finish-binding";
 import type { Env } from "./env";
 
 /**
@@ -175,10 +176,24 @@ export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
  * true for every studio. NOTHING sets this var today: the plane-side half (who sets it, and when) is
  * a control-plane decision, not a panel one.
  */
-type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE">;
+type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> &
+  Partial<VideoFinishDoorHost>;
 
-/** Which state this studio is in. A public URL (or the default Traefik origin) is available. */
+/** Which state this studio is in. A bound container, or a public URL, is available.
+ *
+ *  cf#810: THE BINDING IS CHECKED FIRST, and this is not a preference, it is the file's own rule
+ *  applied to a case that did not exist when it was written. The header above says a studio that has
+ *  the tier bound "cannot display these words at all, by construction ... an observation beats a
+ *  label". Until cf#810 the only observation available was a URL. Now there is a real Durable Object
+ *  binding, and it is the STRONGER observation: a URL is a string someone typed, the door is a
+ *  container this deploy can actually reach.
+ *
+ *  This is load-bearing for the repoint, not a tidy-up. The end state of cf#810 UNSETS
+ *  VIDEO_FINISH_URL, because the door replaces it. Without this line that unset would flip a working
+ *  film tier to "unavailable" and the panel would grey out capability that works -- the exact
+ *  failure this file exists to prevent, arriving through the change meant to fix the tier. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
+  if (env.VIDEO_FINISH_DOOR) return "available";
   if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
   return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
 }
