@@ -3,9 +3,9 @@
 // runtime or spend. The video-URL parse, poll token, and RunPod-GC helpers are shared, vendored
 // per-module so the module stays independent (matches the seedance/hailuo reference).
 //
-// Phase 1 (#172): video-only. generate_audio defaults false; the core's score/mux chain owns audio,
-// exactly like the seedance/hailuo reference. Expose generate_audio as an opt-in config bool so
-// native Veo audio is a one-line enable later.
+// generate_audio defaults TRUE (config_schema default + `cfg.generate_audio !== false`): Veo's
+// own talking audio ships by default, and the config bool is an opt-OUT (off: silent clip) rather
+// than the opt-in #172 first specced.
 
 import type { MotionBackendInput } from "./contract";
 

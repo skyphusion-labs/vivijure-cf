@@ -342,6 +342,9 @@ secret_name = "R2_S3_SECRET_ACCESS_KEY"
 # concludes the media path is reachable without a credential and reasons about the entire auth
 # posture from there. A comment that under-claims a control is how the control gets "simplified"
 # by someone who believes it is not load-bearing.
+#
+# CX-8/cf#881 independently found and fixed the same stale "fail-open" wording; superseded here by
+# cf#893 (cf#906/#910), which landed the real fix (and the fail-CLOSED code change to match) first.
 [[secrets_store_secrets]]
 binding = "MEDIA_FINISH_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"

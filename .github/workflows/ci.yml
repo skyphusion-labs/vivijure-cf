@@ -967,8 +967,12 @@ jobs:
           AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
           FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
           FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
-          # #520: the 5 media modules carry a REPLACE_WITH_VPC_*_ID placeholder (no hardcoded prod VPC
-          # service id in the tracked tomls). Filled per-module below from these repo secrets.
+          # #520 ORIGINALLY: the 5 media modules carried a REPLACE_WITH_VPC_*_ID placeholder, filled
+          # per-module below from these repo secrets. NO LONGER TRUE -- CX-8/cf#764, same correction
+          # as the block below (cf#840): zero module tomls declare a VPC placeholder any more, no
+          # script in this repo reads a VPC_*_ID env var, and these three lines substitute nothing.
+          # Left in place rather than deleted for the same reason as the block below: removing the
+          # secrets and this wiring is a separate deliberate change, not a comment fix.
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}
           VPC_AUDIO_BEAT_SYNC_ID: ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}

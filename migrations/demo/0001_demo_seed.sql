@@ -4,7 +4,7 @@
 -- scanned by `wrangler d1 migrations apply`, so it can NEVER auto-apply to the production DB and
 -- pollute the real catalog / project library. The public demo deploy (AUTH_MODE=demo, its own demo
 -- D1, no AI/RunPod/dispatch/R2 bindings) applies it EXPLICITLY, AFTER the base schema:
---   wrangler d1 migrations apply <demo-db>            # base schema: migrations/0001..0010
+--   wrangler d1 migrations apply <demo-db>            # base schema: every migrations/*.sql file
 --   wrangler d1 execute <demo-db> --file=migrations/demo/0001_demo_seed.sql
 --
 -- What it seeds:

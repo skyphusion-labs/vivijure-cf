@@ -44,7 +44,7 @@ import {
   handleCastSourceRemove,
   deleteCastArtifacts,
 } from "./cast-media";
-import { exportCastBundle, importCastBundle } from "./cast-bundle";
+import { CAST_BUNDLE_MAX_IMPORT_BYTES, exportCastBundle, importCastBundle } from "./cast-bundle";
 import {
   TALKING_VOICE_HONOR,
   startCastVoiceSample,
@@ -440,6 +440,17 @@ const hPollCastRefs: Handler = async (_req, env, _c, p) => {
 // allocates a fresh local id.
 const hExportCast: Handler = async (_req, env, _c, p) => exportCastBundle(env, await resolveCastId(env, p.id));
 const hImportCast: Handler = async (req, env) => {
+  // CB-9: the 80MB cap in importCastBundle only fires after the whole body is buffered by
+  // arrayBuffer() below. A Content-Length precheck rejects an oversized upload before that
+  // buffering happens; it is a fast-path only (the header can be absent or wrong under chunked
+  // transfer), so the authoritative cap check in cast-bundle.ts stays as the backstop.
+  const declaredLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > CAST_BUNDLE_MAX_IMPORT_BYTES) {
+    throw new HttpError(
+      413,
+      `bundle too large (Content-Length ${declaredLength} bytes > ${CAST_BUNDLE_MAX_IMPORT_BYTES} cap)`,
+    );
+  }
   const buf = new Uint8Array(await req.arrayBuffer());
   return importCastBundle(env, buf);
 };
@@ -866,41 +877,6 @@ const hAnimateHybrid: Handler = async (req, env, _c, p) => {
 };
 
 // --- render submission / lifecycle ---------------------------------------
-
-// #696: every config map on a render/film submit arrives as unknown JSON. A config map MUST be a plain
-// object -- a module config_schema projects into a { field: value } record, and the invoke-path clamp is
-// forgiving by design, so a string / array / number / null slips straight through and silently degrades
-// the render (a pre-#674 client sent film_finish_config as a JSON STRING; downstream value[subtitle] was
-// undefined, validateConfig clamped to defaults, and subtitle mode=both silently became burn on
-// film-941a4d3b, completing done with no error -- an honest-failures violation). Bounce LOUD at the door,
-// BEFORE any GPU spend, naming the offending field. Mirrors #577 motion_config preflight. An OMITTED
-// field (undefined) is fine; a present non-object (string/array/number/null) bounces. Used by hStartFilm
-// six config maps and hSubmitRender render_overrides bag.
-function assertConfigMapShape(label: string, value: unknown): void {
-  if (value === undefined) return;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    const actual = describeJsonType(value);
-    throw badRequest(label + " must be a JSON object (a { key: value } map), not " + (/^[aeiou]/.test(actual) ? "an " : "a ") + actual);
-  }
-}
-function describeJsonType(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
-}
-// #696 (deep): a per-module config map is object-of-objects -- module -> { field: value }. Check the top
-// level AND every per-module entry, so a nested garbage entry (film_finish_config = { subtitle: "x" })
-// bounces at the door instead of clamping silently downstream (the same defect class as the incident).
-// The flat knob maps (keyframe_config / motion_config) use assertConfigMapShape directly: their values
-// are legitimately scalars, so only the top level is shape-checked.
-function assertModuleConfigMap(label: string, value: unknown): void {
-  assertConfigMapShape(label, value);
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    for (const [name, cfg] of Object.entries(value as Record<string, unknown>)) {
-      assertConfigMapShape(`${label}.${name}`, cfg);
-    }
-  }
-}
 
 const hSubmitRender: Handler = async (req, env) => {
   const b = await readBody<{
@@ -1527,9 +1503,9 @@ const hPollClips: Handler = async (_req, env, _c, p) => {
 // Film orchestrator: the keyframe -> clip handoff. POST starts it (runs the keyframe module), GET
 // advances it across the keyframe -> clips phases. See film-orchestrator.ts.
 /** Attach a presigned download URL to a film summary once the film is assembled (phase "done").
- *  film_key lives in the private R2 render bucket; a presigned GET (24h) lets a caller without CF
- *  Access (e.g. the Slate Discord bot posting into a channel) fetch/share the mp4 directly, with no
- *  size limit and no extra API surface. Absent until the film is done. */
+ *  film_key lives in the private R2 render bucket; a presigned GET (6h, FILM_DOWNLOAD_TTL_SECONDS)
+ *  lets a caller without CF Access (e.g. the Slate Discord bot posting into a channel) fetch/share
+ *  the mp4 directly, with no size limit and no extra API surface. Absent until the film is done. */
 async function withFilmDownloadUrl(env: StudioEnv, summary: FilmSummary): Promise<FilmSummary & { download_url?: string; clip_urls?: { shot_id: string; download_url: string }[] }> {
   if (summary.phase === "done" && summary.film_key) {
     return { ...summary, download_url: await presignR2Get(env, summary.film_key, FILM_DOWNLOAD_TTL_SECONDS) };
