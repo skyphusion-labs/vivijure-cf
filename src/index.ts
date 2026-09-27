@@ -789,7 +789,11 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
     projectId: row.project_id,
     parentId: row.id,
   });
-  return json({ ok: true, ...view }, 201);
+  // fc#2250: carry the retry degrade reason to the caller when there is one. A full retry is a
+  // RE-DERIVATION from the stored bundle and overrides, not a replay, because the renders row does
+  // not persist the submit-time inputs; answering a bare 201 claimed a film this path did not
+  // rebuild. Absent when the retry is faithful (the finalize branch), so the field means something.
+  return json(r.degraded ? { ok: true, ...view, degraded: r.degraded } : { ok: true, ...view }, 201);
 };
 
 const hFinalizePreview: Handler = async (req, env, _c, p) => {
