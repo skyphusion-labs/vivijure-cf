@@ -13,7 +13,6 @@ output matches what the pod used to produce, but runs on a cheap CPU container
 instead of GPU-billed seconds. See docs/video-finish-container.md.
 """
 import asyncio
-import base64
 import json as _json
 import logging
 import math
