@@ -1054,6 +1054,28 @@ jobs:
           # literal ${...}); comment-prose mentioning ${...} is fine, and -F keeps the pattern
           # literal on every grep (the v0.16.2 MCP-guard lesson: '${' as a regex is grep-dependent).
           if grep -v '^[[:space:]]*#' wrangler.toml | grep -qF '${'; then echo "::error::unsubstituted placeholder in wrangler.toml"; grep -nF '${' wrangler.toml | grep -v ':[[:space:]]*#'; exit 1; fi
+          # cf#850, and it is the SIBLING of the line above rather than a second opinion about it.
+          # That guard catches a var MISSING from the $VARS shell-format list, because the literal
+          # ${FOO} survives the render. It CANNOT catch a var that is LISTED AND EMPTY: envsubst
+          # substitutes it to "", the config reads FINISH_UPSCALE_DOORS = "", every guard in this step
+          # passes, and the deploy is green with the door off. That is cf#489 failure mode on the one
+          # path cf#840 did not cover, and a deliberate opt-out renders BYTE-IDENTICALLY to a forgotten
+          # variable. The two together cover the space: missing -> the grep above; empty -> this.
+          #
+          # It REPORTS rather than fails on empty, because the template documents empty as meaningful
+          # ("Empty = that service is off") and the door-list modules read an empty list as "use
+          # RunPod", so a self-host legitimately ships most of these empty. A gate that is wrong about
+          # the ordinary case gets routed around. It hard-fails exactly one CONTRADICTION: a config
+          # that binds [[containers]] while VIDEO_FINISH_URL renders empty, which is a working door
+          # sitting bound while src/video-finish-availability.ts degrades the assemble phase as though
+          # no tier existed.
+          #
+          # NOT on bundle-gate, container-deploy-shape or studio-release: those three render the same
+          # template with EMPTY or dummy substitutions ON PURPOSE, so they would hit that refusal for a
+          # reason that is not a defect. tests/origin-vars-report-cf850.test.ts pins both the single
+          # live invocation here and its ABSENCE there, because this is a control that would be WRONG
+          # if generalised.
+          sh scripts/report-origin-vars.sh wrangler.toml
           # Auth guard (mode-aware since #423): AUTH_MODE must render non-empty, and access mode
           # additionally needs the armed Access vars NON-EMPTY (a blank would unarm -> DENY 503).
           grep -Eq 'AUTH_MODE = ".+"' wrangler.toml || { echo "::error::AUTH_MODE empty after render"; exit 1; }
