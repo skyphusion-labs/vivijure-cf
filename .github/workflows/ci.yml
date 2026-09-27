@@ -187,6 +187,7 @@ jobs:
           containers/video-finish/test_meta_sidecar.py
           containers/video-finish/test_concat_guard.py
           containers/video-finish/test_chunked_contract.py
+          containers/video-finish/test_upload_streams.py
           containers/video-finish/test_ffmpeg_timeout.py
           containers/audio-mix/test_ffmpeg_timeout.py
           containers/audio-master/test_ffmpeg_timeout.py
@@ -207,8 +208,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 13 ]; then
-            echo "::error::expected exactly 13 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 14 ]; then
+            echo "::error::expected exactly 14 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
@@ -258,6 +259,174 @@ jobs:
 
       - name: Bundle the studio worker (wrangler --dry-run, no container build)
         run: npx wrangler deploy --dry-run --containers-rollout=none --outdir=bundle-out
+
+  # CONTAINER DEPLOY-SHAPE GATE (cf#809 follow-up, asked for in the #812 review).
+  #
+  # WHAT bundle-gate ABOVE CANNOT SEE, and why that is not a criticism of it. bundle-gate passes
+  # --containers-rollout=none so it stays Docker-free, credential-free and fast on every PR. That
+  # flag SKIPS the container image build. So bundle-gate answers "does the worker bundle", and it
+  # was read as answering "does the deploy work" -- which is exactly how cf#798 merged green while
+  # arming a deploy failure that only a v* tag could reach. A gate that passes by not performing the
+  # step it is supposed to cover is the failure mode, and this job is the missing step.
+  #
+  # THE REAL BUILD, and it is `wrangler deploy --dry-run` with the rollout flag OMITTED. MEASURED on
+  # the runner, not assumed: that job's log carries 1317 buildkit step lines, 394 apt-get lines, and
+  # all three of the Dockerfile's ffmpeg sanity-encode markers (libx264, drawtext, libass). --dry-run
+  # keeps it credential-free and fork-safe -- nothing contacts the account, nothing is pushed -- and
+  # it still builds, because the image is an input to the bundle wrangler is asked to produce.
+  #
+  # TWO THINGS I GOT WRONG HERE FIRST, recorded so the next reader does not repeat either.
+  #
+  #   1. I briefly concluded this dry-run does NOT build, from a 40-second duration plus a `grep ...
+  #      | tail -40` of the log. Both were bad instruments: 40s is ample for this image on a runner,
+  #      and a truncated, filtered view is not evidence of absence. Counting over the WHOLE log
+  #      settled it in the opposite direction.
+  #   2. The replacement I reached for, `wrangler containers build <dir> --push=false`, CANNOT be
+  #      used here: it requires CLOUDFLARE_API_TOKEN even when it pushes nothing, and this gate must
+  #      run on fork PRs with no secrets. It exits 1 with "In a non-interactive environment, it's
+  #      necessary to set a CLOUDFLARE_API_TOKEN environment variable".
+  #
+  # WHICH IS WHY THE BUILD IS ASSERTED, not assumed, in the step below. The whole point of this gate
+  # is that bundle-gate passes by skipping the build; a future wrangler that stops building in
+  # dry-run would turn THIS gate into the same decoration without anything going red. I could not
+  # tell those two states apart by eye, so the job is not allowed to either.
+  #
+  # WHY IT IS PATH-FILTERED, and why the filter is NARROWER than container-pr-build.yml's. This job
+  # asks "does the DEPLOY SHAPE still assemble", which changes when the wrangler config changes or
+  # when the Dockerfile wrangler is pointed at changes. It does NOT change when a pin moves in
+  # requirements.txt -- container-pr-build.yml owns that question and builds the real image for it.
+  # Filtering this way keeps an ffmpeg build off every unrelated PR and avoids building the same
+  # image twice for a change that only one of the two gates is about.
+  #
+  # WHY IT IS NOT IN container-pr-build.yml, which already has a path filter and buildx: that
+  # workflow's verify job fail-closes on "zero containers selected", deliberately, to catch a
+  # false-zero matrix. A wrangler-config-only change selects zero CONTAINERS while still needing
+  # this gate, so folding it in would have meant weakening that guard to add this one. Two jobs
+  # answering two questions beats one job with a softened assertion.
+  #
+  # TWO JOBS ON PURPOSE. detect -> gate, rather than one job that exits 0 when not applicable. A
+  # not-applicable run must render as SKIPPED, not as a green tick: an absent check reads exactly
+  # like a passed one, and this repo has now been bitten by that twice in one night.
+  container-deploy-shape-detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.pick.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Does this change touch the deploy shape?
+        id: pick
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # On a push (main or a tag) there is no PR base to diff against, and a tag runs the REAL
+          # deploy anyway. Run the gate rather than invent a base.
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "not a pull_request (no base/head sha): running the gate rather than guessing a diff"
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # THE STRUCTURAL DENOMINATOR. Every Dockerfile named by a [[containers]] image line, read
+          # from the config rather than hand-listed, so adding a second container cannot silently
+          # leave this gate looking at the first one forever.
+          IMAGES="$(grep -E '^image[[:space:]]*=' wrangler.toml.example | sed -E 's/^image[[:space:]]*=[[:space:]]*"(.*)"$/\1/' | sed -E 's#^\./##')"
+          echo "Dockerfiles named by [[containers]]:"; echo "${IMAGES}" | sed 's/^/  /'
+          if [ -z "${IMAGES}" ]; then
+            echo "::error::no [[containers]] image line in wrangler.toml.example. Either the block was removed (then remove this gate in the same change) or the parse drifted; refusing to report a pass over an empty set."
+            exit 1
+          fi
+
+          # Three-dot against the merge base, so commits that landed on the base branch after the
+          # branch point are not attributed to this PR. Same rule as the changelog gate.
+          CHANGED="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")"
+
+          NEEDED=false
+          if echo "${CHANGED}" | grep -qx 'wrangler\.toml\.example'; then
+            echo "wrangler.toml.example changed -> deploy shape may have moved"
+            NEEDED=true
+          fi
+          for img in ${IMAGES}; do
+            if echo "${CHANGED}" | grep -qxF "${img}"; then
+              echo "${img} changed -> what wrangler builds has moved"
+              NEEDED=true
+            fi
+          done
+          if echo "${CHANGED}" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "ci.yml changed -> a change to this gate is tested by this gate"
+            NEEDED=true
+          fi
+
+          echo "needed=${NEEDED}" >> "$GITHUB_OUTPUT"
+          echo "deploy-shape gate needed: ${NEEDED}"
+
+  container-deploy-shape:
+    needs: container-deploy-shape-detect
+    if: needs.container-deploy-shape-detect.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      # Same render as bundle-gate: EMPTY substitutions, because this checks the SHAPE of the
+      # config and the build, never account-specific ids. That is what keeps it credential-free.
+      - name: Render a throwaway wrangler.toml from the committed example
+        run: |
+          set -euo pipefail
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          envsubst < .wrangler.hosted.toml > wrangler.toml
+
+      - name: Prove the instrument can see a container at all
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing; this gate cannot make its claim"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon unreachable; this gate cannot make its claim"; exit 1; }
+          grep -q '^\[\[containers\]\]' wrangler.toml || { echo "::error::no [[containers]] block survived the render, so a green result here would mean nothing was built"; exit 1; }
+          echo "docker OK and a [[containers]] block is present; the real build below is a real assertion."
+
+      # NO --containers-rollout=none. That omission IS the gate: it is what makes wrangler build the
+      # [[containers]] image instead of skipping it.
+      - name: wrangler deploy --dry-run WITH the container build
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --dry-run --outdir=shape-out 2>&1 | tee shape-build.log
+
+      # THE CONTROL ON THE CONTROL. A pass here must mean an image was BUILT, and nothing in the
+      # step above distinguishes "built it" from "quietly skipped it" -- which is precisely how
+      # bundle-gate came to be read as covering a step it skips. So the build is proven from the
+      # log's own evidence, and the absence of that evidence is a failure rather than a pass.
+      - name: Prove an image was actually built
+        run: |
+          set -eu
+          if [ ! -s shape-build.log ]; then
+            echo "::error::no build log was produced, so nothing can be claimed about the image"
+            exit 1
+          fi
+          # Any ONE of these only appears when buildkit really ran. CACHED counts: a cache hit is
+          # still a resolved, buildable image, and this runner has no cache on a first run anyway.
+          if grep -qE "exporting to image|sanity-encode OK|^#[0-9]+ (CACHED|DONE)| CACHED$" shape-build.log; then
+            echo "build evidence found:"
+            grep -oE "exporting to image|[a-z0-9()]+ sanity-encode OK" shape-build.log | sort -u | sed 's/^/  /'
+            exit 0
+          fi
+          echo "::error::wrangler exited 0 but produced NO container build output. Either --containers-rollout=none crept back in, or wrangler no longer builds during --dry-run. Do not merge on this green: the gate is not covering the step it claims to. See the header comment above this job."
+          echo "--- last 40 lines of the build log"
+          tail -40 shape-build.log
+          exit 1
 
   # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
   # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
