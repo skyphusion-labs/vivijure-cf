@@ -14,7 +14,7 @@
 
 import { describe, it, expect, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -127,7 +127,7 @@ describe("cf#886: an unmeasured run says so, because absence reads like cleanlin
 });
 
 describe("cf#886: wired next to the var report, and never with the power to refuse", () => {
-  const ci = execFileSync("cat", [".github/workflows/ci.yml"], { encoding: "utf8" });
+  const ci = readFileSync(".github/workflows/ci.yml", { encoding: "utf8" });
 
   it("the deploy render invokes it exactly once, right after the origin-var report", () => {
     const live = ci.split("\n").filter((l) => l.includes(SCRIPT) && !l.trim().startsWith("#"));
@@ -142,7 +142,7 @@ describe("cf#886: wired next to the var report, and never with the power to refu
     // no `|| exit`, no `&&` chain that inverts it, no `set -e` rescue wrapper on the same line
     expect(live).not.toMatch(/\|\||&&|exit/);
     // and the script itself must not carry `set -e`, which would let a failing lookup terminate it
-    const body = execFileSync("cat", [SCRIPT], { encoding: "utf8" });
+    const body = readFileSync(SCRIPT, { encoding: "utf8" });
     expect(body).not.toMatch(/^set -e/m);
     expect(body).toMatch(/^set -u$/m);
     expect(body.trimEnd().endsWith("exit 0")).toBe(true);
