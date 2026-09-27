@@ -23,6 +23,29 @@
 # convenience env would make this gate more permissive than the real deploy, which is the fake-store
 # mistake in a different costume.
 #
+# WHAT THIS GATE STRUCTURALLY CANNOT SEE, stated here rather than discovered during the next
+# incident. A green from this script means "an image built from THIS SOURCE TREE boots and answers
+# /health on an ubuntu-latest runner". It does not mean:
+#
+#   - THE DEPLOYED IMAGE SERVES. cf#851's crashing artifact was registry digest
+#     sha256:324167ae95b8e025aba92726d7d2763e394215c3ff9ddcb9a574a57b69123124 in Cloudflare's managed
+#     registry. This gate builds from the Dockerfile and runs with --pull=never, so it never touches
+#     that digest and cannot be pointed at it without registry credentials and a pull. The two are
+#     normally the same bytes; "normally" is not a gate. Compare the image id this prints against
+#     what the deploy rolled out if that question ever matters.
+#   - IT SERVES UNDER THE PLATFORM'S CONSTRAINTS. Cloudflare Containers runs instance_type
+#     standard-4 with its own memory, disk and port-check timing. A runner has more of everything, so
+#     an image that boots here can still be OOM-killed or time out there.
+#   - ANY ROUTE BUT THE PROBED ONE WORKS. /health is a liveness probe, not a contract test. The
+#     container's real surface (/async/finish, /inspect, /finish) is exercised by
+#     containers/*/test_*.py against the source, not by this.
+#
+# The complement is deliberate and the boundary is the point: the static file-set guard
+# (tests/container-image-file-set.test.py) catches the missing-COPY class before a build and names
+# the file; this one catches anything that stops the process binding its port, whatever the cause.
+# Neither substitutes for the other, and if either is ever read as standing in for the other we have
+# rebuilt cf#857 in a new place.
+#
 # EXIT CODES are distinct so a control can assert WHICH failure happened, not merely that something
 # did. A test that accepts any non-zero cannot tell a working guard from a broken one.
 #   0  served
