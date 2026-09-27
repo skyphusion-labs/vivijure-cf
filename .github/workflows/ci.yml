@@ -1108,6 +1108,27 @@ jobs:
           # live invocation here and its ABSENCE there, because this is a control that would be WRONG
           # if generalised.
           sh scripts/report-origin-vars.sh wrangler.toml
+          # cf#886, and it is REPORT-ONLY BY RULING. The line above says whether a door var is BOUND;
+          # this says whether the host it names resolves. The v1.34.3 deploy is why both exist: the var
+          # report printed "7 bound, 0 empty" on a release where ELEVEN of the thirteen hostnames were
+          # authoritative NXDOMAIN. BOUND is a statement about the CONFIG; this is the cheapest
+          # available statement about the world. ~7 lookups, sub-second, no egress, no credential.
+          #
+          # IT MUST NEVER BE ABLE TO REFUSE. A release gate that depends on a third party being up can
+          # block an unrelated release, and the first time it does that it goes on the bypass list
+          # permanently -- the same family as a jail that can ban your own ingress path. So the script
+          # carries no `set -e`, ends in `exit 0`, and is invoked BARE here: no `||`, no `&&`, nothing
+          # that could convert a warning into a failure. tests/origin-reachability-cf886.test.ts
+          # asserts all of that, including that it still exits 0 when EVERY host fails and when its own
+          # resolver is broken. An HTTP probe here was refused for the same reason, and it would also
+          # need MEDIA_FINISH_TOKEN, putting a credential in a path that needs none.
+          #
+          # Its blind spot is named rather than papered over: a host that RESOLVES but is DEAD reads as
+          # fine. cf#851 is the proof that matters -- that door was a Durable Object binding with no
+          # hostname at all. cf#887 is the readiness surface for "is the tier SERVING now", which is a
+          # different question, and core#327 already ruled the RENDER PATH reads the submit outcome
+          # rather than any predicate.
+          sh scripts/report-origin-reachability.sh wrangler.toml
           # Auth guard (mode-aware since #423): AUTH_MODE must render non-empty, and access mode
           # additionally needs the armed Access vars NON-EMPTY (a blank would unarm -> DENY 503).
           grep -Eq 'AUTH_MODE = ".+"' wrangler.toml || { echo "::error::AUTH_MODE empty after render"; exit 1; }
