@@ -742,28 +742,41 @@ jobs:
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}
           VPC_AUDIO_BEAT_SYNC_ID: ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}
-          # OPTIONAL (cf#482/#480). UNSET IS THE NORMAL STATE and is what ships today: an unset id
-          # makes fill-module-placeholders.sh STRIP the door's [[vpc_services]] and
-          # [[secrets_store_secrets]] blocks, so finish-upscale deploys exactly as
-          # they do now, on RunPod. Referencing a secret that does not exist yields "" here, which
-          # IS the unset state -- so adding these lines changes nothing until someone creates the
-          # secret. Set one only once the matching connectivity-directory service exists.
+          # OPTIONAL (cf#482/#480), AND THESE FOUR NOW HAVE NO CONSUMER -- CORRECTED cf#840.
+          # This comment used to say an unset id makes fill-module-placeholders.sh STRIP the door's
+          # [[vpc_services]] and [[secrets_store_secrets]] blocks. THERE IS NO SUCH STRIP ANY MORE.
+          # Hosted module tomls carry no Workers VPC at all; the script REFUSES a leftover
+          # [[vpc_services]] or ${VPC_ rather than filling or stripping it, and
+          # tests/optional-binding-wiring-cf507.test.ts asserts that ABSENCE across every
+          # modules/*/wrangler.toml. Measured at cf#840: zero module tomls declare a VPC
+          # placeholder, the core wrangler.toml.example declares none either, and no script in this
+          # repo reads a VPC_*_ID env var -- so the VPC_* lines here and in the core render step
+          # below substitute nothing. They are left in place rather than deleted in the cf#840 PR
+          # because removing them is a separate deliberate change and a release was in flight.
+          # The seam an unset id actually strips today is the DOOR URL vars
+          # (FINISH_UPSCALE_DOORS / FINISH_BLENDER_DOORS), and cf#840 made that strip report
+          # itself: fill-module-placeholders.sh now prints BOUND/STRIPPED per declared door var,
+          # with a ::warning:: on each stripped one, so a forgotten variable is distinguishable
+          # from a deliberate opt-out by reading this job's log. Referencing a secret that does not
+          # exist still yields "" here, which IS the unset state.
           VPC_FINISH_UPSCALE_ID: ${{ secrets.VPC_FINISH_UPSCALE_ID }}
           # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
           # deploy stayed GREEN while silently stripping the door blocks. The log line reading
           # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks was the ONLY tell.
           #
-          # THAT IS NO LONGER TRUE AND THE OLD WORDING IS WORTH CORRECTING RATHER THAN DELETING.
-          # This comment used to end "nothing asserts this list against the module tomls that
-          # declare the markers". cf#507 shipped exactly that assertion:
-          # tests/optional-binding-wiring-cf507.test.ts derives the marker set from the module
-          # tomls and fails if any declared marker is absent from THIS env block or from the
-          # optional-var loop in fill-module-placeholders.sh, with a denominator and a negative
-          # control so an empty derivation cannot pass vacuously.
+          # CORRECTED TWICE, AND THE SECOND CORRECTION IS cf#840. This comment first said "nothing
+          # asserts this list against the module tomls that declare the markers", then was updated
+          # to say tests/optional-binding-wiring-cf507.test.ts DERIVES the marker set from the
+          # module tomls and fails if any declared marker is absent from THIS env block or from the
+          # optional-var loop in fill-module-placeholders.sh. That is no longer what the file does:
+          # the VPC marker population went to zero, and the test was rewritten to assert the
+          # ABSENCE of [[vpc_services]] / REPLACE_WITH_VPC_* / ${VPC_ on every module toml. It
+          # asserts nothing about this env block. Read the test, not this comment, for what is
+          # covered -- a comment claiming a property the code lacks is what got cf#840 re-filed.
           #
-          # Left as a correction because the stale sentence actively costs time: it invites a
-          # reader to re-file the gap as open, which is the failure mode it was warning about,
-          # pointed at itself.
+          # Corrected rather than deleted because the stale sentence actively costs time: it
+          # invites a reader to re-file the gap as open, which is the failure mode it was warning
+          # about, pointed at itself.
           VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
           # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
           # normal state and strips the blocks, so adding these lines changes nothing until the

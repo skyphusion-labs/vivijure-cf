@@ -1,8 +1,15 @@
 name: build-media-images
 
 # The five always-on CPU finishing containers (containers/*) -> GHCR as
-# ghcr.io/skyphusion-labs/vivijure-cf-<svc>, for the fleet swarm `vivijure-media` stack
-# (fleet-chezmoi system/swarm/stacks/vivijure-media.stack.yml).
+# ghcr.io/skyphusion-labs/vivijure-cf-<svc>, for an operator running the media stack with
+# containers/compose.yaml (containers/README.md:8-12 publishes these GHCR names as the pinnable
+# artifacts, reached over the VIDEO_FINISH_URL / AUDIO_*_URL door vars).
+#
+# The fleet swarm `vivijure-media` stack these were originally built for is decommissioned
+# (cf#837/cf#838). These images are NOT dead output: the self-host path is documented and live, and
+# video-finish additionally has a hosted consumer built from ./containers/video-finish/Dockerfile
+# rather than from the GHCR image (wrangler.toml.example [[containers]]). What died is the hosted
+# consumer OF THE PUSHED IMAGES, so treat a change here as operator-facing, not internal.
 #
 # Package naming reflects the repo (vivijure-cf-*) so these are unambiguous vs the
 # vivijure-local-* variants built by the vivijure-local repo. Pushing with the built-in

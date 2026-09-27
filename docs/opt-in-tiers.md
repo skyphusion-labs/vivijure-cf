@@ -65,8 +65,8 @@ Each add-on tells you four things:
 > profile or flag is set, so a binding can never dangle.
 >
 > The profile switch: your `deploy.env` sets `VIVIJURE_PROFILE`. **`standard`** (the default) is the
-> core + render + media stack described above. **`satellites`** also deploys the three GPU finish
-> endpoints below. (The old `minimal` / `full` names still work as aliases and print a deprecation
+> core + render + media stack described above. **`satellites`** also deploys the 1 GPU finish
+> endpoint below. (The old `minimal` / `full` names still work as aliases and print a deprecation
 > note: `minimal` -> `standard`, `full` -> `satellites`.) The local-GPU render door is a separate flag,
 > `INSTALL_LOCAL_GPU=1`.
 

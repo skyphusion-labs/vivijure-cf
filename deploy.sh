@@ -369,7 +369,7 @@ VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$D1_DATABASE_ID \$VIDEO_FIN
 
 # Strip the wrangler.toml.example blocks this deploy does not want, then envsubst the rest:
 #   SELFHOST-SKIP -- OUR-fleet-only (e.g. the vivijure-tail consumer); ALWAYS stripped for a self-host.
-#   SATELLITE     -- the 3 opt-in GPU finish modules; stripped unless VIVIJURE_PROFILE=satellites.
+#   SATELLITE     -- the 1 opt-in GPU finish module; stripped unless VIVIJURE_PROFILE=satellites.
 #   LOCAL-GPU     -- the local-GPU door binding; stripped unless INSTALL_LOCAL_GPU=1 (else it dangles
 #                    10143, the local-gpu module being deployed only with a local backend).
 # The media-stack bindings are unconditional (standard, #519) -- nothing strips them.
@@ -576,8 +576,8 @@ cat <<MSG
   Profile: $VIVIJURE_PROFILE. Bring the media-stack containers up on your box:
       docker network create vivijure   # once, if it does not exist
       docker compose -f containers/compose.yaml up -d --build
-  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 3 extra
-  RunPod endpoint ids) and re-run ./deploy.sh.
+  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 1 extra
+  RunPod endpoint id) and re-run ./deploy.sh.
 MSG
 elif [ "$AUTH_MODE" = token ]; then
 cat <<MSG
@@ -588,8 +588,8 @@ cat <<MSG
   Profile: $VIVIJURE_PROFILE. Bring the media-stack containers up on your box:
       docker network create vivijure   # once, if it does not exist
       docker compose -f containers/compose.yaml up -d --build
-  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 3 extra
-  RunPod endpoint ids) and re-run ./deploy.sh.
+  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 1 extra
+  RunPod endpoint id) and re-run ./deploy.sh.
 MSG
 else
 cat <<MSG
@@ -602,8 +602,8 @@ cat <<MSG
   Profile: $VIVIJURE_PROFILE. Bring the media-stack containers up on your box:
       docker network create vivijure   # once, if it does not exist
       docker compose -f containers/compose.yaml up -d --build
-  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 3 extra
-  RunPod endpoint ids) and re-run ./deploy.sh.
+  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 1 extra
+  RunPod endpoint id) and re-run ./deploy.sh.
 MSG
 fi
 

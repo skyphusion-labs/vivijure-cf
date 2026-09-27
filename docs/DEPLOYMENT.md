@@ -98,7 +98,7 @@ Pick a profile with `VIVIJURE_PROFILE` in `deploy.env`:
   always-on CPU containers reached over the `*_URL` vars in `deploy.env`). `deploy.sh` writes the
   compose tunnel token (`containers/tunnel.env`); it does NOT create Workers VPC services. You set the
   media URLs and bring the containers up with `docker compose` (section 5). This is your first deploy.
-- **satellites** -- also the 3 opt-in GPU finish modules that each need a separate RunPod endpoint:
+- **satellites** -- also the 1 opt-in GPU finish module that needs its own separate RunPod endpoint:
   upscale.
 
 How the split works: in `wrangler.toml.example`, opt-in blocks are wrapped in comment markers.

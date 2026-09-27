@@ -266,4 +266,50 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       expect(provisioned, `${name}: provisioned column`).toBe(CATALOG.includes(name) ? "yes" : "no");
     }
   });
+  /**
+   * cf#780 re-trace: THE TABLE BODY WAS GATED AND THE PROSE AROUND IT WAS NOT, so this page drifted
+   * a THIRD time. Population 1 published 36 against a tree of 34, population 2 published 17
+   * against 15, population 3 published 24 against 22, population 4 published 18 against 17, and
+   * the bullet naming the NOT-provisioned modules named four (cf-flux-3-video, cf-grok-video,
+   * cf-hh1-r2v, cf-seedance) that the catalog DOES provision, while omitting five that it does not.
+   *
+   * Every one of those is a count typed beside the thing it describes, which is the precise shape
+   * the preamble of this file forbids. The row-for-row test above could not see any of them,
+   * because it only ever reads lines whose FIRST cell is a module name -- a careful guard with a
+   * corpus narrower than the defect class, reporting the reassuring state.
+   *
+   * This is not cosmetic. The page exists so that a reader who quotes it quotes the right
+   * denominator; the stale bullet told an operator that four PROVISIONED modules could not be
+   * reached by a tenant. That is cf#470 repeating with new names, which is why the fix is a gate
+   * and not an edit.
+   */
+  it("every denominator the PROSE publishes is derived, not typed (cf#780)", () => {
+    const doc = readFileSync(DOC, "utf8");
+
+    // The four population sizes, keyed by population NUMBER so the assertion does not depend on
+    // the wording of the row.
+    const sizes = new Map<string, string>();
+    for (const line of doc.split("\n")) {
+      const m = /^\| ([1-9]) \| .* \| \*\*(\d+)\*\* \|/.exec(line.trim());
+      if (m) sizes.set(m[1], m[2]);
+    }
+    expect(sizes.size, "population rows parsed out of the doc").toBe(4);
+    expect(sizes.get("1"), "population 1: modules in this repo").toBe(String(ENTRIES.length));
+    expect(sizes.get("2"), "population 2: modules writing job-log rows").toBe(String(WRITES_JOB_LOG.length));
+    expect(sizes.get("3"), "population 3: published tenant bundles").toBe(String(publishedToTenants().length));
+    expect(sizes.get("4"), "population 4: provisioned to tenants").toBe(String(CATALOG.length));
+
+    // The /ready invariant is published as a count in prose, not only held by
+    // tests/module-ready-coverage-291.test.ts.
+    expect(doc, "the /ready coverage sentence").toContain(`all ${READY.length} now implement it`);
+
+    // The NOT-provisioned set, asserted as a SET DIFFERENCE for the reason given at the head of
+    // this file: a hand-listed set of names is a copy compared against itself.
+    const notProvisioned = ENTRIES.map((e) => e.name).filter((n) => !CATALOG.includes(n)).sort();
+    const bullet = /\*\*Anything about the other (\d+) modules\*\*([\s\S]*?)\n- \*\*/.exec(doc);
+    expect(bullet, "the not-provisioned bullet").not.toBeNull();
+    expect(bullet![1], "the count that bullet claims").toBe(String(notProvisioned.length));
+    const named = [...bullet![2].matchAll(/`([a-z0-9-]+)`/g)].map((m) => m[1]).sort();
+    expect(named, "the modules that bullet NAMES as not provisioned").toEqual(notProvisioned);
+  });
 });
