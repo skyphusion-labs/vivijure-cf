@@ -5,6 +5,435 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.34.2 -- 2026-09-27
+
+### fix(cast-media): a failed cast-row write answers 404 with a diagnostic, not `200 { cast: null }`
+
+Port of `vivijure-local#351` to the hosted door (cf#754). Every image-registration POST on
+`src/cast-media.ts` answered `200 { cast: null }` when the D1 row write produced no row: a failed
+write reported as a success, with the failure and the success rendering as the same state to any
+caller that does not inspect a field legitimately absent in neither case.
+
+This was never a tidiness fix. The panel assigns `state.cast[idx] = data.cast` before it reads
+anything, so the null landed in panel state; the editor populate then threw a JavaScript
+null-property error instead of naming the write that failed, and the list kept rendering stale data
+until an unrelated re-render hit the null. With a 404 the panel `api()` helper throws
+`Error(body.error)` and every existing catch produces the right message, with no panel change.
+
+**The failure body carries no `cast` field at all.** `404 { cast: null }` would still put null into
+panel state, so the status alone does not close this; both halves are asserted separately.
+
+Measured denominator on `main` at 4e2fe52, because the issue body's count was stale:
+`grep -c "row ? toPublicCast(row) : null" src/cast-media.ts` returned **9**, not two -- 3 doors
+(portrait / ref / source) x 3 entry forms (chat-artifact copy, staged key, raw bytes). Six were
+live defects; the three staged-key sites already threw 404 one line above, so their null arm was
+unreachable dead code. Two further `result.row ? ... : null` dead ternaries in the REMOVE handlers,
+which that grep string does not match, were removed in the same pass: unreachable, but the exact
+shape a new handler gets written by copying.
+
+All nine now route through one `castRowResponse(row, op, id)` helper whose diagnostic names the
+door and the entry form, so the nine 404s stay distinguishable from each other and from the
+`cast not found` 404 for a missing member.
+
+The truthy-`row` delete guard from #753 is KEPT, deliberately. It is redundant against the new
+throw, but the ordering claim lives in the guard, not in the throw, and
+`tests/cast-portrait-delete-ordering-local407.test.ts` still passes. Two cases in that file moved
+from `status: 200` to `status: 404`; their claim (the superseded object survives a row write that
+produced nothing) is untouched, only the expected literal.
+
+Covered by `tests/cast-row-write-404-754.test.ts`: 9 failure cases and **9 positive controls**,
+because nine 404s are otherwise exactly as consistent with nine handlers that never ran. Each
+control proves by the recorded R2 op log and the key handed to the db mock that THAT site executed
+(the copy form reads the source first, the raw-bytes form only puts, the staged form touches R2 not
+at all). The structural guard strips comments before matching and carries a control of its own
+showing each matcher producing a positive, since both this file and `cast-media.ts` quote
+`{ cast: null }` in their prose.
+
+Driven red first: with the source change stashed and the tests kept, 11 of 21 fail (all 9 failure
+cases plus both structural guards), and the 9 controls stay green, which is what a control is for.
+
+### docs(modules): justify the finish ceilings, gate the 1800 crossover (cf#762)
+
+Three modules declare `max_invocation_seconds`, not five: `speech-upscale` and `finish-lipsync` were
+excised and took their 300 and 900 with them. `finish-blender`, `finish-rife` and `finish-upscale`
+each declared **900** with nothing at the edit site saying what that number does.
+
+It is not a local number. Core derives the effective phase deadline in `phaseCeiling`:
+
+```
+required  = FINISH_STEP_MAX_ATTEMPTS(3) * max(declared ceiling over the steps that run next)
+effective = max(PHASE_HARD_DEADLINE_SECONDS(5400), required)
+```
+
+At 900 `required` is 2700 and the floor wins. Above **5400/3 = 1800** the derivation overtakes the
+floor and a GLOBAL per-phase deadline moves for every film whose finish chain can REACH the module,
+including the films that never invoke it, because the derivation takes the max over the steps that
+COULD run next.
+
+**Basis per module, stated at each declaration site.** `finish-blender` keeps 900 because that is the
+worker's own deploy configuration (`EXECUTION_TIMEOUT_MS` default `900000` in `vivijure-blender`
+`deploy.sh`, passed as `executionTimeoutMs` on endpoint create); it is NOT a live reading, and the
+comment says so, because no `vivijure-blender` endpoint exists (RunPod `list-endpoints` returns
+`total: 2`, and the control plane carries no blender pin). **The 5400 proposed by the superseded PR is
+refuted and was backwards:** 5400 is that repo's own `PHASE_HARD_DEADLINE_SECONDS`, the ceiling the
+door must stay UNDER, not a duration the worker permits; its real worst case,
+`declared_budget_seconds("composite")`, is 4320s and is itself a sum of per-leg guards.
+`finish-rife` and `finish-upscale` are declared **uniform with a stated reason** rather than given an
+invented number: rife's endpoint (`vivijure-backend`) reports `timeout: 0`, no execution timeout is
+configured and the Worker sends no per-request `policy.executionTimeout`; upscale's endpoint no
+longer exists at all (cf#757). There is nothing to measure, and saying so is the honest value.
+
+**A comment is not a mechanism, so the threshold is enforced.**
+`modules/_shared/finish-ceiling.ts` derives the crossover from core's two constants (never a typed
+1800) and holds the acknowledgement registry, empty. `tests/finish-ceiling-crossover-cf762.test.ts`
+scans every module's manifest source and fails on a declaration above the crossover with no
+registered acknowledgement, a stale or reasonless acknowledgement, an acknowledgement outliving its
+declaration, or a declaration site that does not name the threshold. It runs core's own
+`phaseCeiling` at 1800 and 1801 rather than restating the arithmetic, and it checks its own
+instrument: the scan must account for every module that mentions the field, so a broken regex cannot
+pass vacuously. Both failure paths were watched RED (rife at 1801; the comment stripped) and
+reverted.
+
+Fix-forward: `modules/_shared/video-finish-404.ts` still claimed no finish-chain module declares a
+ceiling. Three do; corrected, with the stale sentence recorded so the correction is not re-derived.
+
+No behaviour change: every declared value is unchanged at 900, so core's effective ceiling stays on
+its 5400 floor exactly as before.
+
+### test(shared): the served-prefix rule now fails CI when the two repos' lists diverge (cf#789)
+
+The rule "which R2 prefixes are served, and therefore what may be copied into them" was stated in
+four places across two repos, and the lists had already drifted in both directions. Nothing was
+vulnerable; the risk was that widening any one of them silently reopens a closed class in a file
+nobody would think to connect to it.
+
+This adds neither a fifth restatement nor a shared list. It adds the **ICD**: one declared table of
+the intended delta in `docs/CONTRACT.md`, and `tests/served-prefix-icd-789.test.ts`, which checks
+both repos by EXECUTION against their real functions rather than by reading either list.
+
+Why a check and not one source of truth: core's `RENDERS_AUDIO_PREFIXES` is a module-private `const`
+and is not exported, so cf cannot import it, and making it importable is a core change plus a
+publish plus a dependency bump before any drift becomes visible here. The two lists also answer
+different questions -- cf's is "may this be SERVED", core's is "may this be STAGED as audio" -- so
+collapsing them would either widen cf's serve surface or break core's staging.
+
+The declared delta, both directions pinned: `dialogue/` is staged by core and not served by cf;
+`cast/` is served by cf and refused by core. `quarantine/` is refused by both, which cf#789 found was
+true only by accident of construction and is now an assertion.
+
+Watched it go red in both directions, because a drift check that has never seen drift is decoration:
+
+- adding a prefix to cf's `ARTIFACT_PREFIXES` fails the denominator case;
+- adding `cast/` to core's `RENDERS_AUDIO_PREFIXES` fails `core refuses cast/` -- which is literally
+  the failure scenario the issue was filed to prevent.
+
+Carries a positive control on each side, since 9 of the 13 core assertions are of the form "it
+refused" and a core that refused everything would satisfy all nine.
+
+### fix(tests): stop billing the worker entrypoint's import to a single test case (cf#807)
+
+Two cases sat at roughly a 2.7x margin under the 5000ms `testTimeout` and flipped to red on machine
+speed rather than on code. The cause is not that the work is large. It is that both files reached
+`src/index` through `await import("../src/index")` from **inside a test body**, so the one-time cost
+of transforming and importing a 92-route module graph was charged against whichever case happened to
+trigger it first.
+
+Measured on this suite, not inferred from the shape:
+
+- a case whose entire body is `await import("../src/index")` takes **2049ms**; a second import takes
+  **0ms**;
+- the two named cases took **1192ms** and **1194ms** while every sibling case in the same two files
+  took **0-3ms**.
+
+So the case was measuring the import, and the code under test contributed about 1ms.
+
+Denominator, because the population matters: of 251 test files, **41** import `src/index`
+statically, and a static top-level import is paid during collection and is billed to no case.
+**Exactly 2** imported it dynamically from inside a case, and those 2 are precisely the two files in
+the issue. The correlation is total.
+
+The fix hoists the import into `beforeAll`, which is charged to `hookTimeout` (10000ms) rather than
+to any case. A static import, which is what the other 41 suites use, is **not** available in these
+two files: `vi.mock` is hoisted above the module body, so a static import of `src/index` would run
+the mock factory before the `vi.fn` consts it closes over are initialised.
+
+Result: **1192ms to 23ms** and **1194ms to 24ms**. The margin under the default timeout goes from
+2.7x to about 208x, and the number a case reports is now a property of the code it exercises.
+
+Watched it go red: replacing the hook body with `API_ROUTES = []` fails all 7 cases in
+`patch-module-config-387.test.ts` with `route PATCH /api/modules/:name/config is not in API_ROUTES`,
+so the speedup is not the tests quietly ceasing to run. `testTimeout` is left at its default; nothing
+was raised to buy the pass.
+
+### test(storage): the R2 storage ceiling can now be watched failing in CI (cf#811)
+
+The storage-quota gate can answer 507, and its fail-closed posture can answer 503, and neither had a
+test. `git grep -ln "checkStorageQuota\|R2_STORAGE_QUOTA_BYTES" -- tests/` returned nothing, so the
+control had never been observed going red and a refactor that silenced it would have landed green.
+
+18 cases driving `worker.fetch` at the wire, not `checkStorageQuota` directly. That distinction is
+the point: a unit test of core's function stays green through the exact regression this file exists
+to catch, which is someone deleting the `isPanelStorageSubmitRoute` block from `src/index.ts`.
+
+Telling the two 503s apart is the whole difficulty, and it is why no case here asserts on a bare
+status. The spend gate sits immediately above this one and also fails closed to 503 on a broken
+check, so every case binds a PASSING `SPEND_RATE_LIMITER` and asserts on the MESSAGE. A case that
+asserted only `status === 503` would pass with the storage gate deleted outright.
+
+Covered: the 507 on all four panel-supplement routes; the 503 for an unbound DB and, separately, for
+a usage read that throws; `meter` mode declining to deny and declining to 503; an unrecognised mode
+falling back to `deny` rather than to `meter`; an unstamped ledger still denying at the ceiling; and
+`SPEND_LIMIT_FAIL_CLOSED` having no effect on this gate, which is what stops the two being
+"unified" on the strength of the comment cf#804 corrected.
+
+Nine of the eighteen are CONTROLS, because N refusals are equally consistent with N routes that are
+simply broken in the fixture env: each route is also driven with usage UNDER the ceiling and must be
+admitted, the knob is unset to show the refusal is caused by the knob, and `/voice-sample/keep` must
+NOT be gated so the anchored patterns cannot quietly widen. A DENOMINATOR case asserts the file has
+one route per entry in `PANEL_STORAGE_SUBMIT_PATTERNS`, so a fifth byte-writing route fails here
+rather than going silently uncovered.
+
+Watched it go red, twice, because a gate that has never been seen to fail is decoration:
+
+- removing the gate block from `src/index.ts` fails **9 of 18**, every refusal case, while all nine
+  controls stay green;
+- narrowing `isPanelStorageSubmitRoute` back to core's list alone (the fc#2250 defect shape, where
+  the ceiling denied the front door and left the side door open) fails the same 9.
+
+Test-only. No behaviour change, and `R2_STORAGE_QUOTA_BYTES` remains off by default.
+
+### fix(docs): correct 7 stale denominators in module-readiness-coverage.md, and gate them (cf#829)
+
+The page exists so that a reader who quotes a readiness result quotes the right denominator, and it
+records having got that number wrong twice already. It was wrong a third time, in seven places, and
+it contradicted its own table: the bullet naming the modules a tenant provision does not reach
+named four modules the catalog DOES provision and omitted five it does not.
+
+The table body was gated row for row; the prose around it was not. `expect(doc).toContain("17 of
+34")` covered exactly one number, and the row-for-row check only reads lines whose first cell is a
+module name, so neither instrument could see the population table, the `/ready` sentence or the
+bullet. The suite was green with all seven values wrong.
+
+Corrected, and the prose is now derived rather than typed: population sizes are parsed by
+population number and compared to the measured tree, the `/ready` count is asserted against the
+anchored matcher, and the not-provisioned bullet is asserted as a SET DIFFERENCE. The new gate was
+driven red on all five defect shapes (each of the four population sizes, the `/ready` count, a name
+added to the bullet, a name dropped from it) before being trusted.
+
+### fix(config): stop asserting a Hetzner-era topology in operator-facing config (cf#837)
+
+Three artifacts encoded a topology that cannot work, and the worst of them sat in the file operators
+render their own config from.
+
+**1. `wrangler.toml.example` told operators a Worker route fronts the finish container.** It does not,
+and it cannot: `src/video-finish-binding.ts:3-13` records the cf#810 measurement that killed cf#797's
+premise. Core is a LIBRARY running inside this Worker, so a route on this Worker means the Worker
+fetches itself, and Cloudflare documents that same-zone Worker-to-Worker global `fetch()` fails. The
+comment now says what the var IS in each of the two deploys that exist: with `FINISH_CONTAINER` bound
+the door is the BINDING and the var NAME is only the lookup key core reads
+(`MEDIA_DOOR_FETCHERS.VIDEO_FINISH_URL`, synthesised in `src/orchestrator-env.ts`), so the VALUE is
+never fetched though it must stay non-empty for `src/video-finish-availability.ts` to call the tier
+installed; without the binding the value IS the origin, exactly as before.
+
+**Measured while correcting it, and this part is new:** the hosted deploy injects
+`VIDEO_FINISH_URL=https://video-finish.skyphusion.org` from a repo Actions variable and that hostname
+is **NXDOMAIN**. The hosted core is masked from it because the binding wins first; the two module
+workers that reach the same door over plain HTTPS (`modules/film-titles`, `modules/subtitle`) are not
+masked. Eleven of the thirteen media-door hostnames in those variables are NXDOMAIN. That is live
+deploy state, it is tracked in cf#780 / cf#746, and it is deliberately not changed from a repo PR:
+cf#746 records that emptying `FINISH_BLENDER_DOORS` un-parks a parked GPU endpoint, which is a spend
+decision.
+
+**2. `modules/_shared/video-finish-404.ts` derived a live retry policy from a deleted VIP.** Its
+`P(miss) = 2/3` came from three cloudflared connectors in front of a 3-replica swarm service at
+`10.0.1.90`. The measurement is kept and now labelled HISTORICAL rather than presented as the current
+basis, because it is still the right arithmetic for any door that fans out across replicas (a
+self-hoster with three containers behind a load balancer reproduces the ambiguity exactly) and only
+the ownership of that topology changed. The header now states who the callers actually are, that they
+were NOT migrated to the cf#810 binding, and that against a single-instance door the same streak is
+restart and registration-race tolerance rather than peer arithmetic. `CONTAINER_NOTFOUND_STREAK`
+is deliberately UNCHANGED: the suite already pins that it cannot increment in production shape, so the
+real terminal is the 90-minute `submittedAt` backstop, and re-deriving a number with no live subject
+would be arithmetic about nothing.
+
+**3. `build-media-images.yml` described its output as feeding the decommissioned fleet swarm stack.**
+Corrected to the live self-host path (`containers/compose.yaml`, the GHCR names published in
+`containers/README.md`), with the distinction cf#838 drew kept intact: these images are real
+operator-facing artifacts, and what died is the hosted consumer of the pushed images, not the images.
+
+**The comment is a rule, so it gets a mechanism.** `tests/video-finish-not-a-route-cf837.test.ts`
+asserts against the REAL exported `API_ROUTES` table that no route serves an `async` path, and that
+`studioEnv` synthesises the bound door even when `VIDEO_FINISH_URL` is deliberately set to a
+route-shaped URL on this Worker's own host, which is the deploy that would silently fetch itself.
+Both carry positive controls, because both load-bearing assertions are negatives and a negative over
+an empty collection observes nothing. **Watched red:** inserting `POST /async/finish` into
+`API_ROUTES` fails the first with `expected [ 'POST /async/finish' ] to deeply equal []`, and
+disabling the door synthesis fails the second with `expected null not to be null`, vitest exit 1,
+while the negative control keeps passing so neither failure is a blanket one.
+
+**Fix-forward, found by accident and worth naming.** Adding the corrected comment to
+`build-media-images.yml` turned `tests/local-gpu-strip-cf560.test.ts` RED. That guard DERIVES the
+population of hosted render paths from the workflows, and it enrolled a workflow on a PROSE MENTION of
+`wrangler.toml.example`: build-media-images renders no config at all. The file already states the
+right rule in its own words for the other half of the matcher, "A MENTION IS NOT A CALLER... anchor on
+a line that RUNS it"; it was never applied to the population side. `rendersHostedConfig()` now drops
+comment lines before matching, in both directions, because a `#` line cannot render anything in YAML
+or in a `run:` block. A control that fires on a comment punishes documentation, and the next author's
+cheapest fix is to delete the sentence instead of looking.
+
+The union that made that matcher robust is untouched and was re-proven, not assumed. Two mutations,
+both RED, both restored: deleting the strip from `studio-release.yml` and rendering the template
+directly (the literal historical cf#560 defect) fails 2 of 21 with `expected false to be true`; and
+the vanish shape, where the strip is gone AND the template is named zero times in the whole file
+(`grep -c` = 0), still keeps the path in the population through the `> wrangler.toml` signal and still
+fails. An assertion that can vanish is worse than one that can be wrong, and it still cannot vanish.
+
+Not fixed here: `HOSTED_FINISH_POLL_BOXES = ["jello", "descendents", "badbrains"]` lives in
+`@skyphusion-labs/vivijure-core`, not in this repo, so it is filed there and lands here as a pin bump
+when core is next cut. It is dead code rather than a live defect: `pollVideoFinishAsync`
+short-circuits when the `MEDIA_DOOR_FETCHERS` binding is present.
+
+### fix(tail): the tail pipeline reported success while delivering nothing (cf#838)
+
+`vivijure-tail` shipped the studio's render logs to a self-hosted Loki over Workers VPC. That host is
+deleted. The consumer stayed bound anyway, and **nothing anywhere said so**: measured on the live
+account 2026-09-27, `vivijure-studio` still carried
+`tail_consumers = [{ service = "vivijure-tail" }]`, `vivijure-tail` still carried its `LOKI_VPC`
+binding, and the worker was invoked **549 times in the preceding six hours** (Workers observability
+`/telemetry/query`, `cloudflare-workers` dataset), every one of them a drop. There is no cloudflared
+tunnel left for a monitoring host; `grafana.skyphusion.org` is NXDOMAIN.
+
+That is the worst shape a monitor can take. A tail consumer that drops every batch is
+indistinguishable from one that ships, so the question "are we logging?" answered yes for a quarter.
+
+**Three silent paths, now reported.** `pushToLoki` returned early on a missing binding, swallowed a
+throwing fetch in a bare `catch {}`, and never looked at the response status, so an unbound sink, an
+unreachable sink and a 413 from Loki all produced exactly the same nothing as a successful push. Each
+now emits ONE structured line per invocation, `{"ev":"tail.sink.drop","reason":...,"lines":N}`, with
+`reason` in `sink_unbound` / `sink_unreachable` / `sink_rejected` / `shape_failed` and `lines` as the
+count that did not arrive, so an under-delivery carries its own denominator. A shaping exception was
+silent too and is now `shape_failed`.
+
+**Why that report is not circular:** it lands in `vivijure-tail`'s OWN Workers Logs
+(`[observability.logs]` in `tail/wrangler.toml.example`), a different surface from the sink it feeds,
+which is the only reason a shipper can report its own sink being down. No loop is possible: nothing
+declares `tail_consumers` against `vivijure-tail`, so it is not a tail producer for itself. The worker
+still never throws back into the producer and still does all sink I/O under `ctx.waitUntil`.
+
+**The dark consumer comes off.** `tail_consumers` in `wrangler.toml.example` ships COMMENTED OUT, so
+the next core deploy unbinds it. Same call the MuseTalk excision made about its strip gate (`ci.yml`:
+a control with no subject comes off rather than staying on green). A stock deploy keeps Cloudflare
+Workers Logs (`observability.logs`, live and `persist = true`, measured) plus the status routes, which
+is what `docs/observability.md` already described as enough to operate a single-user studio.
+
+**The shipper is kept, not deleted, and stops being fleet-specific.** It is a documented opt-in tier
+(`docs/opt-in-tiers.md`) and the only dead part was our sink, so `biafra`, "the fleet Loki" and
+"recorded in the private store" come out of `tail/wrangler.toml.example` and `scripts/deploy-tail.sh`
+in favour of the operator supplying their own `LOKI_VPC_ID`. New optional `LOKI_PUSH_URL` var
+(mirrored in the tail worker's hand-authored `Env`) so an operator whose Loki answers on another name
+or port configures it instead of editing source; unset keeps the previous endpoint exactly.
+`LOKI_VPC` is now OPTIONAL in that `Env`, because a deploy without it is a real state the code always
+handled while the type claimed otherwise.
+
+`docs/observability.md` led with a pipeline diagram and a "it looks like the log was dropped, it was
+not, it is in Loki" line, both of which had become false. It now opens with the measured status and
+what the 549 invocations mean, and the network-isolated-Loki section is marked as the retired
+reference topology rather than deleted, because the topology generalises to any operator and only the
+hostnames died.
+
+Seven guards in `tests/tail.test.ts` drive the REAL `tail()` handler (not a stub of the push, which
+would encode an assumption about which branch runs) and assert on the report: each `reason` fires with
+its line count, a 204 accept stays SILENT so the drop line means something, `LOKI_PUSH_URL` is honoured
+and defaults correctly, the handler resolves rather than throwing on a poisoned event, and the reporter
+itself cannot throw. **Watched red:** restoring the original silent bodies fails exactly the four
+reason assertions with `expected [] to have a length of 1`, vitest exit 1, while the 204-silent and
+URL-default cases still pass, then restored.
+
+**Not fixed here, and escalated instead:** `docs/legal/PRIVACY.md` section 3.4 tells a hosted user
+that operational logs go to "a logging system (Grafana/Loki) that the operator runs on their own
+servers, NOT a third-party log vendor". With the consumer unbound, the hosted tier's operational logs
+live in Cloudflare Workers Logs with `persist = true`. That is a published privacy representation
+about the hosted door, not an infra comment, so it is not edited in an infra PR.
+
+### fix(abuse-report): attribute reported keys by derived ownership, and record unbound reports honestly
+
+The report door now derives a reported key's owning project instead of assuming one, and says so in
+the hold note when it cannot. `resolveKeyBinding` returns one of three outcomes per key:
+
+- **bound** -- ownership derived and it matches the reported project. Accepted.
+- **foreign** -- ownership derived and it belongs to a DIFFERENT project. **Refused.**
+- **unbound** -- ownership is not derivable. **Accepted**, and recorded as unbound.
+
+**Unbound is accepted rather than refused, deliberately.** `cast/`, `uploads/`, `character-refs/`
+and `cast-gen/` are where caller-supplied imagery lands, so they are the most likely home of
+genuinely offending content. A door that refused what it could not attribute would make that
+content unreportable, which trades a griefing bound for a takedown path that must not be narrowed.
+The door stays open; what it no longer does is claim an attribution it does not have.
+
+**Derivability is measured against the schema, not assumed.** `renders` carries `project` alongside
+`bundle_key` and `output_key`, so three key spaces resolve by exact match: `renders/` from the slug
+in the key itself, `bundles/` and `out/` by lookup. `cast_members` has no `project_id` and is
+globally slug-unique (`migrations/0001_init.sql`), so everything cast-shaped is deploy-wide by
+construction and genuinely has nothing to bind to. Nothing resolves by scanning a JSON column: a
+`LIKE` over `output_json` would be a guess wearing a lookup's clothes, and a wrong attribution here
+refuses a legitimate report.
+
+**The hold note is the record somebody may act on under a reporting duty**, so it no longer lets
+`project` read as a verified attribution. It now carries `project_is` (naming it as the reporter's
+claim), a per-key `bindings[]` with a closed-set `basis` token, and an explicit `attribution` field
+(`all-keys-bound` / `partially-bound` / `no-keys-bound`) alongside `bound_count` and
+`unbound_count`. `attribution` is a field rather than something a reader derives, because "every key
+attributed" and "no key attributed" would otherwise look identical to someone who did not think to
+divide two numbers, and a person acting on a hold is not going to do arithmetic.
+
+`basis` keeps two facts apart that would otherwise collapse: **`db-unavailable` means the lookup
+could not run, `no-owning-row` means it ran and found nothing.** Could not look is not the same as
+looked and found nothing.
+
+The resolver never throws and a broken lookup does not close the door, matching the posture this
+route already takes on its limiter (metered as a SAFETY route: throttled, never denied by a broken
+check). A safety door that shuts when a database hiccups is a safety door that is not there.
+
+Covered by `tests/abuse-report-key-scope.test.ts`, 18 cases. The denominator case asserts every one
+of the twelve `ARTIFACT_PREFIXES` members is classified derivable or not and that the two sets
+partition the list, so a thirteenth prefix cannot arrive without someone deciding which side it is
+on. Controls in both directions: an in-project key is accepted and removed, an out-of-project key is
+refused and its original survives, and a broken lookup still files the report.
+
+### fix(modules): drop provider response bodies from thrown errors and returned error strings, keeping enumerated fields
+
+A module that calls a provider now reports a refusal using the provider's ENUMERATED fields
+(`error.code`, `error.type`) plus the HTTP status, and never the provider's free-text prose. Where a
+path has no enumerated field, the prose is replaced by `untrustedLabel()` from `src/log-scrub.ts`, so
+two reports of the same refusal still correlate and an operator can still see that a body was present.
+
+Three call sites changed: `modules/image-generate/src/image-gen.ts` on both its OpenAI-direct and
+AI-Gateway paths, and `modules/plan-enhance/src/provider.ts` on its Anthropic path.
+
+**The invariant is now load-bearing rather than hygiene, and is stated in the code and the docs:**
+`modules/plan-enhance/src/index.ts` folds an exception message into `output.notes` and into its
+returned `error`, so "no throw on a provider path carries a fetched body" is what keeps provider text
+out of persisted output. Two gates hold it: `tests/log-scrub.test.ts` behaviourally, against all
+three live call sites through the same specifiers the modules use, and
+`tests/modules-log-scrub-reexport.test.ts` statically, asserting no identifier assigned from a
+response body reaches a thrown template. The static half is file-scoped and says so: a ratchet, not
+a proof.
+
+`src/providers/openai-image.ts` is **deleted**. It had no production importer, so it was a second
+implementation of a live path that nothing ran; a patched file with no importer terminates a search.
+The shared label vocabulary now reaches modules through `modules/_shared/log-scrub.ts`, a re-export
+pointer at `src/log-scrub.ts` on the `modules/_shared/runpod-route.ts` precedent, because a copied
+helper forks at copy time. `src/log-scrub.ts` imports nothing, so a module bundling it gets three pure
+functions and no host coupling.
+
+`docs/privacy-residual-dataset.md` is corrected. Its census said "the studio source" while being
+scoped to `src/`, so every statement in it was true as written and false as read: `modules/` was never
+swept. It now publishes its denominator, carries the commands to reproduce it, and covers both trees.
+
+`tests/image-generate-module.test.ts` asserted that a provider's prose appeared in the returned error
+string, so it pinned the old behaviour in place and went red on this change. Its intent (fail loud on
+a refusal, never soft-degrade, name the model) is kept and the assertion is inverted.
+
 ## v1.34.1 -- 2026-09-27
 
 ### fix(finish): bound the stateless pool under the container application cap (cf#810)
