@@ -1,6 +1,7 @@
 // chatterbox: a `dialogue` module worker (vivijure-module/2). Voices each speaking shot's line with
 // Deepgram Aura-1 on Workers AI, in the cast member's assigned voice, and writes one WAV per shot to
-// R2. The core attaches each audio_key to that shot's FinishInput so finish-lipsync can drive the
+// R2. The core attaches each audio_key to that shot's FinishInput; since cf#783 removed
+// finish-lipsync no finish module consumes it, and it reaches the film through the
 // mouth from it -- the "talking characters" pipeline's audio stage.
 //
 // ASYNC: an Aura-1 synth is a SINGLE BLOCKING env.AI.run (Workers AI is synchronous-only). A whole

@@ -79,7 +79,7 @@ export const MANIFEST: ModuleManifest = {
     },
     strength: { type: "float", default: 1, min: 0, max: 2, label: "preset strength" },
   },
-  // After lipsync (15), before upscale (20): grade at native resolution.
+  // After rife (10), before upscale (20): grade at native resolution.
   ui: { section: "finish", icon: "palette", order: 18 },
   // cf#537, and this line IS the ticket. `finish` is a chain hook, so binding this module used to be
   // the entire enrolment: it ran on every shot of every film and applied a real `filmic_warm` grade
@@ -240,7 +240,7 @@ function passthrough(
 }
 
 /** cf#594 POLL-TIME SOFT DEGRADE, the same decision finish-lipsync, finish-upscale and
- *  speech-upscale already make at their poll sites.
+ *  speech-upscale (since removed, cf#786) already made at their poll sites.
  *
  *  A finish step is POLISH. When the door reports a structured `ok:false` -- it could not polish,
  *  but it did not crash -- the honest answer is the input clip passed through with the reason

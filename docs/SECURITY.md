@@ -31,13 +31,14 @@ front of the worker, not by in-worker code. The Access app covers the whole serv
 - `vivijure.skyphusion.org` (production UI + JSON API). The `*.workers.dev` host is disabled
   (`workers_dev = false`, #349), so the custom domain is the only served hostname.
 
-The Access policy admits a Skyphusion Labs email identity or an Access **service token**. The only
-non-browser caller of `/api` is the **Slate** Discord bot, which authenticates with a service token
-(it sends `CF-Access-Client-Id` + `CF-Access-Client-Secret` on every call). The **GPU backend does
-NOT call `/api` at all** -- it is a RunPod serverless handler that receives work through the RunPod
-job envelope and writes artifacts straight to R2 via boto3 S3, so it never crosses the Access
-boundary. (A legacy production-IP bypass for "internal callers" is being removed in the F2 cutover;
-the GPU backend never needed it on this path, and Slate uses a service token instead.)
+The Access policy admits a Skyphusion Labs email identity or an Access **service token**. Every
+non-browser caller of `/api` (the **Slate** Discord bot, the **vivijure-mcp** agent door, any
+satellite or script) must carry its own Access service token in access mode (it sends
+`CF-Access-Client-Id` + `CF-Access-Client-Secret` on every call); in token mode each instead gets
+its own named token (section 1b-i). The **GPU backend does NOT call `/api` at all** -- it is a
+RunPod serverless handler that receives work through the RunPod job envelope and writes artifacts
+straight to R2 via boto3 S3, so it never crosses the gate. No caller in the stock constellation
+needs a production-IP bypass for `/api/*`; do not add one (see the section 1a caveat).
 
 The auth gate is the front door: it must cover the entire `/api/*` surface -- the in-worker token
 gate in production (section 1b), or, in access mode, the Access app. But the studio does not rest on
@@ -58,8 +59,8 @@ keeps the serve from becoming an arbitrary-object read even if that gate ever fa
 
 **Hardening (F4).** The serve is nonetheless bounded so it cannot become an arbitrary-object read or a
 stored-XSS vector even if section 1 ever fails: the key must pass `isSafeRelKey` (no traversal /
-absolute / scheme / control bytes) AND start with a known artifact prefix (`ARTIFACT_PREFIXES`),
-else `404`; and every response carries `X-Content-Type-Options: nosniff`. The upload routes
+absolute / scheme / control bytes) AND start with a known artifact prefix (`ARTIFACT_PREFIXES`)
+AND not start with `quarantine/` (`isQuarantineKey`, section 9), else `404`; and every response carries `X-Content-Type-Options: nosniff`. The upload routes
 (`/api/upload`, `/api/storyboard/character-ref`, `/api/storyboard/audio-upload`) reject any
 content-type outside their allowlist (no `"bin"` fallback), so a scriptable type (`text/html`,
 `image/svg+xml`) can never be stored and later served back into the operator's authenticated origin.
@@ -78,12 +79,26 @@ and `nosniff` apply identically on every path; the object size is resolved via `
 up front so an out-of-bounds range is answered `416` rather than mistaken for a missing object
 (an R2 `get()` with a bad range returns null, indistinguishable from not-found).
 
+**Presigned artifact URLs (`GET /api/artifact-url/<key>`).** This gated route hands the caller a
+direct, UNAUTHENTICATED R2 GET URL for one artifact (the MCP `artifact_url` path, for a client that
+cannot carry the bearer token to the bytes). The key passes the SAME guard as the serve route
+(`isSafeRelKey` + `ARTIFACT_PREFIXES` + not `quarantine/`), and the object must exist (`R2_RENDERS.head()`),
+else `404`; with no `R2_RENDERS` binding it is `404` too. The lifetime is the `expires_in` query
+parameter clamped to `[60, 3600]` seconds, default `300` when absent or non-numeric
+(`clampArtifactUrlTtl`). The response is `{ key, url, expires_in, content_type, size }`, where
+`content_type` is the STORED type. Be clear about what this grants: until it expires, the URL is a
+bearer capability that anyone holding it can use, with no token, no cookie, and none of this
+worker's headers (`nosniff`, CSP) on the response, because R2 serves it directly. Treat a leaked
+presigned URL as a leak of that one object for up to one hour.
+
 ### 1c. Resource ids are unguessable capabilities (F13)
 The three externally-addressable resource tables (`cast_members`, `storyboard_projects`, `renders`)
-expose a `public_id` -- a UUID v4, 122 bits of entropy (`src/public-id.ts`, migration 0010) -- as
+expose a `public_id` -- a UUID v4, 122 bits of entropy (`@skyphusion-labs/vivijure-core/public-id`,
+`isPublicId`; migration 0010) -- as
 the ONLY id that leaves the core over the API. The internal `INTEGER PRIMARY KEY` never crosses the
 boundary; it stays the join/FK key inside D1. Every RESOURCE `:id` route -- `/api/cast/:id`
-(get/patch/delete/**export**), `/api/storyboard/projects/:id`, `/api/storyboard/renders/:id` -- and
+(get/patch/delete), `/api/cast/export/:id` (GET/POST), `/api/storyboard/projects/:id`,
+`/api/storyboard/renders/:id` -- and
 every request BODY that names a resource (e.g. the planner's cast slots) accepts ONLY the public_id
 and resolves it to a row. (`/api/render/film/:id` is keyed by the film JOB UUID `film-<uuid>`, which
 was already opaque before S9 and is untouched by this change: it is the same capability model
@@ -131,10 +146,11 @@ opt-out.
 > Arming the backstop denies any caller WITHOUT a valid Access JWT. Email-identity and Access
 > **service-token** callers carry one (a service token's JWT has `common_name` instead of `email`;
 > the gate checks the signature + `aud`, NOT an email claim, so service tokens pass). But a
-> **production-IP BYPASS** policy admits traffic with NO JWT -- so the internal callers that today
-> reach `/api/*` via IP bypass (the GPU backend, the Slate bot) would be DENIED the moment the
-> backstop is armed. Before arming, migrate those callers OFF the IP bypass and ONTO Access service
-> tokens (each its own scoped token, per section 4). This both fixes the conflict and is strictly
+> **production-IP BYPASS** policy admits traffic with NO JWT -- so any caller that reaches `/api/*`
+> through an IP-bypass Access policy (none is required by the stock constellation: the GPU backend
+> never calls `/api`, and Slate uses a service token) would be DENIED the moment the backstop is
+> armed. Before arming, migrate any such caller OFF the IP bypass and ONTO an Access service
+> token (each its own scoped token, per section 4). This both fixes the conflict and is strictly
 > stronger than IP allow-listing. Arming without this migration is a self-inflicted outage.
 
 ## 1b. Token mode: built-in studio API token (`AUTH_MODE = "token"`, #423)
@@ -188,31 +204,59 @@ a satellite) gets its OWN named token instead of reusing the operator's, per the
 rule: a leak burns one consumer, a rotation touches one consumer, and the operator login is never
 handed out.
 
-- Mint: `scripts/studio-consumer-token.sh mint <name>` generates a 256-bit token, inserts ONLY its
-  SHA-256 hash into the D1 `api_tokens` table (migration 0009), and writes the plaintext to a
-  local `chmod 600` file exactly once -- it is never printed to the terminal or stored anywhere
-  else. Hand the file's value to the consumer (its `.env`), then delete the file.
-- Revoke: `scripts/studio-consumer-token.sh revoke <name>` (idempotent); `list` shows names +
-  created/revoked timestamps (never hashes' preimages -- there is nothing secret in the table).
+- Mint: `scripts/studio-consumer-token.sh mint <name> <scope> [--out <file>]` (`<scope>` is
+  REQUIRED, `operator` or `consumer`; `<name>` matches `[a-z0-9][a-z0-9_-]{0,63}`) generates a
+  256-bit token, inserts ONLY its SHA-256 hash plus the scope into the D1 `api_tokens` table
+  (migration 0009; `scope` column added by migration 0020), and writes the plaintext to a local
+  `chmod 600` file (default `./<name>.token`) exactly once -- it is never printed to the terminal or
+  stored anywhere else. Hand the file's value to the consumer (its `.env`), then delete the file.
+  Re-minting an existing name fails (`INSERT`, not upsert, on the `name` primary key; a revoked
+  row keeps its name), so a replacement credential is minted under a new name.
+- Revoke: `scripts/studio-consumer-token.sh revoke <name>` (idempotent); `list` shows name, scope,
+  and created/revoked timestamps (never hashes' preimages -- there is nothing secret in the table).
 - The gate (`src/auth-gate.ts`) checks the operator secret first (constant-time), then looks the
   presented token's hash up in `api_tokens` where `revoked_at IS NULL`. A named match
-  authenticates as `api-token:<name>` (visible in observability), same transport rules as the
-  operator token (bearer any method, cookie GET/HEAD only). The deny reason is identical for both
-  classes, so a probe cannot learn which class it missed.
+  authenticates as `api-token:<name>` (visible in observability) with the scope from its own row,
+  same transport rules as the operator token (bearer any method, cookie GET/HEAD only). The deny
+  reason is identical for both classes, so a probe cannot learn which class it missed.
 - FAIL CLOSED: no D1 binding, an unapplied migration, or a D1 outage simply means no named token
-  matches; the operator path is independent and unaffected.
+  matches; the operator path is independent and unaffected. A row whose `scope` is not exactly
+  `operator` or `consumer` is DENIED (never guessed) and logs an `authz.token_scope_invalid` event.
 
-**Scope: full access, not data isolation.** A named token is a full-access credential that happens
-to be independently issuable and revocable -- it is NOT a scoped-down or read-only key. Every valid
-bearer (the operator secret OR any named token) reaches the ENTIRE API identically: the gate
-authenticates the token and records its name in observability (`api-token:<name>`), but no handler
-scopes any project, cast member, or render by the caller's identity. There is no owner column and no
+**Scope: `operator` or `consumer` (cf#520).** Admission (WHO is calling) is followed by
+authorization (WHAT the route requires). Every row of the route table (`API_ROUTES`, `src/index.ts`)
+declares a required scope, and `authorizeRoute` (`src/authz.ts`) admits a `consumer` route for any
+admitted credential and an `operator` route ONLY for an `operator` credential. The scope each
+credential carries:
+
+| Credential | Scope |
+|---|---|
+| Operator secret `STUDIO_API_TOKEN` (token mode) | `operator` |
+| Verified Access JWT, email or service token (access mode / legacy unset) | `operator` |
+| `ALLOW_UNAUTHENTICATED = "true"` dev opt-out (legacy unset mode only) | `operator` |
+| Named token (`api_tokens` row) | the row's `scope`; migration 0020 DEFAULTS every pre-existing row to `consumer` until reissued |
+| Demo visitor (`AUTH_MODE = "demo"`, section 1d) | `consumer` |
+
+The `operator` routes are installation, configuration, or estate-wide state: `GET /api/storage/usage`,
+`POST /api/storage/reconcile`, `GET /api/modules/installed`, `POST /api/modules/install`,
+`DELETE`/`PATCH /api/modules/install/:name`, and `GET`/`PATCH /api/modules/:name/config`. Every other
+route is `consumer`, INCLUDING every DELETE and every spend route (the axis is whose data, not how
+destructive the verb). A scope refusal is `403` with body
+`{ "error": "insufficient scope: this credential is not authorized for this route", "code": "scope_denied" }`
+and header `X-Vivijure-Authz: scope_denied`, and logs an `authz.deny` event carrying the route
+template (never the raw path).
+
+**Consumer scope is NOT data isolation.** A `consumer` token is kept off the operator routes above
+and nothing else: it reaches every consumer route identically to the operator. No handler scopes any
+project, cast member, or render by the caller's identity. There is no owner column and no
 per-consumer data boundary (this is the same single-operator capability model as section 2: all data
 belongs to the one operator, and the per-object capabilities are the unguessable ids: job ids and
-the resource public_ids from section 1c). So a named token can
-read, write, and delete every other consumer's projects, cast, and renders. Issue one to bound
-ROTATION and attribution blast radius (a leak burns one consumer, a revoke touches one consumer),
-never to isolate data between callers. If you need real per-caller data isolation, that is not token
+the resource public_ids from section 1c). So a named token of EITHER scope can read, write, and
+delete every other consumer's (and the operator's) projects, cast, and renders, and can submit spend.
+Issue one to bound ROTATION and attribution blast radius (a leak burns one consumer, a revoke touches
+one consumer) and, with `consumer` scope, to keep a consumer off module install/config and the
+storage ledger; never to isolate data between callers. Mint `operator` only for a consumer that
+actually calls an operator route. If you need real per-caller data isolation, that is not token
 mode -- put Cloudflare Access in front (`AUTH_MODE = "access"`) and add an owner column; token mode
 deliberately does not model it.
 
@@ -231,18 +275,52 @@ token mode is enough. A team, an org, or anything with staff turnover: put Acces
 ## 1d. Demo mode: the public demo studio (`AUTH_MODE = "demo"`, #625)
 
 `demo.vivijure.com` is a Skyphusion-Labs-operated PUBLIC deploy that shows the studio to anonymous
-visitors at ZERO spend. Its posture is a distinct, documented auth mode -- deliberately the INVERSE
-of the section-3 "only `/welcome` and `/health` are public" default: in demo mode the entire READ
-surface is public by design, and there is nothing to write.
+visitors. Its posture is a distinct, documented auth mode -- deliberately the INVERSE
+of the section-3 "`/api/*` is gated" default: in demo mode the entire READ surface is public by
+design, and the write surface is exactly two capped routes (#631 Phase B).
 
 - **Gate (`verifyDemoRequest`, `src/auth-gate.ts`).** `GET`/`HEAD` are open to EVERYONE,
-  unauthenticated. Every mutating method (`POST`/`PUT`/`PATCH`/`DELETE`/anything else) is denied
-  `403` for everyone, credential-independently: a bearer token unlocks nothing, because a demo
-  deploy has no writes to unlock.
-- **Zero-spend is enforced PRIMARILY by ABSENT bindings.** The demo deploy binds none of the money
-  surfaces (no AI Gateway, no RunPod, no R2, no module service bindings, no dispatch namespace), so
-  there is physically nothing to spend even if a request reached a spend path. The demo gate is the
-  independent SECOND barrier at the front door; absent bindings are the first.
+  unauthenticated. `POST /api/demo/render` and `POST /api/demo/chat` (the `DEMO_WRITE_ROUTES` set,
+  the demo's ENTIRE write surface) are also open to everyone, unauthenticated. Every other mutating
+  request (`POST`/`PUT`/`PATCH`/`DELETE`/anything else) is denied `403` for everyone,
+  credential-independently: a bearer token unlocks nothing, because there is no operator path into
+  a demo deploy through the API.
+- **A demo visitor is `consumer` scope (section 1b-i).** Every admitted demo request carries
+  `consumer`, so the `operator` routes (`GET /api/storage/usage`, `GET /api/modules/installed`,
+  `GET /api/modules/:name/config`, and the operator mutations) answer `403 scope_denied` even
+  though they are `GET`s.
+- **`POST /api/demo/render`** (seeded click-to-render, `src/demo-render.ts`). The only input is a
+  seeded `demo_renderable` id (no free text, no uploads). It runs only when `DEMO_RENDER_ENABLED =
+  "true"` AND the demo-scoped `MODULE_LOCAL_GPU` door is bound; otherwise `503` (`reason: "paused"`).
+  Bounds, checked before enqueue: the per-IP `SPEND_RATE_LIMITER` burst limiter (`enforceSpendLimit`,
+  fail closed, section 6), a per-IP daily cap (`DEMO_RENDER_PER_IP_DAILY`, default 3), a global daily
+  cap (`DEMO_RENDER_GLOBAL_DAILY`, default 2000), and a queue depth cap (`DEMO_RENDER_QUEUE_DEPTH`,
+  default 10); the queue is serial (one job running). A cap refusal is `429`, an unknown scene `400`.
+  Poll is `GET /api/demo/render/:id`, keyed by a `crypto.randomUUID()` job id.
+- **`POST /api/demo/chat`** (OSS assistant, `src/demo-chat.ts`). One Workers AI call
+  (`DEMO_ASSISTANT_MODEL`, default a llama-3.3-70b class model) through `env.AI` and the demo's own
+  AI Gateway (`GATEWAY_ID`), which carries a hard daily budget set at provisioning. Bounds, checked
+  BEFORE the model is called: input at most 1500 characters, a pre-model refusal of clear
+  jailbreak / free-LLM-proxy shapes, a per-IP daily cap (`DEMO_CHAT_PER_IP_DAILY`, default 20), and a
+  global daily cap (`DEMO_CHAT_GLOBAL_DAILY`, default 2000); output is capped at 400 tokens. It is
+  NOT behind the `SPEND_RATE_LIMITER` burst limiter; the daily counters and the gateway budget are
+  the bound. Exhaustion is `429`.
+- **Counters store the raw visitor IP.** Both routes count in the demo D1 table `demo_counter`
+  (`migrations/demo/0002_demo_render.sql`) under bucket keys `render:ip:<ip>:<day>` /
+  `chat:ip:<ip>:<day>`, where `<ip>` is the raw `CF-Connecting-IP` value (the literal `global` when
+  the header is absent); every queued render row in `demo_render_queue` also stores the raw IP in its
+  `ip` column. Nothing purges either table. (This is a privacy defect tracked as LG-1 in #764; it is
+  stated here because it is the demo's only stored visitor data.)
+- **Zero-spend holds only for the Phase A binding set.** A Phase A (browse-only) demo binds none of
+  the money surfaces (no AI Gateway, no RunPod, no R2, no module service bindings, no dispatch
+  namespace), so there is physically nothing to spend, and the gate is the independent second
+  barrier. Phase B OPENS `MODULE_LOCAL_GPU` (a demo-scoped GPU door), `AI` + `GATEWAY_ID` (the demo
+  gateway), `SPEND_RATE_LIMITER`, and the `DEMO_*` vars (see `docs/demo-studio.md`, "Binding
+  delta"). With those bound, the demo DOES spend: GPU time on the door's box and Workers AI tokens,
+  bounded by the caps above and the gateway budget, not by absence. RunPod, R2, and frontier-model
+  credentials stay absent in both phases. `DEMO_RENDER_ENABLED` unset or `"false"` (the documented
+  zero-spend posture) pauses renders; the chat route still runs whenever `AI` + `GATEWAY_ID` are
+  bound.
 - **Own seeded D1, no prod data.** The demo binds its own D1 seeded from
   `migrations/demo/0001_demo_seed.sql` (captured module manifests -- see GET /api/modules -- plus fictional
   projects/cast + completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
@@ -252,11 +330,14 @@ surface is public by design, and there is nothing to write.
   mode; the frontend read-only gate (`public/readonly-gate.js`) renders the honest banner and blocks
   mutations client-side BEFORE the network. The server gate is authoritative; the client gate is UX
   on top of it.
-- **CSP: `STUDIO_DEMO_CSP` (`src/asset-response.ts`).** Demo PAGES get `STUDIO_CSP` plus exactly one
-  wider directive -- `media-src 'self' https://assets.skyphusion.net` -- so the showcase films
-  (served from the host-pinned asset origin, no R2 binding needed) play. Every other directive is
-  byte-identical to prod, and a non-demo deploy never serves this policy. All non-page responses keep
-  the locked CSP (section 8).
+- **CSP: `STUDIO_DEMO_CSP` (`src/asset-response.ts`).** Demo PAGES get `STUDIO_CSP` with the
+  host-pinned asset origin `https://assets.skyphusion.net` (`DEMO_MEDIA_ORIGIN`) admitted on TWO
+  directives: `img-src 'self' data: blob: https://assets.skyphusion.net` (the seeded cast portraits)
+  and an added, last `media-src 'self' https://assets.skyphusion.net` (the showcase films; no R2
+  binding needed). When `DEMO_ARTIFACT_ORIGIN` is set to a DIFFERENT origin (the isolated demo R2
+  public origin Phase B render clips are served from), `applyResponseSecurity` appends it verbatim
+  to that `media-src` directive (no wildcard). Every other directive is byte-identical to prod, and
+  a non-demo deploy never serves this policy. All non-page responses keep the locked CSP (section 8).
 - **Cookies / identity.** No token is ever entered on the demo, so no identity cookie is set and the
   server sends no `Set-Cookie` on anonymous responses (live-verified). The client token shim
   (`public/auth-token.js`) writes only an empty, immediately-expiring placeholder cookie via
@@ -293,8 +374,22 @@ not in this regex. Do not mistake loosening/tightening the regex for an entropy 
 
 ## 3. Intentionally public surfaces, and the `/api/modules` projection
 
-Only **`/welcome`** (a 301 redirect to the marketing storefront at https://vivijure.com/; #617 moved the page itself off the Worker) and **`/health`** are reachable
-without authentication, by design; both are reviewed to leak nothing internal. (A demo deploy, `AUTH_MODE = "demo"`, additionally opens the entire `GET`/`HEAD` surface to anonymous visitors while denying every mutation `403`; see section 1d.) On the production
+The auth gate covers exactly `/api/*` (`routeRequest`, `src/index.ts`). Reachable without
+authentication, by design:
+
+- **`/welcome`** (a 301 redirect to the marketing storefront at https://vivijure.com/; #617 moved
+  the page itself off the Worker) and **`/health`** (`{ ok, service, phase }`); both are reviewed to
+  leak nothing internal.
+- **The static studio shell**: the page routes (`/`, `/planner`, `/cast`, `/modules`, `/settings`,
+  their `.html` twins) and every other non-`/api/` path served from the Workers Assets binding
+  (JS/CSS/images under `public/`). This is public BY DESIGN: the shell is the same open-source bundle
+  every deploy ships and carries no data, token, or config; everything it renders comes from
+  `/api/*` behind the gate, and the token prompt is part of the shell. A secret must therefore never
+  be placed under `public/`.
+
+(A demo deploy, `AUTH_MODE = "demo"`, additionally opens the entire `GET`/`HEAD` surface plus
+`POST /api/demo/render` and `POST /api/demo/chat` to anonymous visitors, while denying every other
+mutation `403`; see section 1d.) On the production
 instance `/welcome` and `/health` each sit behind their own path-scoped Cloudflare Access app whose
 policy is a public bypass (everyone for `/welcome`, a production-IP allowlist for `/health`); those
 path-scoped apps are independent of `AUTH_MODE` and do NOT extend to `/api/*`. The public
@@ -306,8 +401,10 @@ it returns only the PUBLIC view of each installed module (name, version, hooks, 
 markers). Internal binding VALUES never cross this projection; an `install`-scope config value
 (e.g. a notify-email recipient) lives only behind the authenticated config route and is never
 emitted here. The projection lists whatever the deploy installed -- the standard `deploy.sh`
-profile installs the full first-party module set (26 module workers as of v0.20.x), so it is
-populated from first boot. If you add a module, keep its secret/internal fields off the projection.
+profile installs the curated `STANDARD_MODULES` list (the `satellites` profile adds the three GPU
+finish satellites; `finish-blender` and `local-gpu` are opt-in), which is a subset of the
+first-party module workers under `modules/`, so it is populated from first boot. When
+`ABUSE_REPORT_URL` is set, the projection also carries `host.abuse_report_url` (section 9). If you add a module, keep its secret/internal fields off the projection.
 
 ## 4. Credential blast radius (least privilege per function)
 
@@ -320,9 +417,25 @@ exactly its function:
   R2 API token MUST be **Object Read & Write** (not bucket/config admin) and scoped to **the render
   bucket only** (`vivijure`). A leaked presign secret then reaches that bucket's objects and nothing
   else. The worker also signs only for the single `R2_S3_BUCKET` it is configured with.
+- **The same R2 S3 key pair, handed to `needs_tenant_r2` modules.** When all four of
+  `R2_S3_ENDPOINT` / `R2_S3_ACCESS_KEY_ID` / `R2_S3_SECRET_ACCESS_KEY` / `R2_S3_BUCKET` are set
+  (`tenantR2FromEnv`), the core attaches them as `InvokeRequest.r2` (`{ endpoint, access_key_id,
+  secret_access_key, bucket }`, core `modules/tenant-r2` `withTenantR2`, called from the registry
+  chain dispatch and `render-orchestrator`) on every `/invoke` to a module whose manifest sets
+  `needs_tenant_r2: true` AND that is first-party (`isFirstPartyModule`: service-bound, not a
+  `dispatch:` WfP binding, locality `local`/`byo`/`cloud` or undeclared). In-repo, `keyframe` and
+  `own-gpu` declare it; each strips it on receipt (`takeTenantR2`) and forwards it in its RunPod
+  job body so the GPU backend writes to that bucket. A WfP/community (dispatch) module NEVER
+  receives it, even if it sets the flag. So the long-lived, bucket-wide Object R/W secret crosses
+  the wire to those workers and on to RunPod on every such job: a compromised or buggy
+  `needs_tenant_r2` module, or the RunPod endpoint it submits to, holds read-and-write over the
+  whole render bucket, not just its job's objects. Only ever set the flag on a module you would
+  trust with that key.
 - **Presigned URLs** are short-lived and key-scoped: the lifetime is clamped to `[1, 604800]`
   seconds and the key is validated by `isPresignSafeKey` before signing, so a hostile expiry or a
-  traversal/scheme-injected key cannot widen the grant (#6).
+  traversal/scheme-injected key cannot widen the grant (#6). The
+  `GET /api/artifact-url/<key>` route clamps tighter, to `[60, 3600]` (section 1, "Presigned
+  artifact URLs").
 - **Per-consumer keys**: the GPU backend, CI deploy, and AI Gateway each carry their own scoped
   token, so rolling or revoking one never touches the others.
 
@@ -337,12 +450,22 @@ schemes, and control/non-ASCII bytes from steering an object reference.
 ## 6. Spend rate limiting (F3)
 
 The render / train / generate routes each submit a RunPod GPU job or paid AI work, so an abused
-session can burn the operator's balance (denial-of-wallet). Every such POST route
-(`/api/storyboard/render`, `/api/render/clips`, `/api/render/film`,
-`.../render-from-keyframes`, `.../renders/:id/animate-cloud|animate-hybrid`,
-`/api/cast/:id/train-lora`, `/api/cast/:id/generate-refs`, `/api/storyboard/score-bed|music-generate`)
-passes a rate limiter before dispatch (`src/rate-limit.ts`, the spend surface is the single
-auditable `SPEND_PATTERNS` list). Backend: the Cloudflare native Rate Limiting binding
+session can burn the operator's balance (denial-of-wallet). Every such route passes a rate
+limiter before dispatch (`src/rate-limit.ts`; `isSpendRoute` matches `POST` only against the single
+auditable `SPEND_PATTERNS` list). As of v1.33.9 that list is:
+
+- GPU submits: `/api/storyboard/render`, `/api/render/clips`, `/api/render/film`,
+  `/api/storyboard/render-from-keyframes`, and under `/api/storyboard/renders/:id/`:
+  `animate-cloud`, `animate-hybrid`, `regen-shot`, `finalize`, `add-narration`, `retry`;
+  `/api/cast/:id/train-lora`, `/api/cast/:id/train-wan-lora`, `/api/cast/:id/generate-refs`;
+  `/api/storyboard/score-bed`, `/api/storyboard/music-generate`.
+- Paid-AI submits: `/api/storyboard/plan`, `/api/storyboard/refine`, `/api/storyboard/enhance`,
+  `/api/chat` (both its text-planner and image-generation branches).
+
+`POST /api/demo/render` (demo deploys only, section 1d) is not in the list but calls the same
+`enforceSpendLimit` inside its handler. `add-audio` is deliberately absent (it muxes an existing
+artifact and dispatches nothing). `tests/spend-surface-render-children.test.ts` fails when a new
+render-child `POST` route is added without being classified. Backend: the Cloudflare native Rate Limiting binding
 (`SPEND_RATE_LIMITER`), keyed by `CF-Connecting-IP`; over-limit returns `429` + `Retry-After`.
 
 Posture: **FAIL CLOSED by default (S9 F7).** A healthy limiter does ordinary rate limiting: it allows
@@ -378,11 +501,17 @@ small JSON metadata -- heavy artifacts live in R2, referenced by KEY, never inli
 generous. A response exceeding it (or an unreadable body) becomes an honest `ok:false` DEGRADE,
 never an unbounded buffer that could OOM/DoS the core Worker.
 
-> **Follow-up (tracked):** runtime validation of a module's terminal OUTPUT against its hook
-> contract (`checkHookOutput`) is NOT yet enforced at runtime -- it runs only in the conformance
-> TEST. The core still trusts the output SHAPE a module returns. See the F5-output-validation issue
-> for the layering decision (the generic invoke/poll transport is payload-agnostic, so enforcement
-> belongs at the per-hook terminal-consumption seams, with a test-fixture sweep).
+**Terminal output validation (#345 / F5b).** The generic invoke/poll transport is payload-agnostic,
+so it does not check a hook's output shape. Instead each orchestrator that CONSUMES a hook runs
+`hookOutputViolation` (core `modules/conformance`, a wrapper over `checkHookOutput`) on the resolved
+output at its terminal seam, and a violation becomes an honest degrade/failure carrying
+`module <id> violated <hook> contract: <detail>` instead of threading a malformed payload
+downstream. As of core 1.22.5 the checked hooks are `keyframe`, `motion.backend`, `dialogue`,
+`speech`, `finish`, `master`, `film.finish` (core `film-orchestrator` / `render-orchestrator`),
+`score` (`src/score-bed.ts`), and `cast.image` (`src/cast-image-orchestrator.ts`). NOT checked at
+runtime: `plan.enhance`, `image.generate`, and `notify` outputs, and the intermediate
+output-to-input fold of a generic chain dispatch; for those the core still trusts the SHAPE a module
+returns (the conformance test is the only gate).
 
 ## 7a. What installing a module grants it
 
@@ -392,12 +521,23 @@ specific assets of the job it serves (e.g. a `finish` module gets a GET on the c
 PUT for its output). So installing a module grants that third-party Worker: (a) READ of the source
 asset it processes for that job, and (b) WRITE of its own output object -- meaning a malicious or
 buggy module can exfiltrate the asset it is handed or poison its own output (ship a garbage or
-hostile clip). That blast radius is deliberately bounded: `InvokeContext` carries only
-`{project, job_id}` and NO secrets; every presigned URL is scoped to one specific key with a short
-TTL; a module NEVER chooses its own output key (all PUT keys are core-derived); and no long-lived
-credential ever crosses the wire. A module cannot reach another job's or another project's assets,
-read a secret, or escalate through the dispatch binding. Treat installing a module as granting it
-read-and-tamper over the render assets it processes -- install only module code you trust, and
+hostile clip). For a module that does NOT declare `needs_tenant_r2`, that blast radius is
+deliberately bounded: `InvokeContext` carries only `{project, job_id}` and NO secrets; every
+presigned URL is scoped to one specific key with a short TTL; a module NEVER chooses its own output
+key (all PUT keys are core-derived); and no long-lived credential crosses the wire to it. Such a
+module cannot reach another job's or another project's assets, read a secret, or escalate through
+the dispatch binding.
+
+**The exception: `needs_tenant_r2` modules.** A first-party, service-bound module whose manifest
+sets `needs_tenant_r2: true` (in-repo: `keyframe`, `own-gpu`) ALSO receives `InvokeRequest.r2`, a
+sibling of `context` carrying the studio's long-lived R2 S3 key pair and bucket (section 4). That
+module can read, overwrite, and delete ANY object in the render bucket, every job and every project,
+until the key is rotated; the per-key presign bound above does not apply to it. The core never
+attaches the block to a WfP/community (dispatch) module, whatever its manifest says, so a
+third-party module installed through the dispatch namespace stays inside the bounded case.
+
+Treat installing a module as granting it read-and-tamper over the render assets it processes (and,
+for a `needs_tenant_r2` module, over the whole bucket) -- install only module code you trust, and
 prefer first-party or provenance-checked modules for any hook on a sensitive render.
 
 ## 8. Response security headers (worker-owned, single source of truth)
@@ -442,18 +582,57 @@ security-header transform above). The chokepoint defaults a non-page response th
 |---|---|---|
 | Static pages + assets (studio pages, JS/CSS) | `public, max-age=0, must-revalidate` | Workers Assets binding (preserved through the chokepoint) |
 | Artifact (`/api/artifact/<key>`) | `private, max-age=300` | `hServeArtifact` (`private` = never edge-cached, so an authenticated artifact never enters a shared cache) |
-| Cast bundle download | `no-store` | `assembleBundle` |
+| Cast bundle download (`/api/cast/export/:id`) | `no-store` | `exportCastBundle` (`src/cast-bundle.ts`) |
 | API/JSON, the 429, marker downloads, any other bare non-page response | `no-store` | chokepoint default (set-if-absent) |
 
 `no-store` on the dynamic/authenticated classes keeps a private API body out of any shared or
 browser cache; the static assets keep the binding's revalidating policy so the edge can still cache
 them (the release-purge flow that flushes the old `/welcome` page and `/` depends on that edge cache existing, #405/#407).
 
+## 9. Abuse reports, the report contact, and log hygiene
+
+**`POST /api/report` is an actual-knowledge quarantine door, not a scanner** (`handleAbuseReport`,
+`src/abuse-report.ts`). Nothing in the studio inspects content; a report from a person is the whole
+detection surface. The route is `consumer` scope, so any admitted credential can call it (it is not
+open on a demo deploy). Body `{ project, reason?, keys? }`: `project` is required (non-empty, at most
+128 characters, no `/` or `..`, else `400 project is required`); `reason` is trimmed and cut to 2000
+characters; `keys` is at most 32 entries (else `400 too many keys`), each passing `isSafeRelKey` and
+not already under `quarantine/` (else `400 unsafe key`). Each key that exists is COPIED to
+`quarantine/<timestamp>/<hold_id>/<key>`, and a `HOLD.json` note (`{ hold_id, project, reason, keys,
+copied, at }`) is written under the same prefix; the response is `{ ok, hold_id, copied, note_key }`.
+What it does NOT do, stated plainly: it does not delete, hide, or block the ORIGINAL objects (they
+stay servable until the operator acts); it does not check that `project` exists or that the keys
+belong to it; `keys` are NOT restricted to `ARTIFACT_PREFIXES`, so a caller can copy any
+safe-keyed object in the render bucket into `quarantine/`; and it is not rate-limited, so each call
+can write up to 33 R2 objects. `quarantine/` is never served back through the API: the artifact
+serve route, `GET /api/artifact-url/<key>`, and `POST /api/render/frames` all `404` a `quarantine/`
+key (`isQuarantineKey`).
+
+**`ABUSE_REPORT_URL` (operator `[vars]`, `src/abuse-contact.ts`).** Where a reporter is sent for
+abuse of THIS studio. The panel hardcodes no address (the same bundle self-hosts, and an operator
+cannot act on someone else's studio); when the var is set, `GET /api/modules` projects it as
+`host.abuse_report_url` and the panel renders the link. `abuseReportUrl` accepts only an absolute
+`http:`/`https:` URL; any other value (a relative path, `javascript:`, `data:`) is dropped with a
+server-side warning and projects nothing. Unset means no field and no link.
+
+**Log lines carry ids, never content (cf#223, `src/log-scrub.ts`).** A studio log line reaches
+whatever sink the deploy has (Workers observability, `wrangler tail`, a Loki shipper) with no
+per-field filter, so the rule is enforced at the call site: project names, cast names, voice
+labels, prompts, and raw R2 keys never go into a log line. Use `keyLabel(key)` (the key's top-level
+prefix plus a stable FNV-1a label of the rest, e.g. `renders/#1a2b3c4d`) for an R2 key, and
+`untrustedLabel(value)` (label plus length) for any externally supplied value; router error and
+`authz.deny` lines log the route TEMPLATE, never the raw pathname. These labels are for joining log
+lines, NOT a security hash: a short input is trivially recoverable from one.
+
 ## Checklist when changing the surface
 
 - [ ] New hostname or route -> confirm the active auth gate still covers it (in production the
       in-worker token gate; in access mode the Cloudflare Access app). `/api/*` must stay gated;
-      only `/welcome` and `/health` are public. (A demo deploy is the deliberate exception, section 1d: all `GET`/`HEAD` is intentionally public, all mutations `403`.)
+      only `/welcome`, `/health`, and the static studio shell are public (section 3). (A demo deploy is the deliberate exception, section 1d: all `GET`/`HEAD` plus `POST /api/demo/render` and `POST /api/demo/chat` are intentionally public, every other mutation `403`.)
+- [ ] New `/api/*` route -> declare its `scope` in `API_ROUTES` (section 1b-i): `operator` if it
+      touches installation, configuration, or estate-wide state; `consumer` otherwise.
+- [ ] New demo write route -> it must be added to `DEMO_WRITE_ROUTES` deliberately, capped, and
+      re-reviewed on the live demo (section 1d); the demo write surface is exactly that set.
 - [ ] New job-keyed OR resource-`:id` route -> the id must be an unguessable `crypto.randomUUID()`
       capability (a job id, or a resource `public_id` per section 1c); never expose or accept a
       sequential integer or other low-entropy id as a capability.
@@ -462,6 +641,10 @@ them (the release-purge flow that flushes the old `/welcome` page and `/` depend
       do not reuse a broader token.
 - [ ] New module response field consumed by the core -> it is UNTRUSTED; validate its shape
       before acting on it (a module is community code).
+- [ ] New module setting `needs_tenant_r2` -> it will receive the bucket-wide R2 S3 key pair on
+      every invoke (sections 4, 7a); set it only if the module truly needs it.
+- [ ] New log line -> ids and `keyLabel`/`untrustedLabel` labels only, never names, prompts, or
+      raw keys (section 9).
 - [ ] Arming the F2 backstop (`ACCESS_TEAM_DOMAIN`/`ACCESS_AUD`) -> first confirm EVERY internal
       caller carries an Access JWT (service token, not IP bypass), or it will be denied.
 - [ ] Token-mode surface change -> `STUDIO_API_TOKEN` stays a worker SECRET (never a var or a
@@ -490,5 +673,10 @@ them (the release-purge flow that flushes the old `/welcome` page and `/` depend
 - #364 / #370 -- worker-owned response security headers (CSP + companions) + the per-class matrix (section 8).
 - #416 -- byte-range media serving on `/api/artifact` + worker-authoritative `Cache-Control` (section 8; the zone cache-bypass rule is optional hardening).
 - #423 -- built-in token auth mode (section 1b); Cloudflare Access becomes optional hardening, not a deploy prerequisite.
+- cf#520 -- per-route `operator` / `consumer` authorization; named tokens carry a scope (section 1b-i, migration 0020).
+- #625 / #631 -- demo auth mode and the Phase B capped demo render + assistant (section 1d).
+- cp#270 -- `InvokeRequest.r2`: the R2 key pair handed to first-party `needs_tenant_r2` modules (sections 4, 7a).
+- #345 (F5b) -- runtime `hookOutputViolation` at the terminal consumption seams (section 7).
+- cf#223 / control-plane#130 -- content-free log labels; the abuse report contact (section 9).
 - [DEPLOYMENT.md](DEPLOYMENT.md) -- per-function key issuance and scopes.
 - [S8 adversarial security audit (2026-07-03)](audits/2026-07-03-s8-adversarial-audit.md) -- independent adversarial read of this control plane, published verbatim once patched; F1/F4 fixed, F2/F3/F5 documented here, F7 default flipped, and the one still-open item (F6 backend half, vivijure-backend#281) named rather than dropped.

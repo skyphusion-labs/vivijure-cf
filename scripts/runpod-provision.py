@@ -27,8 +27,6 @@ on cold start); attach one later via the RunPod API/console if you want warm wei
 FINISH SATELLITES (#522). Pass --satellite to provision a finish endpoint instead of the backend:
 
     python3 scripts/runpod-provision.py --satellite upscale        # video upscale (vivijure-upscale)
-    python3 scripts/runpod-provision.py --satellite lipsync        # MuseTalk (vivijure-musetalk)
-    python3 scripts/runpod-provision.py --satellite audio-upscale  # speech (vivijure-audio-upscale)
 
 A satellite endpoint reads/writes YOUR R2 bucket directly, so it needs the four R2 env vars
 (R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET) on its template -- which this
@@ -72,14 +70,6 @@ SATELLITES = {
     "upscale": {
         "image_repo": "vivijure-upscale", "tag": "0.2.7",
         "endpoint_var": "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID",
-    },
-    "lipsync": {
-        "image_repo": "vivijure-musetalk", "tag": "0.1.0",
-        "endpoint_var": "MUSETALK_RUNPOD_ENDPOINT_ID",
-    },
-    "audio-upscale": {
-        "image_repo": "vivijure-audio-upscale", "tag": "0.1.0",
-        "endpoint_var": "AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID",
     },
 }
 
@@ -131,7 +121,7 @@ def main() -> None:
                     "module docstring.")
     ap.add_argument("--satellite", choices=sorted(SATELLITES), default=None,
                     help="provision a finish SATELLITE endpoint (its image + the four R2 env vars) "
-                         "instead of the backend (#522): upscale / lipsync / audio-upscale")
+                         "instead of the backend (#522): upscale")
     ap.add_argument("--name", default=None, help="template + endpoint name (default: derived from the target)")
     ap.add_argument("--image", default=None, help="image ref (default: the pinned image for the target)")
     ap.add_argument("--allow-latest", action="store_true",

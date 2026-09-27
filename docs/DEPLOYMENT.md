@@ -8,18 +8,21 @@ Vivijure has three pieces:
 1. **The Studio Worker** (this repo) -- a single Cloudflare Worker that owns projects, storyboards,
    cast, and render orchestration, plus a registry of opt-in **module workers** (one per capability).
 2. **The GPU backend** (`vivijure-backend`) -- a container on **RunPod Serverless** that does the
-   heavy lifting: LoRA training, SDXL keyframes, image-to-video, lip-sync.
+   heavy lifting: LoRA training, SDXL keyframes, image-to-video.
 3. **The media-stack CPU containers** (`video-finish`, `image-prep`, `audio-beat-sync`,
-   `audio-mix`, `audio-master`) -- ffmpeg/CPU work that runs always-on on your own box, reached
-   privately over Cloudflare VPC bindings. As of #519 these are part of the **standard** install: the
-   film assembly step runs in `video-finish`, so without the media stack you get a folder of separate
-   clips, not one finished film. `deploy.sh` creates the tunnel + the VPC Services for you; you bring
-   the containers up with `docker compose` (section 5). At render time, if the media tier is
+   `audio-mix`, `audio-master`) -- ffmpeg/CPU work that runs always-on on your own box. The studio
+   reaches them over **public HTTPS origins** you configure (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`,
+   `AUDIO_BEAT_SYNC_URL`, `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`), authenticated with the
+   `MEDIA_FINISH_TOKEN` binding (store secret `FINISH_DOOR_TOKEN`); Workers VPC is no longer used for
+   media. As of #519 these are part of the **standard** install: the film assembly step runs in
+   `video-finish`, so without the media stack you get a folder of separate clips, not one finished
+   film. `deploy.sh` writes the compose tunnel token for you; you set the URLs in `deploy.env` and
+   bring the containers up with `docker compose` (section 5). At render time, if the media tier is
    unreachable the film still COMPLETES with the rendered clips delivered and a loud "finish
    unavailable" status (#519 / #524), never a hard-fail after the GPU spend.
 
 You do NOT need a separate API key per video provider. Seedance, Kling, MiniMax Hailuo, Google Veo, Vidu, Wan,
-keyframes, and lip-sync all run **through RunPod**, so one RunPod key covers them.
+keyframes, and the finish satellites all run **through RunPod**, so one RunPod key covers them.
 
 ---
 
@@ -38,7 +41,8 @@ still gets the whole bundle. Every deploy MUST therefore run an auth gate. The s
   The studio UI asks for it on first load and keeps it in your browser only. No Zero Trust
   product, no extra dashboard step. Other consumers (bots, satellites) do NOT reuse this
   operator token: mint each one its own named token with
-  `scripts/studio-consumer-token.sh mint <name>` (independently revocable; see
+  `scripts/studio-consumer-token.sh mint <name> <operator|consumer>` (the scope argument is
+  required and has no default, cf#520; independently revocable; see
   [SECURITY.md](SECURITY.md) section 1b-i).
 - **`access`:** the Worker verifies a Cloudflare Access JWT in-code (fail closed) BEHIND an edge
   Access app you configure -- the recommended hardening for team/org deployments (SSO identity,
@@ -91,30 +95,49 @@ note on what the value is and where to get it, matching sections 2a-2d below.
 Pick a profile with `VIVIJURE_PROFILE` in `deploy.env`:
 
 - **standard** (the default) -- the studio core, cloud + own-GPU render, AND the media stack (5
-  always-on CPU containers reached over Workers VPC). `deploy.sh` creates the tunnel + the 5 VPC
-  Services and wires their ids in automatically (#519); you just bring the containers up with
-  `docker compose` (section 5). This is your first deploy.
+  always-on CPU containers reached over the `*_URL` vars in `deploy.env`). `deploy.sh` writes the
+  compose tunnel token (`containers/tunnel.env`); it does NOT create Workers VPC services. You set the
+  media URLs and bring the containers up with `docker compose` (section 5). This is your first deploy.
 - **satellites** -- also the 3 opt-in GPU finish modules that each need a separate RunPod endpoint:
-  upscale, lip-sync, and speech-upscale.
+  upscale.
 
 How the split works: in `wrangler.toml.example`, opt-in blocks are wrapped in comment markers.
 `deploy.sh` strips `# >>> SATELLITE:` blocks unless the satellites profile, the `# >>> LOCAL-GPU:`
 block unless `INSTALL_LOCAL_GPU=1`, and the `# >>> SELFHOST-SKIP:` (our-fleet-only, e.g. the
 `tail_consumers` log shipper) blocks always -- so a binding can never dangle and break the deploy. The
-media-stack bindings (the four `[[vpc_services]]` + the media finish modules) are unconditional now
-(standard). The media stack is FIVE containers behind FIVE Workers VPC Services: the studio core binds
-FOUR of them (`VIDEO_FINISH_VPC`, `IMAGE_PREP_VPC`, `AUDIO_BEAT_SYNC_VPC`, `AUDIO_MIX_VPC`) directly,
-and the fifth (`audio-master`) is reached by its own `audio-master` module worker, so the "four" here
-and the "5 VPC Services" in section 5 are both correct at their own layer. The local-GPU door stays
+media-stack bindings (the media URL vars + the media finish modules) are unconditional now
+(standard). The template has no `[[vpc_services]]` at all: the core and the media finish modules
+(`film-titles`, `subtitle`, `beat-sync`, `audio-master`) reach the five containers over the
+`VIDEO_FINISH_URL` / `IMAGE_PREP_URL` / `AUDIO_BEAT_SYNC_URL` / `AUDIO_MIX_URL` / `AUDIO_MASTER_URL`
+vars (empty = that service is off), with `MEDIA_FINISH_TOKEN` bound from store secret
+`FINISH_DOOR_TOKEN`. The on-box GPU finish doors use `FINISH_UPSCALE_DOORS` /
+`FINISH_BLENDER_DOORS` (comma-separated origins; empty = RunPod path). The local-GPU door stays
 opt-in because it needs your own local GPU box.
+
+> **Known deviation (#764, DP-3):** today `deploy.sh` cannot complete a fresh-account deploy. The
+> core template binds `MODULE_KLING_O1_R2V`, `MODULE_INFINITETALK`, `MODULE_CHATTERBOX`,
+> `MODULE_CF_HAILUO`, `MODULE_CF_VEO` and `MODULE_ALIBABA_WAN_LORA`, which `STANDARD_MODULES` never
+> deploys; `deploy.sh` fills only `store_id` in module configs (it never runs
+> `scripts/fill-module-placeholders.sh`, so `REPLACE_WITH_D1_DATABASE_ID`, `REPLACE_WITH_R2_S3_*` and
+> the `${*_URL}` / `${*_DOORS}` placeholders stay unfilled); and it never seeds `FINISH_DOOR_TOKEN` or
+> `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID`, which the core binds unconditionally.
+
+> **Known deviation (#764, DP-18):** the `finish-blender` SATELLITE block in `wrangler.toml.example`
+> carries a "DISABLED 2026-08-07" comment, but its `MODULE_FINISH_BLENDER` binding is live inside the
+> markers: the satellites profile keeps it (while `deploy.sh` deploys `finish-blender` only when
+> `BLENDER_RUNPOD_ENDPOINT_ID` is set), and the hosted CI render does not strip it.
+
+> **Open question (#764, DP-9):** since cf#560 the template's `# >>> LOCAL-GPU:` block contains only
+> comments (no `MODULE_LOCAL_GPU` binding), so keeping it binds nothing; see section 6.
 
 **Cloudflare plan: free vs Workers Paid (#521).** The full standard install runs on Cloudflare's
 **free** plan: install free, render free. This is live-proven -- a brand-new free-plan account stood up
-the whole 27 MODULE_* service bindings in wrangler.toml.example (plus core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
+the whole standard bundle of the time (27 MODULE_* service bindings in wrangler.toml.example then; the
+template carries 34 as of v1.33.9, see the DP-3 note above) (plus core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
 media stack) and rendered finished 1080p24 films on all three render paths (own GPU on RunPod, cloud
 i2v, and a local-GPU door). You pay only usage: RunPod GPU seconds, cloud render API calls, AI Gateway
 credits for the planner, or $0 on your own hardware. **Workers Paid ($5/month) is required only for the
-three GPU finish satellites** (finish-upscale, finish-lipsync, speech-upscale); their fan-out at
+one GPU finish satellite** (finish-upscale); its fan-out at
 satellite scale is what needs the larger per-invocation subrequest budget. One operational rule either
 way: a plan change (free to paid, or back) only takes effect after you **redeploy the core**
 (`./deploy.sh` again), because a running Worker keeps the plan it was deployed under -- so flip the
@@ -153,10 +176,14 @@ python3 scripts/changelog-assemble.py v1.26.0 2026-08-14
 #    together, in the same release-prep commit. Merge it.
 # 2. Tag the merged commit and push.
 git tag -a v1.26.0 -m "vivijure-studio v1.26.0" && git push origin v1.26.0
-# 3. Watch BOTH workflows. A `v*` tag fires TWO of them, not one:
-#      ci.yml            -> the `deploy` job; applies `wrangler d1 migrations apply --remote`
-#      studio-release.yml -> publishes the GitHub release ASSET and mirrors it to R2
-#    The second is a separate workflow run, so an operator watching "the deploy" does not see it.
+# 3. Watch BOTH jobs of the tag's CI run. Since cf#562 a `v*` tag starts ONE workflow run (ci.yml)
+#    with two publishing jobs, each gated by needs: [ci, container-tests, migrations-gate, assert-on-main]:
+#      deploy         -> modules, D1 migrations (`wrangler d1 migrations apply --remote`), core,
+#                        gate self-check, optional cache purge + MCP Worker
+#      studio-release -> calls studio-release.yml (workflow_call only; it has no trigger of its own):
+#                        publishes the GitHub release ASSET, mirrors it to R2, and advances the
+#                        hosted studio pin in vivijure-control-plane (STUDIO_PIN_VARIABLE_TOKEN)
+#    They are sibling jobs, so an operator watching only the `deploy` job does not see the second.
 #    If it fails the studio still deploys and the tag still looks shipped, but the release asset is
 #    the PUBLIC SOURCE OF TRUTH under the parity ruling and the control plane's provisioner and
 #    upgrade path fetch the tenant studio bundle BY TAG -- so TENANT provisioning breaks at the next
@@ -209,7 +236,8 @@ Migration `0020` adds `api_tokens.scope` defaulting to `consumer`, so from the m
 every named token is demoted and 403s on operator routes. Until the file above runs: slate loses
 `!install-config`; crew-mcp loses all 8 operator tools including `POST /api/storage/reconcile`; the
 panel and both mobile clients fail to load or save module config **with no re-auth prompt**, because
-`AUTHZ_DENY_REASON` deliberately does not match the paste-once regex at `public/auth-token.js:124`
+`AUTHZ_DENY_REASON` deliberately does not match the paste-once regex in `public/auth-token.js`
+(`/api token|STUDIO_API_TOKEN/i`)
 (the token is genuinely fine) and the mobile clients carry no such prompt at all.
 
 Every denial is a **403** -- this gate has no 401 path -- with
@@ -231,7 +259,7 @@ exists.
 | Provider | What it is | Sign up |
 |---|---|---|
 | **Cloudflare** | Hosts the Worker + your data (D1, R2, Vectorize) and routes LLM calls (AI Gateway). | dash.cloudflare.com |
-| **RunPod** | Serverless GPUs that run the render backend (training, keyframes, i2v, lip-sync). | runpod.io |
+| **RunPod** | Serverless GPUs that run the render backend (training, keyframes, i2v, finish). | runpod.io |
 | **GitHub** (optional) | Only if you build/host the backend image yourself via GHCR + Actions. | github.com |
 
 Everything bills to your own accounts. The Studio is single-user by design -- one operator, your keys.
@@ -246,7 +274,7 @@ rotate it, the blast radius is one function, not your whole account.
 ### 2a. Cloudflare API token (deploy-time)
 Create a **user API token**: **dash.cloudflare.com -> My Profile -> API Tokens -> Create Token ->
 Custom token** (NOT an account-owned token under Account Home -> API Tokens -- that flow makes the
-scope picker painful and hides `Connectivity Directory`). Scope it to **your account only**
+scope picker painful). Scope it to **your account only**
 (Account Resources -> Include -> your account).
 
 | Permission | Why it's needed |
@@ -258,7 +286,7 @@ scope picker painful and hides `Connectivity Directory`). Scope it to **your acc
 | `Account > Account Settings > Read` | `wrangler` reads account metadata at deploy time. |
 | `Account > Secrets Store > Edit` | Bind module secrets from the Cloudflare Secrets Store at deploy (the `[[secrets_store_secrets]]` blocks). Binding a store secret to a worker is a write-level association, so READ is NOT enough -- without Edit the deploy fails with `Secrets store binding authorization failed [code: 10021]`. |
 | `Account > Cloudflare Tunnel > Write` | Create the media-stack tunnel and read its connector token (`deploy.sh` -> `scripts/setup-media-vpc.py`, #519). Part of the standard install. |
-| `Account > Connectivity Directory > Admin` | Create the 5 Workers VPC Services the studio reaches the CPU containers through (missing this surfaces as CF error 10196). Part of the standard install. |
+| `Account > Connectivity Directory > Admin` (not needed) | **No longer needed.** It created the Workers VPC Services the media stack used to be reached through; media now uses the public `*_URL` vars, and `scripts/setup-media-vpc.py` only writes the tunnel token (do not use this scope to mint media VPC service ids). |
 | `Account > API Tokens > Edit` (optional) | Lets `deploy.sh` auto-mint the Run-only `CF_AIG_TOKEN` (2d below) so the planner arms with zero extra pastes. Honest trade-off: this scope can mint further API tokens on the account; omit it if that bothers you and paste `CF_AIG_TOKEN` yourself instead. |
 
 > Why so specific: each line maps to a real deploy step below. If a module never touches D1, its
@@ -278,10 +306,11 @@ if you let it, *manages* your endpoint).
 
 | Why it's needed |
 |---|
-| The Studio's GPU modules (`own-gpu`, `keyframe`, `finish-rife`, `finish-upscale`, `finish-lipsync`, and the cloud i2v backends) submit jobs to **your** RunPod Serverless endpoint and poll for results. |
+| The Studio's GPU modules (`own-gpu`, `keyframe`, `finish-rife`, `finish-upscale`, and the cloud i2v backends) submit jobs to **your** RunPod Serverless endpoint and poll for results. |
 
-You also need your **endpoint id(s)** (`RUNPOD_ENDPOINT_ID`) -- the id of the Serverless endpoint
-running the `vivijure-backend` image (see section 4).
+You also need your **endpoint id(s)** (`RUNPOD_ENDPOINT_ID` in `deploy.env`; `deploy.sh` seeds it as
+the Secrets Store secret `BACKEND_RUNPOD_ENDPOINT_ID`) -- the id of the Serverless endpoint running the
+`vivijure-backend` image (see section 4).
 
 ### 2c. R2 S3 access keys (for the GPU backend)
 Create at **dash.cloudflare.com -> R2 -> Manage R2 API Tokens -> Create API token**, scoped to
@@ -327,6 +356,10 @@ route LLM/AI calls through a **Cloudflare AI Gateway** (for caching, rate-limit,
   API token: the auto-mint refuses to stack a second token of the same name, so a stale
   twin blocks re-arming on the next deploy.
 
+  > **Known deviation (#764, DP-17):** the `CF_AIG_TOKEN` comment in `deploy.env.example` still says
+  > that if the token cannot be minted "the deploy still completes"; `deploy.sh` actually dies
+  > (`CF_AIG_TOKEN is required before deploy`) before deploying anything, as described above.
+
 > Why a gateway instead of a raw provider key: it gives you one place to see spend, cache repeat
 > prompts, and swap the underlying model without touching code. Anthropic/other model access is
 > billed through Cloudflare's Unified Billing, so you don't manage a separate provider key here.
@@ -365,9 +398,21 @@ account, and storage bills your Cloudflare account, separately.
 
 Prereqs: Node 22+, `npm install`, and `npx wrangler login` (or `CLOUDFLARE_API_TOKEN` exported).
 
+**There is no `wrangler.toml` in the repo.** The committed file is the template `wrangler.toml.example`
+(gitignored real file, #398). On the manual path you must (a) render the core `wrangler.toml` from the
+template -- strip the marker blocks you do not want, `envsubst` the `${...}` tokens (D1 id, rate-limit
+namespace id, R2 S3 endpoint/bucket, the media `*_URL` / `*_DOORS` vars, auth vars) and `sed`-fill
+`REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID`, exactly as in
+[deploy-config-injection.md](deploy-config-injection.md) section 5 -- and (b) fill every module
+config before deploying it with `scripts/fill-module-placeholders.sh modules/<m>/wrangler.toml`
+(with `SECRETS_STORE_ID`, `D1_DATABASE_ID`, `CLOUDFLARE_ACCOUNT_ID` and the media URL vars exported);
+it fills the store id, `REPLACE_WITH_D1_DATABASE_ID`, `REPLACE_WITH_R2_S3_*` and the `${*_URL}` /
+`${*_DOORS}` vars, and refuses any surviving placeholder or leftover `[[vpc_services]]`. Note that
+this edits the tracked module tomls in place; do not commit the result.
+
 ```bash
 # 3a. Create the data resources (one time)
-npx wrangler d1 create vivijure-studio          # then paste the database_id into wrangler.toml
+npx wrangler d1 create vivijure-studio          # note the database_id: it is D1_DATABASE_ID for the render
 npx wrangler r2 bucket create vivijure           # render outputs (keyframes/clips/films/loras) -- R2_RENDERS
 npx wrangler r2 bucket create skyphusion-llm     # document / RAG store -- the R2 binding
 
@@ -412,15 +457,22 @@ npx wrangler d1 execute vivijure-studio --remote \
 
 # 3d. Deploy. Module workers MUST deploy before the core (the core binds each as a service;
 #     a binding to a not-yet-deployed module makes the core deploy fail).
-# The standard modules (this list mirrors STANDARD_MODULES in deploy.sh; the last five are the
-# media-stack finish modules, reached over Workers VPC):
+# The standard modules (this list mirrors STANDARD_MODULES in deploy.sh as of v1.33.9; the last four
+# are the media-stack finish modules, reached over the media *_URL vars):
 for m in own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
-         notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo vidu-q3 \
-         alibaba-wan alibaba-wan-lora film-titles subtitle beat-sync audio-master; do
+         image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo \
+         vidu-q3 alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video \
+         film-titles subtitle beat-sync audio-master; do
+  sh scripts/fill-module-placeholders.sh modules/$m/wrangler.toml
   npx wrangler deploy -c modules/$m/wrangler.toml
 done
 # The satellites profile also deploys (SATELLITE_MODULES in deploy.sh; each needs a separate RunPod
-# endpoint): finish-upscale finish-lipsync speech-upscale
+# endpoint): finish-upscale. finish-blender is added only when
+# BLENDER_RUNPOD_ENDPOINT_ID is set.
+# NOTE (#764, DP-3): the core template ALSO binds kling-o1-r2v, infinitetalk, chatterbox, cf-hailuo,
+# cf-veo and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
+# the core deploy fails on a dangling [[services]] binding. Derive the full set from the uncommented
+# `service = "vivijure-module-..."` lines of your rendered wrangler.toml.
 npm run deploy   # the core Studio Worker
 ```
 
@@ -430,9 +482,14 @@ freshly (re)created module worker can never start secretless and silently degrad
 shipped finish-upscale as a passthrough in v0.2.2). The values are seeded ONCE into the store and
 never touch CI or GitHub. See **Module secrets via the Secrets Store** below.
 
-> The whole of 3c--3d is automated in CI on push to `main` (`.github/workflows/ci.yml`), gated behind
-> typecheck + tests. For a hosted deploy, set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` as repo
-> secrets and let Actions do it.
+> The whole of 3c--3d is automated in CI on a pushed `v*` tag, never on a push to `main`
+> (`.github/workflows/ci.yml` `deploy` job, gated by `needs: [ci, container-tests, migrations-gate,
+> assert-on-main]`). For a hosted deploy, set the repo secrets `CLOUDFLARE_API_TOKEN`,
+> `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, `SPEND_RATE_LIMITER_NS_ID` (plus `ACCESS_TEAM_DOMAIN` /
+> `ACCESS_AUD` in access mode) and the repo variables `AUTH_MODE`, `SECRETS_STORE_ID` and the media
+> `*_URL` / `*_DOORS` vars; the full list is in [deploy-config-injection.md](deploy-config-injection.md)
+> section 3c. CI deploys every `modules/*/wrangler.toml` (minus an explicit `EXCLUDE`), so it has no
+> STANDARD_MODULES gap.
 
 ### Module secrets via the Secrets Store
 
@@ -445,7 +502,7 @@ fresh-create.
 
 `RUNPOD_ENDPOINT_ID` is bound from one store secret PER ENDPOINT, because the modules target
 different RunPod endpoints (keyframe / i2v on the main backend, upscale on the upscale endpoint,
-lip-sync on the MuseTalk endpoint). The binding name in code stays `RUNPOD_ENDPOINT_ID`; only the
+upscale on the video-upscale endpoint). The binding name in code stays `RUNPOD_ENDPOINT_ID`; only the
 store `secret_name` differs. Modules that share an endpoint share one secret (single source of truth):
 
 | module(s)                      | store secret_name (RUNPOD_ENDPOINT_ID) | RunPod endpoint |
@@ -453,12 +510,10 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 | own-gpu, keyframe, finish-rife | `BACKEND_RUNPOD_ENDPOINT_ID`           | main backend    |
 | finish-upscale                 | `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`     | video upscale   |
 | finish-blender                 | `BLENDER_RUNPOD_ENDPOINT_ID`           | compositor grade |
-| finish-lipsync                 | `MUSETALK_RUNPOD_ENDPOINT_ID`          | MuseTalk        |
-| speech-upscale                 | `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`     | audio upscale   |
 
 > **The satellite ENDPOINTS themselves also need R2 credentials (#522).** The store secret above only
-> carries each satellite's endpoint *id*. Every GPU satellite (finish-upscale, finish-lipsync,
-> speech-upscale) reads its inputs from, and writes its outputs to, YOUR R2 bucket directly, so its
+> carries each satellite's endpoint *id*. Every GPU satellite (finish-upscale,
+> reads its inputs from, and writes its outputs to, YOUR R2 bucket directly, so its
 > RunPod endpoint template must ALSO set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
 > and `R2_BUCKET` in the endpoint env (the same R2 values the backend endpoint uses in section 4). Miss
 > them and the first full render fails at finish with the satellite's honest error (`R2 mode needs
@@ -504,10 +559,25 @@ npx wrangler secrets-store secret create $S --name R2_S3_SECRET_ACCESS_KEY      
 npx wrangler secrets-store secret create $S --name PLAN_ENHANCE_CF_AIG_TOKEN      --scopes workers --remote
 npx wrangler secrets-store secret create $S --name BACKEND_RUNPOD_ENDPOINT_ID       --scopes workers --remote
 npx wrangler secrets-store secret create $S --name VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
-npx wrangler secrets-store secret create $S --name MUSETALK_RUNPOD_ENDPOINT_ID      --scopes workers --remote
-npx wrangler secrets-store secret create $S --name AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID --scopes workers --remote
 npx wrangler secrets-store secret create $S --name BLENDER_RUNPOD_ENDPOINT_ID      --scopes workers --remote  # optional finish-blender
 ```
+
+**Every store secret the configs bind** (derived from the `[[secrets_store_secrets]]` blocks in
+`wrangler.toml.example` and `modules/*/wrangler.toml` as of v1.33.9; re-derive with
+`grep -h 'secret_name' wrangler.toml.example modules/*/wrangler.toml | sort -u`). A worker whose bound
+secret is missing from the store fails its deploy, so each one a deployed worker binds must exist, even
+if the feature behind it is unused. Beyond the ones seeded above:
+
+| store secret_name | bound by (binding name) | what it is |
+| --- | --- | --- |
+| `FINISH_DOOR_TOKEN` | core (`MEDIA_FINISH_TOKEN`); `film-titles`, `subtitle`, `beat-sync`, `audio-master` (`MEDIA_FINISH_TOKEN`); `finish-upscale` (`FINISH_DOOR_TOKEN`) | bearer the media containers / finish doors check |
+| `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` | core (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) | Wan 2.2 LoRA-training endpoint (cast `/train-wan-lora`) |
+| `IMAGE_GENERATE_OPENAI_API_KEY` | `image-generate` (`OPENAI_API_KEY`) | optional BYOK OpenAI key for transparent PNGs |
+| `FINISH_DOOR_TOKEN_PROPAGANDHI` | `finish-upscale` | second upscale door bearer |
+| `BLENDER_DOOR_TOKEN` | `finish-blender` | blender door bearer |
+| `LOCAL_BACKEND_URL`, `LOCAL_BACKEND_TOKEN` | `local-gpu` | local-GPU door (section 6) |
+
+Seed them the same way (`secrets-store secret create $S --name <NAME> --scopes workers --remote`).
 
 **Defensive seed (recommended): strip the value so a bad paste cannot poison the store.** Stage the
 value in a `0600` file, then pipe a sanitized copy via stdin instead of using the interactive prompt.
@@ -565,6 +635,11 @@ python3 scripts/runpod-provision.py  # last line prints RUNPOD_ENDPOINT_ID=<id>
 Put the printed id in `deploy.env` as `RUNPOD_ENDPOINT_ID` and run `./deploy.sh`. The endpoint is
 created scale-to-zero (workersMin=0): it costs nothing until a render job runs.
 
+The same script provisions the **finish satellite** endpoints (#522) with `--satellite upscale`,
+`--satellite upscale`; it sets the four R2 env vars on the satellite
+template for you, and its last line prints the matching `deploy.env` key (e.g.
+`VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID=<id>`) for the satellites profile.
+
 > **Image tag: pinned by default (#518).** `runpod-provision.py` defaults to a specific backend
 > release (`ghcr.io/skyphusion-labs/vivijure-backend:X.Y.Z`), never `:latest`, so your endpoint runs a
 > known image instead of silently changing on the next push (the section-4 pin rule, enforced in the
@@ -604,7 +679,9 @@ weights stay resident between jobs.
 3. Set the backend env on the endpoint: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
    `R2_ENDPOINT` (your `https://<account>.r2.cloudflarestorage.com`), and the HuggingFace/offline
    flags the image documents.
-4. Copy the endpoint id into the Studio's `RUNPOD_ENDPOINT_ID` secret (section 3b).
+4. Copy the endpoint id into the Secrets Store secret `BACKEND_RUNPOD_ENDPOINT_ID` (the core and the
+   `own-gpu` / `keyframe` / `finish-rife` modules bind it as `RUNPOD_ENDPOINT_ID`; see "Module secrets
+   via the Secrets Store" above), or set `RUNPOD_ENDPOINT_ID` in `deploy.env` and let `deploy.sh` seed it.
 
 If your GHCR image is private, the endpoint needs registry credentials; a public image needs none
 (make sure no stale registry credential is configured, or RunPod will try it and fail even a public
@@ -615,10 +692,16 @@ pull).
 ## 5. The media-stack CPU containers (STANDARD)
 
 `video-finish` / `image-prep` / `audio-beat-sync` / `audio-mix` / `audio-master` run always-on as
-Docker on your own box, reached privately over **Workers VPC**. As of #519 this is part of the
-**standard** install: `deploy.sh` already created the Cloudflare tunnel and the 5 VPC Services for you
-(`scripts/setup-media-vpc.py`), rendered their ids into the configs, and wrote the connector token to
-`containers/tunnel.env` (0600). All that is left is to bring the containers up:
+Docker on your own box. The studio reaches them over **public HTTPS origins**, not Workers VPC: the
+core and the media finish modules read `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
+`AUDIO_MIX_URL` and `AUDIO_MASTER_URL` (empty = that service is off) and send the `MEDIA_FINISH_TOKEN`
+bearer (store secret `FINISH_DOOR_TOKEN`; the `video-finish`, `audio-mix` and `audio-beat-sync`
+containers check it as `LOCAL_FINISH_TOKEN`, and leave the gate open when that is unset). As of #519
+this is part of the **standard** install: `deploy.sh` (`scripts/setup-media-vpc.py`) reuses or creates
+one Cloudflare tunnel (default name `vivijure-media`, override with `VIVIJURE_TUNNEL_NAME`) and writes
+its connector token to `containers/tunnel.env` (0600). It creates NO Workers VPC services and renders
+no service ids. Expose each container at a public HTTPS origin, set the `*_URL` vars in `deploy.env`
+(re-run `./deploy.sh` after changing them), and bring the containers up:
 
 ```bash
 docker network create vivijure          # once, if it does not exist
@@ -626,22 +709,23 @@ docker compose -f containers/compose.yaml up -d --build
 ```
 
 The `cloudflared` service in that compose file reads the token from `tunnel.env` and joins the
-`vivijure` network, so each VPC Service resolves its container by service name. Without the containers
+`vivijure` network. (Comments in `containers/compose.yaml` still describe VPC Services as the routing;
+that predates the move to URL vars.) Without the containers
 running, a render still delivers the per-shot clips and reports "finish unavailable" rather than
 failing (the honest degrade, #519); bring them up to get the assembled/finished film.
 
 Doing it by hand instead of `deploy.sh`? Run `scripts/setup-media-vpc.py --token-file
-containers/tunnel.env` with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` set (the token needs
-`Cloudflare Tunnel: Write` + `Connectivity Directory: Admin`); it prints the service ids as JSON and
-writes the token file, both idempotent on a re-run.
+containers/tunnel.env` (optionally `--tunnel-name <name>`) with `CLOUDFLARE_ACCOUNT_ID` +
+`CLOUDFLARE_API_TOKEN` set (the token needs `Cloudflare Tunnel: Write` only); it writes the token
+file and prints `{"tunnel_id": "..."}` as JSON, idempotent on a re-run.
 
 > **Upgrading from a pre-media-stack (pre-#519) install?** Your existing `deploy.env` keeps working as
-> is EXCEPT the Cloudflare API token: it predates the two media-stack scopes above. Re-mint it per
-> section 2a (a user token with `Cloudflare Tunnel: Write` + `Connectivity Directory: Admin` added) and
-> update `deploy.env`, then re-run `./deploy.sh`. If the old token is still in place, step 4 stops with
-> the exact missing scope named (`your token lacks 'Cloudflare Tunnel: Write'`), not a raw error. The
-> re-run **adopts** the tunnel your existing VPC services already point at -- it does not create a
-> second one (#531).
+> is EXCEPT the Cloudflare API token: it predates the media-stack tunnel scope. Re-mint it per
+> section 2a (a user token with `Cloudflare Tunnel: Write` added) and update `deploy.env`, then re-run
+> `./deploy.sh`. If the old token is still in place, step 4 stops with the exact missing scope named
+> (`your token lacks 'Cloudflare Tunnel: Write'`), not a raw error. The re-run **reuses** an existing
+> non-deleted tunnel of the same name (`vivijure-media` or `VIVIJURE_TUNNEL_NAME`) -- it does not
+> create a second one (#531). Add the media `*_URL` vars to `deploy.env` too (see `deploy.env.example`).
 
 ---
 
@@ -651,6 +735,10 @@ The local-GPU doors (`vivijure-local-12gb` / `vivijure-local-16gb`) let you rend
 graphics card instead of renting a serverless GPU. They are off by default. Stand up the door on your
 GPU box first (follow that repo's README); the core binds to the door's URL and token, so those must
 exist before you deploy the core with the door enabled.
+
+> **Open question (#764, DP-9):** as of cf#560 the `wrangler.toml.example` LOCAL-GPU block holds no
+> `MODULE_LOCAL_GPU` binding, so today `INSTALL_LOCAL_GPU=1` deploys the `local-gpu` module worker and
+> seeds its two secrets, but the core does not bind it (the door is not discovered by the registry).
 
 **Two required inputs (#534).** When `INSTALL_LOCAL_GPU=1`, `deploy.env` must also set
 `LOCAL_BACKEND_URL` and `LOCAL_BACKEND_TOKEN`; `deploy.sh` fails early (fail-closed) if either is blank,
@@ -748,14 +836,14 @@ an agent driving your studio, that page is the one to follow.
 
 ## Quick checklist
 
-- [ ] Cloudflare API token (Workers/D1/R2/AI-Gateway/Secrets-Store/Tunnel/Connectivity scopes above) + account id
+- [ ] Cloudflare API token (Workers/D1/R2/AI-Gateway/Secrets-Store/Tunnel scopes above) + account id
 - [ ] R2 enabled on the account (one dashboard click: <https://dash.cloudflare.com/?to=/:account/r2>)
 - [ ] auth mode picked: `token` (default; SAVE the printed token) or `access` (Zero Trust team + AUD)
 - [ ] RunPod API key + a Serverless endpoint running `vivijure-backend` (its id)
 - [ ] R2 S3 access key/secret (scope to all buckets on a first install; the render bucket does not exist yet -- see 2c)
 - [ ] AI Gateway slug (`GATEWAY_ID`) + `CF_AIG_TOKEN` (a deploy PREREQUISITE -- the planner token; auto-minted or pasted, see 2d)
 - [ ] AI credits loaded on the gateway ($10 minimum; the planner will not run on $0.00 -- see 2e)
-- [ ] `wrangler d1 create` + both `r2 bucket create`s, ids in `wrangler.toml`
+- [ ] `wrangler d1 create` + both `r2 bucket create`s; `wrangler.toml` rendered from `wrangler.toml.example` (deploy.sh does this)
 - [ ] secrets set, migrations applied, **modules deployed before core**
-- [ ] (standard) media-stack containers up: `docker compose -f containers/compose.yaml up -d` (deploy.sh already made the tunnel + VPC services)
+- [ ] (standard) media `*_URL` vars set + media-stack containers up: `docker compose -f containers/compose.yaml up -d` (deploy.sh already wrote the tunnel token)
 - [ ] render a test project end to end

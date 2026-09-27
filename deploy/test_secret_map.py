@@ -58,9 +58,7 @@ def test_resolved_values_map_each_endpoint_to_its_store_name():
     # keys are exactly the auto-seeded set (no operator names leak in)
     assert set(vals) == set(vd.AUTO_STORE_NAMES)
     assert vals["BACKEND_RUNPOD_ENDPOINT_ID"] == "vivijure-backend-EPID"
-    assert vals["MUSETALK_RUNPOD_ENDPOINT_ID"] == "vivijure-musetalk-EPID"
     assert vals["VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID"] == "vivijure-upscale-EPID"
-    assert vals["AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID"] == "vivijure-audio-upscale-EPID"
     assert vals["RUNPOD_API_KEY"] == "rp-key"
 
 

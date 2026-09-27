@@ -156,7 +156,6 @@ jobs:
           AUDIO_MIX_URL: ""
           AUDIO_MASTER_URL: ""
           FINISH_UPSCALE_DOORS: ""
-          SPEECH_UPSCALE_DOORS: ""
           FINISH_BLENDER_DOORS: ""
         run: |
           set -euo pipefail
@@ -180,8 +179,6 @@ jobs:
           # nothing pins. The invariant is that no hosted studio config binds this door, not that a
           # particular consumer happens to ignore it.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
-          sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
-          mv .wrangler.hosted2.toml .wrangler.hosted.toml
           envsubst < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/00000000-0000-0000-0000-000000000000/g" wrangler.toml

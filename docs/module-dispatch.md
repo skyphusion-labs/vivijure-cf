@@ -1,22 +1,29 @@
 # Module dispatch (Workers for Platforms)
 
-> Status: **HOST-SIDE IMPLEMENTED, not yet deployed** (roadmap Phase 3). The core now speaks dispatch:
-> registry resolution, the D1 `installed_modules` store, the install/uninstall/disable/list admin routes
-> (behind CF Access), the conformance install-gate, the host capability flag, and the `install-module`
-> CLI all ship in the studio Worker. What is NOT yet done is the DEPLOY step -- creating the
-> `vivijure-modules` dispatch namespace and uncommenting the `[[dispatch_namespaces]]` binding (an
-> operator action gated on a real WfP-enabled account; see the deploy runbook). Until then the binding is
-> unbound and the whole dispatch layer is a no-op: the studio runs exactly as before on service bindings.
+> Status: **SHIPPED as an opt-in capability (v0.8.0, roadmap Phase 3).** The core speaks dispatch:
+> registry resolution, the D1 `installed_modules` store (migration `0006_installed_modules.sql`), the
+> install/uninstall/disable/list admin routes (operator scope, section 4.4), the conformance
+> install-gate, the `host.dispatch` capability flag on `GET /api/modules`, and the
+> `scripts/install-module.ts` operator CLI all ship in the studio Worker. The binding is **opt-in per
+> deploy**: `wrangler.toml.example` keeps the `[[dispatch_namespaces]]` block COMMENTED (the free
+> self-host default, since WfP is a paid add-on and a binding to a missing namespace fails the deploy),
+> and the CI "Render core wrangler.toml" step in `.github/workflows/ci.yml` uncomments it only when the
+> repo variable `vars.ENABLE_WFP_DISPATCH == "1"` (the namespace having been created out of band; see
+> `docs/deploy-runbook.md`). `src/env.ts` declares `MODULE_DISPATCH?: DispatchNamespace`. On a deploy
+> without the binding the whole dispatch layer is a no-op (outside demo mode, section 3.4): the studio
+> runs exactly as before on service bindings.
 >
 > This is an **infrastructure + onboarding** spec layered UNDER the existing module contract
 > (`docs/module-api.md`, `@skyphusion-labs/vivijure-core modules/types` = `vivijure-module/2`). It changes WHERE a module lives
 > and HOW the core reaches it; it does not (by design, see section 6) change WHAT a module is. Read
 > `docs/module-api.md` first; this is the transport story beneath it.
 >
-> **Implementation note (transport ref).** The illustrative `RegisteredModule.dispatch` descriptor in
-> section 3.2 shipped as a strictly-internal simplification: a module's transport is encoded in its
-> single `binding` REF string -- `MODULE_<NAME>` for a service binding, `dispatch:<script>` for a
-> namespace upload -- resolved by one primitive, `registry.resolveFetcher`. One string (not a second
+> **Implementation note (transport ref).** The `RegisteredModule.dispatch` descriptor originally
+> proposed for section 3.2 did NOT ship; the shipped design is a strictly-internal simplification: a
+> module's transport is encoded in its single `binding` REF string -- `MODULE_<NAME>` for a service
+> binding, `dispatch:<script>` (prefix `DISPATCH_REF_PREFIX`, built by `dispatchRef`) for a namespace
+> upload -- resolved by one primitive, `resolveFetcher(env, binding)` in
+> `@skyphusion-labs/vivijure-core modules/registry`. One string (not a second
 > field) means a module's transport persists cleanly through render job state, so a dispatch module works
 > uniformly across the multi-request finish/speech/master chains, not just the in-request pick_one hooks.
 > Nothing on the module-facing contract or the public wire changes (the ref is stripped by `toPublic`).
@@ -55,7 +62,7 @@ becomes **install-without-us** infrastructure.
 
 The crucial seam: `DispatchNamespace.get(name)` returns a **`Fetcher`** -- the exact shape the
 pipeline already consumes. Everything downstream of "resolve a module to a Fetcher" (the `/invoke`,
-`/poll`, `/cancel` envelope handling in `registry.ts`) is **unchanged**. Dispatch is a new way to
+`/poll`, `/cancel` envelope handling in `@skyphusion-labs/vivijure-core modules/registry`) is **unchanged**. Dispatch is a new way to
 RESOLVE a module to a Fetcher, not a new way to TALK to one.
 
 ## 1. Topology
@@ -76,7 +83,7 @@ flowchart TD
   subgraph ns["Dispatch namespace: vivijure-modules"]
     M1["user Worker<br/>motion-someprovider"]
     M2["user Worker<br/>finish-coolthing"]
-    M3["user Worker<br/>local-gpu (was #382)"]
+    M3["user Worker<br/>local-gpu (#382; self-host namespace only, cf#560)"]
   end
 
   RUNPOD["module's own backend<br/>(RunPod / cloud API / homelab)"]
@@ -111,10 +118,20 @@ holds a binding to the namespace and, per request, calls `namespace.get(scriptNa
 the namespace -- which preserves the module trust boundary from `docs/module-authoring.md` (a module
 has no public surface; the core, behind Access, is its only caller).
 
-### 2.2 Proposed `wrangler.toml.example` diff (NOT applied)
+### 2.2 The `wrangler.toml.example` binding (opt-in)
 
 A dispatch namespace is bound exactly like any other resource. The binding name follows the existing
 `MODULE_*` convention so it reads as "the module transport", and the namespace name is account-scoped.
+
+**As shipped:** `wrangler.toml.example` carries the three lines below **commented out**
+(`# [[dispatch_namespaces]]`, `# binding = "MODULE_DISPATCH"`, `# namespace = "vivijure-modules"`), so
+the committed template deploys on a free account. The CI "Render core wrangler.toml" step
+(`.github/workflows/ci.yml`) uncomments exactly those three lines when `vars.ENABLE_WFP_DISPATCH` is
+`"1"`, and fails the deploy (`ENABLE_WFP_DISPATCH=1 but dispatch block did not uncomment (example
+drifted)`) if they do not all appear uncommented afterwards. A self-host operator with WfP uncomments
+them by hand after creating the namespace. The diff below is the **historical design proposal**, kept
+for its rationale; it shows the block active, which is what the rendered config looks like with the
+variable set.
 
 ```diff
   # --- Opt-in MODULE workers: service bindings named MODULE_<NAME>; the registry discovers them.
@@ -146,10 +163,13 @@ A dispatch namespace is bound exactly like any other resource. The binding name 
 > So the namespace is created **once, out of band** (section 3.1), ahead of the first core deploy that
 > carries this binding. After that, modules come and go **inside** the namespace with no core deploy.
 
-### 2.3 Proposed `src/env.ts` diff (NOT applied)
+### 2.3 The `src/env.ts` mirror
 
 Every binding is mirrored in the hand-authored `Env`. `DispatchNamespace` is provided by the pinned
-`@cloudflare/workers-types` devDep (no new dependency).
+`@cloudflare/workers-types` devDep (no new dependency). **As shipped:** `src/env.ts` declares
+`MODULE_DISPATCH?: DispatchNamespace` (optional, so a deploy without WfP still typechecks). The diff
+below is the **historical design proposal**; one detail differs in the shipped code, see the note after
+it.
 
 ```diff
    // Opt-in module workers: `MODULE_<NAME>` service bindings. Discovered by the registry.
@@ -163,10 +183,12 @@ Every binding is mirrored in the hand-authored `Env`. `DispatchNamespace` is pro
 +  MODULE_DISPATCH?: DispatchNamespace;
 ```
 
-> `MODULE_DISPATCH` is a DISTINCT key from the `` [key: `MODULE_${string}`] `` index signature: that
-> index maps to `Fetcher | undefined`, but a dispatch namespace is a `DispatchNamespace` (it has
-> `.get()`, not `.fetch()`). Declaring it explicitly (and as a name the registry's `MODULE_*`
-> service-binding scan must EXCLUDE, see section 6.3) keeps the two transports from colliding -- a
+> `MODULE_DISPATCH` is declared as an explicit key alongside the `` [key: `MODULE_${string}`] `` index
+> signature. Because TypeScript requires an explicit property to be assignable to a matching index
+> signature, the shipped index type is `Fetcher | DispatchNamespace | undefined` (not the
+> `Fetcher | undefined` the proposal shows). A dispatch namespace is a `DispatchNamespace` (it has
+> `.get()`, not `.fetch()`); declaring it explicitly, and as a name the registry's `MODULE_*`
+> service-binding scan EXCLUDES (section 6.3), keeps the two transports from colliding -- a
 > `DispatchNamespace` is not a `Fetcher` and must never be mistaken for a service-bound module.
 
 ## 3. Registry -> dispatch routing
@@ -176,7 +198,7 @@ Every binding is mirrored in the hand-authored `Env`. `DispatchNamespace` is pro
 In the service-binding world the registry is **discovered** from `env` (scan `MODULE_*`, read each
 `module.json`). In the dispatch world there is no per-module `env` binding to scan -- every module
 lives behind ONE namespace binding. So the set of installed modules moves into **D1** (the core
-already binds `DB`), one row per installed module:
+already binds `DB`), one row per installed module (`migrations/0006_installed_modules.sql`):
 
 ```
 TABLE installed_modules (
@@ -196,12 +218,19 @@ its manifest re-runs the upload path (section 3.4), so the stored copy never sil
 
 ### 3.2 Resolving a name to a Fetcher
 
-`registry.ts` today resolves a `RegisteredModule` to a Fetcher with `fetcherFor(env, module)`, which
-reads `env[module.binding]`. Dynamic dispatch adds ONE branch: when a module is namespace-backed,
-resolve through the dispatch binding instead of an `env` key.
+**As shipped:** `@skyphusion-labs/vivijure-core modules/registry` resolves a module with
+`resolveFetcher(env, module.binding)`. If the `binding` ref starts with `DISPATCH_REF_PREFIX`
+(`"dispatch:"`), it calls `env.MODULE_DISPATCH.get(<script>)` (the ref minus the prefix), catching the
+throw `get()` raises for an absent script and returning `null` (also `null` when `MODULE_DISPATCH` is
+unbound); otherwise it reads `env[binding]` and
+returns it only if it is a Fetcher. A `null` is the same honest `ok:false` degrade an unbound service
+binding produces. There is no separate `dispatch` descriptor on `RegisteredModule`.
+
+The historical proposal below (a `fetcherFor` with a `module.dispatch` branch) is kept for its
+rationale; the shipped code folds the same two branches into the single ref string.
 
 ```ts
-// PROPOSED (illustrative): the only new resolution logic. Everything after "got a Fetcher" is the
+// HISTORICAL PROPOSAL (illustrative, not the shipped code): the only new resolution logic. Everything after "got a Fetcher" is the
 // existing invokeModule / pollModule / cancelModule / awaitInvoke path, unchanged.
 function fetcherFor(env: Env, module: RegisteredModule): FetcherLike | null {
   if (module.dispatch) {
@@ -219,20 +248,28 @@ function fetcherFor(env: Env, module: RegisteredModule): FetcherLike | null {
 }
 ```
 
-`RegisteredModule` gains an optional internal `dispatch` descriptor (`{ script_name }`), the namespace
-analogue of `binding`. Like `binding`, it is **internal topology** and is stripped by `toPublic()`
+In the shipped design the namespace analogue of `binding` is the `dispatch:<script>` value OF `binding`
+itself. Like any `binding`, it is **internal topology** and is stripped by `toPublic()`
 before it reaches `GET /api/modules` (the public projection still carries only the manifest -- info
 disclosure boundary #18 is preserved; the wire payload never names a script or a binding).
 
 ### 3.3 The hook call is byte-for-byte the same
 
-Once `fetcherFor` returns a Fetcher, the dispatch path and the service-binding path are identical:
+Once `resolveFetcher` returns a Fetcher, the dispatch path and the service-binding path are identical:
 
 ```
 core: env.MODULE_DISPATCH.get(script).fetch("https://module/invoke", { method: "POST", body:
-        JSON.stringify({ hook, input, config, context }) })
+        JSON.stringify({ hook, input, config, context }) })   // + optional r2, see below
 -> module returns { ok: true, output } | { ok: true, pending: true, poll } | { ok: false, error }
 ```
+
+`InvokeRequest` (`@skyphusion-labs/vivijure-core modules/types`) also has an optional `r2?:
+TenantR2Config` sibling of `context`: the tenant's per-job R2 credential (cp#270), attached only for a
+module whose manifest sets `needs_tenant_r2` and only on a host that carries a full credential set. The
+core refuses to attach it to a dispatch (community) module even when the flag is set, so over the
+dispatch transport the envelope is exactly `{ hook, input, config, context }`. `context` itself stays
+secret-free; the envelope as a whole is not, for a service-bound module that declares
+`needs_tenant_r2`.
 
 This is what preserves the contract's discipline:
 
@@ -246,14 +283,28 @@ This is what preserves the contract's discipline:
   `{ hook, input, config, context }`.
 
 `pick_one` vs `chain` cardinality, `ui.order` folding, soft-degrade handling, the async poll loop, and
-`/cancel` orphan-honesty all live above `fetcherFor` and are untouched.
+`/cancel` orphan-honesty all live above `resolveFetcher` and are untouched.
 
 ### 3.4 Cardinality + discovery, restated for dispatch
 
-`discoverModules(env)` (the `MODULE_*` scan) is joined by a `discoverDispatchModules(env, db)` that
-reads `installed_modules` and reconstructs `RegisteredModule[]` from the stored manifests, tagging each
-with its `dispatch` descriptor instead of a `binding`. The two lists merge into the one registry the
-pipeline and `GET /api/modules` already consume. `indexByHook`, `resolvePickOne`, `servingForHook`,
+The `MODULE_*` service-binding scan is joined by `discoverDispatchModules(env)`
+(`@skyphusion-labs/vivijure-core modules/registry`), which runs `SELECT name, script_name,
+manifest_json, api FROM installed_modules WHERE enabled = 1` on `env.DB`, re-validates each stored
+`manifest_json` with `validateManifest` (a row with invalid JSON or a manifest that no longer validates
+is logged and skipped), and reconstructs each `RegisteredModule` with `binding: "dispatch:<script_name>"`.
+It returns `[]` without touching D1 when `MODULE_DISPATCH` is unbound, with ONE exception: in demo mode
+(`AUTH_MODE=demo`, #625) it reads the table anyway, because the demo binds no namespace but seeds
+`installed_modules` with captured manifests so `/api/modules` projects the real catalog (display-only:
+the demo gate denies mutations and the seeded refs are never invocable). A D1 error is logged and
+yields `[]`.
+
+`discoverModules(env)` returns the merge of both halves via `mergeRegistries(service, dispatch)`:
+service entries first, then dispatch-only entries. On a NAME collision (a module both service-bound and
+installed in the namespace, the transient migration overlap of section 6.3) the **service binding
+wins** and the dispatch duplicate is dropped with a warning. The dispatch half is re-read from D1 on
+EVERY call, so an install / uninstall / enable toggle takes effect on the next request; only the
+service-binding scan is cached per isolate. The merged list is the one registry the pipeline and
+`GET /api/modules` consume. `indexByHook`, `resolvePickOne`, `servingForHook`,
 `dispatchChain`, `dispatchPickOne` need NO change -- they operate on `RegisteredModule[]`, agnostic to
 how each entry will resolve to a Fetcher.
 
@@ -266,26 +317,42 @@ All three steps are code/API, no dashboard click (the IaC / no-dashboard doctrin
 
 ```mermaid
 sequenceDiagram
-  participant C as Contributor
-  participant CLI as install CLI / API (core admin route)
+  participant C as Operator
+  participant CLI as scripts/install-module.ts
   participant CF as Cloudflare WfP API
-  participant CONF as conformance harness
+  participant CORE as core: POST /api/modules/install
   participant NS as dispatch namespace
   participant DB as D1 installed_modules
 
-  C->>CLI: install --script motion-foo --code ./dist --secrets foo.env
+  C->>CLI: node scripts/install-module.ts --script motion-foo --code ./dist/index.js --core <studio-url> [--secrets foo.env]
   CLI->>CF: PUT script into namespace `vivijure-modules` (Workers for Platforms upload API)
   CF->>NS: user Worker `motion-foo` now resident (NOT yet in the registry)
-  CLI->>CONF: run conformance vs the just-uploaded script (via the dispatch binding)
-  CONF-->>CLI: PASS / FAIL (manifest + envelope + typed payload)
-  alt conformance FAIL
+  CLI->>CORE: POST /api/modules/install { script_name: "motion-foo" }
+  CORE->>NS: GET /module.json + runLiveConformance via MODULE_DISPATCH.get("motion-foo")
+  alt manifest invalid or conformance FAIL (non-2xx)
+    CORE-->>CLI: 400 / 422 { ok: false, error, checks? }
     CLI->>CF: DELETE script (rollback -- never half-installed)
-    CLI-->>C: rejected, with the failing check
+    CLI-->>C: rejected, with the failing checks (exit 1)
   else conformance PASS
-    CLI->>DB: INSERT installed_modules row (name, script_name, manifest_json, api)
+    CORE->>DB: upsert installed_modules row (name, script_name, manifest_json, api, installed_at, enabled=1)
+    CORE-->>CLI: 201 { ok: true, module, script_name, checks }
     CLI-->>C: installed -- live on the next request, no core redeploy
   end
 ```
+
+The CLI (`scripts/install-module.ts`, run with `node scripts/install-module.ts`) takes
+`--script <name>` (required; the user-Worker script name), `--code <path>` (required; the ESM entry
+file, uploaded as the `main_module`), `--core <studio-url>` (required), and optionally
+`--secrets <dotenv-file>` (each `KEY=VALUE` line becomes a `secret_text` binding on the uploaded script),
+`--namespace` (default `vivijure-modules`), `--compat-date` (default `2024-11-01`), and `--name` (sent
+in the install body, but the core route reads only `script_name` and takes the module name from the
+manifest). Auth
+comes from the environment, never argv: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (a
+WfP-scoped token, Workers Scripts:Edit) for the upload/delete, and `CF_ACCESS_CLIENT_ID` /
+`CF_ACCESS_CLIENT_SECRET` (a CF Access service token) sent as `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` on the core call. The CLI sends no `Authorization: Bearer` header, so as
+written it reaches an Access-mode core, not a token-mode one (section 4.4 for the route's auth). The
+conformance run and the row insert are done by the **core route**, not the CLI.
 
 A module is **resident** (uploaded into the namespace) the moment the WfP upload succeeds, but it is
 **not installed** until its row exists in `installed_modules`. The conformance gate (section 4.3) sits
@@ -305,7 +372,8 @@ bound to the **user Worker**, not the core:
   creds because the core never has them).
 - The core hands a module only the credential-LESS `InvokeContext` (`{ project, job_id }`) plus
   presigned, short-lived R2 URLs for the specific objects a hook needs -- exactly as today. WfP does
-  not widen that surface.
+  not widen that surface: the one secret the envelope can carry, `InvokeRequest.r2` (section 3.3), is
+  withheld from dispatch modules even when their manifest sets `needs_tenant_r2`.
 - Blast radius of a leaked/compromised module key is one module's backend, never the core or another
   module. Section 7 covers the OPEN question of whether an outbound-Worker egress guard should also
   fence where a module is even allowed to call.
@@ -313,15 +381,23 @@ bound to the **user Worker**, not the core:
 ### 4.3 Conformance gate integration
 
 This is the operational teeth of "a module that implements the interface but fails conformance is not
-installable" (CLAUDE.md, Module conformance).
+installable" (CLAUDE.md, "Verifying changes").
 
 - The harness already exists: `@skyphusion-labs/vivijure-core modules/conformance` (`checkManifest`, `checkInvokeResponse`,
   `checkHookOutput`) and `tests/conformance.live.test.ts`, run today as
   `MODULE_URL=<deployed-url> npm run conformance` against a deployed worker.
 - In the dispatch world the gate runs in the **install path** (section 4.1), against the
   just-uploaded script reached **through the dispatch binding** (not a public URL -- the module has
-  none). The live conformance check is pointed at `env.MODULE_DISPATCH.get(script_name)` so it
-  exercises the real dispatch transport it will run on.
+  none). The live conformance check (`runLiveConformance(fetcher)` from
+  `@skyphusion-labs/vivijure-core modules/conformance`) is pointed at
+  `env.MODULE_DISPATCH.get(script_name)` so it exercises the real dispatch transport it will run on.
+  It makes exactly three probes: (1) `GET /module.json` through `checkManifest` (a failure here stops
+  the run); (2) one `POST /invoke` for the manifest's FIRST hook only (`hooks[0]`), with a fixed
+  `plan.enhance`-shaped input and `context { project: "conformance", job_id: "install-gate" }`, checked
+  with `checkInvokeResponse` (plus `checkHookOutput` when the answer is synchronous `ok:true` without
+  `pending`); a module whose first hook is not `plan.enhance` is expected to degrade (`ok:false`),
+  which is still a conformant envelope; (3) a degrade probe, `POST /invoke` with an unknown hook, that
+  must answer HTTP 200 + `ok:false`. Hooks after `hooks[0]` are not probed at install.
 - **Gate placement is the whole point:** the `INSERT` into `installed_modules` happens ONLY on a green
   suite. Resident-but-not-conformant = rolled back (script deleted) or left orphaned-and-unlisted; it
   is never dispatched because the registry only ever reads installed rows.
@@ -351,6 +427,30 @@ script SECOND (so an in-flight request mid-`/poll` is not torn out from under). 
 routes on the core, callable from an `install` CLI checked into the repo -- the reproducible,
 no-dashboard onboarding the doctrine asks for.
 
+> **Known deviation (#764, MD-6):** today `DELETE /api/modules/install/:name` only deletes the
+> `installed_modules` row, and `scripts/install-module.ts` has no uninstall mode (it deletes a script
+> only as the rollback of a failed install), so the WfP script-evict step is not implemented: an
+> uninstalled script stays resident in the namespace until removed out of band.
+
+**The routes (as shipped).** All four are in `API_ROUTES` (`src/index.ts`) with `scope: "operator"`:
+the caller must pass the `/api/*` auth gate AND hold operator scope (an Access identity in access
+mode, or the `STUDIO_API_TOKEN` secret / a named API token whose row grants `operator` in token mode;
+a consumer-scoped credential gets `403`). The demo studio (`AUTH_MODE=demo`) grants only consumer
+scope, so all four answer `403` there. JSON bodies; errors are `{ "error": "<message>" }` unless noted.
+
+| Route | Body | Success | Failures |
+|---|---|---|---|
+| `GET /api/modules/installed` | none | `200 { ok: true, modules: [{ name, script_name, api, installed_at, enabled }] }` (every row, enabled or not, ordered by `name`; `enabled` is a boolean) | auth only |
+| `POST /api/modules/install` | `{ "script_name": "<script>" }` | `201 { ok: true, module, script_name, checks }` | `400` when `MODULE_DISPATCH` is unbound (`dispatch is not enabled on this host (no MODULE_DISPATCH namespace bound)`), `script_name required`, the script is not resident, `module unreachable: ...` (the `GET /module.json` fetch failed after its timeout/retry), or `module.json is not valid JSON`; `422 { ok: false, error: "invalid manifest: ..." }`; `422 { ok: false, error: "conformance failed", checks: [<failing checks>] }` |
+| `DELETE /api/modules/install/:name` | none | `200 { ok: true, module, removed: true }` | `404 module not installed` |
+| `PATCH /api/modules/install/:name` | `{ "enabled": true \| false }` | `200 { ok: true, module, enabled }` | `400` `` body needs a boolean `enabled` ``; `404 module not installed` |
+
+`:name` is the module name (`manifest.name`, the row's primary key), not the script name. Install is
+an **upsert**: re-installing a name that already has a row (a new version that re-passed the gate)
+replaces its `script_name`, `manifest_json`, `api`, and `installed_at` in place and sets `enabled = 1`,
+so a re-install also re-enables a disabled module. The stored `manifest_json` is the exact raw text
+that passed the gate.
+
 ## 5. Contract-version implications (DECIDED)
 
 **The question:** does dynamic dispatch require a bump of `vivijure-module/2`, or is it host-side-only
@@ -366,13 +466,14 @@ capability flag, not a version) that satisfies the change-control instinct host-
   Dispatch changes **none** of them. A module that conforms to `vivijure-module/2` over a service
   binding conforms over dispatch **without a single byte changed** -- `get(name).fetch("/invoke")` and
   `env.MODULE_X.fetch("/invoke")` deliver the identical request.
-- Everything new lives **host-side**: a binding, a D1 table, a resolution branch in `fetcherFor`, an
-  install path. None of it is visible to a module author or vendored into `src/contract.ts`.
+- Everything new lives **host-side**: a binding, a D1 table, a resolution branch (`resolveFetcher`),
+  an install path. None of it is visible to a module author or added to the module-facing types in
+  `@skyphusion-labs/vivijure-core modules/types`.
 - The contract has a precedent for "additive, no bump": `ui.locality`, `cancelable`, `jobId`, and
   `config_schema` `scope` were all added without a version change because they narrowed nothing a
   module relied on. Dispatch is even less invasive -- it touches the module-facing types not at all.
-- Practical weight: a bump forces a migration story across ~28 modules (the `/1`->`/2` note in
-  `types.ts` already records how costly a simultaneous cutover is). Spending that on a change no module
+- Practical weight: a bump forces a migration story across every module in `modules/` (the
+  `/1`->`/2` note in `@skyphusion-labs/vivijure-core modules/types` already records how costly a simultaneous cutover is). Spending that on a change no module
   can observe is a poor trade.
 
 ### 5.2 The case for a BUMP -- the honest counter
@@ -393,7 +494,7 @@ capability flag, not a version) that satisfies the change-control instinct host-
 **Dispatch ships as additive host-side infrastructure. NO `MODULE_API` bump. The contract stays
 `vivijure-module/2`** -- because the module-facing contract is genuinely untouched
 (`get(name).fetch("/invoke")` delivers the identical request a service binding does), and a bump's cost
-(the ~28-module migration) buys nothing a module can observe. The two decisions section 5.2 raised are
+(a migration of every module in `modules/`) buys nothing a module can observe. The two decisions section 5.2 raised are
 both ruled NO, which is what keeps this additive:
 
 1. **Transport hint to modules: NO.** A module stays BLIND to which door it came through. A
@@ -421,16 +522,24 @@ newly advertised). Adding a host capability flag bumps nothing in `@skyphusion-l
 
 ### 6.1 The `local-gpu` case (#382)
 
-Rollins's `local-gpu` door is the textbook first migration. Today it is fenced out of the v0.7.6
-deploy by an `EXCLUDE` in CI (`.github/workflows/ci.yml`): it is in `modules/` but NOT bound to the
-core (no `MODULE_LOCAL_GPU` `[[services]]`), and its `LOCAL_BACKEND_URL` / `LOCAL_BACKEND_TOKEN`
-secrets are not seeded, so a `wrangler deploy` of it fails (code 10182) -- which is exactly why it was
-excluded to stop breaking the release.
+Rollins's `local-gpu` door was the textbook first migration candidate. *Historically* (v0.7.6) it was
+fenced out of the deploy by an `EXCLUDE` in CI because its `LOCAL_BACKEND_URL` / `LOCAL_BACKEND_TOKEN`
+secrets were not seeded and a `wrangler deploy` of it failed (code 10182).
 
-That whole failure mode **disappears** under dispatch:
+**Today the exclusion is policy, not a workaround (cf#560): the HOSTED studio never deploys or binds
+`local-gpu`.** The door's own manifest says it is self-host only and that commercial use goes through
+vivijure-cf instead, so binding it on the hosted deploy contradicts its licence text. CI enforces this
+twice: `export EXCLUDE="${EXCLUDE:-} local-gpu"` in the module-deploy step, and
+`scripts/strip-local-gpu.sh` removing the LOCAL-GPU block from the rendered hosted config (called from
+both `.github/workflows/ci.yml` and `.github/workflows/studio-release.yml`). Self-host `deploy.sh`
+allows it behind `INSTALL_LOCAL_GPU=1`. The same invariant rules out installing `local-gpu` into the
+vivijure-operated `vivijure-modules` namespace (that would be the hosted studio dispatching to it). The migration described below is for a **self-hosted** studio's own namespace (the operator
+running the studio on their own account with WfP enabled).
+
+For such a self-host, the old failure mode **disappears** under dispatch:
 
 - No core `[[services]]` binding to dangle -> nothing for the core deploy to trip over.
-- No CI `EXCLUDE` entry -> the door is not gated on a core release at all.
+- No deploy-time exclusion or strip to maintain -> the door is not gated on a core release at all.
 - Its secrets bind to the **uploaded user Worker** at install time (section 4.2), not seeded into the
   core's account-level store ahead of a core deploy. The homelab operator installs `local-gpu` into
   the namespace WHEN their box is up, with THEIR backend URL + token, and it goes live on the next
@@ -460,14 +569,13 @@ is the same four files behind the same hook; what differs is whose namespace it 
 The migration is **incremental and reversible**, which is the whole point of keeping both transports:
 
 - First-party modules stay on `[[services]]` bindings until each is deliberately moved. The registry
-  resolves a module by whichever descriptor it carries (`binding` for service-bound, `dispatch` for
-  namespace-resident) -- see section 3.2. Both kinds coexist in one registry, one `GET /api/modules`.
-- The `MODULE_*` env scan (`moduleBindingNames`) MUST exclude the dispatch binding key itself
-  (`MODULE_DISPATCH`): it is a `DispatchNamespace`, not a module `Fetcher`. The scan's `isFetcher`
-  guard already rejects a value without `.fetch()`, and a `DispatchNamespace` has `.get()` not
-  `.fetch()`, so it is filtered out today -- but the exclusion should be made explicit (a named
-  skip), not left to rely on shape, so a future types change cannot accidentally enroll the namespace
-  as a module.
+  resolves a module by the ref its `binding` carries (`MODULE_<NAME>` for service-bound,
+  `dispatch:<script>` for namespace-resident) -- see section 3.2. Both kinds coexist in one registry,
+  one `GET /api/modules`; on a name collision the service binding wins (section 3.4).
+- The `MODULE_*` env scan (`moduleBindingNames`) excludes the dispatch binding key itself
+  (`MODULE_DISPATCH`): it is a `DispatchNamespace`, not a module `Fetcher`. The exclusion is explicit
+  (a named skip, `k !== DISPATCH_BINDING`) in addition to the `isFetcher` shape guard, so a future
+  types change cannot accidentally enroll the namespace as a module.
 - A module can be moved one at a time: upload it to the namespace, install the row, then remove its
   `[[services]]` block in a later, ordinary core deploy. At no point is the studio down a capability.
 - Rollback is symmetric: if a namespace module misbehaves, `uninstall` it (row delete) and, if it was
@@ -481,8 +589,8 @@ follow-ups -- they want a measured number or a follow-up spike, not a v1 ruling,
 design landing.
 
 1. **Upload auth / who may install -- DECIDED: operator-gated install for v1.** A module upload is
-   authenticated by a **core admin API route behind CF Access** (operator-only, mirroring the studio's
-   own auth) plus a **scoped install-CLI token** for the WfP upload itself (option (a) + (b) combined).
+   authenticated by a **core admin API route requiring operator scope** (an Access identity, or the
+   operator / an operator-scoped API token in token mode; section 4.4) plus a **scoped install-CLI token** for the WfP upload itself (option (a) + (b) combined).
    **Self-serve upload into OUR namespace is NOT built** -- letting an outside contributor push an
    arbitrary Worker into the vivijure-operated namespace runs untrusted code on our account, which we
    do not open. The genuine self-serve story is **BYO-accounts (#244)**: a contributor runs the studio
@@ -498,7 +606,7 @@ design landing.
 
 3. **User-Worker cold start.** A namespace module is not always warm. For a synchronous hook
    (`plan.enhance`) a cold start adds latency; for an async GPU hook (`motion.backend`) it is in the
-   noise vs the render. The `readManifest` retry/timeout discipline (`registry.ts`) already tolerates a
+   noise vs the render. The `readManifest` retry/timeout discipline (`@skyphusion-labs/vivijure-core modules/registry`) already tolerates a
    warming module; confirm the same tolerance covers a cold dispatch `get().fetch()`. Low risk, worth a
    measured number before we claim parity.
 
@@ -528,8 +636,9 @@ design landing.
 
 ## 8. What this doc does NOT do
 
-- It does not create the namespace, upload any module, or apply any `wrangler.toml` / `env.ts` change.
-  The diffs in sections 2.2 / 2.3 are PROPOSED, shown inline for review.
+- It does not create the namespace or upload any module; those are operator steps
+  (`docs/deploy-runbook.md`, then `scripts/install-module.ts`). The binding and `Env` changes it
+  proposed have shipped (sections 2.2 / 2.3); the diffs there are kept as historical rationale.
 - It does not change the module-facing contract (`docs/module-api.md`, `@skyphusion-labs/vivijure-core modules/types`). The
   api-version ruling (section 5) is **additive, no bump** -- so this stays a pure host-side +
   onboarding spec layered under the existing `vivijure-module/2` contract. "This host speaks dispatch"

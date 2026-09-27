@@ -30,7 +30,7 @@ Shared rules:
 - Seedance on Cloudflare uses the talking sample you kept as the voice
   lock. Same take, every shot.
 - Kling in this tree is **2.1 silent**. It is not Kling 2.6 `voice_id`. Speaking
-  is Cast TTS plus MuseTalk.
+  is Cast TTS, muxed (a synced mouth is the InfiniteTalk door).
 
 ## cf-flux-3-video (Flux talking)
 
@@ -112,7 +112,7 @@ Cinematic camera, silent clips.
 |---|---|
 | Duration | 5 or 10 seconds |
 | Talks? | No. |
-| Voice lock | `cast_tts`. Speaking is the Cast voice plus MuseTalk. |
+| Voice lock | `cast_tts`. Speaking is the Cast voice, muxed. |
 | First+last? | No. |
 | Cannot | Native talking audio. This is Kling 2.1 silent, not 2.6 `voice_id`. |
 
@@ -124,7 +124,7 @@ Physical motion, silent.
 |---|---|
 | Duration | 6 or 10 seconds |
 | Talks? | No. |
-| Voice lock | `cast_tts`. Cast voice plus MuseTalk if they speak. |
+| Voice lock | `cast_tts`. Cast voice muxed if they speak. |
 | First+last? | No. |
 | Cannot | Native talking audio. Arbitrary lengths. |
 
@@ -243,5 +243,5 @@ Multi-ref silent. Cast, props, locations.
 |---|---|
 | `prompt_lock` | Same speaker description in every motion prompt. No speaker id on the door. |
 | `seed_and_prompt` | Same seed **and** the same prompt lock. Seedance. |
-| `cast_tts` | Speaking voice is the Cast voice (TTS). Driving-audio doors (InfiniteTalk, Wan) consume that LINE file at motion time. MuseTalk mouth-replace is homelab-only; hosted does not bind it. |
+| `cast_tts` | Speaking voice is the Cast voice (TTS). Driving-audio doors (InfiniteTalk, Wan) consume that LINE file at motion time. Post-hoc mouth-replace is GONE (cf#783): on a silent door the Cast voice is muxed and the mouth is not re-synced. |
 | `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Not wired yet. |

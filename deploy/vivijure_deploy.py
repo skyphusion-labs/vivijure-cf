@@ -89,15 +89,13 @@ ACCESS_AUD = ""          # AUTH_MODE=access only: the studio Access application 
 # The store keys are the UNION of every `secret_name` the deployed workers bind across
 # wrangler.toml.example + all modules/*/wrangler.toml (test_secret_map.py asserts this manifest stays
 # in sync with the tomls). NOTE the store key is the `secret_name`, NOT the in-code binding var: e.g.
-# finish-lipsync binds var RUNPOD_ENDPOINT_ID FROM store secret MUSETALK_RUNPOD_ENDPOINT_ID. The old
+# finish-upscale binds var RUNPOD_ENDPOINT_ID FROM store secret VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID. The old
 # seed set (a bare RUNPOD_ENDPOINT_ID) was read by NOTHING -- the core binds BACKEND_RUNPOD_ENDPOINT_ID
 # and the satellites bind their own per-endpoint names (#658). Grouped by how the value is sourced.
 AUTO_STORE_NAMES = (       # the installer resolves + seeds these (user key / RunPod ids / CF derived)
     "RUNPOD_API_KEY",
     "BACKEND_RUNPOD_ENDPOINT_ID",
     "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID",
-    "MUSETALK_RUNPOD_ENDPOINT_ID",
-    "AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID",
     "GATEWAY_ID",
     "R2_S3_ACCESS_KEY_ID",
     "R2_S3_SECRET_ACCESS_KEY",
@@ -133,7 +131,6 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     # (10182 at deploy). The two halves of one optional binding are stripped by DIFFERENT rules on
     # the self-host path, which is why this needs seeding and the VPC id does not.
     "FINISH_DOOR_TOKEN",
-    "SPEECH_DOOR_TOKEN",
     # cf#507: the SECOND door's bearer on each upscale module. Same rule and the SAME reason as the
     # pair above -- render_module_toml strips [[vpc_services]] wholesale but NOT
     # [[secrets_store_secrets]], so on a BASE self-host install this bearer block survives into the
@@ -142,7 +139,6 @@ OPERATOR_STORE_NAMES = (   # the operator supplies these post-install; seeded as
     # happens to work for both is a coupling nobody declared. An operator may point both at the same
     # store value; that is their decision, not a schema one.
     "FINISH_DOOR_TOKEN_PROPAGANDHI",
-    "SPEECH_DOOR_TOKEN_PROPAGANDHI",
     # cf#489: the blender door bearer. Same rule as the two above, and it needs seeding for
     # the same reason: render_module_toml strips [[vpc_services]] wholesale but NOT
     # [[secrets_store_secrets]], so on a BASE self-host install this bearer block survives
@@ -156,8 +152,6 @@ STORE_BINDING_NAMES = AUTO_STORE_NAMES + OPERATOR_STORE_NAMES
 ENDPOINT_SECRET_NAMES = {
     "vivijure-backend": "BACKEND_RUNPOD_ENDPOINT_ID",
     "vivijure-upscale": "VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID",
-    "vivijure-musetalk": "MUSETALK_RUNPOD_ENDPOINT_ID",
-    "vivijure-audio-upscale": "AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID",
 }
 
 # Seeded for the operator-supplied class so the module deploy resolves; the operator replaces it
@@ -166,10 +160,11 @@ OPERATOR_PLACEHOLDER = "REPLACE_ME__vivijure-deploy-operator-secret"
 
 # RunPod serverless endpoints to stand up (each is an id the studio needs). Each finish satellite runs
 # its OWN container image (see runpod_images()); a satellite templated with the backend image fails
-# every finish job (#678). audio-upscale is first-class -- modules/speech-upscale binds
-# AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID (#658). A first deploy can opt into a subset -- upscale/lipsync
-# degrade gracefully.
-RUNPOD_ENDPOINTS = ("vivijure-backend", "vivijure-upscale", "vivijure-musetalk", "vivijure-audio-upscale")
+# every finish job (#678). audio-upscale is GONE (cf#786): speech-upscale was its only consumer
+# and the module is removed. A first deploy can opt into a subset -- the finish
+# satellites degrade gracefully. vivijure-musetalk is GONE (cf#783): MuseTalk is ruled out
+# permanently as a lip-sync provider and its endpoint no longer exists.
+RUNPOD_ENDPOINTS = ("vivijure-backend", "vivijure-upscale")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -771,8 +766,6 @@ GPU_TYPE_IDS: list = []  # REQUIRED -- endpoint GPU type id(s) (GET /gputypes)
 # satellite ships a new tag, or edit a knob to pin a specific tag for a run.
 BACKEND_IMAGE_TAG = "1.0.2"        # ghcr.io/skyphusion-labs/vivijure-backend
 UPSCALE_IMAGE_TAG = "1.0.1"        # ghcr.io/skyphusion-labs/vivijure-upscale
-MUSETALK_IMAGE_TAG = "1.0.0"       # ghcr.io/skyphusion-labs/vivijure-musetalk
-AUDIO_UPSCALE_IMAGE_TAG = "1.0.0"  # ghcr.io/skyphusion-labs/vivijure-audio-upscale
 # Optional finish satellite (finish-blender): provision via vivijure-blender/deploy.sh, not
 # RUNPOD_ENDPOINTS / runpod_images() auto-install. Image tag narrative: 0.1.0.
 
@@ -783,8 +776,6 @@ def runpod_images() -> dict:
     return {
         "vivijure-backend": ("ghcr.io/skyphusion-labs/vivijure-backend", BACKEND_IMAGE_TAG),
         "vivijure-upscale": ("ghcr.io/skyphusion-labs/vivijure-upscale", UPSCALE_IMAGE_TAG),
-        "vivijure-musetalk": ("ghcr.io/skyphusion-labs/vivijure-musetalk", MUSETALK_IMAGE_TAG),
-        "vivijure-audio-upscale": ("ghcr.io/skyphusion-labs/vivijure-audio-upscale", AUDIO_UPSCALE_IMAGE_TAG),
     }
 
 
@@ -1035,7 +1026,7 @@ def seed_secrets(repo: Path, s: Secrets, st: State, cf_derived: dict, runpod_end
     """Step 3. CRITICAL ORDER: seed the Secrets Store BEFORE deploying the workers. A module worker's
     secrets_store_secrets binding references a store secret by name; `wrangler deploy` FAILS if that
     secret does not yet exist (#237). Values flow from: the user's RUNPOD_API_KEY, the per-endpoint
-    RunPod ids under their own store names (BACKEND_/VIDEO_UPSCALE_/MUSETALK_/AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID,
+    RunPod ids under their own store names (BACKEND_/VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID,
     step 2), GATEWAY_ID + the scoped R2 S3 creds (step 1). Operator-supplied secrets (CF AI Gateway
     tokens, a local-backend URL/token) seed as MARKED placeholders so the module deploy resolves; the
     operator replaces them post-install (finalize prints the checklist). Returns the placeholder names.

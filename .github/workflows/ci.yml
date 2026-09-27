@@ -426,7 +426,6 @@ jobs:
           AUDIO_MIX_URL: ${{ vars.AUDIO_MIX_URL }}
           AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
           FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
-          SPEECH_UPSCALE_DOORS: ${{ vars.SPEECH_UPSCALE_DOORS }}
           FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
           # #520: the 5 media modules carry a REPLACE_WITH_VPC_*_ID placeholder (no hardcoded prod VPC
           # service id in the tracked tomls). Filled per-module below from these repo secrets.
@@ -435,12 +434,11 @@ jobs:
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}
           # OPTIONAL (cf#482/#480). UNSET IS THE NORMAL STATE and is what ships today: an unset id
           # makes fill-module-placeholders.sh STRIP the door's [[vpc_services]] and
-          # [[secrets_store_secrets]] blocks, so finish-upscale and speech-upscale deploy exactly as
+          # [[secrets_store_secrets]] blocks, so finish-upscale deploys exactly as
           # they do now, on RunPod. Referencing a secret that does not exist yields "" here, which
           # IS the unset state -- so adding these lines changes nothing until someone creates the
           # secret. Set one only once the matching connectivity-directory service exists.
           VPC_FINISH_UPSCALE_ID: ${{ secrets.VPC_FINISH_UPSCALE_ID }}
-          VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
           # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
           # deploy stayed GREEN while silently stripping the door blocks. The log line reading
           # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks was the ONLY tell.
@@ -462,7 +460,6 @@ jobs:
           # secrets exist. They are listed HERE because an id missing from this list is the cf#489
           # failure: the deploy stays GREEN and silently strips the door it was meant to bind.
           VPC_FINISH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_FINISH_UPSCALE_PROPAGANDHI_ID }}
-          VPC_SPEECH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_SPEECH_UPSCALE_PROPAGANDHI_ID }}
           # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
           # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
           # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name
@@ -539,7 +536,6 @@ jobs:
           AUDIO_MIX_URL: ${{ vars.AUDIO_MIX_URL }}
           AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
           FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
-          SPEECH_UPSCALE_DOORS: ${{ vars.SPEECH_UPSCALE_DOORS }}
           FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
         run: |
           set -eu
@@ -556,7 +552,7 @@ jobs:
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "::error::CLOUDFLARE_ACCOUNT_ID unset -- cannot render R2_S3_ENDPOINT"; exit 1; fi
           R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
           R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
-          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
           # cf#560: STRIP THE LOCAL-GPU BLOCK. The hosted studio must never bind local-gpu.
           #
           # The door's own manifest blurb says "Self-host only ... Commercial use of Vivijure is
@@ -576,8 +572,10 @@ jobs:
           # workflows themselves and refusing if any member does not call it.
           #
           # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour.
-          # SATELLITE finish-upscale / speech-upscale stay. SATELLITE finish-lipsync is
-          # stripped next: MuseTalk is homelab only. SELFHOST-SKIP marks fleet-only blocks,
+          # SATELLITE finish-upscale stays. There is no longer a
+          # finish-lipsync block to strip: MuseTalk is ruled out permanently and the module
+          # is gone (cf#783), so the strip script and its gate went with it rather than
+          # staying on as a control with no subject. SELFHOST-SKIP marks fleet-only blocks,
           # which hosted IS.
           #
           # deploy.sh (SELF-HOST, where local-gpu is ALLOWED) keeps its own INSTALL_LOCAL_GPU switch
@@ -585,8 +583,6 @@ jobs:
           # bolting the unconditional strip onto the self-host path would remove a door its operator
           # is entitled to run.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
-          sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
-          mv .wrangler.hosted2.toml .wrangler.hosted.toml
           envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a

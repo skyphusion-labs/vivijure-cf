@@ -4,7 +4,7 @@ A **`finish`**-chain module (vivijure-module/2). It smooths a shot's motion with
 interpolation and optionally relocks faces with **GFPGAN/CodeFormer**, dispatched as `finish_clip` to
 the shared **vivijure-backend** RunPod endpoint.
 
-It is the **first link in the finish chain** (`order: 10`), so a clip is smoothed before lip-sync
+It is the **first link in the finish chain** (`order: 10`), so a clip is smoothed before grading
 rewrites the mouth and before the upscaler enlarges it.
 
 ## Where it fits
@@ -17,20 +17,19 @@ flowchart LR
   subgraph finish["finish chain"]
     direction LR
     rife["finish-rife<br/>(RIFE + GFPGAN) · 10"]
-    ls["finish-lipsync<br/>(MuseTalk) · 15"]
     up["finish-upscale<br/>(Real-ESRGAN) · 20"]
   end
   asm["assemble"]
   mux["mux"]
 
   clips --> dlg --> sp --> rife
-  rife --> ls --> up --> asm --> mux
+  rife --> up --> asm --> mux
 
   style rife fill:#dff,stroke:#0aa,stroke-width:2px
 ```
 
-The finish chain runs in ascending `ui.order`: **rife (10) -> lipsync (15) -> upscale (20)**. Smoothing
-first means lip-sync and upscale both operate on the higher-frame-rate, face-restored clip.
+The finish chain runs in ascending `ui.order`: **rife (10) -> blender (18) -> upscale (20)**. Smoothing
+first means grade and upscale both operate on the higher-frame-rate, face-restored clip.
 
 ## Configuration
 
@@ -58,7 +57,7 @@ To self-host (service `vivijure-module-finish-rife`, bound into the core as `MOD
 
 - **Hook**: `finish` (cardinality `chain`). `ui { section: "finish", icon: "wand", order: 10 }`.
 - **Input** (`FinishInput`): `shot_id`, `clip_key`, `src_fps`, `frames`, `width`, `height` (the
-  optional `audio_key` is for lipsync; rife ignores it).
+  optional `audio_key` is for an audio-consuming finish module; rife ignores it).
 - **Output** (`FinishOutput`): `shot_id`, `clip_key` (the finished clip), `out_fps`, `frames`,
   `applied`, and `degraded` set ONLY on a real passthrough.
 - **Async**: `POST /invoke` submits to RunPod and returns a poll token; `POST /poll` checks

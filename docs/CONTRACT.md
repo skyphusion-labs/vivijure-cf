@@ -39,9 +39,11 @@ Conventions in this doc:
 - A field name suffixed `?` is optional. "req" column: yes = required, no = optional.
 - A double hyphen `--` stands in for a dash (house style: no em/en dashes, including in diagrams).
 - Unless a route documents otherwise, every JSON request body that fails to parse returns
-  `400 { "error": "invalid JSON body" }`, and every numeric `:id` that is not a positive integer
-  returns `400 { "error": "invalid id" }`. A successful body is JSON with
-  `content-type: application/json; charset=utf-8`.
+  `400 { "error": "invalid JSON body" }`. A project / cast / render `:id` must be that row's opaque
+  public id (a canonical lowercase UUID v4); anything else, including a bare integer, is `404` with
+  the resource noun as the error: `{ "error": "project" }`, `{ "error": "cast member" }`, or
+  `{ "error": "render" }` (the same body as a well-formed but unknown id; there is no `400 invalid
+  id`). A successful body is JSON with `content-type: application/json; charset=utf-8`.
 
 ---
 
@@ -56,7 +58,7 @@ rules below are how the contract stays true over time without depending on any s
 - **`vivijure-module/2`** is the current contract version, carried as the `MODULE_API` constant and
   echoed on the wire in `GET /api/modules.api` and in every module manifest's `api` field; the `/1`
   window is closed (see Epoch history).
-- It covers: the 11 hook names + their cardinality, every hook's Input/Output shape, the module
+- It covers: the 12 hook names + their cardinality, every hook's Input/Output shape, the module
   manifest schema (including the `ConfigField` union), the invoke/poll envelopes, and the
   `GET /api/modules` projection payload.
 - It bumps to a NEW epoch (the next `/N`) ONLY on a breaking change to those shapes (a removed/renamed
@@ -91,7 +93,7 @@ Each kind of change moves the same set of artifacts together, in one PR, with th
 | **New config field scope** | Add to the `ConfigScope` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_SCOPES` in `<vivijure-core>/src/modules/conformance.ts`; if it needs a new value source, wire it into the invoke path; document it in section 4.1.1 here. |
 | **New / changed API route** | Add to `API_ROUTES` (or the inline dispatch) in `src/index.ts` with its handler; document the full request/response schema + status codes in section 2 here. |
 | **New hook field** | Add to the `XInput`/`XOutput` interface; if required, add to the conformance validator; update the field table here. |
-| **New render quality tier / render projection field** | Edit `QUALITY_TIERS` / `RenderConfigProjection` in `src/render-module-config.ts`; update section 2.2.1 / 2.2 here. |
+| **New render quality tier / render projection field** | Edit `QUALITY_TIERS` in `<vivijure-core>/src/render-module-config.ts` / `RenderConfigProjection` in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`; this host has no copy); update section 2.3.1 / 2.3 here. |
 
 The `Record<HookName, ...>` maps (`HOOK_CARDINALITY`, `HOOK_BLURBS`, `HOOK_OUTPUT_CHECKS`) are the
 enforcement spine: TypeScript will not compile if a hook is added to the union without filling in
@@ -169,6 +171,11 @@ are a global singleton. The `notify` hook carries completion facts only -- the e
 in the notify-email module's OWN config, not in any core-sent field. (The legacy per-user ownership
 key was removed in the identity strip; see Epoch history above.)
 
+> **Open question (#764, CT-39):** "token by default" describes the flagship deploy, which injects
+> `AUTH_MODE="token"` at deploy time (`wrangler.toml.example` templates `AUTH_MODE = "${AUTH_MODE}"`).
+> In the worker itself an UNSET `AUTH_MODE` takes the legacy Access path (`src/auth-gate.ts`
+> `gateApi`), not token mode. Which of the two this section should call the default is an owner call.
+
 ### 1.2 Authorization model (cf#520)
 
 Auth gating (1.1) answers **who is calling**. Authorization answers **what they may do**, and it is a
@@ -183,9 +190,12 @@ which rewrites an estate-wide storage ledger.
 | `operator` | the route touches installation, configuration, or estate-wide state |
 | `consumer` | the route touches one tenant's own data, **however destructive** |
 
-Every `DELETE` route in this contract is `consumer`. Deleting your own cast portrait is correct work,
-and classifying by verb would refuse it while protecting nothing; `POST /api/storage/reconcile` is
-`operator` because it rewrites an estate-wide ledger, not because it deletes.
+Destructiveness does not decide scope. Every `DELETE` route on tenant data (projects, cast, cast
+media, voice samples, renders, render jobs) is `consumer`: deleting your own cast portrait is correct
+work, and classifying by verb would refuse it while protecting nothing. The one `operator` `DELETE`
+is `DELETE /api/modules/install/:name`, and it is `operator` because it changes the installation, not
+because it deletes; likewise `POST /api/storage/reconcile` is `operator` because it rewrites an
+estate-wide ledger.
 
 **What each credential holds:**
 
@@ -198,9 +208,12 @@ and classifying by verb would refuse it while protecting nothing; `POST /api/sto
 | a demo visitor (`AUTH_MODE=demo`) | `consumer` | there is no operator path into a demo deploy |
 
 **Refusal.** An authorized-but-insufficient caller gets `403 { "error": "insufficient scope: this
-credential is not authorized for this route" }`. That wording deliberately avoids the phrases the
-frontend token shim keys on, so an authorization failure does not prompt the user to re-paste a
-token that is fine.
+credential is not authorized for this route", "code": "scope_denied" }` with response header
+`X-Vivijure-Authz: scope_denied` (`AUTHZ_DENY_REASON` / `AUTHZ_DENY_CODE`, `src/authz.ts`). That
+wording deliberately avoids the phrases the frontend token shim keys on, so an authorization failure
+does not prompt the user to re-paste a token that is fine. The `code` (and header) appear ONLY on this
+authorization deny, never on an authentication 403 (2.0), so a client can tell "re-issue with
+operator scope" from "paste a live token" without parsing prose.
 
 **Where the classification lives.** On the `Route` entry in `API_ROUTES` (`src/index.ts`), as a
 REQUIRED field -- omitting it is a compile error, so a route cannot be added without being
@@ -237,9 +250,44 @@ the same deny reason as any other bad token so a prober learns nothing, and a
   (e.g. `503`, `422`, `502`, `504`); those are documented per route. Any other uncaught error returns
   `500 { "error": "internal error" }`.
 - A `:id` that addresses a film job is the `film-<...>` string id; a `:jobId` is `film-*` only
-  (poll of leftover `scatter-*` ids returns 410). Render-library / cast / project ids are opaque public ids (UUID strings); cast
-  lookups additionally accept the internal numeric row id (#576).
+  (poll of leftover `scatter-*` ids returns 410). Render-library / cast / project `:id`s are opaque
+  public ids (UUID strings) and nothing else: a numeric row id in the PATH is `404` (see the
+  conventions above). The ONE place a numeric cast row id is accepted is a VALUE inside
+  `castBindings` on `POST /api/storyboard/preflight` (2.12, #576); no `:id` route accepts one.
 - No route requires a request auth field (see 1.1).
+
+**Request gates, in dispatch order** (`routeRequest`, `src/index.ts`). Every `/api/*` request passes
+these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body.
+
+1. **Auth gate** (`gateApi`, `src/auth-gate.ts`; every `/api/*` path, before route matching).
+   `AUTH_MODE="token"`: `403` with `"token mode: STUDIO_API_TOKEN secret is not set -- ..."` (no secret
+   bound, fail closed), `"missing API token: send Authorization: Bearer <your studio API token>"`
+   (no bearer; also a cookie-only mutation, since the `vivijure_token` cookie is honoured for
+   GET/HEAD only), or `"bad API token"` (neither the operator secret nor a live named token).
+   `AUTH_MODE="demo"`: GET/HEAD and `POST /api/demo/render` / `POST /api/demo/chat` pass; every other
+   method is `403 "demo studio is read-only: mutations are disabled on this deployment. ..."`.
+   `AUTH_MODE="access"` or unset: the Access JWT check, `403` with a verification reason (e.g.
+   `"missing Cf-Access-Jwt-Assertion"`, `"bad signature"`, `"token expired"`, `"wrong audience"`), or
+   `503` when the Access keys cannot be loaded, or when `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are not
+   set and `ALLOW_UNAUTHENTICATED` is not `"true"` (`"auth not configured: ..."`). Any
+   other `AUTH_MODE` value: `403 "unknown AUTH_MODE ..."`.
+2. **Spend limiter** (`isSpendRoute` / `enforceSpendLimit`, `src/rate-limit.ts`; `POST` only, on the
+   GPU/paid routes: storyboard `render` / `render-from-keyframes`, `render/clips`, `render/film`,
+   `renders/:id/{regen-shot,finalize,animate-cloud,animate-hybrid,add-narration,retry}`, cast
+   `train-lora` / `train-wan-lora` / `generate-refs`, `score-bed` / `music-generate`, storyboard
+   `plan` / `refine` / `enhance`, and `/api/chat`). An explicit over-limit verdict is `429` with a
+   `Retry-After` header: `60` seconds for the per-request rate limit, or the seconds until UTC
+   midnight when the optional `SPEND_DAILY_CEILING` is reached. A BROKEN check (limiter unbound or
+   throwing, or the ceiling cannot be read) is `503` (fail closed) unless `SPEND_LIMIT_FAIL_CLOSED="false"`.
+3. **Storage quota** (`isStorageSubmitRoute` / `checkStorageQuota`, core `storage-quota`; `POST`
+   only, on routes whose product is stored bytes: the three upload routes, `bundle`, `cast/import`,
+   cast `portrait` / `ref` / `source`, and every GPU / audio submit above plus `add-audio`). Only when
+   `R2_STORAGE_QUOTA_BYTES` is set: at or over the ceiling is `507 "storage quota reached: <used> bytes
+   stored of the <quota>-byte R2_STORAGE_QUOTA_BYTES ceiling; ..."`; a usage read that cannot be made
+   is `503` (fail closed). `R2_STORAGE_QUOTA_MODE="meter"` never denies.
+4. **Route match + authorization** (1.2). A path under `/api/` that matches no `API_ROUTES` entry
+   is NOT a JSON 404: it falls through to the `ASSETS` binding. A matched route whose `scope` the
+   credential does not hold is the `403 scope_denied` of 1.2.
 
 ### 2.1 Full route enumeration
 
@@ -286,14 +334,15 @@ unchanged.
 | 22 | GET | `/api/cast/:id/refs-job/:jobId` | 2.8 |
 | 23 | POST | `/api/cast/:id/train-lora` | 2.9 |
 | 24 | GET | `/api/cast/:id/lora-status` | 2.9 |
-| 24a | POST | `/api/cast/:id/voice-sample` | 2.9.1 |
-| 24b | GET | `/api/cast/:id/voice-sample` | 2.9.1 |
-| 24c | POST | `/api/cast/:id/voice-sample/keep` | 2.9.1 |
-| 24d | DELETE | `/api/cast/:id/voice-sample` | 2.9.1 |
-| 24e | POST | `/api/cast/:id/voice-sample/attach` | 2.9.1 |
+| 24a | POST | `/api/cast/:id/voice-sample` | 2.9 |
+| 24b | GET | `/api/cast/:id/voice-sample` | 2.9 |
+| 24c | POST | `/api/cast/:id/voice-sample/keep` | 2.9 |
+| 24d | DELETE | `/api/cast/:id/voice-sample` | 2.9 |
+| 24e | POST | `/api/cast/:id/voice-sample/attach` | 2.9 |
 | 25 | POST | `/api/upload` | 2.10 |
 | 25a | POST | `/api/report` | 2.10.1 |
 | 26 | GET | `/api/artifact/*key` | 2.11 |
+| 26c | HEAD | `/api/artifact/*key` | 2.11 |
 | 26a | GET | `/api/artifact-url/*key` | 2.11.1 |
 | 26b | POST | `/api/render/frames` | 2.11.2 |
 | 27 | POST | `/api/storyboard/preflight` | 2.12 |
@@ -372,23 +421,41 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `api` | `"vivijure-module/2"` | Contract version (the `/1` window is closed; `/2` only). |
 | `modules` | `PublicModule[]` | Every installed module's manifest, **minus** `binding`. Each is the manifest shape from section 4. |
 | `hooks` | `{ [hook]: string[] }` | Map of hook name -> module **names** serving it, **pre-sorted** in canonical `ui.order` then name order (section 5). The frontend consumes this verbatim and never re-sorts. A hook with no installed module is absent from the map. |
-| `catalog` | `HookCatalogEntry[]` | Every hook (independent of what is installed): `{ name, blurb, cardinality }`. |
+| `catalog` | `HookCatalogEntry[]` | Every hook (independent of what is installed): `{ name, blurb, cardinality, order }`. |
 | `render` | `RenderConfigProjection` | Core-owned render config: `{ quality_tiers: { value, label, blurb }[], default_tier }`. See 2.3.1. |
+| `host` | object | What THIS deployment can do (the core describing itself; orthogonal to `api`). Always present on this host. Fields below. |
 | `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
 | `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
 
-`HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" }`.
+`HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain", order: number }`.
+`order` is the pipeline display sort key (`HOOK_DISPLAY_ORDER`, core#54; additive): `plan.enhance` 10,
+`cast.image` 20, `image.generate` 30, `keyframe` 40, `motion.backend` 50, `dialogue` 60, `speech` 70,
+`finish` 80, `score` 90, `master` 100, `film.finish` 110, `notify` 120. A panel sorts `catalog[]` by it
+rather than hardcoding a hook list; it is independent of the `catalog` array order (which is
+`HOOK_NAMES` declaration order).
 `PublicModule` = the `ModuleManifest` (section 4) with `binding` removed.
+
+**`host`** (`ModulesResponse.host`; every key but `dispatch` is omitted when it does not apply):
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `dispatch` | boolean | `true` when this deploy binds the Workers-for-Platforms namespace (`MODULE_DISPATCH`), i.e. a module can be installed without a core redeploy (2.31). |
+| `hooks_unavailable?` | `{ [hook or "capability:<name>"]: string }` | Hooks this host cannot serve right now, each mapped to a reason the panel prints verbatim (cf#98). Absent key = available. `plan.enhance` appears when the AI Gateway is not usable; `master`, `film.finish`, `notify` and the `capability:video-finish` key appear when the video-finish tier is unavailable (`VIDEO_FINISH_URL` unset). |
+| `abuse_report_url?` | string | Where a reporter is sent for abuse of THIS studio (control-plane#130). Present only when the operator set it. |
+| `readonly?` | `true` | Demo deploys only (`AUTH_MODE=demo`, #625): the one flag the panel gates every mutation affordance on. |
+| `render?` | `{ available: boolean }` | Demo deploys only: whether demo rendering is switched on. (Distinct from the top-level `render`.) |
+| `assistant?` | `{ model: "oss", note: string }` | Demo deploys only, and only when the AI Gateway is usable: the capped open-weights demo assistant (2.33). |
 
 #### 2.3.1 render.quality_tiers (canonical values)
 
-Sourced from `QUALITY_TIERS` / `DEFAULT_QUALITY_TIER`. `default_tier` = `"final"`.
+Sourced from `QUALITY_TIERS` / `DEFAULT_QUALITY_TIER` (core `render-module-config`). `default_tier` =
+`"final"`. The `blurb` strings below are the exact wire values.
 
 | value | label | blurb |
 |-------|-------|-------|
-| `draft` | draft | fastest, lowest quality (reference cloud backend: 33 frames, 8 steps) |
-| `standard` | standard | balanced (reference cloud backend: 8-step keyframes + 20-step EasyCache i2v) |
-| `final` | final | production quality (reference cloud backend: 97 frames, 22 steps) |
+| `draft` | draft | `33 frames, 8 steps; fastest, lowest quality` |
+| `standard` | standard | `8-step keyframes + 20-step EasyCache i2v; balanced` |
+| `final` | final | `97 frames, 22 steps; production quality` |
 
 > The tier is a QUALITY LADDER, not a universal frame-count contract. The concrete numbers above are
 > the reference cloud backend's; a tier moves quality (steps) and each backend maps it its own way -- the
@@ -399,12 +466,21 @@ Sourced from `QUALITY_TIERS` / `DEFAULT_QUALITY_TIER`. `default_tier` = `"final"
 ### 2.4 GET /api/voices
 
 **Request:** none.
-**Response 200:** `{ "voices": { "id": string, "label": string }[] }`.
+**Response 200:** `{ "voices": { "id": string, "label": string }[], "talking_doors": { "name":
+string, "honor": "exact" | "neighborhood" | "line" | "none", "label": string }[] }`.
 
 The catalog is the Aura-1 speakers, in this stable order (the `id` values): `angus`, `asteria`,
 `arcas`, `orion`, `orpheus`, `athena`, `luna`, `zeus`, `perseus`, `helios`, `hera`, `stella`. The
 cast voice picker renders from this; one source of truth. These 12 ids are the **only** valid
-`voice_id` values (see cast PATCH, 2.6).
+`voice_id` values (see cast PATCH, 2.6). On a demo deploy (`AUTH_MODE=demo`) `voices` is the EMPTY
+array (`catalogForDeploy`: a demo cannot invoke TTS, so it advertises none); the valid-id set for
+PATCH is unchanged.
+
+`talking_doors` (`TALKING_VOICE_HONOR`, `src/cast-voice-sample.ts`) says, per talking
+`motion.backend` module `name`, how far that door honours a cast's kept voice sample (2.9):
+`exact` = uses the kept sample (same voice every shot), `neighborhood` = same description, not the
+same take, `line` = mouth follows the storyboard line in the cast TTS voice, `none` = cannot lock the
+sample. `label` is the user-facing sentence. It is served on every deploy, demo included.
 
 ### 2.5 Storyboard projects
 
@@ -528,20 +604,31 @@ Errors: `404` if the cast member (POST) or job (GET) is unknown.
 | POST `/api/cast/:id/voice-sample/keep` | -- | `{ voice_ref_key }` | save the preview as the talking-door lock |
 | POST `/api/cast/:id/voice-sample/attach` | raw video/audio body, or `{ from_chat_artifact }` | `{ voice_ref_key, mime }` | attach a clip or reference audio the filmmaker already has |
 | DELETE `/api/cast/:id/voice-sample` | -- | `{ ok: true }` | clear the saved sample |
-| POST `/api/cast/:id/train-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKey, modelFamily: "sdxl", cast }` | see the shared table below |
-| POST `/api/cast/:id/train-wan-lora` | `{ renderOverrides? }` | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKeys, modelFamily: "wan", cast }` | as above, plus `501` when Wan training is not wired on this host (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) |
-| GET `/api/cast/:id/lora-status` | none | `200 { cast, view }`; `view` is `null` when the member has never been submitted for training | `404` if unknown |
+| POST `/api/cast/:id/train-lora` | `{ model_family?, renderOverrides?, train_overrides? }` (JSON; optional) | `200` the SDXL or the Wan success shape below, per the resolved family | see the shared table below |
+| POST `/api/cast/:id/train-wan-lora` | `{ renderOverrides?, train_overrides? }` (JSON; optional) | `200 { ok: true, jobId, status, statusRaw, bundleKey, loraDestKeys, modelFamily: "wan", cast }` | as above |
+| GET `/api/cast/:id/lora-status` | none | `200 { cast, view }`; `view` is `null` when the member has never been submitted for training (a wedged `training` row reconciled here adds `reconciled: true` or `reconciledFromR2: true`) | `404` if unknown; `502 { error, cast }` when the training job cannot be polled |
+
+**Which family `/train-lora` trains** (`resolveCastTrainFamily`, core `cast-lora-train`): an explicit
+`model_family` (alias `modelFamily`; top-level wins over one inside `renderOverrides`) of `"sdxl"` or
+`"wan"` is honoured verbatim. Absent (or an unrecognised value), it defaults to **Wan when
+`RUNPOD_WAN_TRAIN_ENDPOINT_ID` is wired on this host, SDXL otherwise**. `/train-wan-lora` is always
+Wan. Success shapes: SDXL `{ ok: true, jobId, status, statusRaw, bundleKey, loraDestKey, modelFamily:
+"sdxl", cast }`; Wan as in the table. `train_overrides` (alias `trainOverrides`) is an object whose
+`batch_size` / `resolution` / `steps` keys are kept when they are positive finite numbers (every other
+key is dropped); it is forwarded to the Wan train submit only. A body that is not
+`application/json` is treated as empty.
 
 **Shared preconditions and errors for both train routes.** These are refusals a caller has to expect
 before spending anything, and they are checked in this order:
 
 | Status | Condition |
 |--------|-----------|
-| `404 { error: "cast not found" }` | unknown cast member |
+| `404 { error: "cast member" }` | `:id` is not the public id of a cast member (resolved before the handler runs) |
 | `409 { error: "a LoRA training job is already in flight...", jobId }` | `lora_status` is already `training` |
 | `400 { error: "cast member needs a portrait before training..." }` | no `portrait_key` |
 | `400 { error: "cast member has only N training refs; need at least 4..." }` | fewer than **4** reference images |
-| `500 { error: "bundle assembly failed", details }` | training-bundle assembly failed |
+| `500 { error: "bundle assembly failed", details }` | training-bundle assembly failed (a thrown assembly is `500 { error: "bundle assembly failed: <reason>" }`) |
+| `501 { error: "Wan cast LoRA training is not configured on this host (wire RUNPOD_WAN_TRAIN_ENDPOINT_ID)" }` | the resolved family is Wan and the endpoint is not wired |
 | `502 { error }` | the training submit itself failed |
 
 Note the two success shapes differ by one field: SDXL returns `loraDestKey` (singular), Wan returns
@@ -572,7 +659,7 @@ Share a whole character (portrait + refs + sources + LoRA + bible + voice) as on
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
-| GET (or POST) `/api/cast/export/:id` | none | `200` tar bytes; `Content-Type: application/x-tar`, `Content-Disposition: attachment; filename="<slug>.vvcast"` | `404 { error: "cast not found" }` |
+| GET (or POST) `/api/cast/export/:id` | none; `:id` is the cast member's public id | `200` tar bytes; `Content-Type: application/x-tar`, `Content-Disposition: attachment; filename="<slug>.vvcast"` | `404 { error: "cast member" }` (the id resolves to no cast member) |
 | POST `/api/cast/import` | raw `.vvcast` tar bytes | `201 { cast, imported_from_schema }` | `400 { error }` malformed bundle; `413 { error }` over the 80MB import cap |
 
 The bundle is **identity-free** (carries the character only, no user/tenant/instance id or source
@@ -596,7 +683,7 @@ and `400` on an empty body or over-size.
 |-------|----------------|----------|------------|
 | POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | 25 MB | `uploads/` |
 | POST `/api/storyboard/character-ref` | same image mimes | 25 MB | `character-refs/` |
-| POST `/api/storyboard/audio-upload` | `audio/mpeg|mp3|wav|x-wav|aac|mp4|x-m4a|ogg|webm` | 32 MB | `audio/` |
+| POST `/api/storyboard/audio-upload` | `audio/mpeg\|mp3\|wav\|x-wav\|aac\|mp4\|x-m4a\|ogg\|webm` | 32 MB | `audio/` |
 
 **There is no fallback extension.** Each route looks its `Content-Type` up in a fixed table and
 REFUSES a miss with `400 { "error": "unsupported content-type <mime> (png/jpeg/webp/gif only)" }`
@@ -606,14 +693,6 @@ refusal, not a `.bin` object.
 
 The returned `key` is then registered (e.g. onto a cast member via 2.7, or passed as `audioKey` to a
 render route).
-
-### 2.10.1 Abuse report (actual knowledge)
-
-`POST /api/report` `{ "project": string, "reason"?: string, "keys"?: string[] }`.
-
-Token-gated. Not a scanner. Copies named keys into `quarantine/<stamp>/<hold-id>/` and writes
-`HOLD.json`. `GET /api/artifact` refuses `quarantine/` (404). Max 32 keys. This is the
-actual-knowledge preserve path: a human flags it, we keep a copy, we do not auto-classify.
 
 **The image routes differ ONLY in the key namespace, and the namespaces are interchangeable.**
 `/api/upload` and `/api/storyboard/character-ref` run the same logic (same mime table, same 25 MB
@@ -634,14 +713,60 @@ whose cache key is derived from the bytes rather than the source key.
 This matters beyond tidiness: a caller that can reach only one of the two routes is not thereby cut
 off from the other's use case. The MCP has one image-upload tool for exactly this reason.
 
-### 2.11 GET /api/artifact/*key
+### 2.10.1 Abuse report (actual knowledge)
 
-Serve an R2 object by its full (slashed) key.
+`POST /api/report` `{ "project": string, "reason"?: string, "keys"?: string[] }`.
 
-**Request:** path `*key` = the R2 key (e.g. `renders/film-abc/film.mp4`). No body.
-**Response 200:** raw object bytes. Headers: `content-type` (the object's stored content type, else
-`application/octet-stream`), `content-length` (= the object size), `cache-control: private, max-age=300`.
-**404** `{ "error": "artifact not found" }` if the key is missing.
+Token-gated (`consumer` scope). Not a scanner. Copies each named key that exists into
+`quarantine/<stamp>/<hold-id>/<key>` and writes `quarantine/<stamp>/<hold-id>/HOLD.json`
+(`{ hold_id, project, reason, keys, copied, at }`). `GET /api/artifact` (and `/api/artifact-url`)
+refuse `quarantine/` keys (404). This is the actual-knowledge preserve path: a human flags it, we keep
+a copy, we do not auto-classify.
+
+- `project`: required, trimmed, at most 128 chars, no `/` and no `..`.
+- `reason`: optional, trimmed, truncated to 2000 chars.
+- `keys`: optional, at most **32**; each must be a safe relative key and not already under `quarantine/`.
+  A key that does not exist in the bucket is skipped (not an error).
+
+**Response 200:** `{ "ok": true, "hold_id": string, "copied": number, "note_key": string }`
+(`copied` = how many keys were actually copied; `note_key` = the `HOLD.json` key).
+**Errors** (all `400 { "error" }`, `src/abuse-report.ts`): `"invalid JSON"` (unparseable body),
+`"project is required"` (missing or invalid `project`), `"too many keys"` (over 32), `"unsafe key"`.
+
+### 2.11 GET / HEAD /api/artifact/*key
+
+Serve an R2 object by its full (slashed) key, with HTTP byte-range support (#416) so browsers can
+stream and seek media. `GET` and `HEAD` share one handler; `HEAD` returns the same status and headers
+with no body.
+
+**Request:** path `*key` = the R2 key (e.g. `renders/film-abc/film.mp4`). No body. Optional `Range`
+header (a single `bytes=` range).
+
+**Response:**
+- No `Range` (or a malformed / multi-range one, which is ignored): **`200`** with the full object bytes
+  and `content-length` = the object size.
+- A satisfiable single range: **`206`** with `content-range: bytes <start>-<end>/<size>` and
+  `content-length` = the range length.
+- A range outside the object: **`416`**, no body, with `content-range: bytes */<size>`.
+
+Headers on every 200 / 206 / 416:
+- `content-type`: the object's stored content type **after a safety remap**
+  (`safeArtifactContentType`): only `image/png|jpeg|webp|gif`, `video/mp4|webm|quicktime`, `audio/*`,
+  and `application/octet-stream|json|x-tar|zip|safetensors` pass through (`image/jpg` is normalized to
+  `image/jpeg`); anything else (e.g. a stored `text/html`, or no stored type) is served as
+  `application/octet-stream`.
+- `cache-control: private, max-age=300`, `accept-ranges: bytes`, `x-content-type-options: nosniff`.
+- `content-disposition`: `inline; filename="<name>"` for an `audio/*`, `video/*` or `image/*` type,
+  else `attachment; filename="<name>"`, where `<name>` is the key's last segment with characters
+  outside `[A-Za-z0-9_.-]` replaced by `_` (max 180 chars).
+- Plus the global response-security headers every non-page response carries (a locked
+  `content-security-policy`, `referrer-policy: same-origin`, `x-frame-options: DENY`).
+
+**404** `{ "error": "artifact" }` when the key is missing from the bucket, is not a safe relative key
+(traversal / absolute / scheme / control bytes), is under `quarantine/`, or is outside the known
+artifact namespaces (`ARTIFACT_PREFIXES`: `audio/`, `bundles/`, `cast/`, `cast-clean/`, `cast-gen/`,
+`character-refs/`, `characters/`, `clips/`, `loras/`, `out/`, `renders/`, `uploads/`). A deploy with no
+render bucket bound answers `404 { "error": "the artifact store is not available on this deployment" }`.
 
 > Render outputs mutate (a render can re-finish in place), so artifact serving is short-lived caching
 > only. History-preview bursts limit concurrency client-side, not via long caching.
@@ -724,13 +849,17 @@ action:
 
 | `state` | HTTP | Means |
 |---|---|---|
-| `tier-unavailable` | 503 | `VIDEO_FINISH_VPC` unbound. A provisioning state, not a fault. |
+| `tier-unavailable` | 503 | `VIDEO_FINISH_URL` is empty (the video-finish tier is not installed). A provisioning state, not a fault. |
 | `route-not-served` | 503 | Container answered 404: its image predates this route. **EXPECTED during a rollout window**, when the Worker ships before the container image is rebuilt and the always-on service rolled. No bug to hunt. |
-| `container-unreachable` | 502 | No answer (transport failure, or 503/504 after retries). The service is down or unreachable over the VPC. |
+| `container-unreachable` | 502 | No answer (transport failure, or 503/504 after retries). The service is down or unreachable at `VIDEO_FINISH_URL`. |
 | `container-error` | 502 | The container serves the route and failed on this clip. The fault is the input or ffmpeg on it. |
 
-Extraction runs in the `video-finish` CPU container (`POST /frames`) over the private VPC binding, not
-in the Worker: it is already the ffmpeg surface, and the clip is downloaded and the sheet uploaded via
+The failure body is `{ "error": <reason sentence>, "state": <state>, "source_key": <key> }` with the
+status above. Other refusals: `400 "invalid JSON body: expected { key, count?, at? }"`; `404 { "error":
+"artifact" }` for an unsafe / out-of-namespace / missing source key.
+
+Extraction runs in the `video-finish` CPU container (`POST /frames`, reached over HTTPS at
+`VIDEO_FINISH_URL`), not in the Worker: it is already the ffmpeg surface, and the clip is downloaded and the sheet uploaded via
 short-lived presigned URLs, so bytes never touch the Worker.
 
 ### 2.12 POST /api/storyboard/preflight
@@ -738,8 +867,9 @@ short-lived presigned URLs, so bytes never touch the Worker.
 Pre-render validation. A storyboard with problems is **data**, not an HTTP error: this returns `200`
 with `ok:false` + the issues so the panel renders the reasons.
 
-**Request body (envelope):** `{ storyboard (req), castBindings?, bundleKey?, audioKey?,
-motionBackend?, quality? }`.
+**Request body (envelope):** `{ storyboard (req), castBindings?, motionBackend?, quality? }`. No
+other envelope field is read: in particular `bundleKey` / `audioKey` are NOT validated here (a caller
+that sends them gets no check of them; mcp#26 / cf#315).
 `castBindings` is `{ [slot]: cast_id }`. A `cast_id` may be the cast member's **public id** (the
 `id` value `GET /api/cast` returns), the internal **numeric row id**, or a numeric string of one;
 the route resolves all three to the row id before the cast-readiness check (#576). A value that
@@ -771,14 +901,22 @@ storyboard returns `200` with the shape errors surfaced as `level:"error"` issue
 
 ### 2.13 Planner LLM routes (plan / refine / chat)
 
-These call LLM providers via the AI Gateway. They return `422` on a model/LLM failure (not `500`) so
-the client renders the reason.
+These dispatch to installed **`plan.enhance` modules**; the studio holds no model names and no
+provider routing (`src/planner.ts`). `model` is an id from `GET /api/storyboard/models`, and it is
+resolved to the module that declares it (an id declared by an `image.generate` module routes
+`/api/chat` to its image branch instead). An id no installed module serves is a module failure, not a
+`400`: plan / refine answer `422` whose one `errors` entry reads
+`no plan.enhance module serves model "<id>" (install a planning module)`. They return `422` on a module / model failure (not `500`) so the client renders
+the reason.
 
 **POST `/api/storyboard/plan`** -- plan a storyboard from a brief. Body `PlanStoryboardArgs`:
 `{ brief (req), model (req), characters?, beatBlock? }` (`characters` defaults to `[]`).
-Response `200 { ok: true, storyboard: StoryboardValidated, raw, provider, model, logId }` or
-`422 { ok: false, errors: string[], raw, provider, model, logId }`. `400` if `brief` or `model`
-missing. `StoryboardValidated` is in Appendix A.4.
+Response `200 { ok: true, storyboard: StoryboardValidated, raw, provider, model, logId, module }` or
+`422 { ok: false, errors: string[], raw, provider, model, logId, module? }`. `provider` is always the
+literal `"module"` (kept for shape stability; the answering module is `module`), `logId` is always
+`null`, `raw` is the module's raw output (`null` when the module could not be invoked), and `module?`
+is absent on the 422 only when no module could be resolved. `400 "brief and model required"` if either
+is missing. `StoryboardValidated` is in Appendix A.4.
 
 **POST `/api/storyboard/refine`** -- refine an existing storyboard. Body `{ storyboard (req),
 message (req), model (req) }`. Response shape mirrors plan (`200` ok / `422` fail). `400` if any of
@@ -788,7 +926,8 @@ message (req), model (req) }`. Response shape mirrors plan (`200` ok / `422` fai
 type routes the response:
 - Image model: `200 { model, model_type: "image", output, output_artifact: { key, mime }, latency_ms,
   ai_gateway_log_id }` or `502 { error, model }`.
-- Text model: `200 { output, model, logId }` or `422 { error, model }`.
+- Text model (any id not declared by an `image.generate` module; served by a `plan.enhance` module):
+  `200 { output, model, logId: null }` or `422 { error, model }`.
 
 `400` if `model` or `user_input` missing.
 
@@ -902,24 +1041,54 @@ the planner's existing poll loop understands a module render identically to a ra
 | `processShotIds` | string[] | no | all | Subset of shots to render. |
 | `projectId` | number/string | no | -- | History project id (FK). |
 | `scenes` | `FilmScene[]` | yes | -- | `{ shot_id, prompt, seconds }`; `seconds` defaults 4 on normalize. |
-| `motion_backend` | string | yes for a full render | -- | Explicit motion module choice. A full (non-`keyframesOnly`) render with an omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#500); the old `serving[0]` default is unreachable. `keyframesOnly` renders need none (no motion leg). |
-| `castLoras` | `{ [slot]: cast_id }` | no | -- | Bound cast LoRAs. A bound-but-not-ready LoRA FAILS HARD (no silent inline retrain). |
-| `shardCount` | number | no | min(shots, 20) | Parallel jobs. Omitted uses the worker pool, not 2. `1` is one job. Ignored when `keyframesOnly`. Cap with `RENDER_SHARD_MAX`. |
+| `motion_backend` | string | yes for a full render | -- | Explicit motion module choice (top-level; `renderOverrides.motion_backend` is accepted when the top-level field is absent). A full (non-`keyframesOnly`) render with an omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#500); the old `serving[0]` default is unreachable. `keyframesOnly` renders need none (no motion leg). |
+| `castLoras` | `{ [slot]: cast_id }` | no | -- | Bound cast LoRAs (`cast_id` = the cast public id). A bound-but-not-ready LoRA FAILS HARD (no silent inline retrain), and so does a bound cast with no SDXL keyframe adapter (a Wan-only adapter is not a keyframe substitute). |
+| `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain (as on 2.20). Ignored when `keyframesOnly`. |
+| `style_prefix` | string | no | -- | Carried onto the film job as `style_prefix`. |
+| `voice_lock` | string | no | -- | Carried onto the film job as `voice_lock`. |
+| `idempotency_key` | string | no | -- | Alias `idempotencyKey`. Duplicate-submit guard (cf#528): a repeat submit with the SAME non-blank key within the 60s claim window answers with the ORIGINAL film's poll view (its `jobId`) instead of starting a second film. Absent or blank, a 60s natural-key backstop over the render-affecting inputs applies instead. The guard fails OPEN (no database = unguarded). |
+| `shardCount` | number | no | ignored | Alias `shard_count`. Accepted and IGNORED: film scatter is retired, so a submit is always one `film-*` job (2.23). |
 
-Guards / errors: `503 { error: "no keyframe module installed (bind MODULE_KEYFRAME)" }`;
-`400 "no motion.backend module installed for full render"`; `400 "scenes[] required ..."`;
-`400` (untrained-cast message) if a bound cast LoRA is not ready; `400 "bundleKey required"`;
-`400 "bundleKey must be a plain relative key under bundles/"` when `bundleKey` is not a plain
-relative key under `bundles/` (path-format / traversal guard, checked before the other 400s).
+Keyframe backend: when `renderOverrides` names no `keyframe_backend`, the studio defaults it BY NAME
+to the installed module named `keyframe`, else `cloud-keyframe` (`withFastestKeyframeDefault`,
+`src/default-keyframe.ts`), except when `renderOverrides.motion_backend` is `local-gpu` (the local
+pairing rule then picks the keyframe module).
+
+Guards / errors, in check order (`src/render-door.ts`): `400 "bundleKey required"`;
+`400 "bundleKey must be a plain relative key under bundles/"` (path-format / traversal guard);
+`400 "renderOverrides must be a JSON object ..."` / `400 "renderOverrides.config.<name> must be a
+JSON object ..."` (#696); `400 "scenes[] required (storyboard shots with prompt and duration)"`;
+`503 { error: "no keyframe module installed (bind MODULE_KEYFRAME)" }`; for a full render, `400`
+with the `motionBackendPreflightError` text (`"no motion.backend module is installed, so a full film
+cannot be rendered. ..."`, `"choose a motion backend for a full render -- ... Installed: <names>.
+..."`, or `'motion backend "<name>" is not an installed, serving module. Choose one of: <names>.'`),
+`400` naming the violating knob for a `renderOverrides.config[<motion_backend>]` value the backend's
+schema rejects (#577), and `400` when a `local` motion door is paired with a non-local keyframe
+module (vivijure-local#153); `400 "finish module(s) requested but not serving: ..."` (cf#593);
+`400` (the untrained-cast message) if a bound cast LoRA is not ready, or a bound cast lacks the SDXL
+keyframe adapter; and, when the bundle storyboard has spoken lines on a full render, `400 "This
+storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or
+Grok) and leave talking audio on. Silent look doors cannot say the script."` unless the chosen motion
+module can speak lines and its talking audio is on.
 **Response 201:** the RunPod-shaped poll view (2.24.1).
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
-(default final), renderOverrides?, audioKey?, projectId?, motion_backend? (default "own-gpu") }`.
-Reads scenes + injected keyframes from the bundle. Errors: `400 "bundleKey required"`;
+(default final), renderOverrides?, audioKey?, projectId?, motion_backend?, castLoras?,
+idempotency_key? }`. Reads scenes + injected keyframes from the bundle. `motion_backend` resolves as:
+the top-level value, else `renderOverrides.motion_backend`, else the default GPU door
+(`defaultGpuDoorModule`: the `ui.order`-first serving `motion.backend` module with
+`ui.locality: "byo"`, else the `ui.order`-first `"local"` one); with none of those it is
+`400 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed'`. There is no
+hardcoded `own-gpu` default. `castLoras` (`{ [slot]: cast public id }`) is used only to voice the
+bundle-derived dialogue lines. `idempotency_key` (alias `idempotencyKey`) is the same duplicate-submit
+guard as on `POST /api/storyboard/render`. Errors: `400 "bundleKey required"`;
 `400 "bundleKey must be a plain relative key under bundles/"` (path-format guard);
-`503 "no motion.backend module installed"`; `400 "bundle has no storyboard scenes"`;
-`400 "bundle has no injected keyframes (clips/<id>_keyframe.png)"`; `422 { error }` if the job fails
-to start. **Response 201:** the RunPod-shaped poll view.
+the #696 `renderOverrides` shape `400`s; `503 "no motion.backend module installed"`;
+`400 "bundle has no storyboard scenes"`; `400 "bundle has no injected keyframes
+(clips/<id>_keyframe.png)"`; the no-gpu-door `400` above; the #577 motion-config, local-pairing and
+cf#593 finish `400`s as on `POST /api/storyboard/render` (judged against the RESOLVED backend); the
+spoken-lines talking-door `400` above; `422 { error }` if the job fails to start. **Response 201:**
+the RunPod-shaped poll view.
 
 **POST `/api/storyboard/render-plan`** (dry run, no submission): body `{ selection?:
 RenderPipelineSelection }`; response `200 { ok: true, plan: <resolved pipeline> }` -- which module
@@ -929,11 +1098,16 @@ serves each render hook with its clamped config. Execution is NOT triggered.
 
 Two accepted forms (`parseModuleRenderOverrides`):
 
-1. **Module wire form** (canonical): `{ motion_backend?: string, config?: { [moduleName]: { ...knobs } } }`.
-   Each `config[moduleName]` is clamped against that module's `config_schema`.
+1. **Module wire form** (canonical): `{ motion_backend?: string, keyframe_backend?: string, config?:
+   { [moduleName]: { ...knobs } }, select?: { [hook]: HookSelection } }`. The presence of ANY of these
+   four keys selects this form. Each `config[moduleName]` is clamped against that module's
+   `config_schema`. `keyframe_backend` names the `keyframe` module (whitespace-only backend names are
+   treated as absent). `select` is the per-render participation statement (cf#537): `HookSelection` is
+   `{ mode: "default" }` or `{ mode: "named", modules: string[] }`; only the `finish` hook honours it
+   (`SELECTABLE_HOOKS`), and a malformed entry is dropped (the hook falls back to default participation).
 2. **Legacy namespaced form** `{ keyframe, i2v, lora }` (older rows / expert JSON), best-effort mapped:
-   - `keyframe`: `{ steps?, guidance_scale?, seed?, resolution? ("WxH") }` -> the keyframe module
-     config (`resolution` splits into `width`/`height`).
+   - `keyframe`: `{ steps?, guidance_scale?, seed?, resolution? ("WxH") }` -> the config of the
+     module named `keyframe` (`resolution` splits into `width`/`height`).
    - `i2v`: `{ fps?, flow_shift?, seed? }` -> the `own-gpu` motion config.
    - `lora`: reserved namespace (cast LoRA envelope; not a render-config knob here).
 
@@ -953,8 +1127,8 @@ shots: [...] }` where each shot is `{ shot_id, status, error }` (POST) or `{ sho
 clip_key, error }` (GET). `status` is `"pending" | "done" | "failed"`.
 
 **Transient poll tolerance (#719, v0.20.1).** A single failed round-trip to the module's `/poll`
-does NOT fail the shot. The shared classifier (`classifyTransientFailure`,
-`src/render-orchestrator.ts`; `classifyFinishFailure` delegates to it) separates TRANSPORT blips
+does NOT fail the shot. The shared classifier (`classifyTransientFailure`, core
+`render-orchestrator`; `classifyFinishFailure` delegates to it) separates TRANSPORT blips
 (HTTP 408/429/5xx transport statuses, unreachable/timeout/network-error strings) from a
 DETERMINISTIC module-reported reject.
 A transient error holds the shot `pending` and counts against a CONSECUTIVE budget of
@@ -997,7 +1171,7 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `project` | string | no | derived from `bundle_key` | Project namespace. A caller value that does not match the bundle key (`bundles/<slug>.tar.gz` or `bundles/<slug>-<16hex>.tar.gz`) is remapped to `<slug>` before the GPU job starts; the backend tenancy check is kept and the panel must not send a mismatch. |
 | `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Records the film's quality tier on its renders-history row (#762). The ACTUAL render tier is driven by the baked `keyframe_config.quality_tier` (read by the keyframe module) + `motion_config`; this top-level field is what makes the recorded row LABEL honest (before #762 the row hardcoded `"final"`, mislabeling a draft film). An absent / invalid value defaults `"final"`. Slate should send this alongside the baked configs. |
 | `motion_backend` | string | yes | -- | Motion module choice. An omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#504; this route has no keyframes-only mode, so the check is unconditional). |
-| `keyframe_backend` | string | no | `ui.order`-first keyframe module | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. |
+| `keyframe_backend` | string | no | by name: `keyframe`, else `cloud-keyframe` | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. Omitted, the studio fills it BY NAME with the installed module named `keyframe`, else `cloud-keyframe` (`defaultKeyframeBackendName`, `src/default-keyframe.ts`); when `motion_backend` is `local-gpu`, or neither name is installed, it stays unset and the core picks (the local pairing rule for `local-gpu`). |
 | `keyframe_config` | object | no | -- | **Flat** keyframe module knobs (cf#390 shape A). |
 | `motion_config` | object | no | -- | **Flat** motion module knobs (shape A); judged strictly against the chosen backend's `config_schema` at submit (#577): unknown key / out-of-set enum / out-of-range number / wrong type is a `400` naming what IS allowed, before any keyframe spend. |
 | `finish_config` | `{ [moduleName]: object }` | no | **no finish** | **Nested** per-finish-module knobs (shape B; per-shot `finish` chain). **Omitting `finish_config` (and `finish_select`) skips the finish chain** (cf#386): an MCP/API caller who does not mention finish does not get default rife+upscale and is not billed for polish. Explicit empty (`finish_config: {}` or `finish_select: { mode: "named", modules: [] }`) is also no finish. Keys of a present `finish_config` (minus `finish-order`) become the named module list when `finish_select` is omitted. `{ mode: "default" }` is how a caller still asks for the participation set. A named module this studio does not serve is `400` at submit (cf#593), never a silent drop. |
@@ -1009,6 +1183,7 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `film_titles` | `{ title?: { text, subtitle? }, credits?: { lines: string[] } }` | no | -- | Title / credit card text for the `film.finish` chain; absent => no cards. |
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
 | `cast_loras` | `{ [slot]: castId }` | no | -- | Binds storyboard character slots (A, B, ...) to cast ids. Drives the keyframe LoRAs AND per-slot voice resolution. A bound cast whose LoRA is not ready is rejected `400` (the untrained-cast message), symmetric with `/api/storyboard/render` (#738) -- never a silent drop to a generic render. |
+| `idempotency_key` | string | no | -- | Alias `idempotencyKey`. Duplicate-submit guard (cf#528): a repeat submit with the SAME non-blank key within the 60s claim window answers with the ORIGINAL film instead of starting a second. Absent or blank, a 60s natural-key backstop over the render-affecting inputs applies. Fails OPEN (no database = unguarded). |
 | `shard_count` | number | no | ignored | Alias `shardCount`. Film scatter is retired. A submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage, not a split-motion door. |
 
 **Dialogue voicing precedence (#582), one rule, both paths:**
@@ -1035,7 +1210,12 @@ field when any config map (`keyframe_config` / `motion_config` top-level; `finis
 `speech_config` / `film_finish_config` / `master_config` top-level AND per-module entry) is present
 but not a plain JSON object (#696) -- a mis-encoded map can no longer clamp to defaults and
 silently degrade a film; `400 "finish module(s) requested but not serving: ..."` when a named
-finish module is not in the registry (cf#593), before any keyframe spend.
+finish module is not in the registry (cf#593), before any keyframe spend; `400` when a `local`
+motion door is paired with a non-local `keyframe_backend` (vivijure-local#153); `400` (the
+missing-SDXL message) when a bound cast has no SDXL keyframe adapter; and, when the dialogue lines
+(explicit or bundle-derived) are non-empty, `400 "This storyboard has spoken lines. Pick a talking
+door ... Silent look doors cannot say the script."` unless the chosen motion module can speak lines
+and its talking audio is on.
 
 **Response 201:** `{ ok: true, ...FilmSummary, download_url? }` (see 2.21). A renders-table row is
 inserted so the film shows in history.
@@ -1048,16 +1228,16 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 
 **Request:** path `:id` = the `film-<...>` id. No body. A leftover `scatter-*` id returns 410.
 
-**Response 200:** `{ ok: true, ...FilmSummary, download_url? }`:
+**Response 200:** `{ ok: true, ...FilmSummary, download_url?, clip_urls? }`:
 
 | Field | Type | Meaning |
 |-------|------|---------|
 | `film_id` | string | The job id (`film-*` only). |
-| `phase` | FilmPhase | `keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed`. |
+| `phase` | FilmPhase | `keyframe, pre_clip_dialogue, pre_clip_speech, clips, dialogue, speech, finish, assemble, master, mux, done, failed`. `pre_clip_dialogue` / `pre_clip_speech` run between `keyframe` and `clips` ONLY when the chosen motion module declares `usage.driving_audio: true` (it consumes the shot line as driving audio) and the film has dialogue lines: the line TTS (and its speech cleanup) must exist before the clip is rendered. See section 6. |
 | `error` | string \| undefined | Set when `phase === "failed"`. |
 | `clips` | `JobSummary` \| undefined | `{ total, done, failed, pending, complete }`, when a clips job exists. |
 | `clip_deliveries` | `ClipDelivery[]` \| undefined | #707 duration honesty: one entry per DONE shot whose backend reported usable numbers -- `{ shot_id, planned_seconds, delivered_seconds, fps, frames, distilled? }`. `delivered_seconds` is `frames/fps` (ms-rounded), so a fixed-grid backend's clamp is visible instead of silent. `distilled` (#705) is `true` when a distilled model variant rendered the clip, carried only when the backend reported it. Absent until a backend reports numbers -- absence is honest, never fabricated. |
-| `finish` | `{ total, done, failed, pending, adopted }` \| undefined | Finish-chain progress, when finish shots exist. `adopted` = count of shots with >=1 finish step REUSED from a prior same-project render's R2 artifact rather than run this pass (#583). |
+| `finish` | `{ total, done, failed, pending, adopted, degraded, reasons }` \| undefined | Finish-chain progress, when finish shots exist. `adopted` = count of shots with >=1 finish step REUSED from a prior same-project render's R2 artifact rather than run this pass (#583). `degraded` = count of shots whose finish soft-degraded (passed through without doing its work; an intentional `noop:` is not counted); `reasons` = the distinct degrade reasons, first-seen order (#226). |
 | `film_key` | string \| undefined | R2 key of the assembled film, present once `phase === "done"`. |
 | `film_finish` | object \| undefined | Outcome of the `film.finish` chain (title/credit cards): `degraded` marks a film that reached `done` WITHOUT cards (the container was unreachable; fail-safe by design), `sidecar_key` (#663/#669) carries the re-timed soft `.srt` subtitle sidecar's R2 key when one was produced. Absent until `film.finish` runs. |
 | `finish_unavailable` | `{ at, reason, delivered }` \| undefined | Loud degrade when the video-finish tier was UNAVAILABLE (#519): the film COMPLETED delivering `clips` (at assemble; plus the deliverable `clips[]` with presigned URLs) or `silent_film` (at mux) instead of the finished film. Absent on a normal render. |
@@ -1066,8 +1246,9 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
 | `wan_lora_projection` | `{ injected, dropped }` \| undefined | cf#392: counts from the host Wan cast-LoRA projection into `alibaba-wan-lora` (`high_noise_loras` / `low_noise_loras`). `injected` = cast slots whose expert pair was presigned into the motion config; `dropped` = slots skipped by the per-pass cap. Present only when at least one slot was injected or dropped; absent on non-Wan / no-Wan-cast renders (absence is honest, never fabricated zeros). Also relayed on the planner poll view (`GET /api/storyboard/render/:jobId` -> `output.wan_lora_projection`). Paired with the `film.wan_lora_projection` structured event. |
 | `download_url` | string \| undefined | Presigned GET of the finished film (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; a later poll re-issues a fresh one), added only when `phase === "done"` and `film_key` is set. |
+| `clip_urls` | `{ shot_id, download_url }[]` \| undefined | #519 clips-only degrade: when `phase === "done"` with `finish_unavailable.at === "assemble"` (no assembled film exists), one presigned GET (6h TTL) per delivered shot clip. Absent otherwise. |
 
-**404** `{ "error": "film job not found" }` for an unknown id.
+**404** `{ "error": "film job" }` for an unknown id.
 
 ### 2.22 POST /api/storyboard/renders/:id/regen-shot
 
@@ -1097,14 +1278,35 @@ Returned by the storyboard render submit + this route + the regen submit.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `jobId` | string | The `film-<...>` job id. |
-| `status` | `"IN_PROGRESS"\|"COMPLETED"\|"FAILED"\|"CANCELLED"` | Folded from the job phase. |
+| `status` | `"IN_QUEUE"\|"IN_PROGRESS"\|"COMPLETED"\|"FAILED"\|"CANCELLED"` | Folded from the job: `CANCELLED` if the job was cancelled; else `COMPLETED` at phase `done`, `FAILED` at phase `failed`; else `IN_QUEUE` when the job is in phase `keyframe` AND the keyframe module's last poll reported `wait: "accepted"` (queued / cold start, cf#307); else `IN_PROGRESS`. `IN_QUEUE` is never inferred without that module signal. |
 | `statusRaw` | string | The raw phase (or `"CANCELLED"`). |
-| `output` | object \| undefined | On COMPLETED: `{ output_key, project, mode }` (+ `keyframes`/`scenes` for keyframes-only, + `clips`/`model` for derived animation, + `sidecar_key` when a soft `.srt` subtitle sidecar was produced). While IN_PROGRESS: phase progress `{ phase, scene_index, scene_total, project, progress?, last_progress_at, stalled?, stall_seconds? }`. |
+| `output` | object \| undefined | Absent on `FAILED` / `CANCELLED`. On `COMPLETED`: the done payload below. While `IN_QUEUE` / `IN_PROGRESS`: the progress object below. |
 | `error` | string \| undefined | Set on FAILED. |
 | `executionTimeMs` | number | Wall-clock since job creation. |
 
-`mode` enum: `"full" | "keyframes-only" | "finalized" | "cloud-finalized"`. The IN_PROGRESS `phase`
-label maps `clips` -> `"i2v"` (and otherwise matches the phase name).
+**Done payload** (`filmDonePayload`, core `render-output-payload`; the SAME builder writes the history
+row's `output`, A.3): `{ output_key, project, mode, film_finish }` always, where `film_finish` is
+`{ applied: string[], adopted: string[], degraded: string | null }` or `null` when `film.finish` never
+ran; plus, when applicable: `sidecar_key` (a soft `.srt` subtitle sidecar was produced),
+`finish_unavailable: { at, reason, delivered }` and `clips: { shot_id, key }[]` (#519 clips-only
+degrade), `finish: { degraded, reasons }` (once finish shots exist, #226), `keyframes` (`{ shot_id,
+key }[]`) + `scenes` (keyframes-only), `clips: { shot_id, key, model? }[]` + `model` (a derived
+finalize / cloud / hybrid animation), `keyframes_incomplete`, and `clip_deliveries` (2.21). The poll
+view (not the history row) additionally relays the host's `wan_lora_projection` (2.21) on any
+`output` it carries, done or in flight.
+
+**Progress object** (in-flight): `{ scene_total, project, last_progress_at, stalled?, stall_seconds?,
+phase?, scene_index?, progress?, backend_wait?, keyframes_incomplete?, clip_deliveries? }`.
+`phase` label rule: `keyframe` -> `"keyframe"` (with
+`scene_index` / `progress` from the GPU job's live keyframe tally when known, else `scene_index: 1`),
+`clips` -> `"i2v"` (`scene_index` = done + 1, `progress` = done / total), `finish` -> `"finish"`,
+`assemble` -> `"assemble"`, `mux` -> `"mux"`. Any OTHER phase (`pre_clip_dialogue`,
+`pre_clip_speech`, `dialogue`, `speech`, `master`) carries NO `phase` / `scene_index` key; read
+`statusRaw` for it. `backend_wait` (`"accepted"` or `"running"`) is the keyframe module's wait signal,
+keyframe phase only. `stalled: true` + `stall_seconds` appear once the job has made no progress for
+`KEYFRAME_STALL_SECONDS`.
+
+`mode` enum: `"full" | "keyframes-only" | "finalized" | "cloud-finalized"`.
 
 ### 2.25 Render library (history)
 
@@ -1138,8 +1340,8 @@ Each derives a new render from a parent preview (`getRenderByIdForUser`). All re
 
 | Route | Body | Behavior |
 |-------|------|----------|
-| POST `/api/storyboard/renders/:id/retry` | empty body ok | **cf#353:** re-submit the row's STORED args (project, bundle, tier, overrides, mode). Failed/cancelled/timed-out only. Creates a NEW history row; the failed row stays. `201 { ok: true, ...RunpodJobView }`. |
-| POST `/api/storyboard/renders/:id/finalize` | `{ audioKey?, castLoras?, motion_backend? }` (empty body ok) | GPU finalize. Optional `motion_backend` (cf#347). |
+| POST `/api/storyboard/renders/:id/retry` | `{ idempotency_key? }` (empty body ok) | **cf#353:** re-submit the row's STORED args (project, bundle, tier, overrides, mode). Failed/cancelled/timed-out only. Creates a NEW history row (`parent_id` = the failed row); the failed row stays. `201 { ok: true, ...RunpodJobView }`. `idempotency_key` (alias `idempotencyKey`) is the duplicate-submit guard of 2.18. |
+| POST `/api/storyboard/renders/:id/finalize` | `{ audioKey?, castLoras?, motion_backend?, idempotency_key? }` (empty body ok) | GPU finalize. Optional `motion_backend` (cf#347; alias `motionBackend`, trimmed, blank = absent). `idempotency_key` (alias `idempotencyKey`) is the duplicate-submit guard of 2.18. |
 | POST `/api/storyboard/renders/:id/animate-cloud` | `{ model?, perShot?, audioKey? }` | Cloud i2v finalize (`perShot` = per-shot model map). |
 | POST `/api/storyboard/renders/:id/animate-hybrid` | `{ backends?, defaultBackend? ("gpu"\|"cloud", default "gpu"), defaultCloudModel?, audioKey? }` | Mixed GPU/cloud backends; `backends` validated against installed `motion.backend` modules (excluding `own-gpu`). `400` if the backend set is invalid. |
 
@@ -1164,7 +1366,8 @@ None of these read any identity header (the identity strip, 1.1): `whoami` answe
 
 Install, uninstall, disable and list modules that live as user Workers in the `vivijure-modules`
 dispatch namespace, **without a core redeploy**. Full mechanics: `docs/module-dispatch.md` 4.4. These
-sit behind the same auth gate as every other `/api` route.
+sit behind the same auth gate as every other `/api` route, and all four are **`operator`** scope (1.2):
+a `consumer` credential gets `403 scope_denied`.
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
@@ -1199,13 +1402,13 @@ lifecycle-expiry drift or a failed ledger write. **`unsized` is objects the buck
 size for**: they are accounted as `0` and reported honestly in their own field rather than folded
 into the total as a guess.
 
-### 2.33 Public demo door (`DEMO_MODE` deploys only)
+### 2.33 Public demo door (`AUTH_MODE=demo` deploys only)
 
 The zero-spend public demo: one seeded shot rendered as a single i2v clip, plus a capped
 open-weights assistant. **Every handler double-guards demo mode** and answers `404 { "error":
 "route" }` on a non-demo deploy, so a misconfigured gate still cannot expose them. A demo deploy also
-projects `readonly: true` in `GET /api/modules`, which is the flag the panel gates every mutation
-affordance on.
+projects `host.readonly: true` in `GET /api/modules` (2.3), which is the flag the panel gates every
+mutation affordance on.
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
@@ -1216,8 +1419,8 @@ affordance on.
 
 The demo render path is rate-limited per IP by the same fail-closed spend primitive as every other
 spend route (2.0), on top of the per-day submission caps. The assistant runs a free open-weights
-model and says so in the projection's `assistant.note` rather than presenting itself as the studio
-brain.
+model and says so in the projection's `host.assistant.note` rather than presenting itself as the
+studio brain.
 
 ### 2.30 Film render lifecycle (sequence)
 
@@ -1245,7 +1448,7 @@ sequenceDiagram
 ## 3. The 12 hooks
 
 The hooks are the typed contract between the core and module workers. Source of truth: `HOOK_NAMES`,
-`HOOK_CARDINALITY`, `HOOK_BLURBS`, and the `*Input` / `*Output` interfaces in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`).
+`HOOK_CARDINALITY`, `HOOK_BLURBS`, `HOOK_DISPLAY_ORDER`, and the `*Input` / `*Output` interfaces in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`, entry `modules/types`; this host keeps no copy).
 The core invokes a hook with `InvokeRequest { hook, input, config, context }` and reads back an
 `InvokeResponse`. Conformance (`<vivijure-core>/src/modules/conformance.ts`) enforces the REQUIRED output fields per
 hook; optional hint fields are not demanded.
@@ -1261,7 +1464,7 @@ hook; optional hint fields are not demanded.
 | `dialogue` | pick_one | spoken lines -> per-character voice (TTS) |
 | `speech` | chain | clean / enhance dialogue audio |
 | `plan.enhance` | chain | LLM auto-direction |
-| `image.generate` | pick_one | prompt -> a single generated image |
+| `image.generate` | pick_one | prompt -> a generated image |
 | `cast.image` | pick_one | character refs from a portrait + bible |
 | `notify` | chain | render-complete notification (email / webhook) |
 | `master` | chain | film-level audio mastering: music upscale + loudness |
@@ -1336,6 +1539,12 @@ Per-shot: turns one start keyframe + motion intent into a clip (GPU or cloud i2v
 | `shot_id` | string | yes | The shot. |
 | `keyframe_url` | string | yes | Presigned, fetchable URL of the start keyframe. |
 | `keyframe_key?` | string | no | The underlying R2 key, for reference. |
+| `last_keyframe_url?` | string | no | Presigned END still (the next shot's start keyframe). When set, a first/last-frame backend animates first -> last. |
+| `last_keyframe_key?` | string | no | The R2 key behind `last_keyframe_url`. |
+| `voice_ref_url?` | string | no | Presigned kept voice-sample clip (2.9) for a door that can lock a voice from it (Seedance sends it as `reference_video`). Never used as Wan audio. |
+| `voice_ref_key?` | string | no | The R2 key behind `voice_ref_url`. |
+| `audio_url?` | string | no | Presigned shot LINE audio (cast TTS of this shot's storyboard line) for a driving-audio door (InfiniteTalk / Wan 2.6; see `usage.driving_audio`, section 4). |
+| `audio_key?` | string | no | The R2 key behind `audio_url`. |
 | `prompt` | string | yes | The motion prompt. |
 | `seconds` | number | yes | Clip length. |
 
@@ -1347,6 +1556,7 @@ Per-shot: turns one start keyframe + motion intent into a clip (GPU or cloud i2v
 | `clip_key` | string | yes | R2 key of the rendered clip (mp4). |
 | `fps` | number | yes | Clip fps. |
 | `frames` | number | yes | Frame count. |
+| `has_audio` | boolean | no | `true` when the clip already carries the model's OWN soundtrack (Seedance / Flux / Veo / ...). Retained per shot by the core when present. |
 | `distilled` | boolean | no | OPTIONAL + additive (#705, no `MODULE_API` bump): tier-honesty signal -- `true` when a DISTILLED variant of the model rendered this clip (e.g. the 12GB door's final-tier 13B distilled), `false` when the full model ran. The module RELAYS what its backend reports and OMITS the field when the backend says nothing; the core retains it per shot and surfaces it on the film summary's `clip_deliveries` (2.21). Absence is honest, never a fabricated `false`. |
 
 The `fps` + `frames` a backend reports are also retained per shot as the DELIVERED numbers behind
@@ -1367,8 +1577,20 @@ Post-process a clip (interpolation / upscale / face restore). Honest soft-degrad
 | `audio_key?` | string | no | R2 key of the shot's dialogue audio (TTS); set only for a speaking shot. A lip-sync finish consumes it (and declares `finish_consumes_audio`, so the core runs it before interpolation, section 3.0.1); others ignore it. Absent => silent shot. |
 | `src_fps?` | number | no | Hint; probed if absent. |
 | `frames?` | number | no | Hint. |
-| `width?` | number | no | Hint. |
-| `height?` | number | no | Hint. |
+| `width?` | number | no | Source width hint; omitted when unmeasured. |
+| `height?` | number | no | Source height hint; omitted when unmeasured. |
+| `delivery_width?` | number | no | The film's DELIVERY target width. The core always supplies it on a film finish step, so a module can pick a scale that does not undershoot the target. |
+| `delivery_height?` | number | no | The delivery target height (as above). |
+| `output_hash?` | string | no | The #583 provenance value (3.3.1) the producer stamps verbatim into `<output_key>.hash`. Absent from an older core; then no sidecar is written. |
+| `video_url?` | string | no | Presigned GET of `clip_key` (cf#312), so a credentialless satellite can run without shared-bucket R2 env. |
+| `output_url?` | string | no | Presigned PUT for this step's output clip. |
+| `output_key?` | string | no | The R2 key behind `output_url` (the step's deterministic output key, 3.3.1). |
+| `audio_url?` | string | no | Presigned GET of `audio_key` (set only when `audio_key` is). |
+| `hash_url?` | string | no | Presigned PUT for the `<output_key>.hash` sidecar (set only when `output_hash` is). |
+
+The presigned fields are ALL-OR-NOTHING: the core sets `video_url` + `output_url` + `output_key` (+
+`audio_url` for a speaking shot, + `hash_url` when hashed) together, or none of them, in which case the
+module falls back to reading / writing R2 by key. `clip_key` / `audio_key` are always kept.
 
 **FinishOutput** (required: `shot_id`, `clip_key`, `out_fps`, `frames`, `applied`)
 
@@ -1552,6 +1774,7 @@ Add audio (music / narration / beat-sync) to the assembled film.
 |-------|------|-----|---------|
 | `film_key` | string | yes | R2 key of the scored film (mp4). |
 | `applied` | string[] | yes | e.g. `["music:minimax","narration:tts"]`. |
+| `degraded?` | string | no | Set ONLY when the score step passed through without doing its work; the reason. |
 
 ### 3.5 dialogue (pick_one)
 
@@ -1572,7 +1795,7 @@ absent/unknown falls back to a default speaker at synth time).
 | Field | Type | Req | Meaning |
 |-------|------|-----|---------|
 | `project` | string | yes | Echo. |
-| `audio` | `{ shot_id, audio_key, voice_id }[]` | yes | Per-line synthesized audio (R2 key + voice used). The core attaches `audio_key` to that shot's FinishInput. |
+| `audio` | `{ shot_id, audio_key, voice_id, duration_s? }[]` (`DialogueShotAudio`) | yes | Per-line synthesized audio (R2 key + voice used). `duration_s?` (optional, additive) = seconds of the written WAV after pad/trim. The core attaches `audio_key` to that shot's FinishInput. |
 | `applied` | string[] | yes | What it did. |
 
 ### 3.6 speech (chain)
@@ -1580,7 +1803,15 @@ absent/unknown falls back to a default speaker at synth time).
 Clean / enhance one shot's dialogue audio. Runs AFTER dialogue, BEFORE finish. Polish step: never
 fails the render on a miss.
 
-**SpeechInput**: `{ shot_id: string, audio_key: string }` (R2 key of the shot's dialogue audio).
+**SpeechInput**
+
+| Field | Type | Req | Meaning |
+|-------|------|-----|---------|
+| `shot_id` | string | yes | The shot. |
+| `audio_key` | string | yes | R2 key of the shot's dialogue audio. |
+| `audio_url?` | string | no | Presigned GET of `audio_key` (credentialless transport). |
+| `output_url?` | string | no | Presigned PUT for the cleaned audio. |
+| `output_key?` | string | no | The R2 key behind `output_url`. |
 
 **SpeechOutput** (required: `shot_id`, `audio_key`, `applied`)
 
@@ -1588,7 +1819,7 @@ fails the render on a miss.
 |-------|------|-----|---------|
 | `shot_id` | string | yes | The shot. |
 | `audio_key` | string | yes | NEW cleaned key on enhancement, or the input key passed through on a soft-degrade. |
-| `applied` | string[] | yes | e.g. `["speech-upscale:resemble-enhance"]`; or `[]` on passthrough. |
+| `applied` | string[] | yes | e.g. `["<module>:<variant>"]`; or `[]` on passthrough. NO SHIPPED MODULE serves the `speech` hook since cf#786; the hook and this contract are unchanged. |
 | `degraded?` | string | no | Set ONLY when passed through (disabled / backend down / no audio); the reason. |
 
 ### 3.7 plan.enhance (chain)
@@ -1615,9 +1846,25 @@ Enrich a storyboard before render (LLM auto-direction). Structural passthrough: 
 
 ### 3.x `image.generate` (pick_one)
 
-Prompt -> a single generated image. Served by modules such as `image-generate` (and any future
-provider module on this hook). I/O: `ImageGenerateInput` / `ImageGenerateOutput` in
-`@skyphusion-labs/vivijure-core` `modules/types`.
+Prompt -> a single generated image (the `/api/chat` image branch, 2.13). Served by modules such as
+`image-generate` (and any future provider module on this hook). Deliberately NOT a cast shape (that is
+`cast.image`, 3.8).
+
+**ImageGenerateInput**
+
+| Field | Type | Req | Meaning |
+|-------|------|-----|---------|
+| `prompt` | string | yes | The image prompt. |
+| `negative_prompt?` | string | no | Steering away from content, where the model supports it. |
+| `refs?` | string[] | no | Reference images as `data:` URLs, for multi-reference models; ignored by models without support. |
+| `width?` | number | no | Requested width. |
+| `height?` | number | no | Requested height. |
+
+**ImageGenerateOutput** (required: `image.bytes_b64` non-empty raw base64, NOT a `data:` URL; `image.mime`)
+
+| Field | Type | Req | Meaning |
+|-------|------|-----|---------|
+| `image` | `{ bytes_b64: string, mime: string }` | yes | THE IMAGE ITSELF (base64 bytes, no `data:` prefix, plus its real mime), not a storage key. The core owns persistence and writes it where its own serve route reads (cf#140), which is why this differs from `cast.image`'s write-and-return-keys shape. |
 
 ### 3.8 cast.image (pick_one)
 
@@ -1670,6 +1917,9 @@ AFTER the mix, BEFORE the mux. Audio sibling of `finish`. Honest soft-degrade.
 |-------|------|-----|---------|
 | `film_id` | string | yes | The film (for the output-key convention + logs). |
 | `audio_key` | string | yes | R2 key of the assembled audio bed (the mix to master). |
+| `audio_url` | string | yes | Presigned GET of `audio_key` (the module stays credentialless and forwards it to its CPU container). |
+| `output_url` | string | yes | Presigned PUT the module writes the mastered bed to. |
+| `output_key` | string | yes | The R2 key behind `output_url`. |
 | `seconds?` | number | no | Film length hint; probed if absent. |
 
 **MasterOutput** (required: `audio_key`, `applied`)
@@ -1695,19 +1945,27 @@ reads what step N wrote, not the original (#14).
 | `video_url` | string | yes | Presigned GET of the input film (the module fetches it). |
 | `output_url` | string | yes | Presigned PUT the module writes the carded film to. |
 | `output_key` | string | yes | The R2 key behind `output_url`. |
+| `width?` | number | no | Delivery target width. The core always sends it (cf#507b), so a module never falls back to its own default. |
+| `height?` | number | no | Delivery target height (as above). |
+| `fps?` | number | no | Delivery fps. |
 | `title?` | `{ text: string, subtitle?: string }` | no | Opening title card text; absent => no title card. |
 | `credits?` | `{ lines: string[] }` | no | End-credit lines; absent => no credit card. |
 | `captions` | `{ start: number, end: number, text: string }[]` | yes | Time-synced dialogue cues (FilmFinishCaption[]); empty => the subtitle module no-ops. |
 | `sidecar_url` | string | yes | Presigned PUT for an optional `.srt` subtitle sidecar (ignored by non-subtitle modules). |
 | `sidecar_key` | string | yes | The R2 key behind `sidecar_url`. |
+| `meta_url?` | string | no | Presigned PUT for the step's measurement sidecar (`<output_key minus .mp4>.meta.json`), data that must survive even when the step's output is never read. |
+| `meta_key?` | string | no | The R2 key behind `meta_url`. |
 
 **FilmFinishOutput** (conformance requires: `film_key` string)
 
 | Field | Type | Req | Meaning |
 |-------|------|-----|---------|
-| `film_key?` | string | yes (per conformance) | R2 key of the carded film; omitted / unchanged => passed through (no new film). |
+| `film_key` | string | yes | R2 key of the carded film. On a no-op / passthrough the module returns the INPUT film key unchanged (never omits it); the core then keeps reading the input film. |
 | `applied?` | string[] | no | Module name on success; `"passthrough:<reason>"` / `"noop:no-cards"` on a soft-degrade. |
 | `degraded?` | string | no | Set ONLY when the film shipped UNCARDED, carrying the reason -- the one signal cards were NOT applied (#207). |
+| `prepend_seconds?` | number | no | Seconds of opening card this step PREPENDED (3.0.1 sidecar re-time, #663). |
+| `duration_seconds?` | number | no | Content length of the film this step wrote; recorded against the written key (it feeds `assemble_ms` / `output_ms`, 2.21). |
+| `elapsed_ms?` | number | no | The container's wall-clock for the step (cf#268), persisted as the render's finish elapsed time. |
 
 > `FilmFinishCaption` (`{ start, end, text }`) is declared in the contract so a module in another repo
 > vendoring `types.ts` gets the caption shape without importing a core-only module.
@@ -1729,7 +1987,16 @@ conformance harness (`checkManifest`) proves a candidate module honors it.
 | `hooks` | `HookName[]` | yes | The hooks this module serves (must be known hook names). |
 | `provides?` | `{ id: string, label: string }[]` | no | User-facing capabilities (each needs `id` + `label`). |
 | `config_schema?` | `{ [field]: ConfigField }` | no | The knobs the module exposes; the UI renders controls from these and the core clamps the user's value against them before invoking. A field's `scope?` (4.1.1) marks it per-render (default) or operator install config. |
-| `ui?` | `{ section?: string, icon?: string, order?: number }` | no | Self-assembling-UI hints. `order` is the fold/render order within a chain hook (default 100 when absent). |
+| `ui?` | `ModuleUi` `{ section?: string, icon?: string, order?: number, locality?: "local" \| "byo" \| "cloud", cost?: string, blurb?: string, limits?: string[] }` | no | Self-assembling-UI hints. `order` is the fold/render order within a chain hook (default 100 when absent). `locality` is load-bearing: it drives the planner door tag AND the core's GPU-door vs cloud classification of `motion.backend` modules (`gpuDoorMotionModules` = `byo` / `local`; an UNDECLARED locality classifies as cloud), so every `motion.backend` module should declare it. `cost` / `blurb` / `limits` are display-only and omitted by the UI when absent (`limits` falls back to the `config_schema` ranges). |
+| `cancelable?` | boolean | no | The module serves `POST /cancel` (4.3) and can STOP an in-flight async job. Absent / `false` => the core cannot cancel its jobs and degrade-logs any orphan. |
+| `finish_artifacts?` | `FinishArtifactsDecl` | no | A `finish` module's R2 artifact convention, so the core's R2-authoritative recovery can predict its output key and rebuild its `applied` marker (3.3.1): `{ output_key: { kind: "shot_named", filename } \| { kind: "append_suffix", suffix }, applied?: { when?: { knob, equals }, tag }[] }` (first matching rule wins; `tag` may template `{knob}` / `{knob\|default}`). A module without it gets no R2 shortcut. Validated at load. |
+| `keyframe_label?` | string | no | A `keyframe` module's short display noun for its backend (e.g. `"SDXL"`), projected inline by the planner (and into preflight's cast-readiness message). Must be non-empty when present. |
+| `needs_tenant_r2?` | boolean | no | The module submits to a possibly POOLED RunPod endpoint and needs the tenant's per-job R2 credential: only then does the core attach `InvokeRequest.r2` (4.3), and never for a dispatch (community) module. Set it only if the module needs it. |
+| `finish_consumes_audio?` | boolean | no | NO SHIPPED MODULE DECLARES THIS SINCE cf#783 removed finish-lipsync; the mechanism is live in vivijure-core and unchanged. A `finish` module that drives its output from `FinishInput.audio_key` (lip-sync) and so must run on the native-fps clip (3.0.1). |
+| `duration_grid?` | `{ fps: number, tiers: { [tier]: { max_frames: number } } }` | no | A `motion.backend` module whose engine renders on a FIXED grid; a tier's max deliverable seconds = `max_frames / fps`. Drives the preflight clamp warning (2.12, #707). Relayed from the backend, never fabricated. |
+| `usage?` | `MotionUsageDecl` | no | How the studio actually calls this `motion.backend` door: `{ native_audio: boolean, voice: "prompt_lock" \| "seed_and_prompt" \| "cast_tts" \| "prev_clip", scatter_native_audio: boolean, min_seconds: number, max_seconds: number, duration_steps?: number[], first_last?: boolean, seed?: boolean, voice_ref?: boolean, driving_audio?: boolean }`. `driving_audio: true` puts the film through `pre_clip_dialogue` (2.21). A malformed value is refused at load. |
+| `participation?` | `"default"` \| `"opt_in"` | no | cf#537. Whether the module runs when a render carries NO selection for its hook: `"default"` / absent = yes; `"opt_in"` = only when named. Honoured for `SELECTABLE_HOOKS` (`finish`). Any other value is refused at load; conformance (`checkManifest`) FAILS a module serving a selectable hook without an explicit value. |
+| `max_invocation_seconds?` | number | no | core#182. The module's OWN enforced per-invocation wall-clock ceiling, in seconds (positive, finite); the core sizes its stall ceiling for `CEILING_DERIVED_HOOKS` (`finish`, `speech`) from it. Declare the whole invocation or nothing; absence is reported (`film.ceiling_undeclared`), never substituted. Conformance FAILS a `finish` / `speech` module that omits it; load stays permissive. |
 
 Internal-only, **intentionally NEVER on the wire**: `RegisteredModule = ModuleManifest & { binding:
 string }`. The `binding` (the env binding that serves the module) is stripped to `PublicModule` for
@@ -1814,21 +2081,46 @@ invoke, the core loads the module's stored install-config and passes it as the u
 The core POSTs to a module's `/invoke`:
 
 ```
-InvokeRequest = { hook: HookName, input: <hook input>, config: { ...validated knobs }, context: InvokeContext }
+InvokeRequest = { hook: HookName, input: <hook input>, config: { ...validated knobs }, context: InvokeContext, r2?: TenantR2Config }
 InvokeContext = { project: string, job_id: string }   // never secrets, never identity
+TenantR2Config = { endpoint: string, access_key_id: string, secret_access_key: string, bucket: string }
 ```
+
+`r2?` (cp#270) is the ONE secret the envelope can carry: the tenant's per-job R2 credential, attached
+ONLY for a module whose manifest sets `needs_tenant_r2` (never a dispatch module) and only on a host
+that holds a full credential set. It is a SIBLING of `context` so `context` stays secret-free. Absent
+means the key is OMITTED, never `null` (the backend refuses an explicit null), and all four fields are
+required when present. A receiver MUST strip it on receipt (`takeTenantR2(req)`) so nothing downstream
+holds it.
 
 The module returns one of:
 
 ```
-{ ok: true, output: <hook output> }            // synchronous: done
-{ ok: true, pending: true, poll: string }       // async: accepted; POST /poll with this token
-{ ok: false, error: string }                    // failure is DATA, not an exception
+{ ok: true, output: <hook output> }                      // synchronous: done
+{ ok: true, pending: true, poll: string, jobId?: string } // async: accepted; POST /poll with this token
+{ ok: false, error: string }                              // failure is DATA, not an exception
 ```
 
-For async work the core POSTs `{ poll: string }` to the module's `/poll` until it returns
-`{ ok:true, output }` (done) or `{ ok:false, error }` (failed); `{ ok:true, pending:true }` means keep
-polling.
+`jobId?` (optional, additive, #318) is the module's backend job id. For a `keyframe` module the core
+records it as the film's `keyframe_job_id` and reads that GPU job's live keyframe tally from it (the
+keyframe `scene_index` / `progress` of 2.24.1); polling itself always uses the `poll` token.
+
+For async work the core POSTs `{ poll: string }` to the module's `/poll` until it returns:
+
+```
+{ ok: true, pending: true, wait?: "accepted" | "running" }     // keep polling
+{ ok: true, output: <hook output> }                            // done
+{ ok: false, error: string, outcome?: "backend-error" | "failed" | "gone" | "cancelled",
+  runpodStatus?: string, errorType?: string }                  // failed
+```
+
+`wait?` (cf#307, optional) is a backend-neutral wait phase on a pending poll: `accepted` = the backend
+has the work but compute has not started (queue / cold start), `running` = compute is underway. The
+keyframe module's `accepted` is what surfaces as `status: "IN_QUEUE"` on the poll view (2.24.1); a
+module that omits it reads as plain pending. On failure, `outcome?` is a closed terminal
+classification hosts record without parsing `error` prose (anything outside the set is ignored),
+`runpodStatus?` the RunPod envelope status when known, and `errorType?` the structured exception class
+when known (cf#298).
 
 ### Cancelling an async job (`POST /cancel`)
 
@@ -1930,14 +2222,17 @@ flowchart TD
 A film job moves through these phases in order (the `FilmJob.phase` union):
 
 ```
-keyframe -> clips -> dialogue -> speech -> finish -> assemble -> master -> mux -> done
-                                                                              (+ failed at any point)
+keyframe -> [pre_clip_dialogue -> pre_clip_speech] -> clips -> dialogue -> speech -> finish
+         -> assemble -> master -> mux -> done                        (+ failed at any point)
 ```
 
 ```mermaid
 stateDiagram-v2
   [*] --> keyframe
   keyframe --> clips: pollable
+  keyframe --> pre_clip_dialogue: driving-audio door
+  pre_clip_dialogue --> pre_clip_speech: module poll
+  pre_clip_speech --> clips: module poll
   clips --> dialogue: pollable
   dialogue --> speech: module poll
   speech --> finish: module poll
@@ -1973,12 +2268,17 @@ stateDiagram-v2
   `film.finish`) never fail the render on a miss; they pass their input through and record a
   `degraded` reason. Structural failures (a keyframe / motion / assemble failure) fail loud to
   `failed`.
-- **Conditional phases:** `dialogue`/`speech` run only when there are dialogue lines; `master` runs
+- **Conditional phases:** `pre_clip_dialogue` / `pre_clip_speech` run only when the chosen motion
+  module declares `usage.driving_audio: true` and the film has dialogue lines, because such a door
+  consumes the line audio to render the clip (the post-clip `dialogue` pass then finds the audio
+  already made and does not synthesize it again);
+  `dialogue`/`speech` run only when there are dialogue lines; `master` runs
   only when there is an `audio_key` AND a `master` module is installed; `mux` runs only when there is
   both a silent film and an audio bed; `film.finish` runs only when a `film.finish` module is
   installed (else the assembled film keeps its key).
 - **Done output:** once `phase === "done"`, `film_key` is set and `GET /api/render/film/:id` adds a
-  presigned `download_url` (24h). `notify` fires once on the done-transition.
+  presigned `download_url` (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; re-issued on every poll). `notify`
+  fires once on the done-transition.
 
 ---
 
@@ -1986,13 +2286,19 @@ stateDiagram-v2
 
 The studio persists three resource rows (D1). These are app-state, not the module hook contract, but
 are documented here for total coverage. The API returns them wrapped (`{ cast }`, `{ project }`,
-`{ renders }`).
+`{ renders }`) and always in their PUBLIC projection (`toPublicCast` / `toPublicProject` /
+`toPublicRenderRow`, core `cast-db` / `storyboard-projects-db` / `renders-db`): the internal integer
+primary key and every internal integer FK never cross the wire; `id` is the row's opaque public id.
+
+Timestamp formats differ by table and are exactly as stored: cast and project timestamps are SQLite
+`datetime('now')` strings, UTC, `"YYYY-MM-DD HH:MM:SS"` (no `T`, no zone suffix); render timestamps
+are integer epoch SECONDS.
 
 ### A.1 CastMember
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `id` | number | Primary key. |
+| `id` | string | Opaque public id (UUID v4). The internal integer PK is never returned. |
 | `slug` | string | URL-safe name slug. |
 | `name` | string | Display name. |
 | `bible` | string \| null | Character description. |
@@ -2000,12 +2306,12 @@ are documented here for total coverage. The API returns them wrapped (`{ cast }`
 | `portrait_mime` | string \| null | Portrait mime. |
 | `ref_keys` | `{ key, mime }[]` | LoRA training reference images. |
 | `source_keys` | `{ key, mime }[]` | Human-uploaded source photos (multi-ref conditioning). |
-| `created_at` / `updated_at` | string | Timestamps. |
+| `created_at` / `updated_at` | string | UTC `"YYYY-MM-DD HH:MM:SS"`. |
 | `lora_key` | string \| null | R2 key of the trained **SDXL** identity LoRA (keyframes). |
 | `lora_status` | `"idle"\|"training"\|"ready"\|"failed"` | **Legacy shared** last training-job state across SDXL + Wan. `"ready"` does not imply both families have adapters -- use `sdxl_lora_ready` / `wan_lora_ready` (cf#383). |
 | `lora_job_id` | string \| null | In-flight training job (shared slot). |
 | `lora_error` | string \| null | Last training failure when status is `failed`. Non-null alone is not a failure predicate: ops harvest notes have also been written here on ready rows (cf#295). |
-| `lora_trained_at` | string \| null | When a train last completed (either family). |
+| `lora_trained_at` | string \| null | When a train last completed (either family); UTC `"YYYY-MM-DD HH:MM:SS"`. |
 | `wan_lora_key_high` | string \| null | R2 key of the Wan high-noise expert adapter. |
 | `wan_lora_key_low` | string \| null | R2 key of the Wan low-noise expert adapter. |
 | `sdxl_lora_ready` | boolean | Derived: SDXL identity adapter present (`lora_key` under `loras/`). Prefer for keyframe binding. |
@@ -2017,36 +2323,41 @@ are documented here for total coverage. The API returns them wrapped (`{ cast }`
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `id` | number | Primary key. |
+| `id` | string | Opaque public id (UUID v4). |
 | `slug` | string | Name slug. |
 | `name` | string | Display name. |
 | `prefs` | object | Per-project preferences. |
 | `last_storyboard` | unknown \| null | The last saved storyboard (opaque here). |
-| `created_at` / `updated_at` | string | Timestamps. |
+| `created_at` / `updated_at` | string | UTC `"YYYY-MM-DD HH:MM:SS"`. |
 
 ### A.3 RenderRow (history)
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `id` | number | Primary key. |
+| `id` | string | Opaque public id (UUID v4). |
 | `job_id` | string | The `film-*` job id. Leftover `scatter-*` history rows poll as 410. |
 | `project` | string | Project namespace. |
 | `bundle_key` | string | Render bundle R2 key. |
-| `quality_tier` | string | The tier used. |
+| `quality_tier` | string | The tier recorded for the render. |
+| `motion_backend` | string \| null | The resolved `motion.backend` module at submit (cf#393); `null` for a keyframes-only render or a row that predates the column. |
+| `keyframe_backend` | string \| null | The resolved `keyframe` module at submit (cf#393); `null` when no keyframe pass ran (e.g. render-from-keyframes) or unknown. |
 | `render_overrides` | object \| null | The overrides used. |
-| `status` | string | `IN_PROGRESS \| COMPLETED \| FAILED \| CANCELLED`. |
+| `status` | string | `IN_QUEUE \| IN_PROGRESS \| COMPLETED \| FAILED \| CANCELLED` (the poll-view `status`, 2.24.1). |
 | `output_key` | string \| null | R2 key of the output film. |
-| `output` | unknown | The poll-view output blob. |
+| `output` | unknown | The done payload (2.24.1) once complete; the latest poll-view `output` before that. |
 | `error` | string \| null | Failure reason. |
 | `execution_time_ms` / `delay_time_ms` | number \| null | Timing. |
-| `submitted_at` / `updated_at` / `completed_at` | number / number / number\|null | Timestamps (epoch ms). |
+| `output_ms` | number \| null | CONTENT length (ms) of the delivered film (cf#365); `null` = not measured (never `0` for unknown). |
+| `finish_elapsed_ms` | number \| null | Finish-container wall-clock (cf#268); `null` = not measured. |
+| `submitted_at` / `updated_at` / `completed_at` | number / number / number\|null | Integer epoch SECONDS. |
 | `label` | string \| null | User label. |
 | `keyframes` | `KeyframeRef[]` \| null | Keyframe refs (keyframes-only previews). |
 | `mode` | `"full"\|"keyframes-only"\|"finalized"\|"cloud-finalized"` | Render mode. |
 | `locked_shots` | string[] \| null | Shots locked in a preview. |
-| `project_id` | number \| null | FK to a StoryboardProject. |
+| `project_id` | string \| null | The referenced StoryboardProject's PUBLIC id; `null` when unset or the project was deleted. |
 | `folder_path` | string \| null | History folder. |
 | `tags` | string[] | History tags (deduped, lowercased). |
+| `parent_id` | string \| null | The PUBLIC id of the render this one was derived from (regen-shot, retry, finalize / animate-*); `null` for an original render or a deleted parent. |
 
 ### A.4 StoryboardValidated (planner output)
 
@@ -2090,7 +2401,7 @@ points unless marked **host**.
 | Hook names / cardinality / blurbs, all hook I/O, manifest + ConfigField, invoke envelopes | `@skyphusion-labs/vivijure-core` `modules/types` |
 | Registry projection (`indexByHook`, `hookCatalog`, `modulesResponse`, `toPublic`), dispatch (`dispatchChain`, `dispatchPickOne`, `servingForHook`) | `@skyphusion-labs/vivijure-core` `modules/registry` |
 | Conformance checks (manifest, invoke response, per-hook output) | `@skyphusion-labs/vivijure-core` `modules/conformance` |
-| Router (`API_ROUTES`), all HTTP handlers, `GET /api/modules` inline | **host** `src/index.ts` |
+| Router (`API_ROUTES`), all HTTP handlers (`GET /api/modules` is a table route, `hModules`, since cf#520) | **host** `src/index.ts` |
 | Film job (`FilmJob`, phases), `applyFilmFinish`, `transitionToDone`, summaries | `@skyphusion-labs/vivijure-core` `film-orchestrator` |
 | Per-shot clip job (`ClipJob`, `JobSummary`, `summarizeJob`) | `@skyphusion-labs/vivijure-core` `render-orchestrator` |
 | Render-override parsing, quality tiers, `RenderConfigProjection` | `@skyphusion-labs/vivijure-core` `render-module-config` |
@@ -2098,7 +2409,7 @@ points unless marked **host**.
 | Scatter orchestration | retired (host 410 on leftover `scatter-*` ids; core helper remains for id-shape only) |
 | Voice catalog | `@skyphusion-labs/vivijure-core` `voices` |
 | Caption cue timing (FilmFinishCaption source) | `@skyphusion-labs/vivijure-core` `captions` |
-| Cast / project / render row schemas | `src/cast-db.ts`, `src/storyboard-projects-db.ts`, `src/renders-db.ts` |
-| Preflight | `src/preflight.ts` |
-| Planner LLM (plan / refine / chat) + validated storyboard | `src/planner.ts`, `src/storyboard-validate.ts` |
+| Cast / project / render row schemas + public projections | `@skyphusion-labs/vivijure-core` `cast-db`, `storyboard-projects-db`, `renders-db` (host `src/cast-public.ts` wraps `toPublicCast` with the readiness booleans) |
+| Preflight checks (`checkStoryboardShape`, `resolveCastBindings`, `checkCastBindingsReady`, `checkDurationGrid`) | `@skyphusion-labs/vivijure-core` `preflight` (the route handler `hPreflight` is **host** `src/index.ts`) |
+| Planner (plan / refine / chat dispatch to `plan.enhance` modules) + validated storyboard | **host** `src/planner.ts`; `@skyphusion-labs/vivijure-core` `storyboard-validate`, `planner-prompt` |
 </content>

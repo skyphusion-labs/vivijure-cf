@@ -253,7 +253,8 @@ function passthrough(
 }
 
 
-/** cf#578 POLL-TIME SOFT DEGRADE, the same decision speech-upscale already makes at its poll site.
+/** cf#578 POLL-TIME SOFT DEGRADE, the same decision speech-upscale made at its poll site before it
+ *  was removed (cf#786); the decision it set the precedent for is still the rule here.
  *
  *  A finish step is POLISH. When the endpoint completes but yields no artifact, the honest answer is
  *  the input clip passed through with the reason RECORDED, not a chain failure: an `ok:false` here

@@ -7,7 +7,6 @@ cf-grok-video
 cf-hh1-r2v
 cf-seedance
 film-titles
-finish-lipsync
 finish-rife
 finish-upscale
 google-veo
@@ -19,6 +18,5 @@ narration-gen
 own-gpu
 plan-enhance
 seedance
-speech-upscale
 subtitle
 vidu-q3

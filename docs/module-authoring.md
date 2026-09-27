@@ -11,15 +11,16 @@ See also [`module-api.md`](./module-api.md) for the contract design, and the ref
 
 ## The shape of a module
 
-A module is a standalone Cloudflare Worker. A synchronous module serves two endpoints; an async or
-cancelable one serves up to four:
+A module is a standalone Cloudflare Worker. A synchronous module serves two contract endpoints
+(plus the `GET /ready` probe); an async or cancelable one serves up to four:
 
 | Endpoint | Required | Purpose |
 |---|---|---|
 | `GET /module.json` | always | the module's **manifest** (which hooks it serves, its config, how it surfaces in the UI) |
 | `POST /invoke` | always | run one hook: `{ hook, input, config, context }` in, an `InvokeResponse` out |
-| `POST /poll` | **async modules** | when `/invoke` returns `{ ok: true, pending: true, poll }`, the core polls here with `{ poll }` until the job is terminal (a long RunPod render must be async so no Worker holds a request open) |
-| `POST /cancel` | **`cancelable` modules** | stop an in-flight async job by its poll token, so a cancelled render or an adopted phase does not orphan GPU and bleed spend (#327/#328); best-effort + idempotent. Advertise it with `cancelable: true` in the manifest |
+| `POST /poll` | **async modules** | when `/invoke` returns `{ ok: true, pending: true, poll }`, the core polls here with `{ poll }` (`PollRequest`) until the job is terminal, answering a `PollResponse` (a long RunPod render must be async so no Worker holds a request open) |
+| `POST /cancel` | **`cancelable` modules** | stop an in-flight async job by its poll token (`CancelRequest` `{ poll }` in, `CancelResponse` out), so a cancelled render or an adopted phase does not orphan GPU and bleed spend (#327/#328); best-effort + idempotent. Advertise it with `cancelable: true` in the manifest |
+| `GET /ready` | **in-repo modules** (optional for an external module) | credential-visibility probe: `{ ok, module, credentials: { <name>: boolean } }`, booleans only, never values (cf#114/cf#295; see [`module-api.md`](./module-api.md) "Credential readiness"). Every worker under `modules/` must serve it: `tests/module-ready-coverage-291.test.ts` fails otherwise |
 
 The core discovers your module from a `MODULE_<NAME>` service binding, reads your manifest, indexes
 you by hook, and renders your stage in the studio UI from your `config_schema`. It invokes you when a
@@ -46,9 +47,10 @@ surface internal: the service binding is the boundary, do not punch a hole in it
 | `motion.backend` | keyframe (+ motion prompt) -> shot clip (GPU or cloud) | **pick one** per shot |
 | `finish` | post-process a clip: interpolation / lip-sync / upscale / face restore | **chain** |
 | `score` | add audio to a film: music / narration / beat-sync | **chain** |
-| `dialogue` | per-shot dialogue lines -> speech audio (TTS); feeds the lip-sync finish module | **pick one** |
+| `dialogue` | per-shot dialogue lines -> speech audio (TTS); becomes the shot's spoken track | **pick one** |
 | `speech` | per-shot dialogue audio -> cleaned/enhanced audio (post-dialogue, pre-finish) | **chain** |
 | `plan.enhance` | expand a storyboard before render (LLM auto-direction) | **chain** |
+| `image.generate` | prompt -> a generated image | **pick one** |
 | `cast.image` | portrait + bible -> LoRA training reference images | **pick one** |
 | `notify` | render-complete notification (email / webhook) | **chain** |
 | `master` | assembled film's audio bed -> mastered audio (music upscale + loudness), pre-mux; fail-safe | **chain** |
@@ -62,34 +64,48 @@ installed module in `ui.order`, each consuming the previous one's output.
 
 ## The 4-file template
 
-A module is small. The reference `plan-enhance` module is four files:
+A module is small. The minimal shape is four files:
 
 ```
 modules/<your-module>/
   wrangler.toml        # name, compat date, and the bindings your /invoke needs
   src/contract.ts      # VENDORED copy of the contract shapes you use
   src/<logic>.ts       # your pure logic (so it unit-tests without the runtime)
-  src/index.ts         # the worker: GET /module.json + POST /invoke
+  src/index.ts         # the worker: GET /module.json + POST /invoke (+ GET /ready)
 ```
+
+The reference `plan-enhance` module has grown past that minimum to seven files: `wrangler.toml`,
+`README.md`, `src/contract.ts`, `src/index.ts`, and its logic split three ways (`src/enhance.ts`,
+`src/provider.ts` for the Opus-vs-Workers-AI choice, `src/mock.ts` for the dev-only planner mock).
 
 ### 1. Vendor the contract
 
 A module **vendors** the contract shapes it uses (copy them into `src/contract.ts`) so it stays
 independent of the core's repo -- a module in another repo ships its own copy. Copy only what you
 need from `@skyphusion-labs/vivijure-core` (`modules/types`): `MODULE_API`, the manifest types, the
-`InvokeRequest`/`InvokeResponse` shapes, and your hook's payload types (e.g. `PlanEnhanceInput` /
-`PlanEnhanceOutput`).
+`InvokeRequest`/`InvokeResponse` shapes (plus `PollRequest`/`PollResponse` for an async module and
+`CancelRequest`/`CancelResponse` for a cancelable one), and your hook's payload types (e.g.
+`PlanEnhanceInput` / `PlanEnhanceOutput`).
 
 ### 2. Declare your manifest
+
+Abridged from `modules/plan-enhance/src/index.ts` (the real `model` enum lists more ids, and the
+version moves with the module):
 
 ```ts
 const MANIFEST: ModuleManifest = {
   name: "plan-enhance",
-  version: "0.1.0",
+  version: "0.2.1",
   api: MODULE_API,                       // "vivijure-module/2"
   hooks: ["plan.enhance"],
-  provides: [{ id: "auto-direction", label: "LLM auto-direction" }],
+  provides: [{ id: "auto-direction", label: "Opus auto-direction" }],
   config_schema: {                       // the UI renders a control per field
+    model: {
+      type: "enum",
+      values: ["anthropic/claude-opus-4-8", "anthropic/claude-sonnet-5" /* ... */],
+      default: "anthropic/claude-opus-4-8",
+      label: "model",
+    },
     intensity: { type: "enum", values: ["light", "medium", "bold"], default: "medium", label: "direction intensity" },
   },
   ui: { section: "plan", order: 10 },
@@ -99,7 +115,39 @@ const MANIFEST: ModuleManifest = {
 `config_schema` fields (`int` / `float` / `bool` / `enum` / `string`, each with a `default`, and
 `min`/`max` for numbers) are the single source of truth: the studio renders the control from them,
 the core clamps the user's value against them before calling you, so your `/invoke` never has to
-defend against junk.
+defend against junk. Each field may also carry an optional `label` (the control's text),
+`enum_labels` (`int`/`float` only: display text per value), and `scope`: `"render"` (the default when
+omitted; a per-render knob) or `"install"` (operator-set once, stored in the operator-config store,
+surfaced on the studio settings page, and injected at invoke time). The core's `validateConfig`
+**drops every key your schema does not declare**, fills missing keys with the field `default`,
+clamps numbers to `[min, max]`, and replaces an out-of-set enum value with its default -- so a knob
+you read in `/invoke` but forgot to declare always arrives absent.
+
+**Fields conformance requires for some hooks.** `validateManifest` still LOADS a manifest without
+these, but `checkManifest` (the conformance harness) FAILS it:
+
+- a module serving `finish` (the `SELECTABLE_HOOKS`) must declare `participation: "default" | "opt_in"`
+  (cf#537): `"default"` runs when a render carries no explicit selection for the hook, `"opt_in"`
+  runs only when the render's selection names it;
+- a module serving `finish` or `speech` (the `CEILING_DERIVED_HOOKS`) must declare
+  `max_invocation_seconds` (core#223): the wall-clock ceiling your module ACTUALLY enforces on one
+  invocation, which the core sizes its phase stall ceiling against. Declare only a guard you have.
+
+**Optional, additive manifest fields** (no `MODULE_API` bump; see the doc comments on
+`ModuleManifest` in `@skyphusion-labs/vivijure-core/modules/types`): `cancelable`, `ui.locality`
+(`"local" | "byo" | "cloud"`; every `motion.backend` should set it, since an undeclared locality
+classifies as cloud) plus the display-only `ui.cost` / `ui.blurb` / `ui.limits`, `finish_artifacts`
+(a finish module's output-key + `applied` conventions for R2 mid-chain recovery),
+`finish_consumes_audio` (a lip-sync finish module; runs first on the native-fps clip),
+`duration_grid` and `usage` (a motion backend's fixed frame grid and duration/voice envelope),
+`keyframe_label`, and `needs_tenant_r2`.
+
+**`needs_tenant_r2`** is for a module that submits to a RunPod endpoint that may be pooled across
+hosted tenants (today `keyframe` and `own-gpu`): only a module declaring it receives the tenant's
+per-job R2 credential as `InvokeRequest.r2` (cp#270), and never a dispatch (community) module. A
+receiver must call `takeTenantR2(req)` (`@skyphusion-labs/vivijure-core/modules/tenant-r2`) at the
+top of its handler, which reads and strips the block in one step. Leave the flag absent unless your
+module needs it.
 
 ### 3. Serve the two endpoints
 
@@ -111,7 +159,12 @@ export default {
       return json(MANIFEST);
     }
     if (request.method === "POST" && url.pathname === "/invoke") {
-      const req = (await request.json()) as InvokeRequest<MyInput>;
+      let req: InvokeRequest<MyInput>;
+      try {
+        req = (await request.json()) as InvokeRequest<MyInput>;
+      } catch {
+        return json({ ok: false, error: "invalid JSON body" }); // garbage is DATA: HTTP 200, not a 500
+      }
       if (req.hook !== "plan.enhance") {
         return json({ ok: false, error: `unsupported hook ${req.hook}` });
       }
@@ -128,21 +181,42 @@ The single most important rule. A module failure must be a value, not a thrown e
 wire, so the core degrades instead of crashing. Always return HTTP 200 with an `InvokeResponse`:
 
 ```ts
-type InvokeResponse<O> = { ok: true; output: O } | { ok: false; error: string };
+type InvokeResponse<O> =
+  | { ok: true; output: O }
+  | { ok: true; pending: true; poll: string; jobId?: string }   // async: the core polls /poll with { poll }
+  | { ok: false; error: string };
+
+type PollResponse<O> =
+  | { ok: true; pending: true; wait?: "accepted" | "running" }
+  | { ok: true; output: O }
+  | { ok: false; error: string; outcome?: "backend-error" | "failed" | "gone" | "cancelled";
+      runpodStatus?: string; errorType?: string };
+
+type CancelResponse = { ok: true } | { ok: false; error: string };
 ```
 
 For a chain hook, prefer a **soft degrade** where it makes sense: if your work cannot run (an
 upstream model is down, a reply is unparseable), return `{ ok: true, output: <input passed through>, ... }`
 with a note, so the chain continues from a good value. A hard `{ ok: false }` is for "I cannot honor
-this request at all"; the core records it and moves on.
+this request at all" (malformed I/O, a missing credential). **Do not assume the core shrugs it off.**
+On `finish`, an `ok: false` from `/invoke` or `/poll` is retried only when classified transient (a
+bounded retry, vivijure-core film-orchestrator `failOrRetry`); otherwise it FAILS the render with the
+real per-shot error, by design, so a render never ships an unfinished clip as done. A finish module
+that merely could not polish a clip (no face in the frame, a wall-clock guard expired, a model would
+not load) must therefore answer `ok: true` with the input clip passed through, `applied` tagged, and
+`degraded: "<reason>"` (`FinishOutput.degraded`). The first-party finish modules share that
+classification in `modules/_shared/finish-soft-degrade.ts` (cf#594).
 
 ## Wrapping a RunPod (or any cloud) worker
 
 The template generalizes to any off-GPU or cloud capability: keep the same four files and make
 `/invoke` proxy your backend instead of doing the work in the Worker.
 
-**Never build the RunPod URL or the bearer yourself.** Both come from
-`modules/_shared/runpod-route.ts`, and a module that hard-codes either is unreachable for a shared
+**Never build the RunPod URL or the bearer yourself.** Both come from the route helpers in
+`@skyphusion-labs/vivijure-core/runpod-route` (moved into core by cp#321). An in-repo module imports
+them through `modules/_shared/runpod-route.ts`, which is a pure re-export kept so existing import
+paths work (it must declare nothing of its own; `tests/runpod-route-reexport-cp321.test.ts`); an
+external module imports core directly. A module that hard-codes either is unreachable for a shared
 hosted tenant (cf#394, cp#288). The reason is an invariant, not a style preference: on the hosted
 tier no tenant-namespace script may hold a RunPod credential at all, so the control plane stands a
 proxy in front of RunPod and binds `RUNPOD_PROXY_BASE` to it. A module with a literal
@@ -153,7 +227,8 @@ with a credential a tenant must never have.
 import {
   runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName,
   planeRefusalReason, planeRefusalError, type RunpodRoute,
-} from "../../_shared/runpod-route";
+} from "../../_shared/runpod-route";   // external module: "@skyphusion-labs/vivijure-core/runpod-route"
+import { secretValue } from "@skyphusion-labs/vivijure-core/secret-store";
 
 async function run(env: Env, req: InvokeRequest<MotionInput>): Promise<InvokeResponse<MotionOutput>> {
   // 0. resolve the route. Proxied when the plane bound RUNPOD_PROXY_BASE, direct otherwise.
@@ -163,8 +238,12 @@ async function run(env: Env, req: InvokeRequest<MotionInput>): Promise<InvokeRes
     // RUNPOD_API_KEY on a proxied worker sends them after a binding that must not exist there.
     return { ok: false, error: `my-module: ${runpodCredentialName(route)} not configured` };
   }
+  // RUNPOD_ENDPOINT_ID is a Secrets Store binding (or a plain_text string on a hosted upload):
+  // resolve it to a string before building the URL, never interpolate the binding object.
+  const endpointId = await secretValue(env.RUNPOD_ENDPOINT_ID);
+  if (!endpointId) return { ok: false, error: "my-module: RUNPOD_ENDPOINT_ID not configured" };
   // 1. submit. The suffixes are RunPod's own on both routes, so this line does not branch.
-  const sub = await fetch(runpodEndpointUrl(route, env.RUNPOD_ENDPOINT_ID) + "/run", {
+  const sub = await fetch(runpodEndpointUrl(route, endpointId) + "/run", {
     method: "POST",
     headers: { ...runpodHeaders(route, MANIFEST.name), "content-type": "application/json" },
     body: JSON.stringify({ input: toBackendInput(req.input, req.config) }),
@@ -182,13 +261,14 @@ tenant leaves them unbound:
 
 ```ts
 interface Env {
+  RUNPOD_ENDPOINT_ID: SecretsStoreSecret;      // resolve with secretValue() before use
   RUNPOD_API_KEY: SecretsStoreSecret;          // the DIRECT route's bearer
   RUNPOD_PROXY_BASE?: string;                  // plain_text, shared hosted tenants only
   RUNPOD_PROXY_TOKEN?: SecretsStoreSecret | string;  // the PROXIED route's bearer
 }
 ```
 
-Three rules that are not obvious from the code:
+Five rules that are not obvious from the code:
 
 - **The branch is whether `RUNPOD_PROXY_BASE` is bound. It is never a failover.** A proxied module
   whose token is missing REFUSES; it must not reach for the direct key, because a shared tenant that
@@ -214,15 +294,18 @@ Three rules that are not obvious from the code:
 
 `tests/runpod-proxy-base-cf394.test.ts` enforces the first rule across the whole module namespace: it
 counts every module reaching RunPod and fails if one of them is not routing through the helper.
-`tests/plane-refusal-poll-cf398.test.ts` does the same for the poll rule, and drives all fourteen
-over their real `/invoke` then `/poll` with one stub in three configurations, so a module that
-reads the header, one that ignores it, and one that treats every failure as a refusal are three
-distinguishable outcomes rather than one.
+`tests/plane-refusal-poll-cf398.test.ts` does the same for the poll rule, and drives every module in
+its `CASES` table over their real `/invoke` then `/poll` with one stub in three configurations, so a
+module that reads the header, one that ignores it, and one that treats every failure as a refusal
+are three distinguishable outcomes rather than one. Its census derives the RunPod-reaching
+population from source and asserts only a floor (at least 14), so **a new RunPod module must be added
+to `CASES` in the same change** (or to `RUNSYNC_ONLY` if it never polls); a RunPod-reaching module in
+neither list fails the suite.
 
 ### Cross-repo wire name: `x-vivijure-plane-refusal` (cf#403)
 
 The plane emits, and every module reads, the header name held in `PLANE_REFUSAL_HEADER`
-(`modules/_shared/runpod-route.ts`). The control plane defines the same constant in
+(`@skyphusion-labs/vivijure-core/runpod-route`, re-exported by `modules/_shared/runpod-route.ts`). The control plane defines the same constant in
 `vivijure-control-plane/src/runpod-proxy-poll.ts`. There is no shared package; both repos pin the
 literal `"x-vivijure-plane-refusal"` in `tests/plane-refusal-header-contract.test.ts` (mirrored on
 the plane). Renaming the header requires updating **both** pins and both source constants in the
@@ -253,7 +336,15 @@ Two gates on that, both worth knowing before you conclude your module did not de
   skipping every other module. Read as `0` on 2026-08-03, so the full set deploys today, but it is a
   mutable variable and the behaviour is a property of its value, not of this sentence.
 - `FINISH_SATELLITES_ONLY` narrows to `scripts/finish-satellite-modules.txt`
-  (`finish-rife`, `finish-upscale`, `finish-lipsync`, `speech-upscale`).
+  (`finish-rife`, `finish-upscale`, `finish-blender`).
+- `local-gpu` is ALWAYS skipped on this deploy: `ci.yml` exports `EXCLUDE="... local-gpu"` (cf#560),
+  because that door belongs on vivijure-local, and the core's `wrangler.toml.example` does not bind it.
+
+Before each `wrangler deploy`, `scripts/fill-module-placeholders.sh` fills the module toml's
+`REPLACE_WITH_*` placeholders (`REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID`, `REPLACE_WITH_D1_DATABASE_ID`,
+the R2 S3 identifiers) from env and REFUSES the deploy if any survive outside a comment; media URL
+vars written as `${VIDEO_FINISH_URL}` etc. become empty (honest off) when unset. A new module toml
+should use the same placeholder names for those ids, never a literal account-specific value.
 
 **Do not confuse that file with `scripts/tenant-release-modules.txt` (cf#394).** They overlap and
 they answer different questions. `finish-satellite-modules.txt` narrows an OPERATOR deploy;
@@ -264,8 +355,10 @@ bundle. The satellites are a strict subset of the tenant list, and
 ### Path 2 -- a hosted tenant: a published bundle, fetched by (tag, module)
 
 The control plane is a Worker and cannot bundle at provision time, so each module must arrive as a
-single-file, integrity-checked artifact. `.github/workflows/studio-release.yml` fires on a `v*` tag
-and `scripts/build-module-release.ts` writes:
+single-file, integrity-checked artifact. On a `v*` tag, `ci.yml`'s `studio-release` job (which
+`needs: [ci, container-tests, migrations-gate, assert-on-main]`) calls
+`.github/workflows/studio-release.yml`, a `workflow_call`-only workflow with no trigger of its own
+(cf#562), and `scripts/build-module-release.ts` writes:
 
 ```
 studio-releases/<tag>/modules/<module>/manifest.json
@@ -278,8 +371,10 @@ it. The plane then fetches by `(tag, module)` and uploads into the tenant dispat
 
 **Which modules take this path is `scripts/tenant-release-modules.txt`, and that is the whole
 answer** (cf#394). Adding a module to it publishes a bundle; it does NOT provision anything, because
-provisioning is a row in the control plane's `TENANT_MODULE_CATALOG`. **The two are deliberately
-allowed to differ:** a published bundle with no catalog row uploads to nobody and costs nothing,
+provisioning is a row in the control plane's `TENANT_MODULE_CATALOG` (mirrored here at
+`scripts/tenant-module-catalog.txt`; the required `ci` job's `npm run check:catalog` step fetches the
+plane's catalog and fails on drift, cf#470, so a catalog change on the plane turns this repo red
+until the mirror is updated). **The two are deliberately allowed to differ:** a published bundle with no catalog row uploads to nobody and costs nothing,
 which is what lets the plane add a row whenever it is ready instead of the two repos taking turns.
 Until cf#394 the publish set was three names inline in the workflow plus the satellites file, so it
 could not be read in one place -- and on 2026-08-03 that cost a lane its direction when the catalog
@@ -307,7 +402,10 @@ look for a code difference.**
 
 ## Bind it to the core
 
-Deploy your module worker, then add a service binding to the core's `wrangler.toml`:
+Deploy your module worker, then add a service binding to the core's deploy config (your
+`wrangler.toml`, rendered from the committed `wrangler.toml.example`; a first-party module adds the
+block to `wrangler.toml.example` itself). No `src/env.ts` edit is needed: `Env` already carries a
+`MODULE_${string}` index signature, and the registry discovers any `MODULE_*` Fetcher binding:
 
 > This is **path 1 only** -- how the operator panel reaches your module. A hosted tenant
 > reaches it as a published bundle instead, with different timing and different gates. See
@@ -322,29 +420,56 @@ service = "vivijure-module-<name>"   # your deployed worker's name
 Redeploy the core. `GET /api/modules` now lists your module, the studio UI renders its stage, and
 the core invokes it through your hook. Nothing else is hardcoded.
 
+**Or install without a core redeploy (Workers for Platforms dispatch).** On a host with the
+`MODULE_DISPATCH` namespace bound, `scripts/install-module.ts` uploads your Worker into the dispatch
+namespace and then calls the operator-scoped `POST /api/modules/install` with `{ "script_name": "<script>" }`.
+The core reads the resident script's manifest, runs `runLiveConformance` over that same dispatch
+transport, and inserts the registry row only on a green suite (`201 { ok: true, module, script_name, checks }`;
+`422 { ok: false, error: "conformance failed", checks }` otherwise). See
+[`module-dispatch.md`](./module-dispatch.md).
+
 ## Prove it conforms
 
-Before you bind a module, run the **conformance harness** against it (see
-[`@skyphusion-labs/vivijure-core` conformance harness](https://github.com/skyphusion-labs/vivijure-core/blob/main/src/modules/conformance.ts)) to confirm it honors the contract --
-a valid manifest, a well-formed `InvokeResponse`, and graceful degradation on a bad request:
+Before you bind a module, run the **conformance harness** against it to confirm it honors the
+contract -- a valid manifest, a well-formed `InvokeResponse`, and graceful degradation on a bad
+request. The harness is published as `@skyphusion-labs/vivijure-core/modules/conformance`
+(`checkManifest`, `checkInvokeResponse`, `checkHookOutput`, `runLiveConformance`); its source is
+[`src/modules/conformance.ts` in vivijure-core](https://github.com/skyphusion-labs/vivijure-core/blob/main/src/modules/conformance.ts).
+This repo's `tests/conformance.live.test.ts` drives it against a live module URL.
+
+Run your module **locally** and point the harness at it. Never enable `workers_dev` (or add a route)
+to test: that is the public surface the hard rule above forbids.
 
 ```
-MODULE_URL=https://vivijure-module-<name>.<subdomain>.workers.dev \
-  npx vitest run tests/conformance.live.test.ts
+npx wrangler dev -c modules/<name>/wrangler.toml     # an external module: wrangler dev in its own repo
+MODULE_URL=http://localhost:8787 npm run conformance # in a second shell, from this repo
 ```
 
-If that is green, your module will plug into the core cleanly.
+(`npm run conformance` runs `tests/conformance.test.ts` plus `tests/conformance.live.test.ts`; the live
+suite is skipped unless `MODULE_URL` is set. Pass `--port` to `wrangler dev` and adjust the URL if
+8787 is taken.) If that is green, your module will plug into the core cleanly. A module installed
+through the dispatch route above is gated again: `POST /api/modules/install` runs
+`runLiveConformance` over the real dispatch transport before the module is registered.
 
 ## Checklist
 
 - [ ] `GET /module.json` returns a manifest with `api: "vivijure-module/2"` (the `/1` window is
       CLOSED as of v0.12.0 -- a `/1` manifest is rejected at registration), a `name`, a `version`,
       and only known `hooks`.
-- [ ] `config_schema` fields each have a valid `type` and a `default` consistent with it.
+- [ ] A `finish` module declares `participation: "default" | "opt_in"` (cf#537); a `finish` or
+      `speech` module declares `max_invocation_seconds` (core#223). Conformance fails without them.
+- [ ] `config_schema` fields each have a valid `type` and a `default` consistent with it, and every
+      knob `/invoke` reads is declared (undeclared keys are dropped before you are called).
 - [ ] `POST /invoke` returns HTTP 200 with a well-formed `InvokeResponse` for every input, including
-      garbage (no thrown errors across the wire).
+      garbage (no thrown errors across the wire; guard `request.json()`).
+- [ ] A `finish` module answers a polish miss with `ok: true` + passthrough + `degraded`, reserving
+      `ok: false` for malformed I/O (an `ok: false` fails the render).
+- [ ] `GET /ready` reports credential visibility as booleans (required for a module in this repo).
+- [ ] A RunPod-reaching module routes through the core runpod-route helpers, checks
+      `planeRefusalReason` on every poll, and is added to `CASES` in `tests/plane-refusal-poll-cf398.test.ts`.
 - [ ] Pure logic is split out and unit-tested; the worker is thin glue.
-- [ ] Conformance harness is green against the deployed worker.
+- [ ] Conformance harness is green against the module running locally (`wrangler dev`), with
+      `workers_dev = false` and no route.
 - [ ] A `[[services]]` binding named `MODULE_<NAME>` is added to the core and the core redeployed.
 
 ## Writing a module in Python (second on-ramp)
@@ -374,7 +499,10 @@ class Default(WorkerEntrypoint):
         if method == "GET" and url.endswith("/module.json"):
             return _json(MANIFEST)
         if method == "POST" and url.endswith("/invoke"):
-            req = (await request.json()).to_py()
+            try:
+                req = (await request.json()).to_py()
+            except Exception:
+                return _json({"ok": False, "error": "invalid JSON body"})  # garbage is DATA, HTTP 200
             # ... run the hook; failure is DATA: return _json({"ok": False, "error": ...})
             return _json({"ok": True, "output": {}})
         return _json({"ok": False, "error": "not found"}, status=404)
@@ -384,7 +512,7 @@ Tooling is [pywrangler](https://github.com/cloudflare/workers-py) (the Python Wo
 [`uv`](https://docs.astral.sh/uv/)): `uvx --from workers-py pywrangler dev` / `... deploy`. Declare
 deps in `pyproject.toml` (bundled into `python_modules/` on deploy). `wrangler.toml` needs
 `main = "src/entry.py"` and `compatibility_flags = ["python_workers"]`. The same conformance harness
-applies -- a Python module passes `MODULE_URL=<url> npx vitest run tests/conformance.live.test.ts`
-exactly like a TS one. This on-ramp was proven end-to-end by the now-retired `plan-enhance-py`
+applies -- run it under `pywrangler dev` and a Python module passes
+`MODULE_URL=http://localhost:8787 npm run conformance` exactly like a TS one. This on-ramp was proven end-to-end by the now-retired `plan-enhance-py`
 proof module (the deterministic Python sibling of the TS `plan-enhance`); see it in the git
 history if you need a full worked example.

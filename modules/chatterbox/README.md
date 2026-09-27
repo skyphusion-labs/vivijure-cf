@@ -17,22 +17,27 @@ flowchart LR
   sp["speech<br/>(enhance)"]
   subgraph finish["finish chain"]
     rife["finish-rife · 10"]
-    ls["finish-lipsync · 15"]
     up["finish-upscale · 20"]
   end
   asm["assemble"]
   mux["mux"]
   done["done"]
 
-  kf --> clips --> dlg --> sp --> rife --> ls --> up --> asm --> mux --> done
-  dlg -. "audio_key" .-> ls
+  kf --> clips --> dlg --> sp --> rife --> up --> asm --> mux --> done
+  dlg -. "audio_key" .-> mux
 
   style dlg fill:#dff,stroke:#0aa,stroke-width:2px
 ```
 
 The seam is the audio key: this module produces `job.dialogue_audio[shot]`, the **speech** chain cleans
-it, and the cleaned key flows into **finish-lipsync** (MuseTalk) to drive the mouth. A shot with no
-spoken line simply has no audio key, and finish-lipsync no-ops for it.
+it, and the cleaned key becomes the shot's spoken track in the final mux. A shot with no spoken line
+simply has no audio key.
+
+It used to flow into `finish-lipsync` (MuseTalk) to drive the mouth. MuseTalk is ruled out
+permanently and that module is removed (cf#783), so the mouth is no longer patched after the fact:
+a synced mouth comes from a driving-audio motion door (`infinitetalk`) at motion time, and on a
+silent door the Cast voice is muxed with the mouth left as the model animated it. Note the phase
+order: `dialogue` runs AFTER clips, so this module's audio was never what fed that door.
 
 ## Configuration
 

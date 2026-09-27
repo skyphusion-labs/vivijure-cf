@@ -22,7 +22,7 @@
 // construction are all shipped code; the field is read off the actual response body.
 //
 // MEASURED CORRECTION TO cf#289's TABLE. The issue enumerates FIVE RunPod submitters (keyframe,
-// finish-upscale, speech-upscale, narration-gen, vidu-q3). The real population is FOURTEEN. It never
+// finish-upscale, narration-gen, vidu-q3). The real population is derived below. It never
 // listed finish-lipsync or finish-rife at all, and it counted only one of the nine motion backends.
 // The census at the bottom of this file derives the population instead of asserting it, so the next
 // person does not inherit a hand-written list that can go stale the same way.
@@ -32,8 +32,6 @@ import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
-import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
-import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -91,28 +89,6 @@ const CASES: Case[] = [
     env: RUNPOD_ENV,
     input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" },
     config: { interpolate: true },
-  },
-  {
-    // finish-lipsync no-ops without dialogue audio for the shot, same reasoning.
-    name: "finish-lipsync",
-    worker: finishLipsyncWorker as unknown as Worker,
-    hook: "finish",
-    env: RUNPOD_ENV,
-    input: {
-      shot_id: "shot_01",
-      clip_key: "renders/p_test/clips/shot_01.mp4",
-      audio_key: "renders/p_test/dialogue/shot_01.wav",
-    },
-    config: {},
-  },
-  {
-    // speech-upscale is opt-in; `enable` off is a clean no-op, not a submit.
-    name: "speech-upscale",
-    worker: speechUpscaleWorker as unknown as Worker,
-    hook: "speech",
-    env: RUNPOD_ENV,
-    input: { shot_id: "shot_01", audio_key: "renders/p_test/dialogue/shot_01.wav" },
-    config: { enable: true },
   },
   {
     // narration-gen submits to a fixed hosted endpoint slug, so it needs no RUNPOD_ENDPOINT_ID.

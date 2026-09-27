@@ -175,7 +175,7 @@ R2_S3_BUCKET = "REPLACE_WITH_R2_S3_BUCKET"
 });
 
 describe("shipped door / media tomls fill clean with empty origins", () => {
-  for (const m of ["finish-upscale", "speech-upscale", "finish-blender", "audio-master", "beat-sync", "film-titles", "subtitle"]) {
+  for (const m of ["finish-upscale", "finish-blender", "audio-master", "beat-sync", "film-titles", "subtitle"]) {
     it(`${m} fills with zero survivors and no vpc_services`, () => {
       const r = run(readFileSync(`modules/${m}/wrangler.toml`, "utf8"), REQ);
       expect(r.status).toBe(0);

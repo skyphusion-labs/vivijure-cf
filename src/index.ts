@@ -79,6 +79,11 @@ import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import { handleAbuseReport, isQuarantineKey } from "./abuse-report";
+// ARTIFACT_PREFIXES lives in shared.ts so the abuse-report door can enforce the SAME allowlist
+// as the serve guard without importing this module (that would be an import cycle). Re-exported
+// here because it has always been part of this module's public surface.
+export { ARTIFACT_PREFIXES } from "./shared";
+import { ARTIFACT_PREFIXES } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
   resolveAgentFinishSelect,
@@ -484,13 +489,6 @@ const hUpload: Handler = async (req, env) => {
   // `size`, matching the two sibling upload routes and CONTRACT 2.10 (was `bytes`; no consumer read it).
   return json({ key, mime, size: bytes.byteLength }, 201);
 };
-// F4: the known artifact namespaces. The serve route is scoped to these so it can only ever return a
-// real artifact, not an arbitrary R2 object. ADD a prefix here when a feature introduces a new one
-// (a served key outside this set is rejected).
-export const ARTIFACT_PREFIXES = [
-  "audio/", "bundles/", "cast/", "cast-clean/", "cast-gen/", "character-refs/",
-  "characters/", "clips/", "loras/", "out/", "renders/", "uploads/",
-];
 // F4: the fixed artifact response header set. cache-control is `private, max-age=300` (private = never
 // edge-cached, so an authenticated artifact never leaks into a shared cache); accept-ranges advertises
 // byte-range support; nosniff stops a stored content-type being MIME-sniffed into executable script in
@@ -1691,7 +1689,7 @@ const hStartFilm: Handler = async (req, env) => {
     finish_select: filmFinishSelect,
     speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
-    // TTS+lip-sync stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
+    // TTS + finish stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
     // which read job.dialogue_lines. cast_loras carries the speaking cast (slot -> cast id) so the
     // LoRA write-back + voice resolution have it.
     dialogue_lines, cast_loras: castIds,
@@ -2356,7 +2354,9 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // daily submission ceiling. Default posture fails CLOSED on a BROKEN check (unbound/throwing
     // limiter -> 503 deny); a healthy limiter is unaffected. SPEND_LIMIT_FAIL_CLOSED="false" opts
     // back to fail-open. An explicit over-limit/over-ceiling verdict is a 429 with Retry-After.
-    // See src/rate-limit.ts.
+    // GHSA-wmjq-7647-h45x: a SAFETY route (isSafetyRoute) is metered here too, but is never DENIED
+    // by a broken check and never sees the daily ceiling, so a missing binding cannot switch the
+    // abuse-report door off. See src/rate-limit.ts.
     if (isSpendRoute(request.method, url.pathname)) {
       const rl = await enforceSpendLimit(request, env);
       if (!rl.ok) {

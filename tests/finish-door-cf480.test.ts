@@ -25,7 +25,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import finishUpscale from "../modules/finish-upscale/src/index";
-import speechUpscale from "../modules/speech-upscale/src/index";
 import { DOOR_ROUTE_NAME, doorRoute, doorBound, doorProblem, tokenTookDoor } from "../modules/_shared/finish-door";
 
 /** Values that appear nowhere else in this repo, so a match cannot be a coincidence. */
@@ -65,13 +64,11 @@ const SPEECH_INPUT = { shot_id: "shot_01", audio_key: "p/shot_01.wav" };
 
 type Worker = { fetch(r: Request, e: never): Promise<Response> };
 const FINISH = finishUpscale as unknown as Worker;
-const SPEECH = speechUpscale as unknown as Worker;
 
 function post(worker: Worker, path: string, env: unknown, body: unknown) {
   return worker.fetch(new Request("https://module.internal" + path, { method: "POST", body: JSON.stringify(body) }), env as never);
 }
 const invokeFinish = (env: unknown) => post(FINISH, "/invoke", env, { hook: "finish", input: FINISH_INPUT, config: {}, context: { project: "cf480" } });
-const invokeSpeech = (env: unknown) => post(SPEECH, "/invoke", env, { hook: "speech", input: SPEECH_INPUT, config: { enable: true }, context: { project: "cf480" } });
 const pollWith = (worker: Worker, env: unknown, token: string) => post(worker, "/poll", env, { poll: token });
 const body = async (r: Response) => (await r.json()) as Record<string, never>;
 
@@ -141,23 +138,6 @@ describe("bound door: RunPod is not called AT ALL", () => {
     expect(doorCalls[0].headers.authorization).not.toContain(RUNPOD_KEY);
   });
 
-  it("speech-upscale does the same", async () => {
-    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
-    globalThis.fetch = rp.fn as unknown as typeof fetch;
-
-    const res = await body(await invokeSpeech({
-      RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT,
-      SPEECH_DOOR_TOKEN: DOOR_TOKEN,
-      SPEECH_UPSCALE_DOORS: "https://speech-upscale-fatmike.test",
-    }));
-
-    expect(res.ok).toBe(true);
-    expect(res.jobId).toBe(DOOR_JOB);
-    expect(rp.calls.every((c) => !c.url.includes("runpod"))).toBe(true);
-    expect(rp.calls[0].headers.authorization).toBe("Bearer " + DOOR_TOKEN);
-    expect(new URL(rp.calls[0].url).hostname).toBe("speech-upscale-fatmike.test");
-  });
-
   it("tokenless takes the RunPod arm (no public door is declared without a bearer)", async () => {
     const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
     globalThis.fetch = rp.fn as unknown as typeof fetch;
@@ -207,13 +187,6 @@ describe("tokenless is the RunPod arm (a public origin is not declared without a
     expect(rp.calls[0].headers["content-type"]).toBe("application/json");
   });
 
-  it("speech-upscale likewise", async () => {
-    const rp = recorder((url) => url.includes("runpod") ? runOk(RUNPOD_JOB) : runOk(DOOR_JOB));
-    globalThis.fetch = rp.fn as unknown as typeof fetch;
-
-    await invokeSpeech({ RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT });
-    expect(rp.calls[0].url).toBe("https://api.runpod.ai/v2/" + ENDPOINT + "/run");
-  });
 });
 
 // ------------------------------------------------------------------------------------------- 4.
@@ -283,21 +256,6 @@ describe("tokenless poll of a door-minted job", () => {
     expect(rp.calls.filter((c) => c.url.includes("runpod")).length).toBe(0);
   });
 
-  it("speech-upscale soft-degrades instead, because ITS token carries the input audio_key", async () => {
-    const rp = recorder(() => notFound());
-    globalThis.fetch = rp.fn as unknown as typeof fetch;
-
-    const res = await body(await pollWith(SPEECH, { RUNPOD_API_KEY: RUNPOD_KEY, RUNPOD_ENDPOINT_ID: ENDPOINT },
-      token({ jobId: DOOR_JOB, shotId: "shot_01", audioKey: SPEECH_INPUT.audio_key, submittedAt: Date.now(), door: DOOR_ROUTE_NAME })));
-
-    expect(res.ok).toBe(true);
-    const out = res.output as unknown as { degraded?: string; audio_key?: string; applied?: unknown[] };
-    expect(out.degraded === "door-unbound-mid-job" || String(out.degraded).includes("token")).toBe(true);
-    expect(out.audio_key).toBe(SPEECH_INPUT.audio_key);
-    // Same rule: the degrade is recorded, and no tag claims the enhance ran.
-    expect(JSON.stringify(out.applied)).not.toContain("speech-upscale:");
-    expect(rp.calls.length).toBe(0);
-  });
 });
 
 // ------------------------------------------------------------------------------------------- 6.
@@ -334,10 +292,9 @@ describe("GET /ready", () => {
   });
 
   it("never leaks the door token in any form", async () => {
-    for (const worker of [FINISH, SPEECH]) {
+    for (const worker of [FINISH]) {
       const res = await worker.fetch(new Request("https://m.internal/ready"), {
         FINISH_DOOR_TOKEN: DOOR_TOKEN,
-        SPEECH_DOOR_TOKEN: DOOR_TOKEN,
       } as never);
       expect(await res.text()).not.toContain(DOOR_TOKEN);
     }

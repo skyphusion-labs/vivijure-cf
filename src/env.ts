@@ -83,7 +83,6 @@ export interface Env {
   AUDIO_MASTER_URL?: string;
   /** Comma-separated HTTPS origins for on-iron finish doors. Empty = RunPod path. */
   FINISH_UPSCALE_DOORS?: string;
-  SPEECH_UPSCALE_DOORS?: string;
   FINISH_BLENDER_DOORS?: string;
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
   RENDER_SHARD_MAX?: string;

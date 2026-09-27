@@ -117,9 +117,14 @@ Refs: control-plane cp#290 / cp#291 / cp#293.
   with a one-binding body (wiped this account to 2 bindings once). Procedure:
   [deploy-config-injection.md](./deploy-config-injection.md) section 8.
 
-**What closes it:** one NEW film id whose `film_finish.adopted` includes `film-titles` and
-whose sidecar / `finish.title_burn` event shows a title burn (not passthrough). Do not reuse
-the C1 film id.
+**What closes it:** one NEW film id, with a title card requested, whose `film_finish.adopted`
+(or `film_finish.applied`) includes `film-titles`, whose `film_finish` shows no
+`passthrough:no-video-finish-url` tag and no `degraded`, and whose film-titles step measurement
+sidecar (`<step film key minus .mp4>.meta.json`, core `metaKeyFor`; NOT `film_finish.sidecar_key`,
+which is the subtitle `.srt`) carries `prepend_seconds` equal to the requested `title_seconds` (as
+in C1). There is no dedicated title-burn event; a module-side
+passthrough is visible as the `film-titles: passthrough (passthrough:no-video-finish-url)` warn line.
+Do not reuse the C1 film id.
 
 ---
 

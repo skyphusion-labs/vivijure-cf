@@ -44,8 +44,6 @@ import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
-import finishLipsyncWorker from "../modules/finish-lipsync/src/index";
-import speechUpscaleWorker from "../modules/speech-upscale/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
 import seedanceWorker from "../modules/seedance/src/index";
 import klingWorker from "../modules/kling/src/index";
@@ -103,10 +101,6 @@ const CASES: Case[] = [
   // finish-rife no-ops deliberately when nothing is enabled, so the config must turn something on or
   // this exercises the no-op path instead of the poll path.
   { name: "finish-rife", worker: finishRifeWorker as unknown as Worker, hook: "finish", extraEnv: ENDPOINT, input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4" }, config: { interpolate: true } },
-  // finish-lipsync no-ops without dialogue audio for the shot, same reasoning.
-  { name: "finish-lipsync", worker: finishLipsyncWorker as unknown as Worker, hook: "finish", extraEnv: ENDPOINT, input: { shot_id: "shot_01", clip_key: "renders/p_test/clips/shot_01.mp4", audio_key: "renders/p_test/dialogue/shot_01.wav" }, config: {} },
-  // speech-upscale is opt-in; `enable` off is a clean no-op, not a submit.
-  { name: "speech-upscale", worker: speechUpscaleWorker as unknown as Worker, hook: "speech", extraEnv: ENDPOINT, input: { shot_id: "shot_01", audio_key: "renders/p_test/dialogue/shot_01.wav" }, config: { enable: true } },
   // narration-gen rides a fixed hosted slug, so it needs no endpoint id. config.text is REQUIRED for
   // a real submit: with neither text nor storyboard scenes it refuses before it reaches /run.
   { name: "narration-gen", worker: narrationGenWorker as unknown as Worker, hook: "score", extraEnv: {}, input: { film_key: "renders/p_test/film.mp4", seconds: 30 }, config: { text: "The city exhales, and the neon holds its breath." } },

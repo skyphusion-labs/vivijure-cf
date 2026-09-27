@@ -97,17 +97,24 @@ describe("vendored clip-level presign fields (cf#590)", () => {
     );
   });
 
-  it("the clip-level FinishInput vendors are the four finish doors", () => {
+  it("the clip-level FinishInput vendors are the finish doors", () => {
     expect(finishVendors.map((v) => v.name)).toEqual([
       "finish-blender",
-      "finish-lipsync",
       "finish-rife",
       "finish-upscale",
     ]);
   });
 
-  it("the SpeechInput vendor is speech-upscale", () => {
-    expect(speechVendors.map((v) => v.name)).toEqual(["speech-upscale"]);
+  // cf#786: there is NO LONGER A SPEECH VENDOR. speech-upscale was the only module vendoring
+  // SpeechInput and it is removed (dead endpoint, no trigger, purpose retired with post-hoc
+  // lip-sync). Core still DECLARES SpeechInput and the `speech` hook, asserted above, so the
+  // contract is intact and the next speech module inherits a checked one.
+  //
+  // ASSERTED AS AN EXPLICIT ZERO, because the per-vendor loop below generates one test PER
+  // VENDOR: with an empty list it generates NOTHING, and a suite that silently stops testing
+  // reads exactly like a suite that passes. This line is what makes the zero a statement.
+  it("there is no SpeechInput vendor, and that is declared rather than silent", () => {
+    expect(speechVendors.map((v) => v.name)).toEqual([]);
   });
 
   it("FinishArtifactsDecl output_key is not mistaken for FinishInput (negative control)", () => {

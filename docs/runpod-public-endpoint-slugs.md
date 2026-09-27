@@ -40,6 +40,11 @@ Never `POST .../run` for this check. Script:
 | `alibaba-wan-lora` | `wan-2-2-t2v-720-lora` | 401 | exists (control) |
 | *(negative)* | `definitely-not-a-slug-xyz` | 404 | not found (control) |
 
+Scope: the table and the probe's `DEFAULT_SLUGS` cover the #267 **motion** cost-door set only. Two
+other modules also call RunPod public-endpoint slugs and are not probed by default (pass them as
+arguments to check them): `kling-o1-r2v` (`ENDPOINT_ID = "kling-video-o1-r2v"`) and `narration-gen`
+(`ENDPOINT_ID = MODEL = "minimax-speech-02-hd"`).
+
 ## Rates (Conrad, 2026-08-03; cf#267 comment)
 
 Slugs are not stale. Published rates reported on the issue:
@@ -51,7 +56,12 @@ Slugs are not stale. Published rates reported on the issue:
 
 **Veo audio is a billing dimension nothing else in the eight cost-door set has:** a 50% swing on a
 boolean request flag. A per-second figure for this model is wrong by 50% unless audio state is
-specified. Module default in this repo: `generate_audio` defaults **off** (core score/mux owns audio).
+specified. Module default in this repo: `generate_audio` defaults **ON** (the `google-veo` manifest
+`config_schema.generate_audio` default is `true`, "keep the model's talking audio"; `veo.ts` sends
+`generate_audio: cfg.generate_audio !== false`), so an unconfigured Veo render bills at the
+**$0.15/sec with-audio** rate. Set `generate_audio: false` in `motion_config` for the $0.10/sec silent
+tier. (The Phase 1 header comments in `modules/google-veo/src/index.ts` and `veo.ts` that still say
+"defaults false" are stale; tracked in #764 RS-1.)
 
 Full eight-model rate table and remaining probes: control-plane cp#284 / `docs/cost-basis.md`
 (may still show the pre-confirm "NOT AVAILABLE" rows until that doc is refreshed there).

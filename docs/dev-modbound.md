@@ -3,8 +3,11 @@
 A plain `wrangler dev` for the studio core boots with `GET /api/modules` returning `modules:[]`,
 because the `MODULE_*` service bindings point at module workers that are not running. With an empty
 catalog the planner cannot drive any render / audio / module-dependent flow. This recipe runs the core
-**and every in-tree module worker together** as one multi-worker local dev, so the registry discovers
-the **real catalog** from each module static `GET /module.json` manifest.
+**and every module worker the core template binds** as one multi-worker local dev, so the registry
+discovers the **real catalog** from each module static `GET /module.json` manifest. A module is
+launched only if its `name` appears as a `service = "..."` binding in the rendered core config and its
+`main` is not a `.py`; in-tree modules the template does not bind (as of this writing `kling`, whose
+binding is commented out, and `local-gpu`) are skipped.
 
 ## What you get
 
@@ -17,6 +20,10 @@ the **real catalog** from each module static `GET /module.json` manifest.
 ## Safety (by construction)
 
 - **Fully local.** Local D1 + local R2, no remote bindings. Production is not reachable from this env.
+- **Auth is OPEN.** The rendered core config blanks `AUTH_MODE` / `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD`
+  and injects `ALLOW_UNAUTHENTICATED = "true"`, so every `/api/*` call is served as operator with no
+  credential (and the core logs `auth.allow_unauthenticated` once per isolate). The script launches
+  with `--ip 127.0.0.1`; do not expose the port.
 - **Zero GPU / provider spend.** The generated module dev configs are binding-FREE: a module serves its
   real manifest but has no RunPod key / AI / R2, so any accidental `POST /invoke` is inert and fails
   safe. No job can reach a GPU from here.
@@ -32,6 +39,11 @@ DRY_RUN=1 SCENARIO=empty bash .dev-modbound/dev-modbound.sh   # render + report,
 The script (idempotent) renders the core dev config from `wrangler.toml.example`, generates a minimal
 binding-free dev config per module, applies the D1 migrations to the local database, and launches the
 fleet. Open `http://127.0.0.1:PORT/planner`.
+
+**It overwrites the repo-root `./wrangler.toml`** (the gitignored real config `deploy.sh` also renders)
+with the dev render, unconditionally and on `DRY_RUN=1` too. If you keep a rendered production
+`wrangler.toml` in this checkout, copy it aside first or run from a separate worktree. Generated module
+configs go to `.dev-modbound/mods/*.toml` (cleared on every run).
 
 ## Plan-validator flow without a live model
 
@@ -132,10 +144,24 @@ ps -u "$USER" -o pid=,args= | grep "$(pwd)"   # expect no output
 ## What is stubbed, and why
 
 Not needed to populate the catalog; dropped from the local render: module invoke backends (RunPod GPU,
-provider APIs, module R2 writes), the 4 Workers-VPC finish services (`VIDEO_FINISH` / `IMAGE_PREP` /
-`AUDIO_BEAT_SYNC` / `AUDIO_MIX`), the tail consumer, ratelimits, crons, and `MODULE_DISPATCH`. A real
-render / audio / finish submit is therefore inert here; run those against a properly provisioned deploy,
-never from this env.
+provider APIs, module R2 writes), the tail consumer, ratelimits, crons, `[ai]`, routes, and any
+`[[vpc_services]]` block. `MODULE_DISPATCH` needs no stubbing: its `[[dispatch_namespaces]]` block is
+commented out in the template. A real render / audio / finish submit is therefore inert here; run those
+against a properly provisioned deploy, never from this env.
+
+The finish media tier is no longer a set of Workers VPC services: the core reaches the CPU containers
+over public HTTPS doors named by `[vars]` URL strings (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`,
+`AUDIO_BEAT_SYNC_URL`, `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, plus the `FINISH_UPSCALE_DOORS` /
+`FINISH_BLENDER_DOORS` lists). For the media URL doors (`VIDEO_FINISH_URL`,
+`AUDIO_MIX_URL`, `AUDIO_BEAT_SYNC_URL`, `IMAGE_PREP_URL`) the core treats a door as installed when its
+var is a non-empty string, and as absent (the honest degrade path) when it is unset or empty.
+
+> **Known deviation (#764, DV-1):** `dev-modbound.sh` only substitutes `${D1_DATABASE_ID}`,
+> `${AUTH_MODE}`, `${ACCESS_TEAM_DOMAIN}` and `${ACCESS_AUD}`, so the rendered dev config keeps literal
+> placeholders such as `VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"`. Those are non-empty strings, so the
+> dev core believes the video-finish (and other door) tiers ARE installed instead of taking the
+> `VIDEO_FINISH_URL unset` degrade path; any finish/assemble call then fails (no `MEDIA_FINISH_TOKEN`,
+> unresolvable URL) rather than degrading.
 
 ## Seeding history / artifacts
 
