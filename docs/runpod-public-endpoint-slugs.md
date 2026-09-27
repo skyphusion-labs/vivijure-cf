@@ -45,6 +45,36 @@ other modules also call RunPod public-endpoint slugs and are not probed by defau
 arguments to check them): `kling-o1-r2v` (`ENDPOINT_ID = "kling-video-o1-r2v"`) and `narration-gen`
 (`ENDPOINT_ID = MODEL = "minimax-speech-02-hd"`).
 
+## These readings have a shelf life
+
+**A dated probe proves the endpoint existed on that date, and nothing more.** RunPod deletes public
+endpoints, so re-run the probe before relying on any row above rather than reading a past 401 as current.
+
+Measured 2026-09-27, same free `/health` probe, with the negative control in the same run:
+
+| Module | `ENDPOINT_ID` in code | `/health` | Status |
+| --- | --- | --- | --- |
+| `kling` | `kling-v2-1-i2v-pro` | **404** | **GONE** (was 401, exists, on 2026-08-05 above) |
+| `infinitetalk` | `infinitetalk` | 401 | exists |
+| `alibaba-wan` | `wan-2-6-i2v` | 401 | exists (control) |
+| `google-veo` | `google-veo3-1-fast-i2v` | 401 | exists (control) |
+| *(negative)* | `definitely-not-a-slug-xyz` | 404 | not found (control) |
+
+The `kling` door is tracked in [#921](https://github.com/skyphusion-labs/vivijure-cf/issues/921).
+
+**And a 401 proves a RunPod endpoint object exists, not that the upstream model does.** Two cases
+measured 2026-09-27 while building the audio-driven provider matrix
+([vivijure#826](https://github.com/skyphusion-labs/vivijure/issues/826)):
+
+- `sora-2-i2v` and `sora-2-pro-i2v` answer 401 and are listed `isLive` with full price tables, while
+  OpenAI's own model page states the Sora 2 models and Videos API "were shut down on September 24, 2026
+  and are no longer available".
+- `minimax-hailuo-2-3-fast` is live on the shelf, while MiniMax's own API reference no longer lists
+  Hailuo 02 or 2.3 at all, superseded by `MiniMax-H3`.
+
+So slug existence is a necessary check, never a sufficient one; vendor liveness is a separate question
+and this file does not answer it.
+
 ## Rates (Conrad, 2026-08-03; cf#267 comment)
 
 Slugs are not stale. Published rates reported on the issue:
