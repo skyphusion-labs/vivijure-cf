@@ -236,6 +236,12 @@ jobs:
       - name: Container bearer gate (cf#893)
         run: python3 tests/container-bearer-gate.test.py
 
+      # cf#893: containers/{video-finish,audio-mix}/test_bearer.py EXISTED and were never in this
+      # list, which is how an assertion labelled fail-open survived the gate being closed: it kept
+      # passing because the new refusal is 503 and 503 is also not 401. A test outside the runner is
+      # a file, not a gate. audio-beat-sync/test_bearer.py is deliberately NOT added -- it imports
+      # librosa, and installing an audio-analysis stack to assert an HTTP status is a worse trade
+      # than the structural coverage tests/container-bearer-gate.test.py already gives all five.
       - name: Run container test scripts
         run: |
           set -eu
@@ -244,13 +250,6 @@ jobs:
           containers/audio-mix/test_url_guard.py
           containers/image-prep/test_url_guard.py
           containers/image-prep/test_decode_bound.py
-          # cf#893: these two EXISTED and were never in this list, which is how an assertion
-          # literally labelled "(fail-open)" survived the gate being closed -- it kept passing
-          # because the new refusal is 503 and 503 is also != 401. A test outside the runner is a
-          # file, not a gate. audio-beat-sync/test_bearer.py is deliberately NOT added: it imports
-          # librosa, and installing an audio-analysis stack to assert an HTTP status is a worse
-          # trade than covering that container structurally, which
-          # tests/container-bearer-gate.test.py does for all five.
           containers/video-finish/test_bearer.py
           containers/audio-mix/test_bearer.py
           containers/video-finish/test_url_guard.py
