@@ -801,24 +801,31 @@ config; everything else in the Studio is single-user and needs no email.
 
 ## 8. Optional BYOK provider keys (advanced)
 
-Two optional worker secrets let you bring your own provider key for a specific feature. Most installs
-need neither: storyboard planning bills through the AI Gateway on Unified Billing (section 2d), and
-image work runs on the AI binding. Set one only if you want that specific provider path:
+**One** optional worker secret lets you bring your own provider key for a specific feature. Most
+installs need it: storyboard planning bills through the AI Gateway on Unified Billing (section 2d),
+and image work runs on the AI binding. Set it only if you want that specific provider path:
 
 - `OPENAI_API_KEY` -- BYOK OpenAI image generation (transparent-PNG output via gpt-image-1.5). Unset
-  by default; the studio renders keyframes/images on its normal path without it.
-- `XAI_API_KEY` -- BYOK xAI for the storyboard planner. Unset by default; the planner runs on the AI
-  Gateway path instead.
-
-Both are worker secrets (set with `wrangler secret put`, or left unset):
+  by default; the studio renders keyframes/images on its normal path without it. Read by
+  `modules/image-generate`, which is the only consumer.
 
 ```bash
 printf %s "<your-key>" | npx wrangler secret put OPENAI_API_KEY
-printf %s "<your-key>" | npx wrangler secret put XAI_API_KEY
 ```
 
-They are the only provider keys not routed through the AI Gateway, so each bills that provider
-directly rather than your Cloudflare Unified Billing balance.
+It is the only provider key not routed through the AI Gateway, so it bills OpenAI directly rather
+than your Cloudflare Unified Billing balance.
+
+**`XAI_API_KEY` used to be listed here and is GONE (cf#839).** This section promised BYOK xAI for the
+storyboard planner and gave a `wrangler secret put` recipe for it, and **no code ever read the
+variable** -- an operator who followed the instruction set a secret, got no error, and gained nothing.
+A documented instruction for a capability that does not exist is worse than an undocumented one,
+because it terminates the reader's search. It is removed from `src/env.ts` and from the wrangler
+examples rather than left standing.
+
+xAI **is** reachable, and always was, by this estate's normal route: through the AI Gateway on Unified
+Billing, keyless, which is exactly why no per-provider key is needed. The grok entries in
+`modules/image-generate`'s model enum are that path.
 
 ---
 

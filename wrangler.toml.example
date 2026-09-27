@@ -72,6 +72,21 @@ assets = { directory = "./public", binding = "ASSETS", html_handling = "none", r
 AUTH_MODE = "${AUTH_MODE}"
 ACCESS_TEAM_DOMAIN = "${ACCESS_TEAM_DOMAIN}"
 ACCESS_AUD = "${ACCESS_AUD}"
+# ALLOW_UNAUTHENTICATED (cf#839): live code reads it (src/access-auth.ts) and until now it appeared
+# in NO committed wrangler example, so the one security-relevant knob in this file was the one an
+# operator could not see here. It is documented in docs/SECURITY.md and docs/CONTRACT.md; this is the
+# surface you actually edit, so it belongs here too.
+#
+# It is NOT a vulnerability and never was: it applies ONLY when Access is unconfigured, it is
+# fail-closed when unset, it does not apply once AUTH_MODE is explicitly selected, and turning it on
+# logs loudly on every request. Leave it EMPTY unless you are developing locally and mean it.
+ALLOW_UNAUTHENTICATED = ""
+# VIDEO_FINISH_TIER_STATE (cf#839): READ here (src/video-finish-availability.ts), WRITTEN by nothing
+# in this repo -- the hosted control plane projects it onto a tenant studio so the panel can say
+# "unprovisionable" instead of "not installed". A self-hoster leaves it unset and loses nothing; it
+# is listed so an operator who finds it in a log or a diff knows whose it is, rather than concluding
+# the studio ignores a var it reads.
+VIDEO_FINISH_TIER_STATE = ""
 # R2 S3-API presign identifiers (src/r2-presign.ts). NOT secrets: R2_S3_ENDPOINT is the public
 # account-scoped R2 S3 host (https://<account-id>.r2.cloudflarestorage.com), R2_S3_BUCKET is the
 # same `vivijure` bucket bound as R2_RENDERS below. Both are deploy-injected (ci.yml / deploy.sh)
@@ -327,7 +342,10 @@ secret_name = "FINISH_DOOR_TOKEN"
 # ---   R2_S3_ENDPOINT + R2_S3_BUCKET : identifiers (URL + bucket name), now rendered into [vars]
 # ---     above from CLOUDFLARE_ACCOUNT_ID at deploy (#238 follow-up) -- NOT wrangler secrets.
 # ---   STUDIO_API_TOKEN : operator login, deploy-minted worker secret (openssl rand | wrangler secret put).
-# ---   XAI_API_KEY / OPENAI_API_KEY : optional BYOK; leave as `wrangler secret put` when used.
+# ---   OPENAI_API_KEY : optional BYOK, read by modules/image-generate for the transparent-PNG path.
+# ---   (XAI_API_KEY is GONE, cf#839: it was declared and documented with a `wrangler secret put`
+# ---   recipe and read by no code at all. xAI models are reached through the AI Gateway on Unified
+# ---   Billing, keyless -- see the grok entries in modules/image-generate's model enum.)
 
 # --- Render-complete notification = the `notify` hook + the notify-email module (MODULE_NOTIFY_EMAIL
 # --- below), NOT a core binding. Notification is multi-backend (email / webhook / ...), so it's a

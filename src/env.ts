@@ -31,7 +31,6 @@ export interface Env {
   GATEWAY_ID: SecretsStoreSecret | string;
   // Planner LLM auth: authenticated AI Gateway token + xAI BYOK (secrets, optional).
   CF_AIG_TOKEN?: SecretsStoreSecret | string;
-  XAI_API_KEY?: string;
 
   // Storage. R2_RENDERS = the `vivijure` bucket (bundles, keyframes, clips, MP4s, project state).
   // R2 = the chat-side bucket; the render flow copies a staged audio bed across from it.
@@ -96,7 +95,6 @@ export interface Env {
   FINISH_UPSCALE_DOORS?: string;
   FINISH_BLENDER_DOORS?: string;
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
-  RENDER_SHARD_MAX?: string;
   // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
   // VIDEO_FINISH_URL is empty. "unprovisionable" = provisioned before the tier existed, with no
   // operator action that can reach it (the cp#112 population). Absent -> the conservative default,
