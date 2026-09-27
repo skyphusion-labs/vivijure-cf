@@ -43,11 +43,37 @@ export function videoFinishDoorOf(env: Partial<VideoFinishDoorHost>): MediaDoorF
   return bound && typeof bound.fetch === "function" ? bound : null;
 }
 
-/** Instances serving routes that carry NO cross-call state. Bounded on purpose, and neither of the
- *  two obvious alternatives: ONE shared instance serialises a burst of per-clip /inspect calls
- *  behind a single container, and a fresh instance per call spawns a container per call, which is
- *  billed per wake. Four is a pool, not a tuned number; raise it when a measurement asks. */
-export const SYNC_POOL_SIZE = 4;
+/** Instances serving routes that carry NO cross-call state.
+ *
+ *  ONE, and the reason is the application ceiling, not a preference. `max_instances = 3` in
+ *  wrangler.toml.example is a deliberate spend and blast-radius knob (its own comment: the platform
+ *  default is 20 and this is "deliberately low to start"), and critically **a request that would
+ *  exceed the cap ERRORS rather than queueing**. So the pool is not free-running: every name it can
+ *  address is one the load-bearing job path cannot have.
+ *
+ *  The arithmetic, which is the whole of it:
+ *
+ *      SYNC_POOL_SIZE  +  concurrent finish jobs  <=  max_instances
+ *              1       +            2             <=        3
+ *
+ *  I first set this to 4 against a ceiling of 3, which means the pool ALONE could exceed the cap
+ *  before a single encode ran. That was measured off the live application (cf#810), not reasoned
+ *  out: I had not read `max_instances` because I wrongly believed I held no Cloudflare credential.
+ *
+ *  THE COST OF 1, NAMED RATHER THAN HIDDEN: a burst of per-clip /inspect calls now serialises
+ *  behind a single container. That is worse than a wider pool would be, and it is still correct
+ *  here, because the alternative is not a slower sync call, it is an ERROR on the finish job that
+ *  the whole tier exists to run. A sync call waiting is a latency cost; a job instance refused is
+ *  a film that does not get made.
+ *
+ *  To widen it, raise `max_instances` FIRST -- that is a spend decision, not this constant's --
+ *  then raise this. tests/video-finish-pool-ceiling-cf810.test.ts asserts the inequality above
+ *  against the real wrangler.toml.example, so the two numbers cannot drift apart again. */
+export const SYNC_POOL_SIZE = 1;
+
+/** Concurrent finish jobs the pool must leave room for. Not a limit we enforce -- it is the headroom
+ *  the ceiling test requires, so a future pool widening cannot silently eat the job budget. */
+export const RESERVED_JOB_INSTANCES = 2;
 
 /** Separator between the routing key and the container's own job id in the compound id handed
  *  back to core. A container job id is uuid4().hex -- 32 hex characters, no dot -- so one dot is

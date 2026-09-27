@@ -2393,10 +2393,26 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         return new Response(JSON.stringify({ error: rl.message }), { status: rl.status, headers });
       }
     }
-    // core#52: the storage ceiling. Same posture as the spend gate above and deliberately AFTER it (a
-    // rate-limited request never reaches the DB). Enforced at SUBMIT, before the spend, so an over-quota
-    // studio is denied honestly with the real numbers instead of discovering it halfway through a film.
-    // Reads, deletes, the planner, and chat keep working, so the operator can go delete something.
+    // core#52: the storage ceiling. Deliberately AFTER the spend gate (a rate-limited request never
+    // reaches the DB). Enforced at SUBMIT, so an over-quota studio is denied honestly with the real
+    // numbers instead of discovering it halfway through a film. Reads, deletes, the planner and chat
+    // keep working, so the operator can go delete something.
+    //
+    // ITS POSTURE IS NOT THE SPEND GATE'S, and this comment used to say it was (cf#804). They are
+    // analogous, not shared, and the difference is operationally load-bearing because they are driven
+    // by DIFFERENT KNOBS -- flipping SPEND_LIMIT_FAIL_CLOSED does nothing to this gate:
+    //
+    //   spend gate    SPEND_LIMIT_FAIL_CLOSED (default closed). A BROKEN check -> 503 deny.
+    //   this gate     core's R2_STORAGE_QUOTA_MODE, "deny" (default) or "meter". Unset, empty or any
+    //                 UNRECOGNISED value resolves to "deny" with a console warning, because guessing
+    //                 "meter" on a typo would silently turn a hard stop into unmetered spend.
+    //
+    // And "meter" does not merely soften the deny, it changes what a BROKEN check does: with no DB or
+    // a failed usage read, "deny" answers 503 fail-closed while "meter" lets the submit PROCEED and
+    // reports the period as an unbillable metering gap. So the two gates disagree about the broken
+    // case in the one direction that costs money. See core's storage-quota.ts (storageQuotaMode,
+    // checkStorageQuota); with no R2_STORAGE_QUOTA_BYTES set there is no ceiling at all and this
+    // returns ok before either knob is consulted.
     // fc#2250: isPanelStorageSubmitRoute, not core's isStorageSubmitRoute. Core's
     // STORAGE_SUBMIT_PATTERNS missed four byte-writing routes this panel serves -- /retry (a full
     // startFilmJob), /cast/:id/voice-sample, /voice-sample/attach (32MB) and /render/frames -- so an
