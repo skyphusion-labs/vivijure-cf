@@ -114,7 +114,40 @@ function needsClosure(name: string, seen = new Set<string>()): Set<string> {
 }
 
 const tagGated = (j: Job) => /refs\/tags\/v/.test(j.ifExpr);
-const publishes = (j: Job) => PUBLISH_VERBS.some((v) => j.effective.includes(v));
+
+/** A COMMENT CANNOT PUBLISH (cf#857).
+ *
+ *  `effective` is raw YAML text, so a `#` line that MENTIONS a publish verb used to make its job a
+ *  publisher. Two things make that a false positive rather than a pedantic one:
+ *
+ *    - parseJobs assigns the comment block that sits BETWEEN two jobs to the PRECEDING job, because
+ *      a new block only starts at the next `  name:` line. So the explanatory paragraph written for
+ *      job B is scanned as if it were part of job A.
+ *    - The `# MIGRATIONS GATE` paragraph documents the deploy step by quoting it: "the deploy job's
+ *      `wrangler d1 migrations apply vivijure-studio --remote` step below".
+ *
+ *  Nothing was wrong while the job above that paragraph was not tag-gated. cf#857 added
+ *  `container-smoke`, which IS tag-gated on purpose so a release cannot skip the only gate that
+ *  starts the container, and it was immediately classified as a publishing job that must depend on
+ *  the version assert. It publishes nothing; it runs `docker build` and `docker run`.
+ *
+ *  Stripping whole-line comments before matching can only make this MORE precise: a real publish
+ *  step is a command line, never a `#` line. The HARNESS FLOOR above is the counter-proof and it is
+ *  not decoration -- it asserts that `deploy` and `studio-release` are still IN this population, so
+ *  a change that quietly emptied it fails there rather than passing silently here.
+ *
+ *  This is the second control in this repo found firing on prose, after the cf#560 hosted-render
+ *  matcher enrolled a workflow on a mention of `wrangler.toml.example` (cf#849). A control that
+ *  fires on a comment punishes documentation, and the cheapest fix for the next author is to delete
+ *  the sentence instead of to look. */
+export function codeOnly(text: string): string {
+  return text
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+}
+
+const publishes = (j: Job) => PUBLISH_VERBS.some((v) => codeOnly(j.effective).includes(v));
 const publishers = jobs.filter((j) => tagGated(j) && publishes(j));
 
 describe("fc#2250 item 2 -- a v* tag cannot publish without the version assert", () => {
@@ -133,6 +166,21 @@ describe("fc#2250 item 2 -- a v* tag cannot publish without the version assert",
     // partition below is measuring something else.
     expect(publishers.map((j) => j.name)).toContain("deploy");
     expect(publishers.map((j) => j.name)).toContain("studio-release");
+  });
+
+  it("the publisher matcher reads CODE, not prose (cf#857)", () => {
+    // Both directions on the same matcher, because a one-sided check here is what let the prose
+    // match stand: the floor above proves the real publishers survive comment-stripping, and this
+    // proves a commented-out or merely-quoted verb does not create a fake one.
+    expect(codeOnly("  # the deploy job's `wrangler deploy` step below\n  runs-on: ubuntu-latest\n"))
+      .not.toMatch(/wrangler deploy/);
+    expect(codeOnly("      run: npx wrangler deploy --dry-run\n")).toMatch(/wrangler deploy/);
+    // and the real subjects, read from the committed workflow rather than from a string
+    const deployJob = byName.get("deploy");
+    expect(deployJob, "deploy must exist for this to mean anything").toBeDefined();
+    expect(publishers.map((j) => j.name)).toContain("deploy");
+    // the job cf#857 added must NOT be a publisher: it builds and runs images, it ships nothing
+    expect(publishers.map((j) => j.name)).not.toContain("container-smoke");
   });
 
   it(`the ${VERSION_JOB} job exists and actually compares the tag to package.json`, () => {

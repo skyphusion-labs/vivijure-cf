@@ -182,6 +182,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r containers/video-finish/requirements.txt
 
+      # cf#857 / cf#851. UNCONDITIONAL and DOCKER-FREE on purpose: this is the gate that would have
+      # caught the crash in the PR that caused it, in milliseconds, with no daemon and no build.
+      # cfa321f added containers/video-finish/concat_guard.py plus a column-0 import of it in app.py,
+      # added its test to the list below in the same commit, and never touched the Dockerfile COPY
+      # line. Every image built since then dies at import before binding :8000, and the step below
+      # stayed green the whole time because it runs these scripts from the REPO CHECKOUT, where the
+      # file is present. The image is never involved here. That is the entire gap.
+      - name: Container image file-set guard (cf#857)
+        run: python3 tests/container-image-file-set.test.py
+
       - name: Run container test scripts
         run: |
           set -eu
@@ -368,11 +378,33 @@ jobs:
               echo "${img} changed -> what wrangler builds has moved"
               NEEDED=true
             fi
+            # cf#857: THE DOCKERFILE IS NOT THE IMAGE. A Dockerfile's build CONTEXT is its directory,
+            # so every file COPYed in can change what the image contains without the Dockerfile path
+            # appearing in the diff at all. Matching only the Dockerfile meant a PR touching just
+            # containers/video-finish/app.py ran neither container gate, which is the hole the
+            # cf#851 class walks through. Widening can only ADD runs, never remove them.
+            ctx="$(dirname "${img}")"
+            for f in ${CHANGED}; do
+              case "$f" in
+                "${ctx}/"*)
+                  echo "${f} changed -> it is inside ${ctx}, the build context of ${img}"
+                  NEEDED=true
+                  ;;
+              esac
+            done
           done
+          # NO REGEX BUILT FROM A STRING above: `case` prefix matching needs no escaping, so the
+          # incomplete-sanitizer class is unreachable by construction rather than by a correct escape.
           if echo "${CHANGED}" | grep -qx '\.github/workflows/ci\.yml'; then
             echo "ci.yml changed -> a change to this gate is tested by this gate"
             NEEDED=true
           fi
+          for own in scripts/container-smoke.sh tests/container-smoke.test.sh; do
+            if echo "${CHANGED}" | grep -qxF "${own}"; then
+              echo "${own} changed -> a change to the smoke gate is tested by the smoke gate"
+              NEEDED=true
+            fi
+          done
 
           echo "needed=${NEEDED}" >> "$GITHUB_OUTPUT"
           echo "deploy-shape gate needed: ${NEEDED}"
@@ -438,6 +470,91 @@ jobs:
           echo "--- last 40 lines of the build log"
           tail -40 shape-build.log
           exit 1
+
+  # CONTAINER SMOKE (cf#857). The gate that starts the image and makes it SERVE.
+  #
+  # WHY IT EXISTS, and it is this repo indicting its own work: `container-deploy-shape` above was
+  # built in cf#817/cf#818 and it proves an image was BUILT. `container-tests` runs the container's
+  # python scripts against the repo CHECKOUT. Neither one starts the image, so the only property
+  # anyone wants from a container gate -- does this boot and bind its port -- was unasserted, and the
+  # v1.34.1 tag run (36296493766) went green on all 10 jobs over an image that crashed on every
+  # startup: "Container crashed while checking for ports", 12 occurrences in one tail session,
+  # assemble to failure in 3,211 ms (cf#851). BUILT and RUNS are different properties.
+  #
+  # THE CONTROL RUNS BEFORE THE SUBJECT, and that ordering is the whole design. cf#857 is about a
+  # gate that could not fail, so this job first drives scripts/container-smoke.sh against three
+  # fixtures it builds -- one that serves, one that dies at import (the cf#851 shape, planted), one
+  # that binds the wrong port -- and asserts the EXACT exit code and reason for each. A smoke step
+  # that has only ever gone red is indistinguishable from one that always goes red; a smoke step that
+  # has only ever gone green is the thing we are replacing. Both directions, or neither claim.
+  #
+  # NOTHING HERE IS SKIPPABLE. No docker CLI, no daemon, no curl, an unbuildable image, a container
+  # that exits, a port that never answers: every one is a FAILURE, never a skip. A gate whose
+  # cheapest satisfaction is not running the container is the same defect one level up, which is what
+  # the issue this closes is about.
+  container-smoke:
+    needs: container-deploy-shape-detect
+    # On a version tag this runs UNCONDITIONALLY rather than through the detect, for two reasons: a
+    # release must never be able to skip the only gate that starts the image, and `deploy` lists this
+    # job in `needs`, where a SKIPPED dependency would skip the deploy itself. The detect already
+    # reports needed=true when there is no PR base to diff, so this is belt-and-suspenders against a
+    # future edit to that script, not a second opinion about it.
+    if: needs.container-deploy-shape-detect.outputs.needed == 'true' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove the instrument exists before claiming anything with it
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing; this gate cannot make its claim (and must not pass)"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon unreachable; this gate cannot make its claim (and must not pass)"; exit 1; }
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl missing; this gate cannot probe a port"; exit 1; }
+          echo "docker $(docker version --format '{{.Server.Version}}') and curl are present."
+
+      # FIRST: prove the smoke script can both PASS and FAIL, against subjects whose truth is known
+      # by construction. Everything below is uninterpretable without this.
+      - name: Control -- the smoke script passes a serving image and fails two planted failures
+        run: sh tests/container-smoke.test.sh
+
+      # THEN: the real subject. Built from the Dockerfile the [[containers]] block NAMES, read out of
+      # the committed example rather than hand-listed, so a second container cannot leave this gate
+      # staring at the first one forever.
+      - name: Build every image the [[containers]] block names
+        run: |
+          set -eu
+          IMAGES="$(grep -E '^image[[:space:]]*=' wrangler.toml.example | sed -E 's/^image[[:space:]]*=[[:space:]]*"(.*)"$/\1/' | sed -E 's#^\./##')"
+          if [ -z "${IMAGES}" ]; then
+            echo "::error::no [[containers]] image line in wrangler.toml.example: refusing to report a pass over an empty set. If the block was removed, remove this job in the same change."
+            exit 1
+          fi
+          built=0
+          for img in ${IMAGES}; do
+            [ -f "${img}" ] || { echo "::error::${img} is named by [[containers]] but does not exist on disk"; exit 1; }
+            ctx="$(dirname "${img}")"
+            tag="vivijure-cf857-smoke-$(basename "${ctx}"):ci"
+            echo "=== building ${img} (context ${ctx}) as ${tag}"
+            docker build -f "${img}" -t "${tag}" "${ctx}"
+            echo "${tag}" >> images.txt
+            built=$((built + 1))
+          done
+          echo "built ${built} image(s)"
+          [ "${built}" -gt 0 ] || { echo "::error::built 0 images; a loop that ran zero times exits 0 and looks exactly like a pass"; exit 1; }
+
+      - name: Smoke every built image -- it must SERVE, not merely exist
+        run: |
+          set -eu
+          [ -s images.txt ] || { echo "::error::no images.txt, so the previous step built nothing and this step would pass over an empty list"; exit 1; }
+          n=0
+          while read -r tag; do
+            [ -n "${tag}" ] || continue
+            echo "=== smoking ${tag}"
+            sh scripts/container-smoke.sh "${tag}" 8000 /health 90
+            n=$((n + 1))
+          done < images.txt
+          echo "smoked ${n} image(s)"
+          [ "${n}" -gt 0 ] || { echo "::error::smoked 0 images"; exit 1; }
 
   # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
   # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
@@ -648,7 +765,20 @@ jobs:
     # fc#2250: assert-tag-version added. It is tag-gated exactly like assert-on-main, so needs:
     # always resolves on this trigger rather than waiting on a job that never starts -- the check to
     # make before widening a needs: array, and the same argument the paragraph above makes.
-    needs: [ci, container-tests, migrations-gate, assert-on-main, assert-tag-version]
+    # cf#857: container-smoke added, by the same argument the two paragraphs above make about
+    # container-tests and migrations-gate. Before this, NOTHING that starts the container gated a
+    # release -- container-deploy-shape is not in this list either, so a tag could deploy with it
+    # RED and the deploy job would simply never look. That is how a crashing image reached
+    # production green (cf#851).
+    #
+    # THE DEADLOCK CHECK, which is the thing to make before widening a needs: array. container-smoke
+    # carries an `if:`, so unlike the other five it COULD be skipped -- and a skipped dependency
+    # skips the dependent job, which would silently turn a release into a no-op. Its `if:` therefore
+    # includes `startsWith(github.ref, 'refs/tags/v')` explicitly, so on this trigger it always runs
+    # and needs: always resolves. container-deploy-shape is deliberately NOT added: it proves a
+    # BUILD, and container-smoke builds each image itself before starting it, so the stronger gate
+    # subsumes it on this path rather than adding a second conditional dependency.
+    needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # cf#809: this job used to run in `container: node:22-alpine`, and #798 broke it the moment it
@@ -1128,7 +1258,13 @@ jobs:
     #
     # No deadlock: deploy and assert-tag-version are both gated on refs/tags/v*, the same trigger
     # this job runs on, so needs: always resolves rather than waiting on a job that never starts.
-    needs: [ci, container-tests, migrations-gate, assert-on-main, assert-tag-version, deploy]
+    # cf#857: container-smoke added here as well as on deploy. tests/tag-publish-gate-cf562.test.ts
+    # DERIVES this requirement from deploy's own needs: array rather than restating the names, and it
+    # caught the omission on the first run -- which is the gate working: this job publishes the
+    # artifact every hosted tenant is provisioned from, so it must be gated at least as hard as the
+    # deploy. Same deadlock check: container-smoke's if: names the v* tag ref explicitly, so on this
+    # trigger it always runs and needs: resolves rather than skipping this job.
+    needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version, deploy]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # the called workflow uploads the release asset; nothing else
