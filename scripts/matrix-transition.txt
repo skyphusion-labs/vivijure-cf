@@ -1,0 +1,31 @@
+# DECLARED MATRIX TRANSITIONS. One line: <module> <retiring|adding> <issue>
+#
+# WHY THIS FILE EXISTS. scripts/check-capability-matrix.mjs enforces agreement in BOTH directions
+# between modules/ in this repo and docs/CAPABILITIES.md in the hub, read from the hub's `main`.
+# Those live in two repos, so the two edits CANNOT be atomic, and every order breaks the gate
+# mid-flight: retiring hub-first leaves a module with no row, cf-first leaves a row with no module,
+# and adding does the same in mirror image. The gate went red on unrelated PRs for a condition that
+# was not in their diff, which is a check freezing merges over something outside the change.
+#
+# A bidirectional consistency gate across two repos cannot be satisfied atomically, so it must
+# tolerate one DECLARED transitional state or it forbids the transition it exists to keep honest.
+# This file is that declaration. vivijure#830.
+#
+# WHAT AN ENTRY BUYS AND WHAT IT COSTS. It exempts one module name from both disagreement checks
+# while the two repos are out of step. It does NOT hide anything, because:
+#
+#   - the gate PRINTS every entry and whether it is currently being applied;
+#   - an entry must name something that exists on at least one side, so it cannot be speculative;
+#   - an entry whose transition has COMPLETED is a hard FAIL, not a no-op. `retiring` completes when
+#     the module and the row are both gone; `adding` completes when both are present. So an exemption
+#     cannot be left behind, which is the only thing that would turn this file into a hiding place;
+#   - a `retiring` module whose row is already gone must appear by name in the hub's `## Retired`
+#     section. Erasing a capability from the matrix entirely is the exact failure the gate exists to
+#     catch, and a transition entry must not become the way to do it quietly.
+#
+# So the steady state of this file is EMPTY, and a non-empty line is a claim with an expiry.
+#
+# TO USE: add the line, land it, then make the two repo edits in either order, then DELETE the line
+# in the same PR as the second edit (or the gate fails on the stale entry, which is the point).
+
+kling retiring cf#921
