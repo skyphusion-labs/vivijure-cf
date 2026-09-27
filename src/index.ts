@@ -69,11 +69,13 @@ import { runDemoChat, DEFAULT_DEMO_CHAT_CAPS, type DemoChatCaps, type DemoChatMo
 import { isSpendRoute, enforceSpendLimit } from "./rate-limit";
 import {
   checkStorageQuota,
-  isStorageSubmitRoute,
   reconcileStorageUsage,
   storageQuotaBytes,
   storageUsage,
 } from "@skyphusion-labs/vivijure-core/storage-quota";
+// fc#2250: core's list UNION this panel's own byte-writing routes. See src/storage-submit-routes.ts
+// for why the supplement is here and how it is kept self-retiring rather than permanent drift.
+import { isPanelStorageSubmitRoute } from "./storage-submit-routes";
 import { applyResponseSecurity } from "./asset-response";
 import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
@@ -2369,7 +2371,12 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // rate-limited request never reaches the DB). Enforced at SUBMIT, before the spend, so an over-quota
     // studio is denied honestly with the real numbers instead of discovering it halfway through a film.
     // Reads, deletes, the planner, and chat keep working, so the operator can go delete something.
-    if (isStorageSubmitRoute(request.method, url.pathname)) {
+    // fc#2250: isPanelStorageSubmitRoute, not core's isStorageSubmitRoute. Core's
+    // STORAGE_SUBMIT_PATTERNS missed four byte-writing routes this panel serves -- /retry (a full
+    // startFilmJob), /cast/:id/voice-sample, /voice-sample/attach (32MB) and /render/frames -- so an
+    // over-quota studio was refused 507 here on /storyboard/render and could then re-render an
+    // entire film through /retry. The ceiling denied the front door and left the side door open.
+    if (isPanelStorageSubmitRoute(request.method, url.pathname)) {
       const q = await checkStorageQuota(env);
       if (!q.ok) {
         return new Response(JSON.stringify({ error: q.message }), {
