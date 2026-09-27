@@ -19,7 +19,7 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, framesFromDelivered, RUNPOD_COLD_GRACE_MS } from "./kling";
+import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./kling";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
@@ -39,7 +39,6 @@ interface Env {
 }
 
 const ENDPOINT_ID = "infinitetalk";
-const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "infinitetalk",
@@ -225,7 +224,11 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: framesFromDelivered(bytes, st.seconds, OUT_FPS) } };
+  // cf#923: measured off the delivered container, not assumed. This door returns 25fps, not the 24
+  // it used to declare. 0/0 means the container could not be parsed; core skips recording a delivery
+  // rather than storing a rate nobody measured.
+  const timing = deliveredTiming(bytes);
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: timing.fps, frames: timing.frames } };
 }
 
 export default {
