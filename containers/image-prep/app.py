@@ -35,6 +35,71 @@ DOWNLOAD_TIMEOUT_S = 30
 UPLOAD_TIMEOUT_S = 30
 MAX_INPUT_BYTES = 32 * 1024 * 1024  # 32 MB upper bound on a portrait
 
+# cf#869: MAX_INPUT_BYTES bounds COMPRESSED bytes. The decoded bitmap is a function of PIXEL
+# DIMENSIONS, and nothing bounded those, so a small, highly compressible image (a flat colour field,
+# or a deliberately crafted one) passed the 32 MB gate and decoded to an allocation orders of
+# magnitude larger. The gate measured the wrong quantity, confidently.
+#
+# WHERE THE COST IS PAID, which decides where the check goes: `rembg.remove()` decodes the input
+# ITSELF, before any Pillow call in this module. A guard in front of `Image.open` would sit behind
+# the allocation it is meant to prevent. This one runs before rembg.
+#
+# WHERE THE NUMBER COMES FROM, rather than a round figure: the subject is a single cast reference
+# portrait. 4096x4096 comfortably covers a modern phone photo (4032x3024 is 12.2 MP) and decodes to
+# about 64 MiB as RGBA, which is the real bound this buys. Anything larger is not a portrait.
+# Env-tunable like the other container constants, so a deployment can lower it without a rebuild.
+MAX_INPUT_PIXELS = int(os.environ.get("MAX_INPUT_PIXELS", str(4096 * 4096)))
+
+# Defense in depth, and deliberately NOT the only line of defense. Pillow WARNS above this value and
+# only raises DecompressionBombError above 2x it, so on its own it would let an image through at up
+# to twice our ceiling. The explicit check in _guard_decode_size is what actually refuses; this
+# stops a decode we did not route through that check from going unbounded.
+Image.MAX_IMAGE_PIXELS = MAX_INPUT_PIXELS
+
+
+class DecodeTooLarge(Exception):
+    """The image is small compressed and large decoded. Carries the dimensions so the refusal can
+    name them: an operator has to be able to tell "your image is too large to decode" from "the
+    container fell over", and a bare 413 or an OOM renders those as one state."""
+
+    def __init__(self, width: int, height: int, ceiling: int) -> None:
+        super().__init__(
+            f"image decodes to {width}x{height} = {width * height} pixels, above the "
+            f"{ceiling}-pixel MAX_INPUT_PIXELS ceiling; "
+            f"compressed size is not a bound on decoded size"
+        )
+        self.width, self.height, self.ceiling = width, height, ceiling
+
+
+def _guard_decode_size(data: bytes) -> "tuple[int, int]":
+    """Read the header ONLY and refuse an image whose decoded size we will not pay for.
+
+    `Image.open` is lazy: it parses the header and exposes `.size` without decoding pixels, so this
+    costs nothing and runs before rembg touches the bytes.
+
+    An image Pillow cannot identify is REFUSED rather than passed through. rembg decodes through
+    Pillow too, so anything unreadable here fails there anyway -- but it would fail AFTER the
+    allocation, which is the thing being prevented. Refusing early turns a 500 into an honest 400.
+    """
+    # Pillow's OWN bomb check is suspended for the header read, and that is deliberate rather than
+    # a weakening. It raises DecompressionBombError at 2x MAX_IMAGE_PIXELS, which would pre-empt the
+    # check below and surface a large image as "could not identify image" -- refused, but with the
+    # wrong reason, which is the same two-states-as-one defect this guard exists to close. Reading a
+    # header allocates nothing, so there is no bomb to defend against at this point; the limit is
+    # restored immediately and still covers every decode that does not come through here.
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None
+    try:
+        with Image.open(BytesIO(data)) as probe:
+            width, height = probe.size
+    except Exception as e:  # noqa: BLE001 - any header failure means we cannot bound the decode
+        raise ValueError(f"could not identify image: {e}") from e
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
+    if width * height > MAX_INPUT_PIXELS:
+        raise DecodeTooLarge(width, height, MAX_INPUT_PIXELS)
+    return width, height
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("image-prep")
 
@@ -92,6 +157,21 @@ async def prep(req):
                     data += chunk
                     if len(data) > MAX_INPUT_BYTES:
                         return web.json_response({"ok": False, "error": "input too large"}, status=413)
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+    # cf#869: bound the DECODE before rembg touches the bytes. MAX_INPUT_BYTES above bounded the
+    # compressed size only, and the two are not related by any ratio an attacker cannot choose.
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _guard_decode_size, data)
+    except DecodeTooLarge as e:
+        # 413 like the byte cap, but naming the DECODED dimensions, so the two refusals are
+        # distinguishable without reading container logs.
+        return web.json_response(
+            {"ok": False, "error": str(e), "width": e.width, "height": e.height,
+             "maxPixels": e.ceiling},
+            status=413,
+        )
     except ValueError as e:
         return web.json_response({"ok": False, "error": str(e)}, status=400)
 

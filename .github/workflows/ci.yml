@@ -181,6 +181,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r containers/video-finish/requirements.txt
+          # cf#869: image-prep's decode bound is a Pillow header read, so the test that proves it
+          # needs Pillow. Pinned to the version image-prep itself ships (containers/image-prep/
+          # requirements.txt) so CI is testing against what runs, not against whatever is newest.
+          # NOT the whole image-prep requirements file: that pulls rembg + onnxruntime, hundreds of
+          # MB of ML runtime this test never touches.
+          python -m pip install "Pillow==12.3.0"
           # PINNED on purpose (cf#874). A linter whose ruleset moves under you is a gate whose
           # findings change without a commit, and this one decides by matching text in that output.
           # Bump it deliberately, like any other pin.
@@ -230,6 +236,7 @@ jobs:
           containers/audio-beat-sync/test_url_guard.py
           containers/audio-mix/test_url_guard.py
           containers/image-prep/test_url_guard.py
+          containers/image-prep/test_decode_bound.py
           containers/video-finish/test_url_guard.py
           containers/video-finish/test_inspect.py
           containers/video-finish/test_photometric_gate.py
@@ -261,8 +268,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 17 ]; then
-            echo "::error::expected exactly 17 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 18 ]; then
+            echo "::error::expected exactly 18 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
