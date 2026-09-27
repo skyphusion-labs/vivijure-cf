@@ -42,16 +42,22 @@ class H(http.server.BaseHTTPRequestHandler):
     def _path(self):
         """Resolve a request to a served file, or None.
 
-        The name is matched against a CONSTANT allowlist rather than sanitized out of the
-        request, so the joined path never derives from input at all. os.path.basename alone
-        would mostly work and is exactly the kind of "probably fine" sanitizer that makes a
-        path-injection finding arguable; a fixed set is not arguable. (CodeQL py/path-injection
-        flagged the earlier basename form on #801, correctly.)
+        The request name is compared against a CONSTANT allowlist and the matched CONSTANT is
+        what gets joined, so no value derived from the request reaches the filesystem call.
+        os.path.basename alone would mostly work, and "mostly works" is exactly what makes a
+        path-injection finding arguable rather than closed. (CodeQL py/path-injection flagged
+        the basename form on #801, correctly, and then flagged the membership-test form too --
+        also correctly, since the request value still flowed into the join.)
         """
-        name = self.path.split("?")[0].lstrip("/")
-        if name not in ALLOWED_NAMES:
-            return None
-        return os.path.join(SRV, name)
+        requested = self.path.split("?")[0].lstrip("/")
+        for allowed in ALLOWED_NAMES:
+            if allowed == requested:
+                # Join the CONSTANT from the allowlist, never the request string. A membership
+                # test still leaves the request value flowing into the path, which CodeQL
+                # tracks (and is right to); returning the matched constant means no value
+                # derived from the request reaches os.path.join at all.
+                return os.path.join(SRV, allowed)
+        return None
     def do_PUT(self):
         p = self._path()
         if p is None:
