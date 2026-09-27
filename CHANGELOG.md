@@ -355,6 +355,40 @@ servers, NOT a third-party log vendor". With the consumer unbound, the hosted ti
 live in Cloudflare Workers Logs with `persist = true`. That is a published privacy representation
 about the hosted door, not an infra comment, so it is not edited in an infra PR.
 
+### fix(panel): read the speech, master and dialogue degrade keys, so completed-with-limits can light for them
+
+The panel now projects the three per-stage degrade keys `vivijure-core` emits (`speech`, `master`,
+`dialogue`), in the same `{ degraded, reasons }` vocabulary it already parses for `output.finish`. A
+film that was never mastered, whose speech chain passed everything through, or that shipped without
+generated voices is now separable from a clean one, on the live render view and in render history.
+
+**The ladder is three states, not two**, and keeping them apart is the whole point:
+
+    key ABSENT        the stage was never reached. NOT MEASURED. Show nothing.
+    degraded: 0       it ran and ran clean. Measured, and NOT a limit.
+    degraded: n > 0   it ran and degraded; the reasons are the studio's own words, rendered verbatim.
+
+The core omits the key entirely rather than writing a zero, so a parse that read a missing key as a
+clean run would throw away the distinction the core is spending a field to preserve. Absent maps to
+`unmeasured` and never to `none-reported`.
+
+`degraded` is the COUNT and `reasons` is DEDUPED, so `degraded >= reasons.length` and the two are not
+interchangeable: two shots failing for the same reason report `{ degraded: 2, reasons: [one] }`.
+Deriving the count from `reasons.length` under-reports exactly when several shots fail the same way.
+
+The existing clip-finish parser is GENERALISED rather than copied three times, since the shape is
+identical: one parse per stage, not a parser per stage. The combining rule is deliberately **not
+worst-of** -- it returns the composition, so "every stage measured, none degraded" stays
+distinguishable from "some stage never measured", and an unreadable signal does not light the badge
+as though the studio had named a limit.
+
+No user-visible change until `vivijure-core` #317 lands and the pin bumps: with the keys absent every
+stage reads `unmeasured` and nothing renders, which is the ladder's first rung working as designed.
+
+Also corrects a stale claim in `public/finish-degrade.d.ts` that `film_finish.degraded` "does not
+exist yet". It exists, `vivijure-core` emits it on both the single-film and scatter paths; what is
+true is that nothing in `public/` reads it yet. Wiring that is tracked separately.
+
 ### fix(abuse-report): attribute reported keys by derived ownership, and record unbound reports honestly
 
 The report door now derives a reported key's owning project instead of assuming one, and says so in
@@ -399,6 +433,40 @@ of the twelve `ARTIFACT_PREFIXES` members is classified derivable or not and tha
 partition the list, so a thirteenth prefix cannot arrive without someone deciding which side it is
 on. Controls in both directions: an in-project key is accepted and removed, an out-of-project key is
 refused and its original survives, and a broken lookup still files the report.
+
+### fix(finish): a single shared CSAM needle, and a guard that keeps it single (GHSA-qgx2-5crw-9m4j)
+
+The CSAM refusal discriminator is now declared **once**, in `modules/_shared/finish-soft-degrade.ts`,
+and `modules/cloud-keyframe/src/image-gen.ts` imports it instead of declaring its own. A refusal is a
+HARD FAIL and never a polish degrade; that was always the intent, and it is now enforced by one
+predicate rather than promised by a docstring.
+
+Details of the prior behaviour are in advisory **GHSA-qgx2-5crw-9m4j**.
+
+**The drift surface is closed, not just the drift.** `tests/csam-needle-one-copy.test.ts` scans the
+shipped trees and fails if any file other than the single source applies a string test to a CSAM
+needle, so a second copy cannot be reintroduced. It carries its own controls: a positive control that
+the scanner can still see the real needle, so the count cannot pass vacuously on an empty population
+if the predicate is ever renamed out of its reach; a check that it does NOT flag the three `finish-*`
+modules that legitimately BUILD a `"csam refusal: "` message after calling the shared discriminator,
+because a guard that cries wolf on a legitimate caller is a guard someone disables; and it was
+verified by injecting a second matcher into a real file and confirming it named the exact file and
+line rather than only passing on synthetic input.
+
+**Widening is one-way, and that is documented in the code.** A false negative on this predicate is a
+missed refusal; a false positive is a film that hard-fails and gets looked at. Those costs are not
+comparable, so the needle only ever grows.
+
+**Two structural lessons kept in the code rather than here**, because they generalise past this fix:
+
+- `BACKEND_SOFT_DEGRADE` exists in that same file so "the four call sites cannot drift into four
+  spellings of it". Sharing a constant to prevent drift while duplicating the predicate beside it is
+  the shape to watch for; the comment says so at the point where someone would repeat it.
+- The existing suite was green throughout, because its positive cases were written against the same
+  single spelling as the implementation. **A test that shares its input vocabulary with the code it
+  tests cannot observe a divergence from a second implementation elsewhere.** That reasoning is now a
+  header comment in `tests/finish-soft-degrade-csam.test.ts` so the pattern is not restored. The new
+  cases were driven RED before the fix, against all three consumers rather than the predicate alone.
 
 ### fix(modules): drop provider response bodies from thrown errors and returned error strings, keeping enumerated fields
 
