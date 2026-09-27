@@ -39,7 +39,6 @@ import shlex
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.abspath(os.path.join(__file__, "..")))
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 failures = []

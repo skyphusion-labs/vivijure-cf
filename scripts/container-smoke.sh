@@ -76,7 +76,10 @@ cid="$(docker run -d --pull=never -p 127.0.0.1::"${PORT}" "${IMAGE}" 2>&1)" || {
 }
 
 mapped="$(docker port "$cid" "${PORT}"/tcp 2>/dev/null | head -1 | sed 's/.*://')"
-[ -n "${mapped:-}" ] || die 3 "the daemon published no host port for container port ${PORT} (does the image EXPOSE it?)"
+# NOT "did you EXPOSE it?": `-p` publishes regardless of EXPOSE, so an empty mapping here means the
+# daemon reported no binding for the port at all, which is a daemon or argument problem rather than a
+# Dockerfile one. Blaming EXPOSE would send the next reader to a line that is not the cause.
+[ -n "${mapped:-}" ] || die 3 "the daemon published no host port for container port ${PORT} (docker port returned nothing; this is not an EXPOSE problem, -p publishes without it)"
 url="http://127.0.0.1:${mapped}${PATH_}"
 echo "container-smoke: container ${cid} mapped ${PORT} -> 127.0.0.1:${mapped}, probing ${url}"
 
@@ -91,8 +94,14 @@ repo_digests="$(docker image inspect --format '{{if .RepoDigests}}{{join .RepoDi
 echo "container-smoke: image id ${image_id}"
 echo "container-smoke: repo digests ${repo_digests}"
 
+# ELAPSED WALL TIME, not an attempt count. The first version counted iterations and reported "within
+# ${TIMEOUT}s", but each iteration can burn the curl -m 5 budget plus a sleep, so the message was
+# claiming a bound the loop did not enforce. Same family as every comment this sprint that asserted a
+# property its code did not hold; it is not more forgivable in my own file.
+started="$(date +%s)"
 i=0
-while [ "$i" -lt "$TIMEOUT" ]; do
+while [ "$(( $(date +%s) - started ))" -lt "$TIMEOUT" ]; do
+  i=$(( $(date +%s) - started ))
   # AN EXITED CONTAINER IS ANSWERED IMMEDIATELY, not after the full timeout. The cf#851 failure is
   # detectable in milliseconds (the process dies at import), and burning 90 seconds to report it
   # would train the next reader to assume a red here means "slow", which is the wrong lesson.
@@ -108,7 +117,7 @@ while [ "$i" -lt "$TIMEOUT" ]; do
   # fixture control in tests/container-smoke.test.sh caught it on the first CI run, before this
   # script had ever judged a real image. The fallback belongs OUTSIDE the substitution, and anything
   # that is not exactly three digits is normalised rather than trusted.
-  code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$url" 2>/dev/null)" || code=""
+  code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$url" 2>/dev/null)" || code=""
   case "$code" in
     [0-9][0-9][0-9]) : ;;
     *) code="000" ;;
@@ -127,8 +136,7 @@ while [ "$i" -lt "$TIMEOUT" ]; do
       die 6 "${PATH_} answered HTTP ${code}, not 2xx. Something is bound and refusing, which is not the same failure as a crash."
       ;;
   esac
-  i=$((i + 1))
   sleep 1
 done
 
-die 5 "${PATH_} never answered within ${TIMEOUT}s while the container stayed up: it is running but nothing is bound on ${PORT}."
+die 5 "${PATH_} never answered within ${TIMEOUT}s (measured on the clock, $(( $(date +%s) - started ))s elapsed) while the container stayed up: it is running but nothing is bound on ${PORT}."
