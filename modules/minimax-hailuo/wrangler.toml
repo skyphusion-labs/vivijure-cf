@@ -35,19 +35,26 @@ secret_name = "RUNPOD_API_KEY"
 # from the D1_DATABASE_ID secret (generic across modules/*/wrangler.toml, no script change), and
 # that script refuses to deploy if the placeholder survives.
 #
-# REVISIT THIS BINDING IF cp#284 IS ANSWERED "TENANTS GET THE COST DOOR". `vivijure-studio` is the
-# FIRST-PARTY studio D1. Binding it here is correct TODAY only because these eight scripts live in
-# our own namespace and a hosted tenant cannot reach them at all: cp#284 measured zero occurrences
-# of all eight cost-door module names in the control plane (with `keyframe` at 28 through the same
-# matcher as the positive control), and TENANT_MODULE_CATALOG is six entries, none of them these.
-# So every row this binding writes is our own traffic.
+# cp#284 IS ANSWERED AND THE ANSWER WAS "TENANTS GET THE COST DOOR" (cp#317). This block used to
+# say TENANT_MODULE_CATALOG was six entries with none of these eight in it, and that a hosted tenant
+# therefore could not reach this worker at all. Both halves are false now. Measured 2026-09-27
+# against vivijure-control-plane@main src/tenant-modules.ts, read by the array BOUNDS rather than by
+# grepping `module:`: the catalog is 17 entries and eight of them are the cost door.
 #
-# If that decision goes the other way and these modules are installed into the tenant dispatch
-# namespace, this same binding becomes a CROSS-TENANT WRITE into the first-party telemetry table,
-# not a missing row. That failure is silent and it fails in the worse direction: the table keeps
-# filling, the counts keep looking healthy, and tenant job ids sit in an operator-facing table they
-# do not belong in. The tenant modules would need their own telemetry destination decided WITH that
-# ruling, not after it.
+# THE CROSS-TENANT WRITE THE OLD BLOCK PREDICTED DOES NOT HAPPEN, and that is worth stating here
+# because the binding below still names the FIRST-PARTY D1. A tenant never runs these bytes with
+# these bindings. scripts/build-module-release.ts publishes a module bundle whose manifest carries
+# {module, worker.sha256, compatibility_date, compatibility_flags} and no bindings at all, and the
+# plane supplies the entire binding set itself at upload: R2_RENDERS to the TENANT bucket
+# (`type: "r2_bucket" ... bucket_name: tenantBucketName`, which THROWS rather than falling back to
+# the operator bucket) and TELEMETRY_DB to the TENANT D1 (`type: "d1" ... id: telemetryD1Id`, which
+# THROWS on a null). So database_name below governs OUR OWN deploy only, through
+# scripts/deploy-module-workers.sh.
+#
+# WHAT WOULD STILL BREAK IT, stated so it is not re-derived from scratch: a change that lets a
+# module own wrangler.toml bindings reach a tenant namespace, or a plane change that binds
+# TELEMETRY_DB to anything other than tenants.d1_database_id. Either one turns this line into the
+# cross-tenant write silently, with every count still looking healthy.
 [[d1_databases]]
 binding = "TELEMETRY_DB"
 database_name = "vivijure-studio"
