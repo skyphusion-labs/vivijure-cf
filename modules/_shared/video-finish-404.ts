@@ -56,9 +56,13 @@ export const CONTAINER_NOTFOUND_STREAK = 12;
  * It is NOT vivijure-core's PHASE_HARD_DEADLINE. Core's value is a floor:
  *   required  = FINISH_STEP_MAX_ATTEMPTS(3) * max(declared ceiling of next steps)
  *   effective = max(PHASE_HARD_DEADLINE_SECONDS, required)
- * They agree today only because no finish-chain module declares
- * max_invocation_seconds (required = 0, basis = floor). The first module that
- * declares a ceiling moves core to 3 * declared and leaves this at 90 min.
+ * They agree today because all three finish-chain modules that declare a ceiling
+ * (finish-blender, finish-rife, finish-upscale) declare 900: required = 2700,
+ * under the floor, so basis stays "floor". (This read "no finish-chain module
+ * declares max_invocation_seconds" until cf#762; it went stale when they did.)
+ * They stop agreeing the moment any finish module declares MORE THAN 1800:
+ * required overtakes the 5400 floor, basis flips to "derived", core's deadline
+ * moves and this one stays at 90 min. See modules/_shared/finish-ceiling.ts.
  * Do not delete this thinking it "is" core's deadline; it pins invocation age
  * on this door. submittedAt is stamped per invoke, so it is not core's
  * phase-start / retry-inclusive clock (Mackaye F2 / F3).
