@@ -355,6 +355,55 @@ servers, NOT a third-party log vendor". With the consumer unbound, the hosted ti
 live in Cloudflare Workers Logs with `persist = true`. That is a published privacy representation
 about the hosted door, not an infra comment, so it is not edited in an infra PR.
 
+### fix(video-finish): COPY `concat_guard.py` into the image, without which the container cannot start (cf#851)
+
+The video-finish container **could not start at all**, on every invocation, and had not been able
+to since 2026-09-27T01:18:31Z. Every film that reached `assemble` failed with
+`video-finish async submit failed (no jobId)`.
+
+`app.py` imports `concat_guard` at column 0:
+
+```
+app.py:32   from concat_guard import assert_no_dropped_parts
+app.py:1665 app.router.add_get("/health", health)
+app.py:1678 web.run_app(app, host="0.0.0.0", port=PORT, ...)
+```
+
+The module is in the repo. It was missing from the image, because the Dockerfile's only source
+COPY line never listed it. The interpreter therefore died at an import roughly 1,600 lines before
+anything bound port 8000, and the platform reported what it saw:
+
+```
+Container error: Error: Container crashed while checking for ports,
+did you start the container and setup the entrypoint correctly?
+```
+
+`cfa321f2d` (#792) ADDED `concat_guard.py` and never touched the Dockerfile, so **every image built
+after that commit was unstartable.** Both v1.34.0's image (`sha256:5ad58793...`) and v1.34.1's
+(`sha256:324167ae...`) were built from trees containing the module and a COPY line without it; the
+defect is one release older than the image roll that made it visible.
+
+The fix is the filename. What earns a changelog entry is the rest:
+
+**The test that covers this module made the suite greener while the image got worse.** #792 added
+`containers/video-finish/test_concat_guard.py` to `ci.yml` **in the same commit that broke the
+image**. That test runs against the repo checkout, where `concat_guard.py` is present, so it passed
+then and passes now. The image is never involved. A container whose every startup crashes shipped
+through a fully green tag run, and the commit that introduced the crash is the one that added a
+passing test for the module at the centre of it.
+
+**The gap is structural, not clerical:** nothing compares the set of local modules `app.py` imports
+against the set the Dockerfile copies. That comparison is a static check anybody can run, and today
+it reports 6 imported, 5 copied, 1 missing. cf#857 tracks the acceptance gate, which now has a real
+two-directional proof available for free: red against the broken image, green against this one.
+
+**A comment beside the sanity-encode block is corrected in the same change.** It asserted "Bind is
+immediate at runtime: app.py registers /health and binds :8000 before any ffmpeg subprocess (no
+startup warm thread to starve the port-ready check)." True about the ordering it names, no
+guarantee that the port ever comes up, and it steers a reader of a port-ready failure toward ffmpeg
+startup and away from the imports, which is precisely the wrong direction here. The replacement
+says to check the COPY line first.
+
 ### fix(panel): read the speech, master and dialogue degrade keys, so completed-with-limits can light for them
 
 The panel now projects the three per-stage degrade keys `vivijure-core` emits (`speech`, `master`,
