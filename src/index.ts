@@ -78,12 +78,12 @@ import { applyResponseSecurity } from "./asset-response";
 import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
-import { handleAbuseReport, isQuarantineKey } from "./abuse-report";
+import { handleAbuseReport } from "./abuse-report";
 // ARTIFACT_PREFIXES lives in shared.ts so the abuse-report door can enforce the SAME allowlist
 // as the serve guard without importing this module (that would be an import cycle). Re-exported
 // here because it has always been part of this module's public surface.
 export { ARTIFACT_PREFIXES } from "./shared";
-import { ARTIFACT_PREFIXES } from "./shared";
+import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
   resolveAgentFinishSelect,
@@ -537,7 +537,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // F4: the key is the untrusted URL tail. Reject an unsafe shape (traversal/absolute/scheme/control
   // bytes) and anything outside the known artifact namespaces -> 404 (not 400) so a probe learns
   // nothing. This bounds the serve to actual artifacts even if the edge Access gate ever fails.
-  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!isServedArtifactKey(key)) {
     throw notFound("artifact");
   }
   const isHead = req.method === "HEAD";
@@ -615,7 +615,7 @@ export function clampArtifactUrlTtl(raw: string | null): number {
 const hArtifactUrl: Handler = async (req, env, _c, p) => {
   if (!env.R2_RENDERS) throw notFound("the artifact store is not available on this deployment");
   const key = p.key;
-  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!isServedArtifactKey(key)) {
     throw notFound("artifact");
   }
   // Existence + real metadata from the bucket. Reported content_type is the STORED type, deliberately
@@ -655,7 +655,7 @@ const hRenderFrames: Handler = async (req, env) => {
   const asParam = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
   const key = String(body.key ?? "").trim();
   // Same guard as the serve route, so this can never read an object /api/artifact would refuse.
-  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!isServedArtifactKey(key)) {
     throw notFound("artifact");
   }
   // head() first so a miss is an honest 404 here, rather than the container failing to download later.

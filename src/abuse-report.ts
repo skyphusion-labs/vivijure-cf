@@ -22,7 +22,7 @@
 // skipped, and its original stays exactly where it was.
 
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
-import { json, ARTIFACT_PREFIXES } from "./shared";
+import { json, isServedArtifactKey } from "./shared";
 import { renderSlug } from "./render-progress";
 import type { StudioEnv } from "./orchestrator-env";
 
@@ -31,13 +31,12 @@ function fail(msg: string, status = 400): Response {
 }
 
 const QUARANTINE = "quarantine/";
+// Re-exported: the definition moved to shared.ts so the serve route, this door and the copy paths
+// share ONE rule. Kept exported from here because existing importers reach it at this path.
+export { isQuarantineKey } from "./shared";
 const RENDERS = "renders/";
 const MAX_KEYS = 32;
 const MAX_NOTE = 2000;
-
-export function isQuarantineKey(key: string): boolean {
-  return key.startsWith(QUARANTINE);
-}
 
 /** The reported project's own render namespace, using the SAME slug the render tree is written
  *  under (src/render-progress.ts). renderSlug is idempotent on an already-slugged name, so a
@@ -49,8 +48,8 @@ export function projectRenderPrefix(project: string): string {
 /** Why this key may not be reported under this project, or null when it may.
  *  Exported so the refusal rules are testable without driving a request. */
 export function keyRefusal(project: string, key: unknown): string | null {
-  if (typeof key !== "string" || !isSafeRelKey(key) || isQuarantineKey(key)) return "unsafe key";
-  if (!ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) return "unsafe key";
+  // The one served-space rule, not a local restatement of it (GHSA-5fj8-6pc2-x9p5).
+  if (!isServedArtifactKey(key)) return "unsafe key";
   // Only renders/ carries a project segment. The other artifact namespaces (cast/, loras/,
   // uploads/, ...) are deploy-wide by construction, so there is no project to bind them to and
   // refusing them would make genuinely offending content unreportable.
