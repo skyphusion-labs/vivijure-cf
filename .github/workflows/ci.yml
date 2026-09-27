@@ -152,6 +152,15 @@ jobs:
   # runs), and `test_ffmpeg_timeout.py` in video-finish / audio-mix / audio-master (cf#571:
   # a real sleep child, named FfmpegTimeout, no ffmpeg binary required).
   #
+  # `test_upload_streams.py` in video-finish (#808) and in audio-master / audio-mix (cf#814) is
+  # the streaming-upload control: a behavioural half that drives the real `_put_file` against a
+  # fake session, plus an `ast` structural scan that refuses the read-then-upload shape so it
+  # cannot be reintroduced by copying a neighbouring route, which is how it reached four sites in
+  # video-finish and both audio containers. It needs aiohttp (app.py imports it) and nothing else
+  # -- no ffmpeg, no network, no large files -- and the pin installed above from video-finish's
+  # requirements.txt is the same `aiohttp==3.14.3` both audio containers pin, so one install
+  # covers all three.
+  #
   # NOT run here, deliberately, and left open on cf#325 rather than silently skipped:
   # `containers/audio-master/test_local.py` and `containers/audio-mix/test_local.py`. Both drive
   # real ffmpeg/ffprobe DSP validation (loudness, ducking) against synthesized audio, and this
@@ -188,6 +197,8 @@ jobs:
           containers/video-finish/test_concat_guard.py
           containers/video-finish/test_chunked_contract.py
           containers/video-finish/test_upload_streams.py
+          containers/audio-master/test_upload_streams.py
+          containers/audio-mix/test_upload_streams.py
           containers/video-finish/test_ffmpeg_timeout.py
           containers/audio-mix/test_ffmpeg_timeout.py
           containers/audio-master/test_ffmpeg_timeout.py
@@ -208,8 +219,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 14 ]; then
-            echo "::error::expected exactly 14 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 16 ]; then
+            echo "::error::expected exactly 16 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
