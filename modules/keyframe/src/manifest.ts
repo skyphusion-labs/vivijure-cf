@@ -19,11 +19,15 @@ export const MANIFEST: ModuleManifest = {
       default: "final",
       label: "quality tier",
     },
-    // Default to a 16:9 landscape keyframe (SDXL-friendly 1344x768). Image-to-video backends conform
-    // the clip to the KEYFRAME's aspect ratio (they ignore an aspect_ratio param once given an input
-    // image), so a square keyframe forced square clips that the assembler then pillarboxed into 16:9
-    // with black bars. A 16:9 keyframe makes the whole chain 16:9. Override via keyframe_config for
-    // portrait/square. (fixes the square showcase clips)
+    // Default to a LANDSCAPE keyframe, the SDXL-friendly 1344x768 bucket. MIND THE RATIO: 1344/768
+    // is 1.75 (7:4), NOT 16:9 (1.7778) -- 16:9 at width 1344 would be height 756. Image-to-video
+    // backends conform the clip to the KEYFRAME's aspect ratio (they ignore an aspect_ratio param
+    // once given an input image), so a square keyframe forced square clips that the assembler then
+    // pillarboxed with black bars. A landscape keyframe removes most of that, but 1.75 still does
+    // not match the 1920x1080 (1.7778) delivery target, so a thin pillarbox remains: measured at
+    // 14px left / 16px right on a 1080p clip. Tracked in cf#945, which is gated on whether SDXL
+    // quality holds at 1280x720 or 1920x1080. Override via keyframe_config for portrait/square.
+    // (fixes the square showcase clips)
     width: { type: "int", default: 1344, min: 512, max: 1536, label: "width" },
     height: { type: "int", default: 768, min: 512, max: 1536, label: "height" },
     steps: { type: "int", default: 30, min: 1, max: 60, label: "diffusion steps" },

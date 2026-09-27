@@ -111,9 +111,11 @@ export const MANIFEST: ModuleManifest = {
       default: MODELS[0],
       label: "image model (Cloudflare Nano Banana 2)",
     },
-    // Default to a 16:9 landscape keyframe (1344x768), matching the GPU keyframe module: image-to-video
-    // backends conform the clip to the KEYFRAME's aspect ratio, so a square keyframe forces square
-    // clips that the assembler then pillarboxes. A 16:9 keyframe keeps the whole chain 16:9.
+    // Default to a LANDSCAPE keyframe (1344x768), matching the GPU keyframe module. MIND THE RATIO:
+    // 1344/768 is 1.75 (7:4), NOT 16:9 (1.7778). Image-to-video backends conform the clip to the
+    // KEYFRAME's aspect ratio, so a square keyframe forces square clips that the assembler then
+    // pillarboxes. A landscape keyframe removes most of that; the residual 1.75 vs 1.7778 mismatch
+    // against the 1920x1080 delivery target is cf#945.
     width: { type: "int", default: 1344, min: 512, max: 1536, label: "width" },
     height: { type: "int", default: 768, min: 512, max: 1536, label: "height" },
     refs_per_slot: { type: "int", default: 1, min: 1, max: 4, label: "reference images per character" },
