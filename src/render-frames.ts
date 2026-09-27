@@ -20,7 +20,7 @@
 // per-frame flicker or motion judder between the samples. Nothing built on this may describe a clip
 // as "checked"; the honest claim is "N frames sampled at these timestamps looked like this".
 import { presignR2Get, presignR2Put } from "./r2-presign";
-import type { VideoFinishDoorHost } from "./video-finish-binding";
+import { videoFinishDoorOf, type VideoFinishDoorHost } from "./video-finish-binding";
 import type { Env } from "./env";
 import { mediaFinishToken } from "../modules/_shared/media-finish-auth";
 
@@ -237,12 +237,12 @@ export async function buildFramesSheet(
   // precedence rule video-finish-availability.ts already states for the tier as a whole -- an
   // observation beats a label -- and the same FetcherLike shape this function was already written
   // against, which is why this is a wiring change and not a rewrite.
-  const door = (env as Partial<VideoFinishDoorHost>).VIDEO_FINISH_DOOR;
+  const door = videoFinishDoorOf(env as Partial<VideoFinishDoorHost>);
   let container: FetcherLike;
   if (door) {
-    container = {
-      fetch: (url, init) => door.fetch(new URL(String(url), "http://video-finish").pathname, init),
-    };
+    // requestFramesFromContainer already calls with the absolute `http://video-finish/frames`, which
+    // is exactly the shape the door takes, so it passes straight through with no adapter.
+    container = door;
   } else {
     const base = typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.replace(/\/$/, "") : "";
     if (!base) return framesFailure("tier-unavailable");

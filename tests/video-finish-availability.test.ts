@@ -235,7 +235,7 @@ describe("cf#810 the bound tier reports AVAILABLE with no URL", () => {
   const door = { fetch: async () => new Response("{}") };
 
   it("a door with NO url is available, and reports no unavailability reason", () => {
-    const env = { VIDEO_FINISH_DOOR: door } as never;
+    const env = { MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door } } as never;
     expect(videoFinishState(env)).toBe("available");
     expect(videoFinishReason(videoFinishState(env))).toBeNull();
     // ABSENT KEY MEANS AVAILABLE. A bound tier must say nothing at all.
@@ -253,7 +253,10 @@ describe("cf#810 the bound tier reports AVAILABLE with no URL", () => {
     const labelled = { VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never;
     expect(videoFinishState(labelled)).toBe("unprovisionable");
 
-    const bound = { VIDEO_FINISH_TIER_STATE: "unprovisionable", VIDEO_FINISH_DOOR: door } as never;
+    const bound = {
+      VIDEO_FINISH_TIER_STATE: "unprovisionable",
+      MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door },
+    } as never;
     expect(videoFinishState(bound)).toBe("available");
   });
 });

@@ -5,35 +5,42 @@
 // it was measured, not argued:
 //
 //   1. @skyphusion-labs/vivijure-core is a LIBRARY that runs INSIDE vivijure-studio, and its
-//      mediaDoorFetch is a plain global fetch(url + path). There is no fetcher seam. So pointing
-//      VIDEO_FINISH_URL at a route on this Worker makes the Worker fetch its own route.
+//      mediaDoorFetch was a plain global fetch(url + path). So pointing VIDEO_FINISH_URL at a route
+//      on this Worker makes the Worker fetch its own route.
 //   2. Cloudflare documents that this FAILS. "Using global fetch() to call another Worker on the
 //      same zone without service bindings fails"; "On the same zone, the only way for a Worker to
 //      communicate with another Worker running on a route, or on a workers.dev subdomain, is via
 //      service bindings." A Custom Domain lifts it -- for ANOTHER Worker. Ours is the same one.
 //
-// So the door is the BINDING. No hostname, no DNS, no edge hop, no bearer, and the container stays
-// unreachable from the internet -- the property cf#797 itself called not tradeable. This is the
-// shape src/render-frames.ts already uses (a FetcherLike over `http://video-finish/...`); we are
-// adopting the pattern this repo already chose, not inventing one.
+// So the door is the BINDING. No hostname, no DNS, no edge hop, no bearer required, and the
+// container stays unreachable from the internet -- the property cf#797 itself called not tradeable.
+//
+// REQUIRES core >= 1.23.0. The seam is `MEDIA_DOOR_FETCHERS` on the env core receives, keyed by the
+// door's URL var so there is one door vocabulary rather than two, and duck-typed on `fetch` so a DO
+// stub needs no Cloudflare type inside core. Below 1.23.0 core does not read the field and this file
+// is INERT: the door is constructed, ignored, and the public-origin path runs unchanged.
 //
 // NAMING: "finish door" in this repo already means the always-on GPU upscale/blender doors
 // (FINISH_UPSCALE_DOORS, tests/finish-door-pool-cf507.test.ts). This is a different thing and is
 // deliberately NOT called that. It sits next to video-finish-availability.ts and shares its prefix.
 
+import type { MediaDoorFetcher, MediaDoorFetchers } from "@skyphusion-labs/vivijure-core/media-finish-auth";
 import type { Env } from "./env";
 
-/** A door reached through a BINDING rather than a public origin. The caller passes a PATH, never a
- *  URL; the implementor owns routing. Mirrors the seam vivijure-core takes on env (cf#810). */
-export interface MediaDoorFetcher {
-  fetch(path: string, init?: RequestInit): Promise<Response>;
-}
+export type { MediaDoorFetcher, MediaDoorFetchers };
 
 /** Structural type for reading the door off an env without declaring it in the wrangler binding
- *  mirror in env.ts. It is NOT a binding -- studioEnv() attaches it -- and env.ts mirrors wrangler
- *  and nothing else. */
+ *  mirror in env.ts. It is NOT a binding -- studioEnv() synthesises it -- and env.ts mirrors
+ *  wrangler and nothing else. Core declares the same field on its own env type. */
 export interface VideoFinishDoorHost {
-  VIDEO_FINISH_DOOR?: MediaDoorFetcher;
+  MEDIA_DOOR_FETCHERS?: MediaDoorFetchers;
+}
+
+/** Read the bound video-finish door off any env, or null. Mirrors core's `mediaDoorFetcher`,
+ *  including its duck-type check, so cf and core agree on what counts as bound. */
+export function videoFinishDoorOf(env: Partial<VideoFinishDoorHost>): MediaDoorFetcher | null {
+  const bound = env.MEDIA_DOOR_FETCHERS?.VIDEO_FINISH_URL;
+  return bound && typeof bound.fetch === "function" ? bound : null;
 }
 
 /** Instances serving routes that carry NO cross-call state. Bounded on purpose, and neither of the
@@ -47,6 +54,9 @@ export const SYNC_POOL_SIZE = 4;
  *  unambiguous and we split on the FIRST one. */
 export const COMPOUND_SEPARATOR = ".";
 
+/** The origin core prefixes onto every bound-path request (MEDIA_DOOR_INTERNAL_ORIGIN in core). The
+ *  hostname is a LABEL: nothing resolves it, and it exists only because `fetch` demands an absolute
+ *  URL. We parse it off again immediately. */
 const CONTAINER_ORIGIN = "http://video-finish";
 
 /** The 202 body app.py returns from POST /async/<route>. */
@@ -71,10 +81,26 @@ export const productionDoorDeps: VideoFinishDoorDeps = {
   poolIndex: () => Math.floor(Math.random() * SYNC_POOL_SIZE),
 };
 
-/** Exported for the test that pins the routing table. Returns the DO instance NAME a path maps to,
- *  or null when the path is a submit (whose name is minted fresh) or an unroutable status. */
-export function statusInstanceName(path: string): string | null {
-  const m = /^\/async\/status\/(.+)$/.exec(path);
+/** Core hands us an ABSOLUTE url (`http://video-finish/async/status/x`). Everything downstream
+ *  reasons about the path, so normalise once, here, and keep the query string: dropping it would
+ *  silently discard parameters on any route that grows one. */
+export function pathOf(input: string): string {
+  try {
+    const u = new URL(input, CONTAINER_ORIGIN);
+    return u.pathname + u.search;
+  } catch {
+    return input.startsWith("/") ? input : "/" + input;
+  }
+}
+
+/** Exported for the test that pins the routing table. Returns the DO instance NAME a status path
+ *  maps to, or null when the id carries no routing key. */
+export function statusInstanceName(input: string): string | null {
+  return splitCompound(input)?.routingKey ?? null;
+}
+
+function splitCompound(input: string): { routingKey: string; containerJobId: string } | null {
+  const m = /^\/async\/status\/([^?]+)/.exec(pathOf(input));
   if (!m) return null;
   let compound: string;
   try {
@@ -85,27 +111,13 @@ export function statusInstanceName(path: string): string | null {
   const i = compound.indexOf(COMPOUND_SEPARATOR);
   // i === 0 means an empty routing key, which cannot address anything.
   if (i <= 0) return null;
-  return compound.slice(0, i);
-}
-
-function containerJobId(path: string): string | null {
-  const m = /^\/async\/status\/(.+)$/.exec(path);
-  if (!m) return null;
-  let compound: string;
-  try {
-    compound = decodeURIComponent(m[1]);
-  } catch {
-    compound = m[1];
-  }
-  const i = compound.indexOf(COMPOUND_SEPARATOR);
-  if (i <= 0) return null;
-  return compound.slice(i + 1);
+  return { routingKey: compound.slice(0, i), containerJobId: compound.slice(i + 1) };
 }
 
 /** POST /async/<route>, excluding the status read. This is the call that MINTS a job. */
 function isAsyncSubmit(path: string, method: string): boolean {
   if (method.toUpperCase() !== "POST") return false;
-  return /^\/async\/(?!status\/)[^/]+$/.test(path);
+  return /^\/async\/(?!status\/)[^/?]+(\?.*)?$/.test(path);
 }
 
 /**
@@ -117,11 +129,16 @@ function isAsyncSubmit(path: string, method: string): boolean {
  * 404 as "job gone" rather than "wrong box" -- it reports a running job as vanished. That is the
  * same defect class the GPU door pool hit in cf#507, and it is why `getRandom()` is banned here.
  *
- * The container mints its own `uuid4().hex` job id and we do NOT change that (cf#810 point 5).
- * Instead the submit response is rewritten to a COMPOUND id, `<routingKey>.<containerJobId>`, and
- * the poll splits it back apart. This works only because core treats the job id as fully opaque,
- * which was checked rather than assumed: `submitAsync` accepts any non-empty string and `pollOne`
- * only `encodeURIComponent`s it.
+ * NOTE ON WHAT THIS DOES NOT SOLVE: container job state is still process memory (vivijure-cf#784
+ * item 2 is open), so a restart or eviction loses a running job even with the poll correctly
+ * addressed. Reaching the right box and the job surviving are different problems. Core keeps its
+ * not-found streak on the bound path precisely because a 404 can still be transient.
+ *
+ * The container mints its own `uuid4().hex` job id and we do NOT change that. Instead the submit
+ * response is rewritten to a COMPOUND id, `<routingKey>.<containerJobId>`, and the poll splits it
+ * back apart. This works only because core treats the job id as fully opaque, which was checked
+ * rather than assumed: `submitAsync` accepts any non-empty string and `pollOne` only
+ * `encodeURIComponent`s it.
  */
 export function videoFinishDoor(
   ns: FinishNamespace,
@@ -130,8 +147,8 @@ export function videoFinishDoor(
   const stub = (name: string) => ns.get(ns.idFromName(name));
 
   return {
-    async fetch(path: string, init: RequestInit = {}): Promise<Response> {
-      const p = path.startsWith("/") ? path : "/" + path;
+    async fetch(input: string, init: RequestInit = {}): Promise<Response> {
+      const p = pathOf(input);
       const method = (init.method as string | undefined) ?? "GET";
 
       if (isAsyncSubmit(p, method)) {
@@ -158,12 +175,12 @@ export function videoFinishDoor(
         });
       }
 
-      const name = statusInstanceName(p);
-      if (name) {
-        const cjid = containerJobId(p);
-        // cjid is non-null whenever name is, but narrow rather than assert.
-        const tail = cjid ? "/async/status/" + encodeURIComponent(cjid) : p;
-        return stub(name).fetch(CONTAINER_ORIGIN + tail, init);
+      const split = splitCompound(p);
+      if (split) {
+        return stub(split.routingKey).fetch(
+          CONTAINER_ORIGIN + "/async/status/" + encodeURIComponent(split.containerJobId),
+          init,
+        );
       }
 
       // A status read whose id carries no routing key cannot be addressed to the instance holding
@@ -180,8 +197,7 @@ export function videoFinishDoor(
 
       // Stateless routes: /finish, /inspect, /frames, /film-titles, /subtitle, /health. No affinity
       // is required because nothing is carried between calls.
-      const idx = deps.poolIndex();
-      return stub("sync-" + idx).fetch(CONTAINER_ORIGIN + p, init);
+      return stub("sync-" + deps.poolIndex()).fetch(CONTAINER_ORIGIN + p, init);
     },
   };
 }

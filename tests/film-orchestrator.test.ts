@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, finishShotRecoverable, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { ConfigSchema } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
@@ -154,6 +154,11 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
       configs: [{ interpolation_factor: 2 }, {}, { scale: 2 }, {}],
     });
     // idx0 RIFE: its RunPod job GC'd after writing _finished.mp4 -> adopted from R2 (tag reconstructed).
+    // core 1.23.0 BRANDS the recoverable states (GHSA-hcr9-8jc2-9q4c): adoptFinishStepOutput takes
+    // RecoverableFinishShot, and the only way to obtain one is this guard. The fixture narrows
+    // through it rather than casting past it -- a cast here would be the test quietly opting out of
+    // the very guarantee the brand exists to give, and would keep passing if the guard broke.
+    if (!finishShotRecoverable(fs)) throw new Error("fixture must be recoverable before adoption");
     adoptFinishStepOutput(fs, "clips/shot_03_finished.mp4", finishStepAppliedTag(fs));
     // idx1..3 run: no-dialogue lip-sync no-ops, upscale, no-overlays text.
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished.mp4", ["noop:no-dialogue"]), "p");
@@ -176,6 +181,8 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
       configs: [{ version: "v15" }, { interpolation_factor: 2 }, { scale: 2 }, {}],
     });
     // idx0 LIPSYNC: reused from R2 (its _ls artifact + matching #583 provenance sidecar) -> mouth IS synced.
+    // Narrowed through the core 1.23.0 brand guard, same reason as the RIFE case above.
+    if (!finishShotRecoverable(fs)) throw new Error("fixture must be recoverable before adoption");
     adoptFinishStepOutput(fs, "clips/shot_02_ls.mp4", finishStepAppliedTag(fs));
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife.mp4", ["interpolate:2x"]), "p");
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife_up.mp4", ["upscale:2x"]), "p");
@@ -2893,10 +2900,18 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
   it("mux + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
     const { env } = degradeEnv(muxJob(), { door: { status: 500, body: { ok: false, error: "remux boom" } } });
     const r = await advanceFilmJob(orch(env), "film-519-mux");
-    // core 1.21.2: mux failure degrades to the silent film rather than failing the render.
-    expect(r?.job.phase).toBe("done");
-    expect(r?.job.finish_unavailable?.at).toBe("mux");
-    expect(r?.job.film_key).toBe("renders/film-519-mux/film-silent.mp4");
+    // core 1.23.0 "fix(mux): a transport failure is a failure, not a silent film shipped as
+    // COMPLETED" (refs cf#746). enterMuxPhase used to degrade to `done` on tick.kind === "failed"
+    // while enterAssemblePhase failed on the identical condition -- ten lines apart, opposite
+    // outcomes, and the mux one was TERMINAL: the job read COMPLETED and the audio was never
+    // coming. submitAsync gives up on the first attempt with no retry, so one transient blip
+    // permanently turned a film-with-audio into a silent film reported as complete.
+    //
+    // This assertion now MATCHES THIS TEST'S OWN TITLE and its assemble sibling twenty lines up.
+    // The rule the two legs share: degrade when a retry cannot help, fail when it can.
+    expect(r?.job.phase).toBe("failed");
+    expect(r?.job.error).toContain("500");
+    expect(r?.job.finish_unavailable).toBeUndefined();
   });
 
   it("summarizeFilm + filmJobToPollView surface the degrade + clip keys for the UI", () => {

@@ -58,7 +58,7 @@
 // Scope note: this describes the FILM path. A clips-only render is unaffected by construction, and
 // the scatter path degrades through its own gates in the same family.
 
-import type { VideoFinishDoorHost } from "./video-finish-binding";
+import { videoFinishDoorOf, type VideoFinishDoorHost } from "./video-finish-binding";
 import type { Env } from "./env";
 
 /**
@@ -193,7 +193,7 @@ type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> 
  *  film tier to "unavailable" and the panel would grey out capability that works -- the exact
  *  failure this file exists to prevent, arriving through the change meant to fix the tier. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
-  if (env.VIDEO_FINISH_DOOR) return "available";
+  if (videoFinishDoorOf(env)) return "available";
   if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
   return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
 }

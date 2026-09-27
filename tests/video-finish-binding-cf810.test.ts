@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   videoFinishDoor,
+  videoFinishDoorOf,
+  pathOf,
   statusInstanceName,
   productionDoorDeps,
   SYNC_POOL_SIZE,
@@ -53,13 +55,16 @@ const fixedDeps = (rk: string, idx = 0): VideoFinishDoorDeps => ({
 // this shape, so the fixture uses the real one rather than a convenient short string.
 const CJID = "9f2c1ab4d3e5470891bc6d2f7a8e0341";
 const RK = "0123456789abcdef0123456789abcdef";
+// The origin core prefixes onto every bound-path call. The hostname is a LABEL; nothing
+// resolves it. Tests use it because it is the real input shape, not a convenience.
+const ORIGIN = "http://video-finish";
 
 describe("cf#810 video-finish door: submit", () => {
   it("routes a submit to a fresh instance and rewrites the job id to a routable compound", async () => {
     const { ns, calls } = fakeNamespace(accepts(CJID));
     const door = videoFinishDoor(ns, fixedDeps(RK));
 
-    const resp = await door.fetch("/async/finish", { method: "POST", body: "{}" });
+    const resp = await door.fetch(ORIGIN + "/async/finish", { method: "POST", body: "{}" });
     const body = (await resp.json()) as { ok: boolean; jobId: string; status: string };
 
     expect(resp.status).toBe(202);
@@ -78,7 +83,7 @@ describe("cf#810 video-finish door: submit", () => {
     const { ns } = fakeNamespace(() => new Response(JSON.stringify({ ok: false, error: "boom" }), { status: 500 }));
     const door = videoFinishDoor(ns, fixedDeps(RK));
 
-    const resp = await door.fetch("/async/finish", { method: "POST", body: "{}" });
+    const resp = await door.fetch(ORIGIN + "/async/finish", { method: "POST", body: "{}" });
     const body = (await resp.json()) as { ok: boolean; error: string };
 
     expect(resp.status).toBe(500);
@@ -92,7 +97,7 @@ describe("cf#810 video-finish door: submit", () => {
     );
     const door = videoFinishDoor(ns, fixedDeps(RK));
 
-    const resp = await door.fetch("/async/finish", { method: "POST", body: "{}" });
+    const resp = await door.fetch(ORIGIN + "/async/finish", { method: "POST", body: "{}" });
     const body = (await resp.json()) as { jobId?: string };
 
     // No id to make routable. Manufacturing one would produce a compound that addresses an instance
@@ -111,7 +116,7 @@ describe("cf#810 video-finish door: poll affinity", () => {
     });
     const door = videoFinishDoor(ns, fixedDeps(RK));
 
-    const resp = await door.fetch("/async/status/" + RK + COMPOUND_SEPARATOR + CJID);
+    const resp = await door.fetch(ORIGIN + "/async/status/" + RK + COMPOUND_SEPARATOR + CJID);
     const body = (await resp.json()) as { status: string };
 
     expect(resp.status).toBe(200);
@@ -131,7 +136,7 @@ describe("cf#810 video-finish door: poll affinity", () => {
     // The routing key in the id, NOT the door's current minting key, decides the instance. If the
     // door ever addressed by anything else -- a fresh key, getRandom, a pool slot -- this is the
     // assertion that goes red.
-    await door.fetch("/async/status/" + RK + COMPOUND_SEPARATOR + CJID);
+    await door.fetch(ORIGIN + "/async/status/" + RK + COMPOUND_SEPARATOR + CJID);
 
     expect(calls[0].name).toBe(RK);
     expect(calls[0].name).not.toBe(OTHER);
@@ -142,7 +147,7 @@ describe("cf#810 video-finish door: poll affinity", () => {
     const door = videoFinishDoor(ns, fixedDeps(RK));
 
     // A bare container id, e.g. from a job submitted before this door existed.
-    const resp = await door.fetch("/async/status/" + CJID);
+    const resp = await door.fetch(ORIGIN + "/async/status/" + CJID);
 
     expect(resp.status).toBe(404);
     // NOTHING was dispatched. Guessing an instance would poll a container that never ran this job
@@ -152,18 +157,18 @@ describe("cf#810 video-finish door: poll affinity", () => {
   });
 
   it("statusInstanceName produces its negative on every unroutable shape", () => {
-    expect(statusInstanceName("/async/status/" + RK + COMPOUND_SEPARATOR + CJID)).toBe(RK);
-    expect(statusInstanceName("/async/status/" + CJID)).toBeNull();
-    expect(statusInstanceName("/async/status/" + COMPOUND_SEPARATOR + CJID)).toBeNull();
-    expect(statusInstanceName("/async/finish")).toBeNull();
-    expect(statusInstanceName("/health")).toBeNull();
+    expect(statusInstanceName(ORIGIN + "/async/status/" + RK + COMPOUND_SEPARATOR + CJID)).toBe(RK);
+    expect(statusInstanceName(ORIGIN + "/async/status/" + CJID)).toBeNull();
+    expect(statusInstanceName(ORIGIN + "/async/status/" + COMPOUND_SEPARATOR + CJID)).toBeNull();
+    expect(statusInstanceName(ORIGIN + "/async/finish")).toBeNull();
+    expect(statusInstanceName(ORIGIN + "/health")).toBeNull();
   });
 
   it("splits on the FIRST separator, so a container id could carry one and still route", async () => {
     const { ns, calls } = fakeNamespace(() => new Response("{}", { status: 200 }));
     const door = videoFinishDoor(ns, fixedDeps(RK));
 
-    await door.fetch("/async/status/" + RK + ".a.b");
+    await door.fetch(ORIGIN + "/async/status/" + RK + ".a.b");
 
     expect(calls[0].name).toBe(RK);
     expect(calls[0].url).toBe("http://video-finish/async/status/" + encodeURIComponent("a.b"));
@@ -175,8 +180,8 @@ describe("cf#810 video-finish door: stateless routes", () => {
     const { ns, calls } = fakeNamespace(() => new Response("{}", { status: 200 }));
     const door = videoFinishDoor(ns, fixedDeps(RK, 2));
 
-    await door.fetch("/inspect", { method: "POST" });
-    await door.fetch("/health");
+    await door.fetch(ORIGIN + "/inspect", { method: "POST" });
+    await door.fetch(ORIGIN + "/health");
 
     expect(calls.map((c) => c.name)).toEqual(["sync-2", "sync-2"]);
     // The routing key is for jobs. A stateless call must not consume a job-addressed instance.
@@ -205,9 +210,44 @@ describe("cf#810 video-finish door: stateless routes", () => {
     const { ns, calls } = fakeNamespace(() => new Response("{}", { status: 200 }));
     const door = videoFinishDoor(ns, fixedDeps(RK, 1));
 
-    await door.fetch("/async/finish");
+    await door.fetch(ORIGIN + "/async/finish");
 
     expect(calls[0].name).toBe("sync-1");
     expect(calls[0].name).not.toBe(RK);
+  });
+});
+
+describe("cf#810 the shape core actually calls with", () => {
+  it("accepts the absolute url core sends, and keeps the query string", () => {
+    expect(pathOf("http://video-finish/async/finish")).toBe("/async/finish");
+    expect(pathOf("http://video-finish/frames?count=9")).toBe("/frames?count=9");
+    // A bare path is still handled, so a caller that passes one is not silently misrouted.
+    expect(pathOf("/inspect")).toBe("/inspect");
+    expect(pathOf("inspect")).toBe("/inspect");
+  });
+
+  it("routes a submit sent as an absolute url, not as a path", async () => {
+    const { ns, calls } = fakeNamespace(accepts(CJID));
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+
+    const resp = await door.fetch(ORIGIN + "/async/finish", { method: "POST", body: "{}" });
+    const body = (await resp.json()) as { jobId: string };
+
+    expect(calls[0].name).toBe(RK);
+    // The bug this pins: treating the absolute url as a path yields
+    // "/http://video-finish/async/finish", which the container 404s.
+    expect(calls[0].url).toBe(ORIGIN + "/async/finish");
+    expect(calls[0].url).not.toContain("/http:");
+    expect(body.jobId).toBe(RK + COMPOUND_SEPARATOR + CJID);
+  });
+
+  it("videoFinishDoorOf reads the door core's way, and rejects a non-door", () => {
+    const door = { fetch: async () => new Response("{}") };
+    expect(videoFinishDoorOf({ MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door } })).toBe(door);
+    expect(videoFinishDoorOf({})).toBeNull();
+    expect(videoFinishDoorOf({ MEDIA_DOOR_FETCHERS: {} })).toBeNull();
+    // Duck-typed on `fetch`, exactly as core's mediaDoorFetcher is, so the two agree on what
+    // counts as bound rather than each having an opinion.
+    expect(videoFinishDoorOf({ MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: {} as never } })).toBeNull();
   });
 });

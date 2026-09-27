@@ -16,9 +16,10 @@ export function orchestratorEnv(env: Env): OrchestratorEnv {
 
 /** Workers Env merged with orchestration fields for route handlers.
  *
- *  VIDEO_FINISH_DOOR is NOT a wrangler binding and deliberately does not appear in env.ts,
+ *  MEDIA_DOOR_FETCHERS is NOT a wrangler binding and deliberately does not appear in env.ts,
  *  which mirrors wrangler and nothing else. It is SYNTHESISED here from the FINISH_CONTAINER
- *  binding (cf#810) and handed to core in place of a public origin. */
+ *  binding (cf#810) and handed to core in place of a public origin. Core declares the same field
+ *  on its own env type from 1.23.0, so tsc catches drift between the two halves. */
 export type StudioEnv = Env & OrchestratorEnv & VideoFinishDoorHost;
 
 /** The ONE place this Worker meters object writes (core#52).
@@ -46,10 +47,14 @@ function meterStudioWrites(raw: Env): void {
 export function studioEnv(raw: Env): StudioEnv {
   if (raw.R2_RENDERS && raw.DB) meterStudioWrites(raw);
   const { PRESIGNER } = orchestratorEnv(raw);
-  return Object.assign(raw, { PRESIGNER, ...videoFinishDoorField(raw) }) as StudioEnv;
+  return Object.assign(raw, { PRESIGNER, ...mediaDoorFetchersField(raw) }) as StudioEnv;
 }
 
-/** The video-finish door, when this deploy has the container bound (cf#810).
+/** The bound media doors, when this deploy has the container bound (cf#810).
+ *
+ *  KEYED BY THE DOOR'S URL VAR, which is core's vocabulary (`MEDIA_DOOR_FETCHERS`), so there is one
+ *  door naming scheme across the two repos rather than two. Requires core >= 1.23.0; below that
+ *  core does not read the field and the door is constructed, ignored, and harmless.
  *
  *  OPTIONAL BY CONSTRUCTION. A self-host with no FINISH_CONTAINER binding gets no door and falls
  *  through to the VIDEO_FINISH_URL path in core exactly as before, which is what keeps this change
@@ -58,11 +63,16 @@ export function studioEnv(raw: Env): StudioEnv {
  *  Reused rather than rebuilt, for the same reason meterStudioWrites is idempotent: studioEnv runs
  *  on EVERY request against the same isolate-level env object, so minting a fresh closure per
  *  request would be pure garbage for no behaviour change. */
-function videoFinishDoorField(raw: Env): VideoFinishDoorHost {
-  const existing = (raw as Env & VideoFinishDoorHost).VIDEO_FINISH_DOOR;
-  if (existing) return { VIDEO_FINISH_DOOR: existing };
+function mediaDoorFetchersField(raw: Env): VideoFinishDoorHost {
+  const existing = (raw as Env & VideoFinishDoorHost).MEDIA_DOOR_FETCHERS;
+  if (existing?.VIDEO_FINISH_URL) return { MEDIA_DOOR_FETCHERS: existing };
   if (!raw.FINISH_CONTAINER) return {};
-  return { VIDEO_FINISH_DOOR: videoFinishDoor(raw.FINISH_CONTAINER) };
+  return {
+    MEDIA_DOOR_FETCHERS: {
+      ...(existing ?? {}),
+      VIDEO_FINISH_URL: videoFinishDoor(raw.FINISH_CONTAINER),
+    },
+  };
 }
 
 /** Test helper: attach a mock presigner without wrapping R2 (keeps mem mocks intact). */
