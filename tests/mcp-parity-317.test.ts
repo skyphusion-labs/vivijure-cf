@@ -92,6 +92,11 @@ function placeholderArgs(tool: (typeof TOOLS)[number]): Record<string, unknown> 
     if (ty === "object") args[k] = {};
     else if (ty === "array") args[k] = ["x"];
     else if (ty === "number") args[k] = 1;
+    // cf#894: `boolean` was absent, so a required boolean fell through to the string
+    // "PLACEHOLDER" and vivijure-mcp 1.3.0's set_module_enabled threw `'enabled' must be a
+    // boolean` inside build(). A missing type in this switch does not report as a missing type; it
+    // reports as whatever the tool does with a string it did not ask for.
+    else if (ty === "boolean") args[k] = true;
     else if (k in ARG_FIXTURES) args[k] = ARG_FIXTURES[k];
     else args[k] = "PLACEHOLDER";
   }
@@ -123,10 +128,35 @@ const canonical = (p: string) =>
 /** A route entry in the canonical form the coverage map is keyed on. */
 const routeKey = (r: Route) => `${r.method} ${canonical(r.pattern)}`;
 
+// cf#894. vivijure-mcp 1.3.0 added a CONTROL-PLANE surface, so "a tool" is no longer one
+// population. Every denominator below is studio-route-relative, and a control-plane tool cannot
+// reach a studio route, so the two must be separated before anything is counted.
+//
+// SPLIT BY CALL TARGET, NOT BY NAME PREFIX, and this is not a stylistic preference. Measured on
+// 1.3.0: 37 tools are named `cp_*` and 38 build a call with `target: "control_plane"`. The one
+// that differs is `control_plane_request` -- the control-plane escape hatch, which a `cp_` prefix
+// test files as a STUDIO tool. A name is a convention; the call's target is the contract.
+const ESCAPE_HATCHES = new Set(["studio_request", "control_plane_request"]);
+
+/** The target a tool's built call addresses. Absent target means the studio, which is the default
+ *  the 1.2.x catalog carried implicitly. */
+function toolTarget(t: (typeof TOOLS)[number]): string {
+  const call = t.build(placeholderArgs(t)) as { target?: unknown };
+  return typeof call.target === "string" ? call.target : "studio";
+}
+
+const STUDIO_TOOLS = TOOLS.filter((t) => toolTarget(t) === "studio");
+const CONTROL_PLANE_TOOLS = TOOLS.filter((t) => toolTarget(t) === "control_plane");
+
 function curatedCoverage(): Map<string, string> {
   const cov = new Map<string, string>();
-  for (const t of TOOLS) {
-    if (t.name === "studio_request") continue; // the escape hatch reaches everything; counted apart
+  // STUDIO tools only. Before cf#894 this iterated every tool and skipped one name, so a
+  // control-plane tool's path went into the studio-route coverage map and would have counted a
+  // studio route as covered on any collision. There is no collision today -- measured, 0 of 38 --
+  // but that is a property of control-plane paths happening to live under /api/admin and
+  // /api/platform, which nobody maintains against this table. The assertion below makes it a rule.
+  for (const t of STUDIO_TOOLS) {
+    if (ESCAPE_HATCHES.has(t.name)) continue; // reaches everything; counted apart
     const call = t.build(placeholderArgs(t));
     cov.set(`${call.method} ${canonical(call.path)}`, t.name);
   }
@@ -426,14 +456,20 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // never to relax the assertion.
 const PUBLISHED = {
   routes: 92, // studio API route entries (method+pattern); scatter submit retired
-  tools: 42, // MCP tools: curated + the studio_request escape hatch (vivijure-mcp v1.2.0)
-  curatedCovered: 41, // route entries reached by a CURATED tool
+  // cf#894: vivijure-mcp 1.3.0 took the catalog from 42 to 109. The growth is NOT what the issue
+  // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
+  // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
+  // the studio figure is the only one the route-relative counts below may be measured against.
+  tools: 109, // every tool in the catalog, both targets
+  studioTools: 71, // tools whose call targets the studio (includes studio_request)
+  controlPlaneTools: 38, // the cp_* operator surface plus control_plane_request
+  curatedCovered: 70, // route entries reached by a CURATED tool
   panelReachable: 71, // scatter submit retired
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
-  panelUncurated: 34, // scatter submit retired
-  panelUncuratedPathOnly: 38, // method-aware + the 4 uncurated path-only false positives
+  panelUncurated: 15, // scatter submit retired
+  panelUncuratedPathOnly: 19, // method-aware + the 4 uncurated path-only false positives
   hatchReachable: 89, // reachable via studio_request = routes minus the raw-body class
 };
 
@@ -456,6 +492,38 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
 
   it("MCP tool count matches the published number", () => {
     expect(TOOLS.length).toBe(PUBLISHED.tools);
+  });
+
+  it("the tool catalog splits into exactly the two published surfaces", () => {
+    expect(STUDIO_TOOLS.length).toBe(PUBLISHED.studioTools);
+    expect(CONTROL_PLANE_TOOLS.length).toBe(PUBLISHED.controlPlaneTools);
+    // TOTAL by construction: a third target would land in neither list and the sum would not
+    // reconcile, rather than being silently dropped from both denominators.
+    expect(PUBLISHED.studioTools + PUBLISHED.controlPlaneTools).toBe(PUBLISHED.tools);
+  });
+
+  it("the cp_ NAMING CONVENTION disagrees with the call TARGET by exactly one tool", () => {
+    // Pinned rather than smoothed over, because the disagreement is the argument for classifying
+    // by target: `control_plane_request` is a control-plane tool that a prefix test files as a
+    // studio one, which would put it in the studio denominator and treat it as curated.
+    const byName = TOOLS.filter((t) => t.name.startsWith("cp_")).map((t) => t.name);
+    const byTarget = CONTROL_PLANE_TOOLS.map((t) => t.name);
+    expect(byName.filter((n) => !byTarget.includes(n))).toEqual([]);
+    expect(byTarget.filter((n) => !byName.includes(n))).toEqual(["control_plane_request"]);
+  });
+
+  it("no control-plane tool's call can be mistaken for a studio route", () => {
+    // Today's separation is an ACCIDENT of path choice (/api/admin, /api/platform), not a rule.
+    // This makes it a rule: a control-plane tool that ever builds a studio route key would have
+    // counted that route as curated, inflating coverage in the direction nobody questions.
+    const routeKeys = new Set(studioRoutes().map(routeKey));
+    const collisions = CONTROL_PLANE_TOOLS.filter((t) => {
+      const call = t.build(placeholderArgs(t));
+      return routeKeys.has(`${call.method} ${canonical(call.path)}`);
+    }).map((t) => t.name);
+    expect(collisions).toEqual([]);
+    // Denominator: a zero above means nothing unless there was a population to collide.
+    expect(CONTROL_PLANE_TOOLS.length).toBeGreaterThan(0);
   });
 
   it("curated-tool coverage matches the published number", () => {
