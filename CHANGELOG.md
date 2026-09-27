@@ -5,6 +5,596 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.35.0 -- 2026-09-27
+
+**READ BEFORE UPGRADING. This release changes what SUCCESS MEANS, which is why it is a MINOR and
+not a PATCH.**
+
+**cf#834 -- films that used to succeed silently now fail loudly.** A dialogue leg that could not
+deliver answered four failure branches with a `console.warn` and a silent finish, on **13 of 15
+live motion doors**. A film shipped silent and booked COMPLETE. From this release those fail. **If
+you have automation keyed on a film reaching `done`, you will see new failures that were
+previously silent successes.** Those renders were already broken; they are only now saying so. Do
+not roll this back to make the failures go away.
+
+**cf#893 / cf#906 / cf#910 -- the container bearer gate now fails CLOSED, and this changes what
+your deployment must supply.** A media container with neither variable set **refuses to start**
+rather than serving media routes unauthenticated.
+
+- **Hosted (Cloudflare Containers):** handled for you. `FinishContainer` declares
+  `envVars = { LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true" }`, because the `[[containers]]` binding
+  IS the private boundary and a token would not work on that path at all -- the bound branch is
+  taken before the token lookup, so an Authorization header is never attached and a configured
+  token would 401 every call.
+- **Self-host (`containers/compose.yaml`):** **you must set ONE of the two explicitly. Neither is
+  defaulted and the hosted opt-out is NOT inherited** -- compose passes both through as empty, so
+  a stack that sets neither will refuse to start after upgrading. Use `LOCAL_FINISH_TOKEN` for
+  anything reachable beyond loopback; `LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true` is defensible only
+  where the deployment itself is the boundary.
+
+**Expect a WARNING in your container logs when the opt-out is active**, naming that media routes
+are served with no authentication. On the hosted path that line is EXPECTED and is the positive
+signal that the opt-out reached the container. On a self-host it is a prompt to check that the
+deployment really is the boundary.
+
+**cf#813 -- your output dimensions change.** The assembled film now matches the measured source
+instead of a constant 1920x1080. Measured on the outgoing v1.34.3 build, choosing 480p saved 58.4%
+on the clip leg and only 4.6% on the delivered film, because the assemble upscaled it back. If you
+relied on every film arriving at 1080p regardless of what you asked for, that stops here.
+
+**cf#836 -- new payload surface.** Three per-stage degrade keys (`speech`, `master`, `dialogue`)
+become observable on the render payload.
+
+**Under-numbering a release that changes the meaning of a terminal state is worse than
+over-numbering one.** None of the Conventional Commit types below can express "the meaning of done
+changed", so the version number is the only place it can be said.
+
+### fix(finish): make every submit attempt attributable to the instance record it creates (cf#843)
+
+`routingKey()` is minted per submit ATTEMPT, so every attempt addresses a fresh Durable Object and
+creates a fresh container instance record. During `film-40e0cd09` the application's instance list grew
+by one about every five minutes while assemble was stuck, and when those records were read back
+**nothing could say which attempt created which**: the instances endpoint carries only
+`{application_id, id, image, name, status}` (cf#844). cf#843 could not attribute `0706ec71...` to
+either a second attempt or a first request landing late, and declined to guess. **This is the line that
+makes the next occurrence answerable.**
+
+Each submit now emits two structured lines, `{"ev":"finish.submit",...}`:
+
+| phase | fields | when |
+|---|---|---|
+| `attempt` | `routing_key`, `path` | **before** the call |
+| `outcome` | `routing_key`, `outcome`, `status`, `container_job_id` | after, one of `accepted` / `rejected` / `unparseable` / `malformed` / `threw` |
+
+**The pre-call line is the load-bearing one.** The record is created by ADDRESSING the object, so if the
+fetch throws or the isolate dies, the record exists and a post-hoc-only line would be exactly the
+missing evidence again. A throwing submit logs `threw` and **rethrows unchanged**: core still reads it
+as a failed submit and no behaviour is altered.
+
+**6 of 10 is not a leak count, and this logging exists partly to stop that reading.** Measured
+2026-09-27, six of the application's ten instance records carry 32-hex names. A SUCCESSFUL submit also
+mints a key and creates a record, so the six are a mix of successes and orphans and there is no way to
+split them retroactively. Attribution is the only thing that can, which is why it ships before any
+change to how keys are minted.
+
+**The line is a leak vector before it is an observability feature.** The submit payload carries
+SigV4-presigned R2 URLs, and `tests/tenant-r2-forward.test.ts` exists because console output is how they
+would escape. Fields are enumerated explicitly rather than spread, `init` and the body are never
+touched, and the routing key is our own random hex identifying an instance rather than a credential.
+Six guards in `tests/video-finish-binding-cf810.test.ts` cover it, appended there rather than in a new
+file so the fake-namespace harness is not copied.
+
+**Watched red, twice:**
+
+- removing the pre-call `attempt` line fails **five** cases, including the leak guard, whose control
+  asserts two lines were emitted so it cannot pass on silence;
+- logging `init` instead of enumerated fields fails **exactly one**, the leak guard, and nothing else.
+
+## What this does NOT do
+
+**The deterministic per-job routing key is not in here, deliberately.** It is the other half of cf#843
+and it interacts with `vivijure-core#308` (both assemble guards sit downstream of a successful submit,
+so a submit that never succeeds is unbounded, OPEN, rollins). Whether a retry should reuse the same
+object depends on whether a failed submit should be retried at all, and cf#843 says the two should be
+decided together rather than separately. Changing the key scheme first would settle that question by
+accident, in the wrong repo.
+
+So cf#843 stays OPEN for the key change. What this closes is the reason it could not be investigated:
+the next stuck film leaves a trail.
+
+### docs(containers): what the Containers control plane can prove, and what it cannot (cf#844)
+
+cf#844 was filed because an empty instances list had been read as proof that nothing was running, and
+therefore nothing billing, at rest. **Measured against the live account, it proves neither, and the
+failure mode is that it answers confidently rather than erroring.**
+
+Two endpoints read **678 ms apart with one credential**:
+
+| reading | value |
+|---|---|
+| `application.instances` | **3** |
+| `application.max_instances` | **3** |
+| rows from `/containers/applications/{id}/instances` | **10** |
+| rows whose `status.state` is anything but `inactive` | **0** |
+
+**`application.instances` is not an observed count.** It read 3 while zero instances were active and ten
+were listed, and it equals `max_instances` exactly. A reader asking "how many are up?" gets a small,
+plausible, wrong integer. `max_instances = 3` also does not bound the number of instance RECORDS, of
+which there were ten.
+
+**An instance row is a record, not a running container**, and the union of keys across all ten rows is
+exactly `application_id`, `id`, `image`, `name`, `status`. **There is no `started_at` field** -- not
+null, absent. cf#844 saw `started_at` appear on one instance and read `null` minutes later and suspected
+it was not a start time; it is no longer in the shape at all, so nothing in that response can carry a
+billing claim about duration.
+
+So the endpoint answers "which instance records exist, and what state each was last seen in", which is
+useful and is not the question it was asked. The 04:49:33Z empty list and the 04:52:33Z record claiming a
+04:01:50Z start can both be true OF THE RECORD while neither speaks to what was running.
+
+## The second instrument, which is the transferable part
+
+cf#844's methodological complaint was that two people checking the same endpoint with different
+credentials treated their agreement as independent confirmation: **two credentials against one endpoint
+is one instrument.** So the doc includes a check that never consults the API about its own reliability.
+
+`SYNC_POOL_SIZE` is 1 and `poolIndex()` is `Math.floor(Math.random() * SYNC_POOL_SIZE)`, so the only
+pool name current code can mint is `sync-0`. The live list contains `sync-0` through **`sync-3`**. Since
+`sync-3` needs `SYNC_POOL_SIZE >= 4` to have ever been minted and cf#810 dropped the pool to 1, those
+records predate the current configuration: **the list is historical, proven by arithmetic about how
+names are generated.**
+
+## The guard exists because the doc would otherwise rot into the defect it describes
+
+That argument is only valid while `SYNC_POOL_SIZE` is actually 1. Raise the pool to 4 and `sync-3`
+becomes mintable, the inference silently inverts, and the doc keeps asserting it -- which is precisely
+the comment-asserting-a-property-the-code-lacks class this repo has spent a sprint clearing. Shipping the
+doc ungated would have been a fresh instance of it.
+
+`tests/containers-control-plane-doc-cf844.test.ts` DERIVES the number from `src/video-finish-binding.ts`
+and fails if the doc quotes a different one, or if the `sync-N` the doc argues from becomes a name
+current code can mint. **Watched red:** raising `SYNC_POOL_SIZE` to 4 fails both, with the message
+telling the next author to update the doc's argument rather than the test. It is not a second definition
+of `tests/video-finish-pool-ceiling-cf810.test.ts`, which pins the
+`SYNC_POOL_SIZE + RESERVED_JOB_INSTANCES <= max_instances` inequality; this one pins the doc against the
+source.
+
+## No gate on the endpoint itself, deliberately
+
+Nothing in this repo reads `containers/applications` or an instances list (`grep -rniE` over `*.ts`,
+`*.sh`, `*.py`, `*.yml`, `*.md`, excluding `node_modules` and `CHANGELOG.md`: the only hit is the word
+"instances" in an unrelated comment). **There is no consumer to guard**, so a gate would be a control
+with no subject, and reading intent out of source text is not something a grep can do. When a consumer
+appears it should be guarded then. Until then the doc is the artifact and the standing rule is cf#844's
+own last line: say "the endpoint reported nothing", not "nothing is running".
+
+Six of the ten rows are 32-hex names, the per-attempt `routingKey()` shape, which is cf#843's subject
+rather than this one's.
+
+### fix(image-prep): bound the DECODED pixels, not just the compressed bytes (cf#869)
+
+`MAX_INPUT_BYTES` gates **compressed** bytes. The decoded bitmap is a function of **pixel
+dimensions**, and nothing bounded those, so the only size gate measured the wrong quantity -- and
+measured it confidently.
+
+Demonstrated rather than argued: a structurally valid **69-byte** PNG whose IHDR claims
+`20000x20000` decodes to about **1.5 GiB** as RGBA. It passes the 32 MB byte cap by four orders of
+magnitude, because compressed size is not a bound on decoded size and an attacker picks the ratio.
+
+`MAX_INPUT_PIXELS` (default `4096x4096`, env-tunable like the other container constants) now bounds
+the decode. Three details are load-bearing:
+
+- **It runs before `rembg`, not before `Image.open`.** `rembg.remove()` decodes the input itself,
+  ahead of any Pillow call in this module, so a guard placed at `Image.open` would have sat *behind*
+  the allocation it exists to prevent.
+- **It reads the HEADER only.** `Image.open` is lazy, so `.size` costs nothing and no pixel is
+  decoded to decide whether decoding is affordable.
+- **Pillow's own bomb check is suspended for that header read, and restored immediately.** Pillow
+  raises `DecompressionBombError` above 2x `MAX_IMAGE_PIXELS`, which pre-empted the check and
+  surfaced a 400 MP image as *"could not identify image"* -- refused, but for the wrong reason,
+  which is the same two-states-as-one defect this guard exists to close. **That was caught by the
+  new test, in the first version of this fix.** The global limit stays set as defense in depth for
+  any decode that does not come through the probe.
+
+The ceiling is derived rather than round: the subject is a single cast reference portrait, and
+`4096x4096` comfortably covers a 12 MP phone photo (`4032x3024`) while bounding the decode at about
+64 MiB RGBA. Both ends are pinned by tests, because a ceiling only tested from above could be far
+too tight and still look correct.
+
+Refusal is a **413 naming the decoded dimensions** and the ceiling applied, so an operator can tell
+"your image is too large to decode" from "the container fell over". An unidentifiable image is now
+refused **400** rather than passed to rembg: what cannot be read cannot be bounded, and it would
+have failed after the allocation anyway.
+
+`containers/image-prep/test_decode_bound.py`, 12 checks, added to the CI list. It builds the bomb by
+hand from a PNG header rather than asking Pillow to create one, because allocating 1.2 GB in a test
+is the very thing being prevented. Watched it go red: removing the bound fails exactly the two
+refusal checks and leaves every positive control green.
+
+CI installs `Pillow==12.3.0` for that job, pinned to what image-prep itself ships. Not the whole
+image-prep requirements file, which pulls rembg and onnxruntime, hundreds of MB of ML runtime this
+test never touches.
+
+The README's "residual, stated rather than hidden" paragraph is gone, because the residual is gone.
+
+### ci(python): fail on an undefined name, because nothing in this repo was asking (cf#874)
+
+`grep -rniE "ruff|pyflakes|flake8|pylint" .github/workflows/` returned **nothing**. There was no Python
+linter in CI at all, and it cost two live outages in one night. The second:
+`containers/video-finish/app.py` called `_parse_partial_urls(raw)` inside `_finish_work(body)` where
+`raw` was never bound, so **every non-remux finish raised `NameError`** until `cedba5a` (PR #875).
+
+**Why nothing caught it.** `py_compile` passes on that file, because a `NameError` is a runtime event
+and not a syntax one, so "it imports" was never evidence. The unit suite covers `_finish_chunked` (5
+call sites) and `_parse_partial_urls` (4) and `_finish_work` (0): both components tested, **the line
+joining them untested**, and no realistic unit test would have covered it without standing up the whole
+handler. And the cf#857 smoke gate cannot see it either -- `/health` answers, the process is healthy,
+and the defect sits on a handler path a boot check never touches. Three layers now, each with a stated
+boundary, none a substitute for another.
+
+**`scripts/lint-python-undefined.sh`** runs pyflakes over every tracked `*.py` (68 of them, derived from
+`git ls-files` rather than a hand-scoped subdirectory, because the defect class is not
+container-specific and a hand-kept list is the artifact that drifts).
+
+- **Undefined names FAIL.** That is the class that shipped.
+- **Style is REPORTED and does not block.** Unused imports, unused locals and placeholder-less
+  f-strings print as `::warning::`. **Eight** such findings existed when this landed and are visible in
+  the step's log. That count is read off the gate's own output (`8 non-blocking finding(s)`), not from
+  my notes: I first wrote nine, having counted the blocking undefined name among the non-blocking ones.
+  Nine was the total of ALL findings on the pre-fix tree, one of which was the outage. A gate that fails a release over an unused import is a gate somebody deletes, and then it
+  is a gate nobody runs.
+- **pyflakes, PINNED at 3.4.0.** A linter whose ruleset moves under you is a gate whose findings change
+  with no commit. `ruff --select F` is the same ruleset plus a large surface that would need
+  configuring to stay quiet; if the repo ever wants that, this script is what it replaces.
+
+**The control is the load-bearing half, because this gate decides by MATCHING TEXT** (`undefined name`)
+in the linter's output. A reworded or silent pyflakes would stop failing and read green forever. So
+`tests/lint-python-undefined.test.sh` drives the shipped script against fixtures and asserts the exact
+exit status plus the reason on each:
+
+| case | expected |
+|---|---|
+| undefined name | **1** |
+| clean file | **0** (the positive control; without it the gate might always fail) |
+| unused import only | **0**, with a non-blocking warning |
+| no `.py` in the population | **1**, could-not-measure is not a pass |
+| linter missing | **2**, an unavailable instrument is a failure and not a skip |
+| **linter that reports NOTHING** | **2**, the gate must REFUSE rather than pass |
+
+That last case is the one that makes the rest mean anything: a clean result from a silent instrument is
+indistinguishable from a clean tree. It uses a stub written by the test, after the first version reached
+for `/bin/true` and got the right exit code **for the wrong reason** (`not found`: macOS has only
+`/usr/bin/true`). The reason assertion caught it; an exit-code-only check would have called it a pass.
+
+**Both directions on the real artifact, no planted defect**, exactly as the issue required. Run against
+two worktrees:
+
+```
+cedba5a~1 (ff7f542)  containers/video-finish/app.py:443:40: undefined name 'raw'   exit 1
+origin/main (8499bc2)  no undefined names in 68 file(s)                            exit 0
+```
+
+Wired into `container-tests`, which already runs unconditionally and is already in the `deploy` job's
+`needs`, so this gates a release without adding a new conditional dependency to the release path.
+
+### ci(deploy): report which media-door hosts do not resolve, and never refuse a release for it (cf#886)
+
+cf#850 landed the config half: `BOUND` or `EMPTY` per media-door var, with one contradiction refused.
+**It says nothing about whether a bound origin resolves**, and the `v1.34.3` deploy is the proof. Its
+log reads:
+
+```
+origin-vars: 7 media-door var(s) in wrangler.toml: 7 bound, 0 empty.
+origin-vars: [[containers]] is bound and VIDEO_FINISH_URL is non-empty, so the finish tier reads as installed.
+```
+
+Rendered from the committed template with the live repo-variable values, the new report beside it reads:
+
+```
+reachability: 10 host(s) in the media-door values: 0 resolve, 10 do not.
+```
+
+**Zero of ten.** `BOUND` is a statement about the CONFIG; this is the cheapest available statement about
+the world. About seven lookups in practice, sub-second, no egress, no credential.
+
+**Correcting my own denominator while I am here:** I previously reported "11 of 13 hostnames NXDOMAIN".
+That 13 counted a non-door hostname I probed by mistake (`studio-mcp.skyphusion.org`, where the live var
+is `studio-mcp.vivijure.com`). Measured properly: **all 12 door hostnames across the 8 origin-bearing
+repo variables are NXDOMAIN**, and **10 of those reach the rendered config** (`SPEECH_UPSCALE_DOORS`
+has no consumer in the template since the module was excised), all 10 unresolvable.
+
+## Report-only is the contract, and it is structural rather than promised
+
+An HTTP probe in the deploy gate was refused on posture and this inherits the reasoning: **a release
+gate that depends on a third party being up is a gate that can block an unrelated release.** A door
+being down has nothing to do with whether the change in front of it is safe to ship, and the first time
+it blocks someone at 2am it goes on the bypass list permanently -- the same family as a jail that can
+ban your own ingress path. An HTTP probe would also need `MEDIA_FINISH_TOKEN`, putting a credential in a
+path that needs none.
+
+So the never-refuse property lives in the artifact, not in a comment promising good behaviour: its own
+file, **no `set -e`**, `exit 0` as the last line, and invoked BARE in `ci.yml` with no `||`, no `&&` and
+no `exit`. `tests/origin-reachability-cf886.test.ts` asserts every one of those, including the script's
+own text, because **if this ever gains the power to refuse it has become the gate that was refused.**
+
+**Not taken on trust, two mutations, both caught, both restored:**
+
+- make it exit non-zero when a host is dead -> the two "still exits 0" cases fail;
+- add `set -e` -> **three** cases fail, including both UNMEASURED paths. That second result is the
+  interesting one: `set -e` does not merely risk refusal in theory, it actually converts an
+  unmeasurable run into a non-zero exit, because a resolver returning non-zero terminates the script.
+  The absence of `set -e` is load-bearing, not stylistic.
+
+## An unmeasured run says so, because absence reads exactly like cleanliness
+
+- No resolver at all (no `getent`, no `python3`, no injected `$RESOLVER`) -> a warning saying
+  UNMEASURED and explicitly "this is not a clean result", and it does **not** go on to print per-host
+  verdicts it could not have obtained.
+- A resolver that fails on everything -> caught by a `localhost` probe first, so a broken tool reads as
+  a broken tool rather than as a catastrophic ten-host outage.
+- Every door empty -> "0 hosts ... nothing to resolve", said out loud rather than printed as silence.
+- A missing rendered config -> UNMEASURED, exit 0.
+
+## The blind spot, named
+
+**A host that RESOLVES but is DEAD reads as fine here.** DNS is not an availability check, and cf#851
+is the proof that this matters: that door was a Durable Object binding with no hostname at all, so this
+script would have had nothing to say during those six hours. cf#887 is the readiness surface that
+answers "is the tier SERVING now", filed rather than built, and it records why it does not reopen
+`core#327`'s ruling that the RENDER PATH reads the submit outcome and never a predicate.
+
+No network in the tests: `localhost` resolves from `/etc/hosts` and `*.invalid` is reserved by RFC 2606
+and never resolves, so both answers are deterministic offline. The resolver is injectable so the
+instrument-failure paths are driven without touching the machine's DNS, and a stub that resolves
+everything is the positive control on the injection seam itself.
+
+### docs(modules): correct README default for `enable_safety_checker`, four repo-wide (cf#891)
+
+`config_schema` declares `enable_safety_checker: default: false` in every module that carries it
+("off: we already refuse CSAM"), and all six call sites read `cfg.enable_safety_checker === true`, so
+the filter only turns on when a caller explicitly sets it. Four READMEs said the opposite: `kling`,
+`kling-o1-r2v` and `infinitetalk` documented `default true` / `(default on)`, and `alibaba-wan-lora`
+went further, stating "only an explicit `false` disables it" -- precisely inverted.
+
+Corrected all four to `default false`, carrying the schema's own rationale. `alibaba-wan-lora`'s
+inverted sentence is deleted rather than flipped in place (flipping alone would have left the
+surrounding paragraph still implying a safe-by-default posture); replaced with a line stating the
+filter becomes `true` only when explicitly set.
+
+Repo-wide `grep -rln "enable_safety_checker" --include="*.md" .` confirms exactly these four; `alibaba-wan`
+and `vidu-q3` (same call-site pattern, no README hit) were read in full and say nothing about the
+setting either way, left alone. Docs only: no schema field, default, or call site touched.
+
+### BREAKING fix(containers): the bearer gate fails CLOSED, and every media container now has one (cf#893, GHSA-v8g8-gmcm-22gr)
+
+**BREAKING FOR SELF-HOSTERS. A running deployment with no `LOCAL_FINISH_TOKEN` set will stop
+starting.** That is the correct outcome and it is deliberate, not a side effect.
+
+The one-line fix:
+
+```bash
+export LOCAL_FINISH_TOKEN="$(openssl rand -hex 32)"   # must match the store secret FINISH_DOOR_TOKEN
+```
+
+If a deployment is genuinely loopback-only and wants no authentication, ask for it **by name** with
+`LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true`. Unset is not a request for it. The insecure state is
+choosable; it is never defaulted into.
+
+**What was wrong.** `bearer_middleware` passed every request through when `LOCAL_FINISH_TOKEN` was
+unset, and the docstring justified it: *"That is the current VPC path, which sends no credential.
+Arming the token is a later flip."* Those doors moved onto public HTTPS three commits later the same
+day, nothing re-armed the gate when the boundary moved, and the later flip never happened. A
+fail-open default is defensible behind a private network boundary and is not defensible on a public
+hostname, which is where a self-hoster following `compose.yaml` plus a tunnel ends up having never
+been told a token existed.
+
+**`image-prep` and `audio-master` had no gate at all**, only `url_guard.py`. Both now have one. Their
+Dockerfiles were missing the `COPY` for it, caught by the cf#857 file-set guard, which is the same
+defect class that crashed `video-finish` on startup earlier (`concat_guard.py` imported and never
+copied).
+
+**The next container inherits this rather than remembering it**, which is the actual fix for how two
+containers ended up ungated:
+
+- `tests/container-bearer-gate.test.py` **derives** the container list from which `app.py` builds a
+  `web.Application`, so a new service cannot ship without a gate. A hardcoded list stays true while
+  the population moves underneath it.
+- It asserts all five vendor a **byte-identical** `bearer.py` and wire the middleware and the startup
+  check.
+- `compose.yaml` plumbs both env vars on the shared `x-common` anchor, so a new service inherits them
+  from `*common`.
+
+`GET /health` stays open with no credential, asserted explicitly at the wire, because swarm and
+Traefik healthchecks depend on it: closing it would break orchestration instead of the auth hole. It
+answers even when the container is misconfigured, so a bad deployment reports itself to its scheduler
+rather than looking dead.
+
+**Two layers, each meaningful.** `require_bearer_config()` runs at `__main__` and refuses to bind;
+`bearer_middleware` independently answers **503** on every media route when no token is set, so a
+future factory that forgets the startup call cannot silently reopen the gate.
+
+**A stale test was passing for the wrong reason and is fixed here.** All three `test_bearer.py` files
+asserted `r.status != 401` for an unset token under the label *"(fail-open)"*. That assertion **kept
+passing** after the gate closed, because the new refusal is 503 and 503 is also `!= 401`. They now
+assert the exact status. And **none of the three were in the CI list at all** -- two are now, which
+is why the false claim survived unnoticed. `audio-beat-sync`'s is deliberately left out: it imports
+`librosa`, and installing an audio-analysis stack to assert an HTTP status is a worse trade than the
+structural coverage the repo-level test already gives it.
+
+Also corrected: `wrangler.toml.example` claimed *"Unset is fail-open"* for `MEDIA_FINISH_TOKEN` while
+`mediaDoorFetch` throws `MediaFinishAuthError` in exactly that case. Wrong in the SAFE direction,
+which is still wrong: a reader trusting it reasons wrongly about the whole auth posture, and a
+comment that under-claims a control is how the control gets "simplified" by someone who believes it
+is not load-bearing.
+
+### ci(changelog): refuse a tag whose `changelog.d/` still holds an unconsumed fragment (cf#901)
+
+**Three times in one night a change shipped inside a tag with no changelog entry and nothing
+refused.** One of them was a child-safety fix.
+
+- `v1.34.1` was HAND-WRITTEN instead of assembled, so both its fragments went unconsumed.
+  `810-pool-vs-max-instances.md` survived only by the accident of the author writing the same
+  content twice; `804-storage-posture-comment.md` was lost and had to be folded back afterwards as
+  a post-publication correction.
+- `v1.34.2` was assembled correctly and then two more PRs merged before the tag -- cf#858 (the
+  shared CSAM needle) and cf#859 -- and then two more again, cf#862 and cf#863.
+
+**IT RUNS AT TAG TIME, AND THAT IS THE DESIGN.** Only the first instance is a cut-time failure. The
+others were fragments that did not exist when the assembler ran, so a cut-time check would have
+passed honestly and the tag would still have shipped undescribed changes. **The tag is the last
+boundary the artifact crosses, so it is the one that has to ask.**
+
+**A HOLD IS DISTINGUISHED FROM AN OVERSIGHT, because `804` was held on purpose for hours.** A gate
+that is wrong about the legitimate case is one somebody disables. The distinction reuses the
+mechanism this repo already proved in `scripts/changelog-corrections.txt` (cp#245): **both halves
+required, neither waives alone** -- the fragment listed in `scripts/changelog-holds.txt`, AND a
+**first-line** `<!-- HELD: reason -->` marker in the fragment. Listed-but-unmarked is refused;
+marked-but-unlisted is refused; a stale hold naming a fragment that no longer exists is refused;
+and a reason under 12 characters is not a reason.
+
+The marker is pinned to line 1 because cp#245's own regression was a waiver living in the content,
+so a section merely DOCUMENTING the mechanism disarmed itself.
+`tests/changelog-fragments-consumed.test.py` plants exactly that -- a fragment quoting
+`<!-- HELD: ... -->` below its first line -- and requires a refusal.
+
+**IT CAN REFUSE, and the control proves it before anything asserts a pass.** 12 planted cases, run
+FIRST, including an unconsumed fragment and each half of the waiver alone. Not
+`continue-on-error`: the `changelog-immutability` step in this repo is, and its green tick
+therefore cannot tell a reader whether a waiver was accepted -- that had to be established by
+running the script by hand during #899. **A gate that cannot refuse is documentation with a tick
+next to it**, which is worse than nothing because the tick reads as an answer.
+
+The gate runs in `assert-tag-version`; its control runs in the `changelog` workflow on **every**
+PR, so the ability to refuse is exercised continuously rather than only on release days.
+
+### fix(containers): give the hosted container the bearer config cf#893 requires, and make the smoke gate able to see it (cf#906)
+
+cf#893 made the media containers refuse to start without a bearer configuration. **Nothing gave the
+Cloudflare-hosted `FinishContainer` one**, so the next deploy would have killed the hosted finish
+tier: the container exits at `require_bearer_config()` before binding, and the platform reports
+`Container crashed while checking for ports` -- the same shape a missing `COPY` produced earlier.
+
+Measured rather than inferred. `envVars` defaults to `{}` in `@cloudflare/containers`, the
+`[[containers]]` block carries no env, the Dockerfile sets none, and `src/` had zero `envVars` hits.
+Running the container's real entry point with that environment exits **1**; with the variable below
+it binds and serves.
+
+**The opt-out rather than a token, and the reason removes the choice rather than weighing it.**
+`mediaDoorFetch` takes the bound branch first (`if (bound) return bound.fetch(...)`) and returns
+**before** the token lookup, so the binding path never attaches an `Authorization` header -- as
+`src/video-finish-binding.ts:15` says in its own words: *"the door is the BINDING. No hostname, no
+DNS, no edge hop, no bearer required."* A token on the container turns every Worker call into 401.
+
+And it is right on the merits: GHSA-v8g8 found a fail-open default defensible behind a private
+network boundary and indefensible on a public hostname. **The `[[containers]]` binding IS that
+private boundary.** This is the one deployment where the old docstring was telling the truth, so the
+insecure-looking state is now **CHOSEN there by name, with the argument at the site**, instead of
+being the silent default everywhere including the public hostnames the advisory was about.
+
+**The smoke gate could not see any of this, and that is the more important half.**
+`container-smoke` injected `LOCAL_FINISH_TOKEN=ci-smoke-token`, which **production has no way to
+set**, so it went green on an image the hosted tier cannot start. That is cf#857's own defect class
+reappearing *inside the gate built to close it*. It now supplies what the deployment supplies.
+
+**The seam is closed by a test that crosses the language boundary**, because the two halves were
+each correct and nobody ran one against the other: `tests/container-bearer-gate.test.py` parses the
+`envVars` that `src/finish-container.ts` declares and drives the real Python `require_bearer_config`
+with exactly those variables. A TypeScript test could assert the property exists; only this asserts
+it **satisfies the gate**. It also pins that the smoke gate does not inject a token and does supply
+the declared var.
+
+Watched red on both halves: removing `envVars` fails 3 checks, and restoring the injected token in
+the smoke gate fails 2.
+
+Authenticating the binding hop itself is a real improvement and a contract change on core's bound
+path. Tracked separately; GHSA-v8g8 is closed by this, not by that.
+
+### test(fixtures): model the container's R2 write, so the film key can be absent then present (cf#833)
+
+Test-only. No behaviour change, no dependency move: this lands on the current core pin and is green
+against it.
+
+`cf#833` made the film key one whose presence **changes during a single advance**:
+
+- **before** assemble it must be ABSENT, or the self-heal short-circuit fires and the real assemble
+  path never runs, which several fixtures deliberately arrange;
+- **after** assemble it must be PRESENT, because core now heads it before calling a film
+  deliverable.
+
+A static `head: async () => null` cannot be both. The WORKER never performs that PUT either -- the
+container writes the film straight to R2 through a presigned URL -- so no Worker-side mock can
+observe it through `put`, and every fixture modelled an R2 in which the film never landed. That was
+harmless only while nothing looked.
+
+`tests/install-vf-fetch.ts` now owns the transition instead of each fixture guessing at it. The door
+records the key it was ASKED to write (from the request, since core content-hashes the mux output
+and a fixture cannot name `film-audio-<hash>.mp4`), a per-test registry cleared in `afterEach` holds
+it, and `vfHead()` reads it. `recordContainerWrite` does the same for a module, called from inside
+the `/invoke` and `/poll` mocks.
+
+**Reaching the mock is the write; declaring a response is not.** That distinction is the whole
+design: `#600`'s in-flight guard supplies an invoke response precisely to assert the module was
+NEVER dispatched, so recording from the response object would assert an artifact that fixture says
+does not exist.
+
+Two things were tried and backed out for that reason, and both looked like write records:
+
+- the job's declared output keys -- asserts presence for the entire test, so the key is never absent;
+- the module invoke response's echoed `film_key` -- intent, not execution.
+
+Each broke exactly one fixture whose premise is absence. Two sources survive: explicit `presentKeys`
+for artifacts that existed BEFORE a test, and the time-modelled registry for what was written DURING
+it. A failed job and a refused submit record nothing, so the gate's refusal arm stays reachable.
+
+Sizes sit above the 2048-byte floor deliberately: ABSENT and TRUNCATED are different refusals, and a
+1-byte stub trips the second while reading like the first.
+
+Three fixtures keep a per-fixture rule instead, each stating its scenario at the site: `masterEnv`
+declares the shape of the content-hashed mux output it expects, and `degradeEnv` declares the silent
+cut present (it was assembled in an earlier phase) while leaving the mux output absent.
+
+**Verified by diffing failing-test NAMES against the pre-change baseline, not counts.** The count was
+12 both times a backed-out attempt was measured; a count would have reported "no change" while one
+fixture had been silently traded for another.
+
+### chore(deps): pin `@skyphusion-labs/vivijure-core` to `^1.25.0` (cf#834, cf#856, cf#813)
+
+Moves the studio onto core 1.25.0, which carries ten fragments including `core#306`
+(`InvokeFailureReason`), `core#307` (assemble admission), `core#321`, `core#322` and `core#833`.
+
+**`cf#834` IS A BEHAVIOUR CHANGE, NOT A BUGFIX, and it reaches users on this bump.** The post-clips
+dialogue leg now **FAILS** what it cannot deliver instead of shipping a silent film booked as
+complete, across **13 of 15 live motion doors** including `cf-seedance`. That is the fix, and it is
+the last of the four "reports success without producing a film" defects. It also means **output that
+currently `succeeds` will start failing wherever dialogue was being silently dropped.** A red render
+downstream of this bump is the gate working, not a regression introduced by it.
+
+Two more behaviour changes ride along and they are NOT the same condition, so do not collapse them:
+
+- **`core#327`** -- an **unreachable** finish tier now delivers the declared clips rather than
+  hard-failing.
+- **`core#330`** -- a container that **answers and refuses** still fails **loud**.
+
+Down and refusing are different states with different outcomes, which is the whole point.
+
+**`cf#813` lands here too.** `core#322` matches the assemble delivery target to the measured source
+instead of a fixed 1920x1080, so films stop being upscaled from whatever the door produced (12 of 15
+installed doors were upscaled at default config) and a 4k source stops being destroyed to hit a
+constant.
+
+Three test assertions move with the pin because they encode behaviour that only exists at 1.25.0,
+and each now asserts the NEW contract rather than merely flipping a boolean:
+
+- **`core#321`** split `{unreachable: true}` from `null`. A transport failure and a 2xx answer with
+  an unparseable body used to collapse to the same value, and only the first should trip the
+  per-pass breaker. Both arms are pinned now, including a case added for the `null` arm.
+- **`cf#856`** records `content_unmeasured` / `validated_unmeasured` when a gate could not run, so
+  `changed` is now true on a skip. Measured on a live film at **5 skips, 0 passes**, with nothing
+  anywhere recording that the pixel gate never looked at a single clip.
+
+The fixture work this bump needed landed separately in the PR below it, so this change is the pin
+plus those three assertions.
+
 ## v1.34.3 -- 2026-09-27
 
 ### fix(containers): stream the audio-master and audio-mix uploads instead of reading them into RAM (cf#814)
