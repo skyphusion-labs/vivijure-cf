@@ -5,6 +5,47 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.34.1 -- 2026-09-27
+
+### fix(finish): bound the stateless pool under the container application cap (cf#810)
+
+`SYNC_POOL_SIZE` was 4 against `max_instances = 3`, so the stateless pool alone could claim every
+instance slot before a single encode ran. It is now 1, leaving 2 slots as job headroom, and
+`tests/video-finish-pool-ceiling-cf810.test.ts` asserts `SYNC_POOL_SIZE + RESERVED_JOB_INSTANCES
+<= max_instances` against the real `wrangler.toml.example` so the two numbers cannot drift apart
+again.
+
+THE MEASUREMENT, which is worth more than the diff, because this is the one case where the
+predicted failure was watched happening rather than argued about. Film `film-40e0cd09` was
+submitted against the deployed v1.34.0 on 2026-09-27: 2 scenes, 480p, `draft`, no `finish_config`,
+so the path was keyframe -> clips -> assemble with the finish chain skipped.
+
+    04:49:31Z  keyframe                          container instances running: 0
+    04:50:12Z  clips (cf-seedance)               container instances running: 0
+    04:53:06Z  assemble                          job instance created, never reached `running`
+    04:57:46Z  failed: "video-finish async submit failed (no jobId)"
+
+Both cloud doors ran with the container correctly idle, which is the negative half of the result.
+At assemble the binding resolved and the Durable Object was created (a 32-hex routing-key instance
+appeared 5s ahead of the phase stamp), but the container could not START: the three pool names
+`sync-1`, `sync-2` and `sync-3` held the cap of 3. Pool size was confirmed from the container side
+independently of the deployed script, because `poolIndex()` is `floor(random * SYNC_POOL_SIZE)` and
+indices 1, 2 and 3 are unreachable unless the pool is at least 4.
+
+Two further findings from that run, each filed separately rather than fixed here:
+
+- The over-cap refusal is NOT prompt. Core's `submitAsync` stalled for minutes rather than taking a
+  fast error, so the film presented as a hang in `assemble` before it failed. The comment on
+  `SYNC_POOL_SIZE` claimed it "ERRORS rather than queueing"; that was directionally right and
+  misleading about timing, and it is corrected in this release.
+- Each retry minted a FRESH routing key, so every attempt created another instance record that
+  could not start. The application's instance list grew from 4 to 5 while the film was stuck.
+
+What this release does NOT change: core failed the film loudly and named the leg. It did not set
+`phase: done`, and it did not ship the per-shot clips as a film. The honest failure is the
+behaviour under test here, and it held.
+
+
 ## v1.34.0 -- 2026-09-27
 
 ### fix(video-finish): stream the remaining artifact uploads instead of reading them into memory
@@ -1776,6 +1817,14 @@ test case rather than promised.
 
 ## v1.27.0 -- 2026-08-15
 
+**CORRECTED AFTER PUBLICATION.** At the v1.27.0 tag this section did not mention six changes the
+tag contains: the `PATCH /api/modules/:name/config` strict write (cf#387), the SDXL vs Wan adapter
+readiness fields (cf#383), the Wan LoRA projection on poll / film / event (cf#392), the video-finish
+`POST /overlay` 410 and the demo catalog `text-overlay` seed drop (both cf#24), and the demo chat
+jailbreak refusal (cf#31). Their entries had been hand-appended to the v1.21.0 section, which
+describes a release that does not contain them. They are moved here, after the entries the tag
+carries, and are declared in `scripts/changelog-corrections.txt` (cf#820).
+
 ### fix(modules): project `studio_release` on `GET /api/modules` (cf#287)
 
 The module registry response carried no studio release identifier, so a caller inspecting
@@ -1903,6 +1952,45 @@ The survival check asserts the MODULE_ line DELTA is exactly 1, not merely that
 leaves the strip running to EOF, and the guard passes because the binding really is gone -- driven at
 481 lines -> 240 with MODULE_ 42 -> 4, and no downstream check catches it either, since every
 downstream-guarded key sits above the truncation point.
+
+### Fixed
+
+- **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
+- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
+
+### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
+
+Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
+guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
+Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
+operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
+(vivijure-core, unreleased).
+
+### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
+
+`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
+null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
+
+- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
+- Legacy `lora_status` retained and documented as shared training-job state only.
+- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
+- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
+
+### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
+
+`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
+view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
+required R2 archaeology. The host now:
+
+- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
+  injected or cap-dropped;
+- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
+  (`GET/POST /api/render/film`), and the scatter 201 body;
+- emits `film.wan_lora_projection` structured lines (docs/observability.md).
+
+Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
+bump.
 
 ## v1.26.0 -- 2026-08-14
 
@@ -2379,60 +2467,6 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
-- **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
-- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
-- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
-### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
-
-`runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
-refusals. Bound raised to 480; cuts end in `...` so a reader knows the string is incomplete.
-`boundDetail` is the single place this happens.
-
-### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298)
-
-A terminal write lost on the poll path used to leave the row at `submitted` forever (measured 2/20
-in a clean run). Retry already narrowed the window; this closes the gap for rows still open:
-
-- Shared reconciler in `modules/_shared/runpod-job-log.ts`: list open rows, re-query RunPod, write
-  terminal outcome; past ~25 min with no answer write `unknown` (new outcome; honest vs inventing
-  completed). Best-effort, never gates render.
-- Wired on **keyframe** and **own-gpu** `/poll` only (the two modules that produced the measured
-  stuck rows). Other modules can adopt later.
-- Docs: `docs/runpod-job-log.md`. Tests: status map, dropped terminal write, retention `unknown`.
-
-Hosted module telemetry (RunPod). Dual-panel N/A for vivijure-local studio door.
-
-### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
-
-Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
-guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
-Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
-operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
-(vivijure-core, unreleased).
-
-### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
-
-`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
-null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
-
-- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
-- Legacy `lora_status` retained and documented as shared training-job state only.
-- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
-- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
-### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
-
-`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
-view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
-required R2 archaeology. The host now:
-
-- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
-  injected or cap-dropped;
-- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
-  (`GET/POST /api/render/film`), and the scatter 201 body;
-- emits `film.wan_lora_projection` structured lines (docs/observability.md).
-
-Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
-bump.
 
 ## v1.20.1 -- 2026-08-05
 
