@@ -1,8 +1,11 @@
 // infinitetalk: an audio-driven motion.backend module worker (vivijure-module/2), MeiGen-AI
 // InfiniteTalk on the RunPod PUBLIC endpoint api.runpod.ai/v2/infinitetalk. Portrait plus Cast
 // audio: the mouth follows a line we synthesized, so this door needs a `dialogue` render to have
-// produced audio_url first (see kling.ts audioUrl) and is the only door that lip-syncs rather
-// than inventing speech.
+// produced audio_url first (see kling.ts audioUrl). Two of the fifteen motion.backend doors
+// declare driving_audio and lip-sync: this one and alibaba-wan (which consumes audio_url in its
+// wan.ts). What is unique here is the PAIR of flags, not either half -- driving_audio true AND
+// native_audio false, so there is no invent-speech fallback and a shot with no line is refused
+// below rather than voiced by a stranger. alibaba-wan is native_audio true, so it voices it.
 // Async (same shape as seedance): GET /module.json, POST /invoke (submit -> poll token), POST /poll
 // (check GET /status, finalize to R2 on completion). Failures are DATA.
 

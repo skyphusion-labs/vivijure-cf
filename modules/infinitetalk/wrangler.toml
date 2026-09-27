@@ -1,9 +1,10 @@
 # infinitetalk module worker (vivijure-module/2): MeiGen-AI InfiniteTalk on the RunPod PUBLIC
 # endpoint api.runpod.ai/v2/infinitetalk (a vendor slug, NOT one of our serverless endpoints, so
 # it holds none of our worker slots and costs nothing at rest). Audio-driven: it takes a portrait
-# plus Cast audio, so it is the only motion.backend door that lip-syncs to a voice we made rather
-# than inventing speech. Same async pattern as seedance; bound into the core as
-# MODULE_INFINITETALK.
+# plus Cast audio and moves the mouth to it. Two of the fifteen motion.backend doors do that
+# (this one and alibaba-wan); what is unique here is the PAIR driving_audio true AND native_audio
+# false, so there is no invent-speech fallback and a shot with no line is refused rather than voiced
+# by a stranger. Same async pattern as seedance; bound into the core as MODULE_INFINITETALK.
 # account_id is read from CLOUDFLARE_ACCOUNT_ID (env), not hardcoded.
 
 name = "vivijure-module-infinitetalk"
