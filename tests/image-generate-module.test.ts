@@ -185,15 +185,35 @@ describe("image.generate invoke", () => {
     expect(body.error).toContain("@cf/lykon/dreamshaper-8-lcm");
   });
 
-  it("FAILS LOUD when the provider flags/refuses the generation", async () => {
-    const res = await invoke(envWith(async () => ({ error: "content policy" })), {
+  it("FAILS LOUD when the provider flags/refuses, WITHOUT relaying the provider prose", async () => {
+    // cf#223. THIS TEST USED TO ASSERT `toContain("content policy")` -- that is, it asserted that
+    // the provider's own error prose reached the `error` string this module returns. That prose is a
+    // provider response body, and on a real moderation refusal it QUOTES THE USER PROMPT back
+    // ("Your prompt ... may contain content that is not allowed"). So the assertion was not merely
+    // failing to catch the leak, it was PINNING it in place as the expected behaviour, which is why
+    // fixing the leak turned this test red.
+    //
+    // The INTENT is kept exactly: image generation has no honest passthrough, so a provider refusal
+    // must fail loud and name the model. Only the means changes, and it is now inverted -- the
+    // prose must be ABSENT.
+    //
+    // The fixture is a distinctive marker rather than a plausible phrase like "content policy",
+    // because a negative assertion against a generic string passes for boring reasons.
+    const PROSE = "PROVIDERPROSE4b1e9a refused the prompt";
+    const res = await invoke(envWith(async () => ({ error: PROSE })), {
       hook: "image.generate",
       input: { prompt: "x" },
       config: { model: "google/nano-banana-pro" },
     });
     const body = (await res.json()) as { ok: boolean; error?: string };
+    // POSITIVE: still loud, still diagnosable -- the caller learns WHICH model refused and that the
+    // refusal came from the provider rather than from us.
     expect(body.ok).toBe(false);
-    expect(body.error).toContain("content policy");
+    expect(body.error).toContain("google/nano-banana-pro");
+    expect(body.error).toContain("failed");
+    // NEGATIVE: and none of the provider's text, whole or in part.
+    expect(body.error, "provider prose relayed into the returned error").not.toContain(PROSE);
+    expect(body.error, "a fragment of the provider prose survived").not.toContain("refused the prompt");
   });
 
   it("rejects an empty prompt rather than generating something arbitrary", async () => {
