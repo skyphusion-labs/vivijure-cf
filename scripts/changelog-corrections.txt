@@ -28,3 +28,4 @@
 
 v1.20.1  section was a bare heading at the tag; body written retroactively in 5451215 (#419). cf#820.
 v1.27.0  six entries the tag contains (cf#387, cf#383, cf#392, cf#24 x2, cf#31) were stranded in the v1.21.0 section; moved here. cf#820.
+v1.34.1  named the pool ceiling as the measured CAUSE of the assemble failure; the v1.34.1 deploy falsified that. cf#851.

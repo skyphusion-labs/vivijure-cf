@@ -15,6 +15,24 @@ instance slot before a single encode ran. It is now 1, leaving 2 slots as job he
 <= max_instances` against the real `wrangler.toml.example` so the two numbers cannot drift apart
 again.
 
+**CORRECTED AFTER PUBLICATION.** This section originally named the pool ceiling as the measured
+CAUSE of the assemble failure. Deploying this very release falsified that. On 2026-09-27 at
+05:24:30Z, film `film-28825997` was submitted in the identical shape against the deployed v1.34.1.
+The pool fix was confirmed live by the one instrument that survives scrutiny: `sync-0` was the only
+pool name that ever appeared, and `sync-1` / `sync-2` / `sync-3` stayed silent, so `SYNC_POOL_SIZE`
+was 1 and two instance slots were free. **The job container still did not start, and the film
+failed with the byte-identical error.** So the pool arithmetic was a real defect, and it was not
+the blocker. `#823` was necessary, shipped correctly, and did not fix the film; the actual cause
+is under investigation in cf#851.
+
+Two further claims in the text below are weaker than they read, and are left in place rather than
+edited away so the reasoning stays auditable. The container-side timestamps come from the
+Containers instances endpoint, which was subsequently measured reporting `state: running` with a
+`started_at` fourteen minutes in the past, so "a 32-hex routing-key instance appeared 5s ahead of
+the phase stamp" is not a second-accurate claim (cf#844). What does survive is the NAME evidence:
+a pool name is chosen at call time and cannot be a stale record of a name the deployed code can no
+longer emit.
+
 THE MEASUREMENT, which is worth more than the diff, because this is the one case where the
 predicted failure was watched happening rather than argued about. Film `film-40e0cd09` was
 submitted against the deployed v1.34.0 on 2026-09-27: 2 scenes, 480p, `draft`, no `finish_config`,
@@ -27,8 +45,9 @@ so the path was keyframe -> clips -> assemble with the finish chain skipped.
 
 Both cloud doors ran with the container correctly idle, which is the negative half of the result.
 At assemble the binding resolved and the Durable Object was created (a 32-hex routing-key instance
-appeared 5s ahead of the phase stamp), but the container could not START: the three pool names
-`sync-1`, `sync-2` and `sync-3` held the cap of 3. Pool size was confirmed from the container side
+appeared 5s ahead of the phase stamp), but the container could not START. The pool holding the cap
+was the explanation given here originally and it is WRONG, per the correction above. Pool size was
+nonetheless confirmed from the container side
 independently of the deployed script, because `poolIndex()` is `floor(random * SYNC_POOL_SIZE)` and
 indices 1, 2 and 3 are unreachable unless the pool is at least 4.
 
