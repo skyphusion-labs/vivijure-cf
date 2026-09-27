@@ -25,8 +25,10 @@ export interface CatalogTarget {
   configModel?: string;
 }
 
-/** A module's display name: its first `provides` label when it has one, else the module name. */
-function moduleLabel(mod: RegisteredModule): string {
+/** A module's display name: its first `provides` label when it has one, else the module name.
+ *  EXPORTED (cf#919) so the talking-door refusal names a door the same way the catalog rows do. A
+ *  second copy of this rule is how two surfaces start calling one module different things. */
+export function moduleLabel(mod: RegisteredModule): string {
   const label = mod.provides?.[0]?.label;
   return (typeof label === "string" && label.trim()) || mod.name;
 }

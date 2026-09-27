@@ -211,7 +211,15 @@
     const ul = $("#cast-voice-honor");
     if (!ul) return;
     ul.innerHTML = "";
-    if (!Array.isArray(doors) || !doors.length) return;
+    // cf#919: talking_doors is projected through the installed motion.backend set, so an EMPTY list
+    // is now a real answer (this studio has no talking door) rather than only a failed fetch. Say so;
+    // a silently blank list reads as "nothing to know about voice honoring", which is the opposite.
+    if (!Array.isArray(doors) || !doors.length) {
+      const li = document.createElement("li");
+      li.textContent = "No talking door is installed on this studio, so a kept voice sample cannot be used in a film.";
+      ul.appendChild(li);
+      return;
+    }
     for (const d of doors) {
       if (!d || !d.name || !d.label) continue;
       const li = document.createElement("li");
