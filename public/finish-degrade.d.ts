@@ -94,14 +94,39 @@ export function clipFinishSummary(clip: ClipFinishDegrade | null | undefined): s
  *
  *  `degraded` is the COUNT and `reasons` is DEDUPED, so `degraded >= reasons.length`; the
  *  two are not interchangeable. */
-export type StageKey = "speech" | "master" | "dialogue";
+export type StageKey = "speech" | "master" | "dialogue" | "film_finish";
 export const STAGE_KEYS: StageKey[];
 
 export interface StageDegrade {
   stage: StageKey;
   degraded: number;
   reasons: string[];
+  /** cf#860: `film_finish` only. The steps that ran. Structural, NOT a degrade. */
+  applied?: string[];
+  /** cf#860 / fc#1662: `film_finish` only. Steps whose artifact was found in R2 rather than run
+   *  -- the wasted-work signal. Carried so it is not re-derived later; it is NOT a degrade and
+   *  must never affect a band or light a badge. */
+  adopted?: string[];
 }
+
+/** cf#860: `output.film_finish` normalised into the shared `{ degraded, reasons }` form.
+ *
+ *  Core emits `{ applied, adopted, degraded: string | null }`, and the whole object is `null`
+ *  when the chain was never reached -- the same three-state ladder in a different shape:
+ *
+ *    null / absent      the chain was never reached          -> unmeasured
+ *    degraded: null     it ran and applied cleanly           -> none-reported
+ *    degraded: "..."    it ran and SHIPPED UNCARDED          -> reported
+ *
+ *  Returns null for an unreadable shape, INCLUDING an object with no `degraded` key at all:
+ *  core always emits that key, so its absence is a shape we do not recognise, and reading an
+ *  unrecognised shape as "ran clean" is the one direction this must never fail in. */
+export function parseFilmFinish(raw: unknown): {
+  degraded: number;
+  reasons: string[];
+  applied: string[];
+  adopted: string[];
+} | null;
 
 export function stageFrom(
   output: RenderOutput | null | undefined,

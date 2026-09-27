@@ -13,6 +13,7 @@ import {
   degradeFrom,
   deliverable,
   deliveredSummary,
+  parseFilmFinish,
   STAGE_KEYS,
   stageBand,
   stageFrom,
@@ -391,8 +392,15 @@ describe("clipFinishSummary (cf#595)", () => {
 // A test that cannot observe the collapse it exists to prevent is decoration.
 const ROOT = join(import.meta.dirname, "..");
 
+// DERIVED from STAGE_KEYS with ONE named exception, rather than a hand-typed list: a new
+// count-shaped stage is picked up here automatically. `film_finish` is excluded because its RAW
+// shape is different (`degraded: string | null`, cf#860) -- the LADDER is identical and is
+// asserted for it in its own block below, but a `{ degraded: 0, reasons: [] }` fixture is not a
+// payload core ever emits for that key, so feeding it one would assert against a fiction.
+const COUNT_SHAPED = STAGE_KEYS.filter((k) => k !== "film_finish");
+
 describe("cf#853 the ladder: absent, clean and degraded are three different states", () => {
-  for (const stage of STAGE_KEYS) {
+  for (const stage of COUNT_SHAPED) {
     describe(stage, () => {
       it("ABSENT key is UNMEASURED, and is not a limit", () => {
         const out = { output_key: "renders/film-x/film.mp4" } as RenderOutput;
@@ -574,5 +582,99 @@ describe("cf#853 the panel is actually wired to the new signals", () => {
     }
     expect(js).toContain("stagesNote(stageInfos)");
     expect(js).toContain("window.finishDegrade.stageSummary(info)");
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// cf#860: film_finish, the unfinished half of cf#549.
+//
+// cf#549 was filed about exactly this case -- "a film that ships without its title card is
+// indistinguishable from one that shipped complete" -- and core has been projecting the field that
+// answers it while nothing in public/ read it. Same three-state ladder, different raw shape:
+//
+//   null / absent      the chain was never reached        -> unmeasured
+//   degraded: null     it ran and applied cleanly         -> none-reported
+//   degraded: "..."    it ran and SHIPPED UNCARDED        -> reported
+//
+// Unlike the cf#853 keys this is LIVE on the installed core, so these fixtures are the shape a
+// real payload carries today rather than one waiting on a core release.
+describe("cf#860 film_finish: the same ladder in a different shape", () => {
+  const view = (degraded: string | null, extra: Record<string, unknown> = {}) =>
+    ({ film_finish: { applied: [], adopted: [], degraded, ...extra } }) as unknown as RenderOutput;
+
+  it("the whole object null is UNMEASURED -- the chain was never reached", () => {
+    // Core ALWAYS sets the key and writes null when `job.film_finish` is absent, so this is the
+    // common real payload, not an edge case.
+    expect(stageBand({ film_finish: null } as unknown as RenderOutput, "film_finish")).toBe(
+      DEGRADE_BANDS.UNMEASURED,
+    );
+    expect(stageFrom({ film_finish: null } as unknown as RenderOutput, "film_finish")).toBeNull();
+  });
+
+  it("degraded null is NONE-REPORTED: it ran and applied cleanly, and is not a limit", () => {
+    expect(stageBand(view(null), "film_finish")).toBe(DEGRADE_BANDS.NONE_REPORTED);
+    expect(stageFrom(view(null), "film_finish")).toBeNull();
+  });
+
+  it("null-object and degraded-null are DIFFERENT, which is the whole point of cf#549", () => {
+    const never = { film_finish: null } as unknown as RenderOutput;
+    expect(stageBand(never, "film_finish")).not.toBe(stageBand(view(null), "film_finish"));
+  });
+
+  it("a degraded string is REPORTED, with the reason VERBATIM", () => {
+    const out = view("film-titles: MODULE_FILM_TITLES not bound; shipped uncarded");
+    expect(stageBand(out, "film_finish")).toBe(DEGRADE_BANDS.REPORTED);
+    const info = stageFrom(out, "film_finish")!;
+    expect(info.degraded).toBe(1);
+    expect(info.reasons).toEqual(["film-titles: MODULE_FILM_TITLES not bound; shipped uncarded"]);
+    expect(stageSummary(info)).toContain("title-card and caption pass");
+    // One reason always, so a count would be false precision.
+    expect(stageSummary(info)).not.toMatch(/\d/);
+  });
+
+  it("an object with NO `degraded` key is UNREADABLE, never clean", () => {
+    // Core always emits the key, so its absence is a shape we do not recognise. Reading an
+    // unrecognised shape as "ran clean" is the one direction this must never fail in.
+    const out = { film_finish: { applied: ["titles"], adopted: [] } } as unknown as RenderOutput;
+    expect(stageBand(out, "film_finish")).toBe(DEGRADE_BANDS.UNREADABLE);
+    expect(stageFrom(out, "film_finish")).toBeNull();
+  });
+
+  it("a non-string, non-null `degraded` is UNREADABLE", () => {
+    for (const bad of [0, 1, {}, [], true, ""] as unknown[]) {
+      expect(stageBand(view(bad as null), "film_finish")).toBe(DEGRADE_BANDS.UNREADABLE);
+    }
+  });
+
+  it("`adopted` is carried, and CANNOT light a badge on its own (fc#1662)", () => {
+    // The wasted-work signal: steps whose artifact was found in R2 rather than run. Real, worth
+    // keeping, and NOT a degrade. A film that reused every step but applied its cards cleanly is
+    // not a limited film, and if adopted ever starts lighting the badge that is this test's job.
+    const reused = view(null, { applied: ["titles", "subtitle"], adopted: ["titles", "subtitle"] });
+    expect(stageBand(reused, "film_finish")).toBe(DEGRADE_BANDS.NONE_REPORTED);
+    expect(stageFrom(reused, "film_finish")).toBeNull();
+    expect(combineBands([stageBand(reused, "film_finish")]).limited).toBe(false);
+    // But it is not thrown away either: it rides on the info when there IS a degrade to report.
+    const degradedAndReused = view("subtitle: passthrough", { adopted: ["titles"] });
+    expect(stageFrom(degradedAndReused, "film_finish")!.adopted).toEqual(["titles"]);
+    expect(stageFrom(degradedAndReused, "film_finish")!.applied).toEqual([]);
+  });
+
+  it("a malformed LEDGER does not decide the band -- only the degrade does", () => {
+    // Deliberately forgiving here and strict on `degraded`: the band is a statement about the
+    // degrade, so junk in `applied`/`adopted` must not turn a clean pass into "unreadable".
+    const out = view(null, { applied: "not-an-array", adopted: 7 });
+    expect(stageBand(out, "film_finish")).toBe(DEGRADE_BANDS.NONE_REPORTED);
+    expect(parseFilmFinish({ degraded: null, applied: "x", adopted: 7 })).toEqual({
+      degraded: 0,
+      reasons: [],
+      applied: [],
+      adopted: [],
+    });
+  });
+
+  it("is in STAGE_KEYS, so both panel surfaces pick it up with no new rendering code", () => {
+    expect(STAGE_KEYS).toContain("film_finish");
   });
 });
