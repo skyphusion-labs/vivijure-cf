@@ -65,8 +65,8 @@ Each add-on tells you four things:
 > profile or flag is set, so a binding can never dangle.
 >
 > The profile switch: your `deploy.env` sets `VIVIJURE_PROFILE`. **`standard`** (the default) is the
-> core + render + media stack described above. **`satellites`** also deploys the three GPU finish
-> endpoints below. (The old `minimal` / `full` names still work as aliases and print a deprecation
+> core + render + media stack described above. **`satellites`** also deploys the 1 GPU finish
+> endpoint below. (The old `minimal` / `full` names still work as aliases and print a deprecation
 > note: `minimal` -> `standard`, `full` -> `satellites`.) The local-GPU render door is a separate flag,
 > `INSTALL_LOCAL_GPU=1`.
 
@@ -146,8 +146,17 @@ shared note just below), then put its endpoint id into the account Secrets Store
   dashboards.
 - **What you get:** live tracing of a render from outside the Worker, so you can see what happened and
   why. See [observability.md](observability.md).
-- **What it needs:** your own `vivijure-tail` Worker deployed first, then the `tail_consumers` line kept
-  (`deploy.sh` strips this our-fleet-only block by default, so a stock deploy is poll-only).
+- **What it needs:** a Loki you run, a Cloudflare **Workers VPC service** that reaches it (supply the id
+  as `LOKI_VPC_ID`), your own `vivijure-tail` Worker deployed first with `scripts/deploy-tail.sh`, and
+  THEN the `tail_consumers` line in `wrangler.toml.example` uncommented. That order is load-bearing:
+  the core deploy fails on a tail consumer that is not live yet, and typecheck cannot catch it.
+- **Off by default, and there is no reference instance (cf#838, 2026-09-27):** the line ships commented
+  out. Without this tier a stock deploy is poll-only plus Cloudflare Workers Logs, which is enough to
+  operate a single-user studio.
+- **How you know it is working:** `vivijure-tail` logs one `{"ev":"tail.sink.drop","reason":...}` line
+  per batch it could NOT deliver, in its own Workers Logs. Live invocations and no drop lines means it
+  is shipping. This exists because for a quarter the answer was neither: the consumer was bound, the
+  sink was gone, and nothing reported a thing.
 
 ---
 

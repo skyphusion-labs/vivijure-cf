@@ -1,10 +1,37 @@
 // video-finish 404 policy (fleet-chezmoi#1662).
 //
+// TOPOLOGY UPDATE 2026-09-27 (cf#837). Everything below the HISTORICAL line was derived from a
+// 3-replica swarm service behind a fleet VIP. That system is deleted. The arithmetic is kept, and
+// kept labelled, because it is still the right arithmetic for ANY door that fans out across
+// replicas (a self-hoster running three video-finish containers behind a load balancer reproduces
+// the ambiguity exactly). What changed is whose topology it describes: not ours.
+//
+// Our two callers today, measured rather than assumed:
+//   - modules/subtitle and modules/film-titles reach the door over PLAIN HTTPS at VIDEO_FINISH_URL.
+//     They were NOT migrated to the cf#810 container binding: MEDIA_DOOR_FETCHERS is synthesised in
+//     the CORE worker (src/orchestrator-env.ts) and a module worker has no FINISH_CONTAINER binding.
+//   - The hosted value of VIDEO_FINISH_URL is https://video-finish.skyphusion.org, which is
+//     NXDOMAIN. A poll therefore fails at connect and never produces a 404 to classify, so
+//     classifyVideoFinish404 is UNREACHABLE on the hosted deploy. That is a dead tier, tracked in
+//     cf#780 / cf#746, not a policy defect, and it is why this file has no live subject to tune
+//     against.
+//   - Where the door DOES answer and is a single instance (the cf#810 container is one per job, and
+//     a self-host container is normally one), P(peer 404) is 0 and the streak below stops being peer
+//     arithmetic: it becomes tolerance for a submit/registration race and for a restart that lost
+//     the in-process registry with its ephemeral disk. Same number, different and smaller claim.
+//
+// Do NOT re-tune CONTAINER_NOTFOUND_STREAK from the 2/3 figure. It was a property of three
+// cloudflared connectors that no longer exist, and the suite already pins that the streak cannot
+// increment in production shape (tests/video-finish-404-peer.test.ts, "PRODUCTION SHAPE"), so the
+// real terminal is the 90-minute submittedAt backstop below.
+//
+// --- HISTORICAL, as measured on the retired fleet ---------------------------------------------
+//
 // WHY THIS FILE EXISTS. subtitle and film-titles poll GET /async/status/:id on the
-// video-finish VIP. The job registry is in-process. The service is 3 replicas, VIP
-// 10.0.1.90, hostname video-finish:8000, no host port (#1874: keep that address; do
-// not copy blender's host.ipv4 pin). A replica that does not hold the job answers
-// 404, correctly, forever.
+// video-finish VIP. The job registry is in-process. The service was 3 replicas, VIP
+// 10.0.1.90 (retired), hostname video-finish:8000, no host port (#1874: keep that
+// address; do not copy blender's host.ipv4 pin). A replica that does not hold the job
+// answers 404, correctly, forever.
 //
 // MEASURED 2026-08-14 (new TCP to the VIP, from each cloudflared connector):
 // found=4 / 404=8. That is 1/3, the replica that holds the job. P(peer 404 | job
@@ -46,6 +73,11 @@ export const CONTAINER_NOTFOUND_GRACE_MS = 30_000;
  * Consecutive 404s that mean "no replica holds this id", not "not mine".
  * (2/3)^12 = 4096/531441 ≈ 0.771% false-fatal under independent 2/3 scatter.
  * N=3 is (2/3)^3 = 8/27 ≈ 29.6% and is the same defect.
+ *
+ * That 2/3 came from the retired 3-replica VIP (see the header). Against a SINGLE-instance door
+ * it is restart / registration-race tolerance instead, and the number is deliberately unchanged:
+ * it is not load-bearing in production shape (the streak cannot increment there) and re-deriving
+ * it against a topology with no live subject would be arithmetic about nothing.
  */
 export const CONTAINER_NOTFOUND_STREAK = 12;
 

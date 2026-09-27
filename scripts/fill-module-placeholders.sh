@@ -41,12 +41,48 @@ replace_in_place "s/REPLACE_WITH_D1_DATABASE_ID/${D1_DATABASE_ID:-}/g"
 # --- Media URL / door-list vars: substitute from env; unset becomes empty (honest off).
 # Wrangler ${VAR} interpolation of an unset var deploys the LITERAL ${VAR} (v1.31.1 class).
 # Filling here means empty-is-off rather than a hostname that is the placeholder text.
+#
+# AND IT REPORTS WHAT IT STRIPPED (cf#840). An unset OPTIONAL door var is not an error: unset is
+# the NORMAL state and the state a self-host ships in, so refusing it would break the ordinary
+# path. What was missing is not a failure, it is a REPORT. cf#489 is the record of the cost: an id
+# absent from the ci.yml env block strips the door it was meant to bind and the deploy stays
+# GREEN, and the only tell was a log line that did not exist on this seam. A deliberate opt-out and
+# a forgotten variable render BYTE-IDENTICALLY in the toml, so nothing downstream can tell them
+# apart; the only place the difference is still knowable is HERE, before the substitution.
+#
+# Reported per module and only for vars THIS toml actually declares: a var a module never mentions
+# is not a stripped door, and counting it would make the loud line noise that gets filtered out.
+# The denominator is printed too, so "no doors" is stated rather than looking like no output.
+#
+# NAMES ONLY, never the value. These are repo VARIABLES rather than secrets, but an origin list is
+# still deploy topology, and SET/EMPTY is the entire question this report answers.
+door_declared=0
+door_bound=""
+door_stripped=""
 for v in VIDEO_FINISH_URL AUDIO_MASTER_URL AUDIO_BEAT_SYNC_URL AUDIO_MIX_URL IMAGE_PREP_URL \
          FINISH_UPSCALE_DOORS FINISH_BLENDER_DOORS; do
   eval "val=\${$v:-}"
+  # Declared on a LIVE line? -F keeps ${...} literal (the v0.16.2 MCP-guard lesson: '${' as a
+  # regex is grep-dependent), and the comment strip keeps a documented example from counting.
+  if grep -vE '^[[:space:]]*#' "$toml" | grep -qF "\${$v}"; then
+    door_declared=$((door_declared + 1))
+    if [ -n "$val" ]; then door_bound="$door_bound $v"; else door_stripped="$door_stripped $v"; fi
+  fi
   escaped=$(printf '%s' "$val" | sed 's/[&|]/\\&/g')
   replace_in_place "s|\${${v}}|${escaped}|g"
 done
+
+if [ "$door_declared" -eq 0 ]; then
+  echo "optional-doors: ${toml} declares 0 optional door vars -- nothing to bind or strip."
+else
+  echo "optional-doors: ${toml} declares ${door_declared} optional door var(s)."
+  for v in $door_bound; do
+    echo "optional-doors: BOUND    ${v} -- set, so this door is LIVE in ${toml}."
+  done
+  for v in $door_stripped; do
+    echo "::warning::optional-doors: STRIPPED ${v} -- unset, so that door is OFF in ${toml} (RunPod/degrade path) and this deploy still succeeds. cf#489/cf#840: a forgotten variable looks exactly like a deliberate opt-out here, so confirm this was intended."
+  done
+fi
 
 # Hosted no longer ships [[vpc_services]] or ${VPC_ on module tomls. Leftover is a regression.
 if grep -vE '^[[:space:]]*#' "$toml" | grep -q '^\[\[vpc_services\]\]'; then
