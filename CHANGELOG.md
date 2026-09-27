@@ -5,6 +5,47 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.34.1 -- 2026-09-27
+
+### fix(finish): bound the stateless pool under the container application cap (cf#810)
+
+`SYNC_POOL_SIZE` was 4 against `max_instances = 3`, so the stateless pool alone could claim every
+instance slot before a single encode ran. It is now 1, leaving 2 slots as job headroom, and
+`tests/video-finish-pool-ceiling-cf810.test.ts` asserts `SYNC_POOL_SIZE + RESERVED_JOB_INSTANCES
+<= max_instances` against the real `wrangler.toml.example` so the two numbers cannot drift apart
+again.
+
+THE MEASUREMENT, which is worth more than the diff, because this is the one case where the
+predicted failure was watched happening rather than argued about. Film `film-40e0cd09` was
+submitted against the deployed v1.34.0 on 2026-09-27: 2 scenes, 480p, `draft`, no `finish_config`,
+so the path was keyframe -> clips -> assemble with the finish chain skipped.
+
+    04:49:31Z  keyframe                          container instances running: 0
+    04:50:12Z  clips (cf-seedance)               container instances running: 0
+    04:53:06Z  assemble                          job instance created, never reached `running`
+    04:57:46Z  failed: "video-finish async submit failed (no jobId)"
+
+Both cloud doors ran with the container correctly idle, which is the negative half of the result.
+At assemble the binding resolved and the Durable Object was created (a 32-hex routing-key instance
+appeared 5s ahead of the phase stamp), but the container could not START: the three pool names
+`sync-1`, `sync-2` and `sync-3` held the cap of 3. Pool size was confirmed from the container side
+independently of the deployed script, because `poolIndex()` is `floor(random * SYNC_POOL_SIZE)` and
+indices 1, 2 and 3 are unreachable unless the pool is at least 4.
+
+Two further findings from that run, each filed separately rather than fixed here:
+
+- The over-cap refusal is NOT prompt. Core's `submitAsync` stalled for minutes rather than taking a
+  fast error, so the film presented as a hang in `assemble` before it failed. The comment on
+  `SYNC_POOL_SIZE` claimed it "ERRORS rather than queueing"; that was directionally right and
+  misleading about timing, and it is corrected in this release.
+- Each retry minted a FRESH routing key, so every attempt created another instance record that
+  could not start. The application's instance list grew from 4 to 5 while the film was stuck.
+
+What this release does NOT change: core failed the film loudly and named the leg. It did not set
+`phase: done`, and it did not ship the per-shot clips as a film. The honest failure is the
+behaviour under test here, and it held.
+
+
 ## v1.34.0 -- 2026-09-27
 
 ### fix(video-finish): stream the remaining artifact uploads instead of reading them into memory
