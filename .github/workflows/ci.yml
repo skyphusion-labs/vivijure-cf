@@ -243,6 +243,13 @@ jobs:
       # librosa, and installing an audio-analysis stack to assert an HTTP status is a worse trade
       # than the structural coverage tests/container-bearer-gate.test.py already gives all five.
       - name: Run container test scripts
+        env:
+          # cf#893: the media containers refuse to serve without this, so the scripts that drive
+          # their routes need one. Set for the STEP rather than edited into each test file: these
+          # tests exercise a configured container, which is what an operator runs. test_bearer.py
+          # and tests/container-bearer-gate.test.py manipulate and restore this themselves, so the
+          # fail-closed cases are still reachable.
+          LOCAL_FINISH_TOKEN: ci-container-test-token
         run: |
           set -eu
           scripts="
@@ -604,7 +611,7 @@ jobs:
           while read -r tag; do
             [ -n "${tag}" ] || continue
             echo "=== smoking ${tag}"
-            sh scripts/container-smoke.sh "${tag}" 8000 /health 90
+            LOCAL_FINISH_TOKEN=ci-smoke-token sh scripts/container-smoke.sh "${tag}" 8000 /health 90
             n=$((n + 1))
           done < images.txt
           echo "smoked ${n} image(s)"
