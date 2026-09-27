@@ -219,9 +219,12 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       "dialogue-gen",
       "film-titles",
       "image-generate",
+      "kling",
       "subtitle",
     ]);
-    for (const m of ["seedance", "kling", "google-veo"]) {
+    // `kling` was in this positive-control trio until cp#538 dropped its catalog row; it is now
+    // asserted in the published-not-provisioned set above instead, which is the stronger statement.
+    for (const m of ["seedance", "vidu-q3", "google-veo"]) {
       expect(publishedToTenants(), m).toContain(m);
       expect(CATALOG, m).toContain(m);
     }
