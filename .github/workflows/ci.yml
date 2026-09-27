@@ -181,6 +181,37 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r containers/video-finish/requirements.txt
+          # PINNED on purpose (cf#874). A linter whose ruleset moves under you is a gate whose
+          # findings change without a commit, and this one decides by matching text in that output.
+          # Bump it deliberately, like any other pin.
+          python -m pip install pyflakes==3.4.0
+
+      # cf#874. There was NO Python linter in CI at all, and it cost two live outages in one night:
+      # containers/video-finish/app.py called _parse_partial_urls(raw) inside _finish_work(body) where
+      # `raw` was never bound, so every non-remux finish raised NameError (fixed in cedba5a, PR #875).
+      # `py_compile` passes on that file because a NameError is a runtime event and not a syntax one,
+      # so "it imports" was never evidence, and the suite covered the functions on either side of the
+      # defect while nothing covered the line joining them. A linter names it at the column in
+      # milliseconds, and the cf#857 smoke gate CANNOT see it: /health answers, the process is healthy,
+      # and the defect sits on a handler path a boot check never touches. Three layers, three
+      # boundaries, none of them a substitute for another.
+      #
+      # THE CONTROL RUNS FIRST, as everywhere else in this file. The gate decides by matching the text
+      # "undefined name" in pyflakes output, so a reworded or silent linter would stop failing and read
+      # green forever; the control drives it against fixtures including a linter stub that reports
+      # nothing, and the gate must REFUSE that rather than pass.
+      - name: Control -- the undefined-name gate can fail, and refuses a silent linter (cf#874)
+        run: sh tests/lint-python-undefined.test.sh
+
+      # Population is every tracked *.py (68 at cf#874), not just containers/: the defect class is not
+      # container-specific and a hand-scoped subdirectory is the artifact that drifts. UNDEFINED NAMES
+      # FAIL; unused imports, unused locals and placeholder-less f-strings are printed as ::warning::
+      # and do NOT block, because a gate that fails a release over an unused import is one somebody
+      # deletes. EIGHT such findings existed when this landed and are visible in this step's log,
+      # a count read off the gate's own output line ("8 non-blocking finding(s)") rather than from my
+      # notes: I first wrote nine, having counted the undefined name itself among the non-blocking.
+      - name: Python undefined-name gate (cf#874)
+        run: sh scripts/lint-python-undefined.sh
 
       # cf#857 / cf#851. UNCONDITIONAL and DOCKER-FREE on purpose: this is the gate that would have
       # caught the crash in the PR that caused it, in milliseconds, with no daemon and no build.
