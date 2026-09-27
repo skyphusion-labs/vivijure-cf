@@ -778,6 +778,28 @@ jobs:
           fi
           echo "tag ${TAG} matches declared version ${pkg}."
 
+      # cf#901. THREE times in one night a change shipped inside a tag with no changelog entry and
+      # nothing refused: v1.34.1 was hand-written so two fragments were never consumed (804 had to be
+      # folded back afterwards as a post-publication correction), and then v1.34.2 was assembled
+      # correctly and TWO more PRs merged before the tag, twice, so cf#858 -- a child-safety fix --
+      # rode a tag undescribed.
+      #
+      # IT RUNS HERE, AT TAG TIME, AND THAT IS THE POINT. A cut-time check would have caught the
+      # first instance and sailed past the other two, because those fragments did not exist when the
+      # assembler ran. The tag is the last boundary the artifact crosses, so it is the one that has
+      # to ask. It is NOT continue-on-error: a gate that cannot refuse is documentation with a tick
+      # next to it, which this repo has now demonstrated the hard way more than once.
+      #
+      # The control runs FIRST, as everywhere else in this file, because a gate whose failing state
+      # has never been observed is decoration. It plants an unconsumed fragment and requires a
+      # refusal, and it plants a fragment that merely QUOTES the hold marker in its prose and
+      # requires that to be refused too -- the cp#245 self-disarm case.
+      - name: Control -- the unconsumed-fragment gate can refuse (cf#901)
+        run: python3 tests/changelog-fragments-consumed.test.py
+
+      - name: Every changelog fragment is consumed or deliberately held (cf#901)
+        run: python3 scripts/changelog-fragments-consumed.py .
+
   deploy:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
