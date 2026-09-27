@@ -1074,6 +1074,7 @@ Next shot's still is the end frame on Flux 3 and HH1. Seedance / Flux /
 Veo / Vidu keep model audio. MuseTalk is opt-in replace-mouth. Pins
 core 1.21.3.
 
+
 ### fix(planner): pick cast before you write the shots
 
 The rail locked Cast until a storyboard existed, so the planner wrote
@@ -2434,6 +2435,12 @@ Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Hos
 bump.
 
 ## v1.20.1 -- 2026-08-05
+
+**CORRECTED AFTER PUBLICATION.** At the v1.20.1 tag this section was a bare heading with no body. The
+body below was written retroactively in 5451215 (2026-08-05, "docs(changelog): expand v1.20.1 entry
+with what actually shipped", #419) from the commits the tag actually contains. It is a truthful
+account of that release and it is NOT the text the tag carries, which is why it is declared here and
+listed in `scripts/changelog-corrections.txt` rather than left as silent drift.
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
 

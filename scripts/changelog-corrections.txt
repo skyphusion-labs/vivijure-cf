@@ -25,3 +25,5 @@
 # without the column-0 marker in CHANGELOG.md itself would still refuse (see declared-but-unlisted
 # and allowed-but-undeclared in the script), which is the correct outcome until piece 1 makes an
 # actual editorial call about what each of those releases notes should say.
+
+v1.20.1  section was a bare heading at the tag; body written retroactively in 5451215 (#419). cf#820.
