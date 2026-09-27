@@ -938,14 +938,11 @@ function renderDeliverable(out, degrade) {
 // disclosure reads the same way twice. Absent and clean stages are not here by construction
 // (stageFrom returns null for both), which is what keeps a healthy render silent.
 function stageDegradesOf(out) {
-  const fd = window.finishDegrade;
-  if (!fd || !fd.STAGE_KEYS) return [];
-  const found = [];
-  for (let i = 0; i < fd.STAGE_KEYS.length; i++) {
-    const info = fd.stageFrom(out, fd.STAGE_KEYS[i]);
-    if (info) found.push(info);
-  }
-  return found;
+  // cf#864: ONE enumeration, shared with the block builder and with render history, so the flag
+  // and the blocks can never disagree about which stages reported.
+  return window.stageDegradeView
+    ? window.stageDegradeView.reportedStages(out, window.finishDegrade)
+    : [];
 }
 
 function renderDegradeNote(degrade, deliv, out) {
@@ -994,30 +991,14 @@ function renderDegradeNote(degrade, deliv, out) {
     }
   }
 
-  // cf#853: one block per reported stage. A separate block per stage on purpose -- a speech
-  // passthrough and an unmastered audio bed are different facts, and one merged sentence
-  // would be the same collapse the band vocabulary exists to prevent.
-  for (let s = 0; s < stages.length; s++) {
-    const info = stages[s];
-    const wrap = document.createElement("div");
-    wrap.className = "render-degrade-stage";
-    wrap.setAttribute("data-stage", info.stage);
-    const stageSummary = fd ? fd.stageSummary(info) : null;
-    if (stageSummary) {
-      const p = document.createElement("p");
-      p.className = "render-degrade-summary";
-      p.textContent = stageSummary;
-      wrap.appendChild(p);
-    }
-    // VERBATIM. The studio wrote the truest available description of what it could not do.
-    for (let i = 0; i < info.reasons.length; i++) {
-      const why = document.createElement("p");
-      why.className = "render-degrade-reason";
-      why.textContent = info.reasons[i];
-      wrap.appendChild(why);
-    }
-    host.appendChild(wrap);
-  }
+  // cf#864: one block per reported stage, built by the SHARED builder. cf#853 wrote this loop
+  // here and again in planner-history-row.js; two loops that must agree forever, with nothing
+  // asserting they do, is the copy-forks-at-copy-time shape. stage-degrade-view.js is now the one
+  // place a stage degrade becomes DOM, and it is unit-tested in both directions.
+  const stageEls = window.stageDegradeView
+    ? window.stageDegradeView.stageBlocksFor(document, out, fd, { className: "render-degrade-stage" })
+    : [];
+  for (let s = 0; s < stageEls.length; s++) host.appendChild(stageEls[s]);
 
   if (deliv.kind === "clips" && deliv.clips.length) {
     const h = document.createElement("h5");
