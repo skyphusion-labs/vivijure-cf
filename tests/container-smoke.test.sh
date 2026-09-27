@@ -40,15 +40,23 @@ trap cleanup EXIT INT TERM
 
 ran=0
 failed=0
+cite_missing=""
 
 check() {
-  name="$1"; want="$2"; want_text="$3"; image="$4"
+  name="$1"; want="$2"; want_text="$3"; image="$4"; want_cite="${5:-}"
   ran=$((ran + 1))
   out="$(sh "$SMOKE" "$image" 8000 /health 20 2>&1)" && got=0 || got=$?
   ok=1
   [ "$got" = "$want" ] || ok=0
   if [ -n "$want_text" ]; then
     printf '%s' "$out" | grep -q "$want_text" || ok=0
+  fi
+  # CITATION IS PART OF THE CONTRACT, not a nicety. A verdict nobody can attach to a specific image
+  # cannot be checked later, and "the broken one" versus "the fixed one" is the whole comparison this
+  # gate exists to make. Asserted wherever a container actually started, on the pass path AND the two
+  # failure paths; the missing-image case never starts one, so it is not required to cite.
+  if [ -n "$want_cite" ]; then
+    printf '%s' "$out" | grep -q "$want_cite" || { ok=0; cite_missing="${cite_missing} ${name}"; }
   fi
   if [ "$ok" = "1" ]; then
     printf '  ok    %-18s exit %s%s\n' "$name" "$got" "$([ -n "$want_text" ] && printf ' (reason matched)')"
@@ -113,13 +121,14 @@ for f in serves crash wrongport; do
 done
 
 echo "asserting the smoke script's verdict on each:"
-check serves           0 "OK -- /health answered 2"          vivijure-cf857-fixture-serves:test
-check crash-on-import  4 "started and died rather than"      vivijure-cf857-fixture-crash:test
-check binds-wrong-port 5 "nothing is bound on 8000"          vivijure-cf857-fixture-wrongport:test
+check serves           0 "OK -- /health answered 2"          vivijure-cf857-fixture-serves:test    "image id sha256:"
+check crash-on-import  4 "started and died rather than"      vivijure-cf857-fixture-crash:test     "image id sha256:"
+check binds-wrong-port 5 "nothing is bound on 8000"          vivijure-cf857-fixture-wrongport:test "image id sha256:"
 check image-not-present 3 "not even startable"               vivijure-cf857-no-such-image-exists:test
 
 # The floor. A control loop that runs zero cases exits 0 and is indistinguishable from four passes,
 # which is the exact failure family cf#857 was filed about.
+[ -z "${cite_missing}" ] || echo "::error::no image-id citation in the output for:${cite_missing}"
 echo "ran ${ran} cases, ${failed} failed"
 [ "$ran" -eq 4 ] || { echo "::error::expected 4 control cases, ran ${ran}"; exit 1; }
 [ "$failed" -eq 0 ] || { echo "::error::${failed} control case(s) failed: scripts/container-smoke.sh does not behave as claimed, so any green it reports on a real image is worthless"; exit 1; }

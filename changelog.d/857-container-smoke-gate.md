@@ -27,6 +27,14 @@ stays up bound to a port nothing probes (`5`), plus a non-existent image ref (`3
 failure is a failure). The fixtures are built in the test rather than committed as a directory so the
 planted failure sits next to the assertion about it.
 
+**It cites the artifact it judged.** Both the pass and the failure paths print the image id read off
+the CONTAINER (`docker inspect --format '{{.Image}}'`), i.e. the bytes this run actually used, rather
+than resolving the mutable tag a second time, plus RepoDigests where the image has been pushed and an
+explicit `(none: locally built, never pushed)` where it has not, because an empty field reads like a
+missing value. A verdict nobody can attach to a specific image cannot be checked later, and "the broken
+one versus the fixed one" is the comparison this gate exists to make. The control asserts the citation
+on every case where a container actually started, so the capability is proven rather than hoped for.
+
 **`tests/container-image-file-set.test.py`** is the fast, docker-free half, and it is the gate that
 would have caught cf#851 in the PR that caused it. For every `containers/*/Dockerfile` on disk (the
 denominator read from the tree, never a hand-kept list) it walks the import graph from the entry

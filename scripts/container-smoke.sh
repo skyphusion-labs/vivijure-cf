@@ -50,6 +50,8 @@ die() {
   code="$1"; shift
   echo "::error::container-smoke: $*"
   if [ -n "$cid" ]; then
+    echo "--- the artifact this verdict is about"
+    docker inspect --format '    image={{.Image}}' "$cid" 2>&1 || true
     echo "--- docker inspect state"
     docker inspect --format '    status={{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} error={{.State.Error}}' "$cid" 2>&1 || true
     echo "--- container logs (last 60 lines) -- THIS is usually the whole answer"
@@ -77,6 +79,17 @@ mapped="$(docker port "$cid" "${PORT}"/tcp 2>/dev/null | head -1 | sed 's/.*://'
 [ -n "${mapped:-}" ] || die 3 "the daemon published no host port for container port ${PORT} (does the image EXPOSE it?)"
 url="http://127.0.0.1:${mapped}${PATH_}"
 echo "container-smoke: container ${cid} mapped ${PORT} -> 127.0.0.1:${mapped}, probing ${url}"
+
+# CITE THE ARTIFACT, NOT THE NAME. A tag is mutable and says nothing about which bytes ran, so a
+# report that quotes only "video-finish:ci" cannot be checked later and cannot distinguish a broken
+# image from its fix. The id is read off the CONTAINER (`.Image`), i.e. the image this run actually
+# used, rather than by resolving the tag a second time. RepoDigests exists only for an image that has
+# been pushed or pulled: a locally built one legitimately has none, and saying so is better than
+# printing an empty field that reads like a missing value.
+image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || echo unknown)"
+repo_digests="$(docker image inspect --format '{{if .RepoDigests}}{{join .RepoDigests ","}}{{else}}(none: locally built, never pushed){{end}}' "$IMAGE" 2>/dev/null || echo unknown)"
+echo "container-smoke: image id ${image_id}"
+echo "container-smoke: repo digests ${repo_digests}"
 
 i=0
 while [ "$i" -lt "$TIMEOUT" ]; do
