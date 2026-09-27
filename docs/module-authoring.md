@@ -132,6 +132,11 @@ these, but `checkManifest` (the conformance harness) FAILS it:
 - a module serving `finish` or `speech` (the `CEILING_DERIVED_HOOKS`) must declare
   `max_invocation_seconds` (core#223): the wall-clock ceiling your module ACTUALLY enforces on one
   invocation, which the core sizes its phase stall ceiling against. Declare only a guard you have.
+  **Above 1800 it stops being a number about your module** (cf#762). The core's effective ceiling is
+  `max(PHASE_HARD_DEADLINE_SECONDS(5400), FINISH_STEP_MAX_ATTEMPTS(3) * declared)`, so a value past
+  `5400/3 = 1800` moves a GLOBAL per-phase deadline for every film whose chain can REACH your module,
+  including the films that never invoke it. Crossing it is a registered decision
+  (`modules/_shared/finish-ceiling.ts`), gated by `tests/finish-ceiling-crossover-cf762.test.ts`.
 
 **Optional, additive manifest fields** (no `MODULE_API` bump; see the doc comments on
 `ModuleManifest` in `@skyphusion-labs/vivijure-core/modules/types`): `cancelable`, `ui.locality`

@@ -69,6 +69,28 @@ export const MANIFEST: ModuleManifest = {
   version: "0.2.1",
   api: MODULE_API,
   hooks: ["finish"],
+  // max_invocation_seconds: the ceiling THIS module declares to the core (core#182 / core#223).
+  //
+  // BASIS (cf#762): UNIFORM BY DECLARATION, and unmeasurable today. The endpoint id is a Secrets
+  // Store value this repo does not carry, and per cf#757 the endpoint this module was pinned to
+  // (4q8idwbk6tyqbq, vivijure-upscale) NO LONGER EXISTS: RunPod list-endpoints returns total: 2
+  // (vivijure-backend, vivijure-wan-train) on 2026-09-27. There is no worker to measure, so no value
+  // here can be justified against one; 900 is held as a conservative declaration, matching the other
+  // two finish doors and staying under the crossover below. When this module is repointed or rebuilt
+  // (a spend decision, cf#757), derive this number from that worker's own guard and update this
+  // comment with the command that establishes it.
+  //
+  // RAISING THIS IS A GLOBAL DECISION, NOT A LOCAL ONE. The core derives its phase stall ceiling
+  // from the largest declared ceiling in the chain (vivijure-core phaseCeiling, src/film-model.ts):
+  //     required  = FINISH_STEP_MAX_ATTEMPTS(3) * max(declared ceiling over the steps that run next)
+  //     effective = max(PHASE_HARD_DEADLINE_SECONDS(5400), required)
+  // At 900, required is 2700: under the floor, so the floor wins and this number changes nothing.
+  // 1800 IS THE CROSSOVER. At 1800, required is exactly 5400 and basis stays "floor". At 1801 it is
+  // 5403, basis flips to "derived", and the deadline moves for EVERY film whose finish chain can
+  // reach this module -- the derivation takes the max over the steps that COULD run next, not the
+  // one that did. Past 1800 is a deliberate, acknowledged act: register it in
+  // ACKNOWLEDGED_ABOVE_CROSSOVER (modules/_shared/finish-ceiling.ts) or the gate in
+  // tests/finish-ceiling-crossover-cf762.test.ts fails. cf#762.
   max_invocation_seconds: 900,
   provides: [
     { id: "upscale", label: "Upscale resolution (Real-ESRGAN)" },
