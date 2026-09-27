@@ -172,6 +172,7 @@ jobs:
           containers/video-finish/test_async.py
           containers/video-finish/test_meta_sidecar.py
           containers/video-finish/test_concat_guard.py
+          containers/video-finish/test_chunked_contract.py
           containers/video-finish/test_ffmpeg_timeout.py
           containers/audio-mix/test_ffmpeg_timeout.py
           containers/audio-master/test_ffmpeg_timeout.py
@@ -192,8 +193,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 12 ]; then
-            echo "::error::expected exactly 12 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 13 ]; then
+            echo "::error::expected exactly 13 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
