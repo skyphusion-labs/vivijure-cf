@@ -39,6 +39,7 @@
 // instead. The BLIND control below reproduces exactly that, which is why it is a 503 with a valid
 // body rather than a thrown fetch.
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { reachesRunpod } from "./runpod-census";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
@@ -248,10 +249,17 @@ describe("the population is derived, not asserted (cf#398 denominator)", () => {
       }
     };
 
-    // Same predicate the cf#289 and cf#394 censuses use, so the three cannot drift into three
-    // different populations: a module reaches RunPod iff it names the RunPod API host or imports the
-    // shared route helper.
-    const runpod = candidates.filter((n) => read(n).includes("api.runpod.ai") || read(n).includes("_shared/runpod-route"));
+    // ONE shared predicate (tests/runpod-census.ts), so the copies cannot drift into different
+    // populations: a module reaches RunPod iff its RUNTIME CODE names the RunPod API host or
+    // imports the shared route helper.
+    //
+    // This comment used to say "the cf#289 and cf#394 censuses ... the three". Both halves were
+    // wrong (cf#951): cf#394 does not carry the predicate, and the files that DO are four, not
+    // three -- cf#289, cf#398, cf#578 and cf#604. Anyone following the old comment to "fix all
+    // three" would have edited a file with nothing to fix and missed two that had, producing the
+    // exact drift the sentence warned against. The wish is now a mechanism: one function, four
+    // importers.
+    const runpod = candidates.filter((n) => reachesRunpod(read(n)));
     const guarded = runpod.filter((n) => read(n).includes("planeRefusalReason("));
 
     // DENOMINATOR beside the result: a matcher returning almost everything has failed as completely
