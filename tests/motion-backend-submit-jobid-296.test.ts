@@ -24,7 +24,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 import seedanceWorker from "../modules/seedance/src/index";
-import klingWorker from "../modules/kling/src/index";
 import viduWorker from "../modules/vidu-q3/src/index";
 import veoWorker from "../modules/google-veo/src/index";
 import hailuoWorker from "../modules/minimax-hailuo/src/index";
@@ -53,7 +52,9 @@ const INPUT = { shot_id: "shot_01", prompt: "a slow push in", keyframe_url: "htt
 
 const MODULES: { name: string; worker: Worker; env: Record<string, unknown>; jobId?: string }[] = [
   { name: "seedance", worker: seedanceWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
-  { name: "kling", worker: klingWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
+  // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
+  // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
+  // directory came back; it did not just get re-enabled.
   { name: "kling-o1-r2v", worker: klingO1Worker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "infinitetalk", worker: infinitetalkWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "vidu-q3", worker: viduWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },

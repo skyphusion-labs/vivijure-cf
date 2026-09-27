@@ -47,7 +47,6 @@ import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
 import seedanceWorker from "../modules/seedance/src/index";
-import klingWorker from "../modules/kling/src/index";
 import viduWorker from "../modules/vidu-q3/src/index";
 import veoWorker from "../modules/google-veo/src/index";
 import hailuoWorker from "../modules/minimax-hailuo/src/index";
@@ -106,7 +105,9 @@ const CASES: Case[] = [
   // a real submit: with neither text nor storyboard scenes it refuses before it reaches /run.
   { name: "narration-gen", worker: narrationGenWorker as unknown as Worker, hook: "score", extraEnv: {}, input: { film_key: "renders/p_test/film.mp4", seconds: 30 }, config: { text: "The city exhales, and the neon holds its breath." } },
   { name: "seedance", worker: seedanceWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
-  { name: "kling", worker: klingWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
+  // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
+  // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
+  // directory came back; it did not just get re-enabled.
   { name: "vidu-q3", worker: viduWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   { name: "google-veo", worker: veoWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   { name: "minimax-hailuo", worker: hailuoWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
