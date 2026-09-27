@@ -1,0 +1,162 @@
+name: endpoint-liveness
+
+# cf#934: are the RunPod public-endpoint slugs this repo dispatches to still there?
+#
+# NOT A CI GATE, AND MUST NEVER BECOME ONE. Ruled on cf#934. This depends on a third party being
+# reachable, so as a required status check a RunPod outage would become a merge freeze on unrelated
+# work -- the same shape as a filter that can ban its own ingress path. Never add it to required
+# checks and never call it from ci.yml. It runs on a SCHEDULE and reports by opening an issue, which
+# degrades into "we learn a day late". That is the correct failure mode for a property that is not a
+# property of the diff. (Why we need it at all: the capability-matrix gate in ci CANNOT see this. A
+# module can exist on disk, be correctly documented, pass that gate, and still be undispatchable
+# because its endpoint is gone. cf#921 is the measured instance.)
+#
+# WHAT GETS AN ISSUE AND WHAT JUST GOES RED, decided here rather than discovered later:
+#   exit 1  a slug is GONE            -> the FINDING. Opens or updates ONE tracking issue.
+#   exit 2/3/4  the probe is unusable -> the RUN goes red, and NO issue is filed. A broken instrument
+#           is a maintainer problem, not an estate finding, and filing for a transient network blip
+#           would be the daily-duplicate noise this design exists to avoid.
+#   exit 0  clean                     -> closes the tracking issue if one is open.
+#
+# NO DUPLICATE ISSUES. The tracking issue is found by a stable title marker, checked with two
+# instruments (a server-side title search AND a client-side grep over open issues), because either
+# alone can return a false clean and a probe that files a fresh issue every day is worse than no
+# probe. A fingerprint line in the body means an unchanged finding is a no-op: no comment, no edit.
+#
+# Credential-free probe, GITHUB_TOKEN only for the issue. No RunPod key is read or needed.
+
+on:
+  schedule:
+    # Daily, off the hour to avoid GitHub's scheduling contention.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: endpoint-liveness
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe every slug this repo dispatches to
+        id: probe
+        run: |
+          set -uo pipefail
+          set +e
+          ./scripts/probe-runpod-public-slugs.sh > probe-output.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          fp="$(grep -m1 '^liveness-fingerprint: ' probe-output.txt || true)"
+          echo "fingerprint=${fp:-liveness-fingerprint: unknown}" >> "$GITHUB_OUTPUT"
+          cat probe-output.txt
+          echo "probe exit code: ${code}"
+
+      - name: Instrument unusable, fail loudly and file nothing
+        if: steps.probe.outputs.exit_code == '2' || steps.probe.outputs.exit_code == '3' || steps.probe.outputs.exit_code == '4'
+        run: |
+          set -euo pipefail
+          echo "::error::endpoint-liveness could not measure (probe exit ${{ steps.probe.outputs.exit_code }}). No verdict, no issue filed. See the run log."
+          exit 1
+
+      - name: Open or update the tracking issue
+        if: steps.probe.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER: "[endpoint-liveness] a RunPod slug this repo dispatches to is gone"
+          FINGERPRINT: ${{ steps.probe.outputs.fingerprint }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:+SET}" ]; then
+            echo "::error::GITHUB_TOKEN is unset; cannot file the finding."
+            exit 1
+          fi
+
+          # Two instruments. Either alone can report a false clean, and the cost of a false clean
+          # here is a duplicate issue every single day.
+          found_a="$(gh issue list --state open --search "in:title \"${MARKER}\"" --json number --jq '.[0].number // empty')"
+          # NOTE: gh's own --jq takes a filter only and does NOT accept --arg, so the marker is
+          # passed to real jq instead of interpolated into a filter string.
+          found_b="$(gh issue list --state open --limit 200 --json number,title \
+            | jq -r --arg m "${MARKER}" '.[] | select(.title | contains($m)) | .number' | head -n1)"
+          issue="${found_a:-${found_b:-}}"
+          echo "tracking issue: search=${found_a:-none} grep=${found_b:-none} -> ${issue:-none}"
+          if [ -n "${found_a:-}" ] && [ -n "${found_b:-}" ] && [ "${found_a}" != "${found_b}" ]; then
+            echo "::warning::two instruments disagree on the tracking issue (${found_a} vs ${found_b}); using ${issue} and not filing a third."
+          fi
+
+          {
+            echo "Filed by the \`endpoint-liveness\` scheduled workflow (cf#934). This issue is machine-updated."
+            echo
+            echo "**A slug this repo hardcodes as a module \`ENDPOINT_ID\` no longer resolves at RunPod, so every"
+            echo "render routed to that door fails at submit.** The probe is the free unauthenticated"
+            echo "\`GET /v2/<slug>/health\` (401 exists, 404 gone); no job was submitted and nothing was billed."
+            echo
+            echo "Latest run: ${RUN_URL}"
+            echo
+            echo "\`\`\`"
+            cat probe-output.txt
+            echo "\`\`\`"
+            echo
+            echo "**What this does NOT say:** a 401 proves a RunPod endpoint object exists, not that the"
+            echo "upstream model does. Slug resolution only; vendor liveness is out of scope by ruling."
+            echo
+            echo "${FINGERPRINT}"
+          } > issue-body.md
+
+          if [ -z "${issue}" ]; then
+            gh issue create --title "${MARKER}" --body-file issue-body.md
+            echo "opened a new tracking issue"
+            exit 0
+          fi
+
+          # An unchanged finding is a no-op. This is what keeps a daily schedule from becoming noise.
+          # tr -d '\r': the API can return CRLF in the body, and grep -x would then never match.
+          if gh issue view "${issue}" --json body --jq .body | tr -d '\r' | grep -qxF "${FINGERPRINT}"; then
+            echo "tracking issue #${issue} already records this exact finding (${FINGERPRINT}); no comment, no edit."
+            exit 0
+          fi
+
+          gh issue edit "${issue}" --body-file issue-body.md
+          {
+            echo "The set of missing slugs CHANGED. The body above is updated to the latest run."
+            echo
+            echo "New: \`${FINGERPRINT}\`"
+            echo
+            echo "Run: ${RUN_URL}"
+          } > change-comment.md
+          gh issue comment "${issue}" --body-file change-comment.md
+          echo "updated tracking issue #${issue} and commented on the change"
+
+      - name: Close the tracking issue if the estate is clean again
+        if: steps.probe.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER: "[endpoint-liveness] a RunPod slug this repo dispatches to is gone"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          issue="$(gh issue list --state open --search "in:title \"${MARKER}\"" --json number --jq '.[0].number // empty')"
+          if [ -z "${issue}" ]; then
+            echo "clean, and no tracking issue open. Nothing to do."
+            exit 0
+          fi
+          {
+            echo "Every slug this repo dispatches to resolves again, so this machine-owned tracking"
+            echo "issue is closing itself."
+            echo
+            echo "Run: ${RUN_URL}"
+            echo
+            echo "A new one is opened automatically by the next run if a slug goes missing again."
+          } > close-comment.md
+          gh issue close "${issue}" --comment "$(cat close-comment.md)" --reason completed
+          echo "closed tracking issue #${issue}"
