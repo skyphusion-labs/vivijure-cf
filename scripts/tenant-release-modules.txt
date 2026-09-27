@@ -6,6 +6,7 @@ cf-flux-3-video
 cf-grok-video
 cf-hh1-r2v
 cf-seedance
+dialogue-gen
 film-titles
 finish-rife
 finish-upscale
