@@ -222,6 +222,16 @@ class_name = "FinishContainer"
 # max_instances is deliberately low to start. The default is 20, and a request that would exceed
 # the cap ERRORS rather than queueing, so this is a spend and blast-radius knob before it is a
 # throughput one.
+#
+# THIS NUMBER IS LOAD-BEARING FOR THE WORKER (cf#810). src/video-finish-binding.ts addresses a
+# stateless pool of SYNC_POOL_SIZE instances plus ONE per in-flight finish job, so the invariant is
+#
+#     SYNC_POOL_SIZE + concurrent finish jobs <= max_instances
+#
+# and at 3 that is a pool of 1 leaving room for 2 concurrent films. Because an over-cap request
+# ERRORS rather than queueing, breaking the inequality does not slow the tier down, it refuses
+# encodes. RAISE THIS BEFORE widening the pool, never after.
+# tests/video-finish-pool-ceiling-cf810.test.ts asserts it against this file.
 [[containers]]
 class_name = "FinishContainer"
 image = "./containers/video-finish/Dockerfile"
