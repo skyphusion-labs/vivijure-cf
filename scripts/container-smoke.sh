@@ -88,7 +88,18 @@ while [ "$i" -lt "$TIMEOUT" ]; do
     die 4 "the container is '${status}' after ${i}s without ever serving ${PATH_}: it started and died rather than binding its port. This is the shape that shipped green in cf#851."
   fi
 
-  code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$url" 2>/dev/null || echo 000)"
+  # NOT `$(curl ... || echo 000)`: on a connection failure curl ALREADY prints its own
+  # %{http_code} of "000" and then exits non-zero, so the fallback inside the substitution
+  # CONCATENATED onto it and produced "000000". That fell through to the not-2xx arm and reported
+  # "something is bound and refusing" about a container that had simply not finished starting. The
+  # fixture control in tests/container-smoke.test.sh caught it on the first CI run, before this
+  # script had ever judged a real image. The fallback belongs OUTSIDE the substitution, and anything
+  # that is not exactly three digits is normalised rather than trusted.
+  code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$url" 2>/dev/null)" || code=""
+  case "$code" in
+    [0-9][0-9][0-9]) : ;;
+    *) code="000" ;;
+  esac
   case "$code" in
     2??)
       echo "container-smoke: OK -- ${PATH_} answered ${code} after ${i}s"

@@ -1247,7 +1247,13 @@ jobs:
     #
     # No deadlock: deploy and assert-tag-version are both gated on refs/tags/v*, the same trigger
     # this job runs on, so needs: always resolves rather than waiting on a job that never starts.
-    needs: [ci, container-tests, migrations-gate, assert-on-main, assert-tag-version, deploy]
+    # cf#857: container-smoke added here as well as on deploy. tests/tag-publish-gate-cf562.test.ts
+    # DERIVES this requirement from deploy's own needs: array rather than restating the names, and it
+    # caught the omission on the first run -- which is the gate working: this job publishes the
+    # artifact every hosted tenant is provisioned from, so it must be gated at least as hard as the
+    # deploy. Same deadlock check: container-smoke's if: names the v* tag ref explicitly, so on this
+    # trigger it always runs and needs: resolves rather than skipping this job.
+    needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version, deploy]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # the called workflow uploads the release asset; nothing else
