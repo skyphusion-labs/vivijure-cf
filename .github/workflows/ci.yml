@@ -230,8 +230,8 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 16 ]; then
-            echo "::error::expected exactly 16 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 17 ]; then
+            echo "::error::expected exactly 17 container test scripts to run, ran ${ran}"
             exit 1
           fi
 
