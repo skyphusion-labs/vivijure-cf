@@ -221,9 +221,11 @@ async function bumpDailyCount(db: SpendCounterDb, day: string): Promise<number> 
 
 // Enforce the spend limit for a request already known to be a spend route: the per-IP rate limiter
 // first, then the optional daily ceiling. A SAFETY route (isSafetyRoute) is throttled by the limiter
-// but is never denied by a broken check and never sees the daily ceiling. Default posture fails OPEN on a broken check (warns);
-// SPEND_LIMIT_FAIL_CLOSED="true" denies 503 instead. An explicit over-limit / over-ceiling verdict
-// is always a 429.
+// but is never denied by a broken check and never sees the daily ceiling. Default posture fails
+// CLOSED on a broken check (unbound binding, or `.limit()` throws): the request is denied 503, per
+// the header above. Only SPEND_LIMIT_FAIL_CLOSED="false" opts out to the allow-and-warn posture;
+// any other value, including unset, keeps the fail-closed default. An explicit over-limit /
+// over-ceiling verdict is always a 429.
 export async function enforceSpendLimit(
   request: Request,
   env: SpendLimitEnv,
