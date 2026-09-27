@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   videoFinishDoor,
   videoFinishDoorOf,
@@ -249,5 +249,96 @@ describe("cf#810 the shape core actually calls with", () => {
     // Duck-typed on `fetch`, exactly as core's mediaDoorFetcher is, so the two agree on what
     // counts as bound rather than each having an opinion.
     expect(videoFinishDoorOf({ MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: {} as never } })).toBeNull();
+  });
+});
+
+
+// -------------------------------------------------------------------------------------------------
+// cf#843: a submit attempt must be ATTRIBUTABLE to the instance record it creates.
+//
+// `routingKey()` is minted per attempt, so every attempt addresses a fresh Durable Object and creates
+// a fresh instance record. During film-40e0cd09 the list grew by one about every five minutes while
+// assemble was stuck, and afterwards nothing could say which attempt made which record: the instances
+// endpoint carries only {application_id, id, image, name, status}. cf#843 declined to guess between
+// "a second attempt" and "the first request landing late", which was right and is also the gap.
+//
+// The load-bearing case is the LAST one. The submit payload carries SigV4-presigned R2 URLs, so a log
+// line near it is a leak vector before it is an observability feature.
+// -------------------------------------------------------------------------------------------------
+describe("cf#843: every submit attempt is attributable, and nothing leaks into the line", () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  // Cleared BEFORE each case as well as after: the spy is installed when this describe body runs,
+  // which is before any test in the file executes, so the earlier door suites above accumulate their
+  // own submit lines into the same buffer. The first version cleared only afterwards and read 10
+  // lines where it expected 2 -- a false FAILURE rather than a false pass, which is the direction to
+  // be wrong in, but still a harness bug rather than a finding.
+  beforeEach(() => log.mockClear());
+  afterEach(() => log.mockClear());
+
+  const submitInit = (body: string) => ({ method: "POST", body } as RequestInit);
+  const lines = () =>
+    log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('"finish.submit"'))
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+
+  it("logs the attempt BEFORE the call, then the accepted outcome with the container job id", async () => {
+    const { ns } = fakeNamespace(accepts(CJID));
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+    await door.fetch(ORIGIN + "/async/finish", submitInit("{}"));
+    const l = lines();
+    expect(l).toHaveLength(2);
+    expect(l[0]).toMatchObject({ phase: "attempt", routing_key: RK, path: "/async/finish" });
+    expect(l[1]).toMatchObject({ phase: "outcome", routing_key: RK, outcome: "accepted", container_job_id: CJID });
+    // ordering is the whole argument for the first line: the record exists once the object is addressed
+    expect(l[0].phase).toBe("attempt");
+  });
+
+  it("a non-202 is reported as rejected, with the status", async () => {
+    const { ns } = fakeNamespace(() => new Response("nope", { status: 503 }));
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+    await door.fetch(ORIGIN + "/async/finish", submitInit("{}"));
+    expect(lines()[1]).toMatchObject({ phase: "outcome", outcome: "rejected", status: 503 });
+  });
+
+  it("a 202 with no usable jobId is reported as malformed rather than passing silently", async () => {
+    const { ns } = fakeNamespace(() => new Response(JSON.stringify({ ok: true }), { status: 202, headers: { "content-type": "application/json" } }));
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+    await door.fetch(ORIGIN + "/async/finish", submitInit("{}"));
+    expect(lines()[1]).toMatchObject({ phase: "outcome", outcome: "malformed" });
+  });
+
+  it("a THROWING call still logs the attempt, reports threw, and rethrows unchanged", async () => {
+    // The case a post-hoc-only line would lose: the object was addressed, so the record exists.
+    const ns = {
+      idFromName: (name: string) => ({ __name: name }),
+      get: () => ({ fetch: async () => { throw new Error("container unreachable"); } }),
+    } as never;
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+    await expect(door.fetch(ORIGIN + "/async/finish", submitInit("{}"))).rejects.toThrow("container unreachable");
+    const l = lines();
+    expect(l[0]).toMatchObject({ phase: "attempt", routing_key: RK });
+    expect(l[1]).toMatchObject({ phase: "outcome", outcome: "threw" });
+  });
+
+  it("NEVER logs the request body: a presigned URL in the payload appears in no line", async () => {
+    // The leak guard, and the reason this suite exists rather than just the feature.
+    const SECRETISH = "https://acct.r2.cloudflarestorage.com/vivijure/x.mp4?X-Amz-Signature=deadbeefcafe";
+    const { ns } = fakeNamespace(accepts(CJID));
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+    await door.fetch(ORIGIN + "/async/finish", submitInit(JSON.stringify({ clip_urls: [SECRETISH] })));
+    const all = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(all).not.toContain("X-Amz-Signature");
+    expect(all).not.toContain(SECRETISH);
+    expect(all).not.toContain("r2.cloudflarestorage.com");
+    // and the control: the lines DID get emitted, so this is not passing because nothing logged
+    expect(lines()).toHaveLength(2);
+  });
+
+  it("a POLL is not a submit, so it mints no key and logs no attempt", async () => {
+    const { ns } = fakeNamespace(() => new Response("{}", { status: 200 }));
+    const door = videoFinishDoor(ns, fixedDeps(RK));
+    await door.fetch(ORIGIN + "/async/status/" + RK + COMPOUND_SEPARATOR + CJID, { method: "GET" });
+    expect(lines()).toHaveLength(0);
   });
 });
