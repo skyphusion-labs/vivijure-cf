@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 
 // cf#336 -- the two-step cast upload flow, end to end, which NOTHING in this suite covered.
@@ -62,12 +62,22 @@ function makeR2() {
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
 const HTML = new TextEncoder().encode("<script>alert(1)</script>");
 
-async function routes() {
-  const { API_ROUTES } = await import("../src/index");
-  return API_ROUTES;
-}
+// cf#807 -- the worker entrypoint is a 92-route module graph that costs ~2s to transform and
+// import ONCE. Paid from inside a test case it lands on that case's 5000ms testTimeout, so the
+// case measures the import rather than the code under test and flips to red on a busy machine.
+// Paid in beforeAll it lands on hookTimeout (10000ms) and is charged to no case at all.
+// Measured on this file's own suite: a case whose entire body is `await import("../src/index")`
+// takes 2049ms, a second import takes 0ms, and every sibling case here runs in 0-3ms.
+// The other 41 suites that touch src/index import it STATICALLY, which is also off the case
+// budget. That is not available here: vi.mock is hoisted above the module body, so a static
+// import would run the mock factory before the vi.fn consts it closes over are initialised.
+let API_ROUTES: (typeof import("../src/index"))["API_ROUTES"];
+beforeAll(async () => {
+  ({ API_ROUTES } = await import("../src/index"));
+});
+
 async function handlerFor(method: string, pattern: string) {
-  const r = (await routes()).find((x) => x.method === method && x.pattern === pattern);
+  const r = API_ROUTES.find((x) => x.method === method && x.pattern === pattern);
   if (!r) throw new Error(`route ${method} ${pattern} is not in API_ROUTES`);
   return r.handler;
 }
