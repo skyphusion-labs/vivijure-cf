@@ -558,6 +558,25 @@ this cast member's set" }` when the key is not on the member.
 Errors: `400` on a missing key (DELETE with neither body `key` nor path key), `404` on an unknown
 cast member.
 
+**A cast-row write that produced no row answers 404, never 200 (cf#754, parity of
+`vivijure-local#351`).** On every POST in the table above, all three request forms, a D1 write
+returning no row is a FAILED write, and the response is:
+
+```
+404 { "error": "<op>: the cast row write returned no row for cast <id> (cast missing, or the row write failed)" }
+```
+
+`<op>` names the door and the entry form, so the diagnostic separates the nine sites from each
+other and from the plain `404 { "error": "cast not found" }` thrown when the member does not exist:
+`portrait upload (chat artifact copy)`, `ref add (staged key)`, `source add (raw bytes)`, and so on.
+
+**The failure body carries no `cast` key at all, and that is contract, not detail.** The panel
+assigns `state.cast[idx] = data.cast` before it inspects anything, so `{ "cast": null }` at ANY
+status (404 included) lands null in panel state; the next editor populate then throws a JavaScript
+null-property error instead of reporting the write, while the list keeps rendering stale data. A
+bare `{ error }` makes the panel `api()` helper throw `Error(body.error)`, which every existing
+catch already renders correctly with no panel change.
+
 ### 2.8 Cast ref generation (the `cast.image` hook)
 
 Async run/poll across requests (a multi-image set cannot finish in one request). POST starts the job;

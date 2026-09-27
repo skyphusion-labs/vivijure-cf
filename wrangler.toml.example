@@ -66,12 +66,32 @@ R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
 R2_S3_BUCKET = "${R2_S3_BUCKET}"
 # Public HTTPS origins for CPU media + on-iron finish doors. Empty = that service is off.
 # Filled at deploy from operator config (deploy.env). Never a baked production hostname.
-# VIDEO_FINISH_URL keeps its HTTP shape on purpose (#797): a Worker route fronts the
-# Cloudflare Container through the FINISH_CONTAINER Durable Object binding and this var
-# points at THAT route, so vivijure-core's contract is untouched and the
-# HOSTED_FINISH_POLL_BOXES swap stays a one-line change rather than a protocol change.
-# Repoint it only AFTER the container answers a real /async/finish -- these are URL vars,
-# so typecheck cannot catch a dangling target and a deploy succeeds against nothing.
+# VIDEO_FINISH_URL is NOT a route, and an earlier version of this comment said it was
+# (cf#837). What cf#797 specified was a Worker route on vivijure-studio fronting the
+# container; cf#810 MEASURED that premise false and it cannot be revived: core is a
+# LIBRARY running INSIDE this Worker, so pointing the var at a route on this Worker makes
+# the Worker fetch itself, and Cloudflare documents that same-zone global fetch() between
+# Workers fails. src/video-finish-binding.ts:3-13 carries the full derivation. No
+# /async/finish route exists on this Worker and none is coming.
+#
+# What the var actually is, in the two deploys that matter:
+#   - WITH the FINISH_CONTAINER binding (the hosted shape): the door is the BINDING. This
+#     var NAME is the key core looks the door up under (MEDIA_DOOR_FETCHERS.VIDEO_FINISH_URL,
+#     synthesised in src/orchestrator-env.ts), so the VALUE is never fetched. It must still be
+#     non-empty, because src/video-finish-availability.ts reads a non-empty var as "the tier is
+#     installed"; an empty one degrades the assemble phase.
+#   - WITHOUT that binding (a self-host running its own video-finish container): the value IS
+#     the origin, fetched over HTTPS, exactly as before.
+# Either way this is a URL var, so typecheck cannot catch a dangling target and a deploy
+# succeeds against nothing. Repoint it only AFTER the thing behind it answers a real
+# /async/finish.
+#
+# MEASURED 2026-09-27 (cf#837): the hosted deploy injects
+# VIDEO_FINISH_URL=https://video-finish.skyphusion.org from a repo Actions variable, and that
+# hostname is NXDOMAIN. On the hosted core that is masked, because the binding wins before the
+# value is ever used; it is NOT masked for the two module workers that reach this door over
+# plain HTTPS (modules/film-titles, modules/subtitle). Tracked in cf#780 / cf#746; the variable
+# is live deploy state and is not changed from here.
 VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"
 IMAGE_PREP_URL = "${IMAGE_PREP_URL}"
 AUDIO_BEAT_SYNC_URL = "${AUDIO_BEAT_SYNC_URL}"
