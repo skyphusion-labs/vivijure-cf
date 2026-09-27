@@ -1,6 +1,7 @@
 // InfiniteTalk on RunPod: portrait + our audio. Speaker is Cast TTS, not invented.
 
 import type { MotionBackendInput } from "./contract";
+import { mp4VideoTiming } from "../../_shared/mp4-timing";
 
 export function clampDuration(seconds: number): number {
   const n = Math.round(Number(seconds) || 5);
@@ -178,9 +179,20 @@ export function mp4DurationSeconds(bytes: Uint8Array): number | null {
 }
 
 /** Poll frames = delivered mp4 duration * fps when inspectable, else round(wavSeconds * fps). */
-export function framesFromDelivered(bytes: ArrayBuffer, wavSeconds: number, fps: number): number {
-  const d = mp4DurationSeconds(new Uint8Array(bytes));
-  if (d && d > 0) return Math.max(1, Math.round(d * fps));
-  const fallback = Number.isFinite(wavSeconds) && wavSeconds > 0 ? wavSeconds : 0;
-  return Math.max(1, Math.round(fallback * fps));
+/** cf#923: the DELIVERED clip's rate and frame count, measured from the container.
+ *
+ *  Replaces `fps: OUT_FPS` plus a frames value computed from the request. A value computed from the
+ *  request is not a measurement no matter what the field is named: this door reported 24fps against a
+ *  delivered 25, and its sibling reported 24 against 30.
+ *
+ *  UNMEASURED IS REPORTED AS ZERO, never as a constant. Core's contract requires numeric fps/frames
+ *  (conformance checks `isNum`, not `> 0`) and core only records a delivery when
+ *  `output.fps > 0 && output.frames > 0` (render-orchestrator). So 0 is the contract's existing
+ *  not-available channel: it passes conformance, the clip is still delivered, and nothing downstream
+ *  records a rate nobody measured. */
+export function deliveredTiming(bytes: ArrayBuffer): { fps: number; frames: number } {
+  const t = mp4VideoTiming(new Uint8Array(bytes));
+  if (!t || !(t.frames > 0)) return { fps: 0, frames: 0 };
+  const fps = t.fps != null && t.fps > 0 ? Math.round(t.fps * 1000) / 1000 : 0;
+  return { fps, frames: t.frames };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildKlingBody as buildO1, clampDuration as clampO1 } from "../modules/kling-o1-r2v/src/kling";
-import { buildKlingBody as buildTalk, clampDuration as clampTalk, framesFromDelivered, mp4DurationSeconds } from "../modules/infinitetalk/src/kling";
+import { buildKlingBody as buildTalk, clampDuration as clampTalk, deliveredTiming, mp4DurationSeconds } from "../modules/infinitetalk/src/kling";
 import { buildParams as hailuo } from "../modules/cf-hailuo/src/params";
 import { buildParams as veo, clampDuration as clampVeo } from "../modules/cf-veo/src/params";
 import { chatterboxVoice, buildTtsParams } from "../modules/chatterbox/src/chatterbox";
@@ -57,11 +57,15 @@ describe("infinitetalk", () => {
     expect(JSON.stringify(b)).not.toMatch(/voice_ref/);
   });
 
-  it("frames follow delivered mp4 duration, else wav seconds", () => {
-    const mp4 = tinyMp4(24, 72); // 3s
+  it("reports 0/0 when the container has no readable video sample table (cf#923)", () => {
+    // This assertion used to read `framesFromDelivered(mp4, 10, 24) === 72` and pass. It was not
+    // measuring the clip: 72 is 3s x an ASSUMED 24fps, and the door actually delivers 25. The helper
+    // now measures the sample table, and this fixture is an mvhd-only stub with no trak/stts -- so the
+    // honest answer is "unmeasured", reported as 0/0 rather than a fabricated frame count.
+    const mp4 = tinyMp4(24, 72); // 3s of movie-header duration, but no video track
     expect(mp4DurationSeconds(mp4)).toBeCloseTo(3, 5);
-    expect(framesFromDelivered(mp4.buffer as ArrayBuffer, 10, 24)).toBe(72);
-    expect(framesFromDelivered(new ArrayBuffer(8), 4, 24)).toBe(96);
+    expect(deliveredTiming(mp4.buffer as ArrayBuffer)).toEqual({ fps: 0, frames: 0 });
+    expect(deliveredTiming(new ArrayBuffer(8))).toEqual({ fps: 0, frames: 0 });
   });
 });
 
