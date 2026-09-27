@@ -27,13 +27,37 @@ ROOT = tempfile.mkdtemp(prefix="e2e-chunk-")
 SRV = os.path.join(ROOT, "srv"); os.makedirs(SRV)
 PORT = 8741
 
+# Every filename this throwaway origin will ever serve or accept, fixed up front. Membership in
+# a constant set is what keeps the handler free of a path built from request input.
+ALLOWED_NAMES = frozenset(
+    ["out.mp4"]
+    + ["clip_%02d.mp4" % i for i in range(100)]
+    + ["partial_%02d.mp4" % k for k in range(100)]
+)
+
+
 class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a): pass
-    def _path(self): return os.path.join(SRV, os.path.basename(self.path.split("?")[0].lstrip("/")))
+    def _path(self):
+        """Resolve a request to a served file, or None.
+
+        The name is matched against a CONSTANT allowlist rather than sanitized out of the
+        request, so the joined path never derives from input at all. os.path.basename alone
+        would mostly work and is exactly the kind of "probably fine" sanitizer that makes a
+        path-injection finding arguable; a fixed set is not arguable. (CodeQL py/path-injection
+        flagged the earlier basename form on #801, correctly.)
+        """
+        name = self.path.split("?")[0].lstrip("/")
+        if name not in ALLOWED_NAMES:
+            return None
+        return os.path.join(SRV, name)
     def do_PUT(self):
+        p = self._path()
+        if p is None:
+            self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
         n = int(self.headers.get("Content-Length", "0"))
-        left, out = n, open(self._path(), "wb")
+        left, out = n, open(p, "wb")
         while left > 0:
             b = self.rfile.read(min(65536, left))
             if not b: break
@@ -42,7 +66,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
     def do_GET(self):
         p = self._path()
-        if not os.path.isfile(p):
+        if p is None or not os.path.isfile(p):
             self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
         size = os.path.getsize(p); start, end, st = 0, size - 1, 200
         rng = self.headers.get("Range")
