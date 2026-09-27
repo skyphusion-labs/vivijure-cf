@@ -10,7 +10,6 @@ import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
 import googleVeoWorker from "../modules/google-veo/src/index";
-import klingWorker from "../modules/kling/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
@@ -92,14 +91,9 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
       min_seconds: 1, max_seconds: 15,
     },
   },
-  {
-    name: "kling",
-    worker: klingWorker as unknown as Worker,
-    usage: {
-      native_audio: false, voice: "cast_tts", scatter_native_audio: true,
-      min_seconds: 5, max_seconds: 10, duration_steps: [5, 10],
-    },
-  },
+  // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
+  // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
+  // directory came back; it did not just get re-enabled.
   {
     name: "minimax-hailuo",
     worker: minimaxHailuoWorker as unknown as Worker,

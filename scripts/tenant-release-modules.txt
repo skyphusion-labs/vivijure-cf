@@ -13,7 +13,6 @@ finish-upscale
 google-veo
 image-generate
 keyframe
-kling
 minimax-hailuo
 narration-gen
 own-gpu

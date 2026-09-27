@@ -383,10 +383,9 @@ service = "vivijure-module-own-gpu"
 binding = "MODULE_SEEDANCE"
 service = "vivijure-module-seedance"
 
-# Kling 2.1 stays in modules/kling but is NOT bound on hosted.
-# [[services]]
-# binding = "MODULE_KLING"
-# service = "vivijure-module-kling"
+# Kling 2.1 (modules/kling) was RETIRED 2026-09-27, cf#921: its RunPod slug
+# kling-v2-1-i2v-pro returns 404 and no live Kling endpoint does plain i2v.
+# MODULE_KLING_O1_R2V below is a DIFFERENT door (multi-reference r2v) and stays.
 
 [[services]]
 binding = "MODULE_KLING_O1_R2V"
