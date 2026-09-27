@@ -46,7 +46,7 @@ import {
 } from "./cast-media";
 import { CAST_BUNDLE_MAX_IMPORT_BYTES, exportCastBundle, importCastBundle } from "./cast-bundle";
 import {
-  TALKING_VOICE_HONOR,
+  talkingVoiceHonorFor,
   startCastVoiceSample,
   pollCastVoiceSample,
   keepCastVoiceSample,
@@ -114,7 +114,7 @@ import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
-import { generateAudioOn, spokenLinesPresent, doorCanSpeakLines } from "./motion-scatter";
+import { generateAudioOn, spokenLinesPresent, doorCanSpeakLines, spokenLinesRefusalMessage } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
@@ -288,9 +288,15 @@ const hSaveProjectStoryboard: Handler = async (req, env, _c, p) => {
 const hListCast: Handler = async (_req, env) => json({ cast: (await listCast(env)).map(toPublicCast) });
 // The dialogue voice catalog (aura-1 speakers). Static; the cast voice picker renders from it so the
 // list of voices has one source of truth (src/voices.ts), not a hardcoded copy in the frontend.
+// cf#919: `talking_doors` is PROJECTED through the installed motion.backend set, not served as the
+// raw table. The table carried `infinitetalk`, which no hosted tenant can install, so the cast voice
+// picker advertised a door that is not in the picker. Same 60s discovery cache as the other read
+// routes; an empty result is an honest answer and public/cast.js has an authored empty state for it.
 const hListVoices: Handler = async (_req, env) => json({
   voices: catalogForDeploy(env, VOICE_CATALOG),
-  talking_doors: TALKING_VOICE_HONOR,
+  talking_doors: talkingVoiceHonorFor(
+    await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 }),
+  ),
 });
 const hCreateCast: Handler = async (req, env) => {
   const b = await readBody<{ name?: string; bible?: string | null }>(req);
@@ -980,7 +986,7 @@ const hSubmitRender: Handler = async (req, env) => {
   if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
     if (!doorCanSpeakLines(panelMotionMod) || !generateAudioOn(mapped.motion_config)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        spokenLinesRefusalMessage(modules, panelMotionMod, generateAudioOn(mapped.motion_config)),
       );
     }
   }
@@ -1141,7 +1147,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   if (spokenLinesPresent(fromKfDialogue)) {
     if (!doorCanSpeakLines(fromKfMotionMod) || !generateAudioOn(mapped.motion_config)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        spokenLinesRefusalMessage(modules, fromKfMotionMod, generateAudioOn(mapped.motion_config)),
       );
     }
   }
@@ -1675,7 +1681,11 @@ const hStartFilm: Handler = async (req, env) => {
   if (spokenLinesPresent(dialogue_lines)) {
     if (!doorCanSpeakLines(filmMotionMod) || !generateAudioOn(a.motion_config as Record<string, unknown> | undefined)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        spokenLinesRefusalMessage(
+          filmModules,
+          filmMotionMod,
+          generateAudioOn(a.motion_config as Record<string, unknown> | undefined),
+        ),
       );
     }
   }

@@ -482,6 +482,14 @@ PATCH is unchanged.
 same take, `line` = mouth follows the storyboard line in the cast TTS voice, `none` = cannot lock the
 sample. `label` is the user-facing sentence. It is served on every deploy, demo included.
 
+**PROJECTED, not served raw (cf#919).** The table is filtered through the modules actually installed
+on this deploy (`talkingVoiceHonorFor`, over `servingForHook(modules, "motion.backend")`), so a row
+only ships when that door is installed here. Deploy MODE does not scrub it (unlike `voices`), the
+live registry does. Consequences a client must handle: the array can be **empty** (no talking door
+installed -- `public/cast.js` renders an authored empty line for this), and an installed door with no
+row in the table gets **no row**, because inventing honour copy for it would be a guess. A deploy
+that binds every talking door still sees the whole table.
+
 ### 2.5 Storyboard projects
 
 Responses are wrapped by resource name: list -> `{ projects: [...] }`, item -> `{ project: {...} }`.
@@ -1126,10 +1134,25 @@ cannot be rendered. ..."`, `"choose a motion backend for a full render -- ... In
 schema rejects (#577), and `400` when a `local` motion door is paired with a non-local keyframe
 module (vivijure-local#153); `400 "finish module(s) requested but not serving: ..."` (cf#593);
 `400` (the untrained-cast message) if a bound cast LoRA is not ready, or a bound cast lacks the SDXL
-keyframe adapter; and, when the bundle storyboard has spoken lines on a full render, `400 "This
-storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or
-Grok) and leave talking audio on. Silent look doors cannot say the script."` unless the chosen motion
-module can speak lines and its talking audio is on.
+keyframe adapter; and, when the bundle storyboard has spoken lines on a full render, `400` unless the
+chosen motion module can speak lines and its talking audio is on.
+
+That last refusal is **PROJECTED from the installed module set (cf#919)**, in the same spirit as
+`Choose one of: <names>` above, and it is one of exactly three sentences:
+
+| State | Message |
+|-------|---------|
+| chosen door cannot speak, and at least one installed door can | `This storyboard has spoken lines. Pick a talking door (<installed talking doors>) and leave talking audio on. Silent look doors cannot say the script.` |
+| chosen door cannot speak, and NO installed door can | `This storyboard has spoken lines, and this studio has no talking door installed. Every motion door installed here is a silent look door, which cannot say the script. Install a talking door, or clear the spoken lines.` |
+| chosen door CAN speak, only `generate_audio` is off | `This storyboard has spoken lines, and talking audio is switched off on <door>. Turn talking audio back on, or clear the spoken lines.` |
+
+`<installed talking doors>` is `servingForHook(modules, "motion.backend")` filtered by
+`doorCanSpeakLines`, in registry display order, each named by its `provides[0].label` (else its
+module name), joined `a, b or c`. **It never names a door this deploy does not have.** It previously
+carried a literal seven-door list, which on a hosted tenant sent the filmmaker to look for
+InfiniteTalk, a door the hosted catalog cannot install. A client MUST NOT match on the old literal;
+match on `spoken lines` if it must match at all. The same three sentences serve all three render
+doors (panel, render-from-keyframes, agent).
 **Response 201:** the RunPod-shaped poll view (2.24.1).
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
