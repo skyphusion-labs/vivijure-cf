@@ -32,6 +32,7 @@
 //   R2 mode        -> { ok: true, clip_key: <written key>, applied: [...] }
 //   presigned mode -> { ok: true, output_key: <written key> }   // no clip_key, no applied
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { reachesRunpod } from "./runpod-census";
 
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 
@@ -272,7 +273,7 @@ describe("the finish-class population is derived, not asserted (cf#578 denominat
     // census by existing rather than by someone remembering to add it here.
     const finishClass = candidates.filter(
       (n) => src(n).includes("parseBackendOutput(s.output)") &&
-        (src(n).includes("api.runpod.ai") || src(n).includes("_shared/runpod-route")),
+        reachesRunpod(src(n)),
     );
     // Accepts the presigned shape iff its PARSE LAYER reads output_key OFF THE RESPONSE.
     // The naive matcher (helper mentions output_key at all) scores finish-rife and finish-blender

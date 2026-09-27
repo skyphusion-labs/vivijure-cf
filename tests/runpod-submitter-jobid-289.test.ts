@@ -27,6 +27,7 @@
 // The census at the bottom of this file derives the population instead of asserting it, so the next
 // person does not inherit a hand-written list that can go stale the same way.
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { reachesRunpod } from "./runpod-census";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
@@ -228,7 +229,7 @@ describe("the population under test is the whole one (cf#289)", () => {
     // matching the hook INSIDE the array, because keying on `hooks: ["motion.backend"]` matches
     // eight of the nine and silently drops local-gpu, which is dual-hook.
     const submitters = candidates.filter(
-      (n) => read(n).includes("api.runpod.ai") || read(n).includes("_shared/runpod-route"),
+      (n) => reachesRunpod(read(n)),
     );
     const motion = candidates.filter((n) => /hooks:\s*\[[^\]]*"motion\.backend"/.test(read(n)));
     const mine = submitters.filter((n) => !motion.includes(n));
