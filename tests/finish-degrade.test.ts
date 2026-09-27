@@ -560,11 +560,17 @@ describe("cf#853 stagesNote names the right stage", () => {
   });
 });
 
-// THE SEAM, STATED PLAINLY. Everything above tests the pure decision logic, which is where all
-// of the deciding happens. The DOM wiring is NOT exercised by a rendered-DOM test here, so these
-// two assertions check that the wiring EXISTS rather than that it paints correctly -- a weaker
-// claim, and it is named as weaker rather than left to look like coverage. `node --check` and
-// `npm run guard:resolve` cover the syntax and the script resolution.
+// THE SEAM, AND IT IS NARROWER THAN IT WAS (cf#864).
+//
+// These two assertions check only that the panel REACHES the projection. They used to be the only
+// thing standing between the tested decision logic and the screen, and they were named as weaker
+// for that reason. cf#864 closed the gap: the DOM construction moved into
+// public/stage-degrade-view.js and tests/stage-degrade-view.test.ts now drives it for real, in both
+// directions, with a witness proving the enumeration ran on every zero-block case.
+//
+// So what remains here is a reachability check and nothing more, and the painting claims live in
+// that file. Deliberately NOT keeping a second, weaker copy of what it asserts: an assertion kept
+// alongside a stronger one that supersedes it is the same defect wearing a disclaimer.
 describe("cf#853 the panel is actually wired to the new signals", () => {
   const src = (f: string) => readFileSync(join(ROOT, "public", f), "utf8");
 
@@ -575,13 +581,16 @@ describe("cf#853 the panel is actually wired to the new signals", () => {
     expect(js).toMatch(/const limited = !!\(degrade \|\| clipFinish \|\| stageDegrades\.length\)/);
   });
 
-  it("planner-history-row.js records a band per stage and renders the reasons", () => {
+  it("planner-history-row.js records a band per stage and reaches the shared builder", () => {
     const js = src("planner-history-row.js");
     for (const attr of ["speechDegrade", "masterDegrade", "dialogueDegrade"]) {
       expect(js, `history row does not record ${attr}`).toContain(`li.dataset.${attr}`);
     }
     expect(js).toContain("stagesNote(stageInfos)");
-    expect(js).toContain("window.finishDegrade.stageSummary(info)");
+    // cf#864: the block building moved to stage-degrade-view.js, so this asserts the row goes
+    // THROUGH that seam. What it renders is asserted in tests/stage-degrade-view.test.ts against a
+    // real element stub, which is a claim this grep cannot make.
+    expect(js).toContain("stageDegradeView.stageBlocks(");
   });
 });
 

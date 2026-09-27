@@ -60,15 +60,16 @@ function buildHistoryRow(r, childrenByParent) {
   // whole point of the band vocabulary is that a stage nobody measured and a stage that ran
   // clean are different facts. Folding them here would rebuild cf#549 three stages over.
   const stageBands = {};
-  const stageInfos = [];
   if (window.finishDegrade && window.finishDegrade.STAGE_KEYS) {
     for (let s = 0; s < window.finishDegrade.STAGE_KEYS.length; s++) {
       const k = window.finishDegrade.STAGE_KEYS[s];
       stageBands[k] = window.finishDegrade.stageBand(r.output, k);
-      const info = window.finishDegrade.stageFrom(r.output, k);
-      if (info) stageInfos.push(info);
     }
   }
+  // cf#864: the SAME enumeration the live view and the block builder use.
+  const stageInfos = window.stageDegradeView
+    ? window.stageDegradeView.reportedStages(r.output, window.finishDegrade)
+    : [];
 
   li.dataset.finishDegrade = finishBand;
   li.dataset.clipFinish = clipFinishBand;
@@ -588,32 +589,21 @@ function buildHistoryRow(r, childrenByParent) {
     li.appendChild(clipWrap);
   }
 
-  // cf#853: one note per REPORTED stage. Separate blocks on purpose -- a speech passthrough,
-  // an unmastered bed and a film with no voices are three different facts, and one merged
-  // sentence is the collapse this vocabulary exists to prevent. Only the "reported" band gets
-  // prose; "unreadable" rides on its data attribute and its badge, because there is nothing
-  // readable to quote and inventing a cause is the one thing this must never do.
-  for (let s = 0; s < stageInfos.length; s++) {
-    const info = stageInfos[s];
-    const stageWrap = document.createElement("div");
-    stageWrap.className = "render-degrade planner-history-degrade";
-    stageWrap.setAttribute("role", "note");
-    stageWrap.setAttribute("data-stage", info.stage);
-    const stageSummaryText = window.finishDegrade.stageSummary(info);
-    if (stageSummaryText) {
-      const p = document.createElement("p");
-      p.className = "render-degrade-summary";
-      p.textContent = stageSummaryText;
-      stageWrap.appendChild(p);
-    }
-    for (let i = 0; i < info.reasons.length; i++) {
-      const why = document.createElement("p");
-      why.className = "render-degrade-reason";
-      why.textContent = info.reasons[i];
-      stageWrap.appendChild(why);
-    }
-    li.appendChild(stageWrap);
-  }
+  // cf#864: one note per REPORTED stage, built by the SHARED builder (stage-degrade-view.js).
+  // Separate blocks on purpose -- a speech passthrough, an unmastered bed and a film with no
+  // voices are three different facts, and one merged sentence is the collapse this vocabulary
+  // exists to prevent. Only the "reported" band gets prose; "unreadable" rides on its data
+  // attribute and its badge, because there is nothing readable to quote and inventing a cause is
+  // the one thing this must never do.
+  const stageEls = window.stageDegradeView
+    ? window.stageDegradeView.stageBlocks(
+        document,
+        stageInfos,
+        window.finishDegrade ? window.finishDegrade.stageSummary : null,
+        { className: "render-degrade planner-history-degrade", role: "note" },
+      )
+    : [];
+  for (let s = 0; s < stageEls.length; s++) li.appendChild(stageEls[s]);
 
   // v0.129.0: inline movie player, full card width, directly below the action
   // buttons (view / re-render / delete). Completed rows that produced a silent

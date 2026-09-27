@@ -50,11 +50,40 @@ MAX_CLIPS = 80
 # 3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES): the batch's sources, their normalized copies, and the
 # batch partial. Tunable per instance type without a rebuild; the default targets the 20 GB
 # ephemeral disk of the largest Cloudflare Container with room to spare.
+#
+# THE 3x IS A BUDGET, NOT A MEASUREMENT, and cf#813 measured what it assumes. The multiplier is
+# only right if a normalized copy is about the size of its source; the measured ratio spans
+# 0.98x to 5.09x and is dominated by whatever bitrate the source happened to carry, not by a
+# constant. One component of it WAS structural: every clip was upscaled to a fixed 1920x1080
+# whatever the door produced, worth about 1.95x on a 720p source. vivijure-core#322 removes that
+# by matching the assemble target to the measured source, so the inflation goes away at its
+# cause rather than being re-tuned here. The rest of the spread is the source's own bitrate and
+# no single multiplier captures it. This budget is deliberately generous for that reason; do not
+# read it as a prediction of what a film weighs.
 MAX_BATCH_BYTES = int(os.environ.get("MAX_BATCH_BYTES", str(1024 * 1024 * 1024)))
 
 # The final join reads the partials straight from their presigned R2 URLs, so they never land on
-# disk and peak disk at that stage is one film. ffmpeg refuses a non-file protocol unless it is
-# whitelisted (the default is file,crypto,data), and https needs BOTH https and tls listed.
+# disk. ffmpeg refuses a non-file protocol unless it is whitelisted (the default is
+# file,crypto,data), and https needs BOTH https and tls listed.
+#
+# CORRECTION (cf#813): this comment used to say peak disk at that stage is ONE film. It is TWO
+# full-length copies. `_silent.mp4` is written at :315 (chunked) and :864 (single-pass),
+# `_mux_bed_onto` (:780) writes `final.mp4` FROM it, and nothing deletes the silent cut:
+# `grep -n "os.remove" app.py` returns exactly :266 and :270, both reaping batch partials. Those
+# two hits are the positive control that the zero for `_silent.mp4` is a real zero and not a
+# broken pattern. `_remux_audio_only` (:650) has the same shape, writing `final.mp4` beside
+# `video_path`.
+#
+# NOT A CORRECTNESS BUG TODAY: a real film measures in the hundreds of MB against a 20 GB disk,
+# so two copies of it is nowhere near the ceiling. It is wrong in the same direction as the rest
+# of the sizing prose, which is why it is corrected rather than left.
+#
+# THE REMOVAL IS DEFERRED, DELIBERATELY. Deleting `_silent.mp4` after `_mux_bed_onto` returns
+# would make this comment true at its cause, which is normally the right fix and is the rule this
+# inverts. It is held because this container is being repaired and re-deployed right now, and an
+# unrelated allocation change does not belong in front of the first confirmed-serving build. The
+# comment is corrected now because a wrong comment here has already cost a live debugging effort
+# real time. Land the removal once the container is verified serving.
 CONCAT_PROTOCOL_WHITELIST = "file,http,https,tcp,tls"
 MAX_KEYFRAME_BYTES = 32 * 1024 * 1024   # keyframe PNG for content-inspect (#523 Layer 2)
 
@@ -180,9 +209,20 @@ async def _finish_chunked(body, partial_urls, t0):
     """Chunked assemble (cf#784): bound peak disk to a fixed working set.
 
     The single-pass path holds every downloaded clip, every normalized copy, the concat and the
-    muxed film in ONE work dir until the job ends, so peak disk is 3-4x total input. At the
-    contracted maximum (MAX_CLIPS x MAX_CLIP_BYTES = 20.0 GB) the download stage alone exceeds the
-    20 GB ephemeral disk of the largest Cloudflare Container before a normalized byte is written.
+    muxed film in ONE work dir until the job ends, so peak disk is 3-4x total input.
+
+    ON `MAX_CLIPS x MAX_CLIP_BYTES` (cf#813): that product is 20.0 GB and this docstring used to
+    present it as the route's "contracted maximum", i.e. an input size to design against. It is
+    not. `MAX_CLIP_BYTES` is a REJECT CEILING -- the argument to `_download(s, url, dst,
+    MAX_CLIP_BYTES)` at :285 and :416, the size at which a download is REFUSED -- so the product
+    is the largest input the route will not reject, not one it expects. A 256 MB clip is 3.2 to
+    15.6 minutes of video at this container's settings; clips are 4 to 8 seconds. Measured, a
+    32-clip film normalizes to roughly 70-350 MB and a full 80-clip film to about 750 MB, so the
+    product sits 23x to 120x above a real film and nothing approaches the 20 GB disk.
+
+    That matters beyond tidiness: a disk gate written against 20 GB could never fire. Size this
+    route by BITRATE x DURATION x COUNT instead (see README for the measured bands), and keep
+    256 MB as what it is, a per-clip reject ceiling.
 
     Here the film is partitioned into byte-bounded batches. Each batch is downloaded, normalized,
     hard-concatenated to a partial, PUT to R2, and its work dir deleted before the next batch
