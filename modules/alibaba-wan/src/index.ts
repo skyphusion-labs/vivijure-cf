@@ -44,7 +44,7 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.2.0",
+  version: "0.2.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
@@ -57,10 +57,15 @@ const MANIFEST: ModuleManifest = {
     order: 70,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Wan 2.6 stills-to-clip. Talks. Mouth follows the storyboard line when we have a Cast voice. Without a line, invents speech.",
+    // cf#929: the blurb used to stop at "Mouth follows the storyboard line", which reads as a promise
+    // that the mouth TRACKS the line. It does not stop when the line does. Measured: a 1.4s line in a
+    // 5s clip left the speaker mouthing silence for 3.6s, 72% of the clip.
+    blurb: "Wan 2.6 stills-to-clip. Talks. Mouth follows the storyboard line when we have a Cast voice, and keeps moving after the line ends. Without a line, invents speech.",
     limits: [
-      "5, 10, or 15 second clips",
+      "5, 10, or 15 second clips. A shorter shot is rounded UP to the next of these.",
       "Mouth follows the storyboard line in the Cast voice.",
+      "The speaker keeps mouthing words after the line ends, for the rest of the clip.",
+      "A line shorter than 5 seconds always leaves that silent-mouthing tail.",
       "Without a line, invents speech from the prompt.",
       "Cannot lock the sample you kept.",
       "One film, no scatter",
@@ -73,6 +78,10 @@ const MANIFEST: ModuleManifest = {
     driving_audio: true,
     min_seconds: 5,
     max_seconds: 15,
+    // cf#929: this is a FLOOR plus a rounding rule, not a menu. wan.ts clampDuration snaps UP to the
+    // next allowed value, so a 1.4s line cannot produce a clip shorter than 5s, and the door keeps the
+    // mouth moving through the remainder. That interaction is what makes the tail unavoidable for
+    // ordinary dialogue rather than an edge case.
     duration_steps: [5, 10, 15],
   },
 };
