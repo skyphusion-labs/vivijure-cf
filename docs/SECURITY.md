@@ -401,8 +401,8 @@ it returns only the PUBLIC view of each installed module (name, version, hooks, 
 markers). Internal binding VALUES never cross this projection; an `install`-scope config value
 (e.g. a notify-email recipient) lives only behind the authenticated config route and is never
 emitted here. The projection lists whatever the deploy installed -- the standard `deploy.sh`
-profile installs the curated `STANDARD_MODULES` list (the `satellites` profile adds the three GPU
-finish satellites; `finish-blender` and `local-gpu` are opt-in), which is a subset of the
+profile installs the curated `STANDARD_MODULES` list (the `satellites` profile adds the 1 GPU
+finish satellite; `finish-blender` and `local-gpu` are opt-in), which is a subset of the
 first-party module workers under `modules/`, so it is populated from first boot. When
 `ABUSE_REPORT_URL` is set, the projection also carries `host.abuse_report_url` (section 9). If you add a module, keep its secret/internal fields off the projection.
 
