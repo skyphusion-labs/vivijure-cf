@@ -64,9 +64,39 @@
  *  the SCOPE note above. */
 export const BACKEND_SOFT_DEGRADE = "backend-soft-degrade";
 
-/** House CSAM needle, same as the keyframe door. A refusal is a HARD FAIL, never a polish degrade. */
+/**
+ * THE house CSAM needle. There is exactly one, and `tests/csam-needle-one-copy.test.ts` fails if a
+ * second appears anywhere in the tree.
+ *
+ * A refusal is a HARD FAIL, never a polish degrade. The three consumers below turn a `false` from
+ * this function into "treat it as an ordinary polish miss and carry on", so anything this misses is
+ * a refusal that ships as degrade noise.
+ *
+ * GHSA-qgx2-5crw-9m4j. This used to test `includes("csam")` only, while `cloud-keyframe` carried a
+ * second copy matching four wordings, and this docstring asserted the two were "the same as the
+ * keyframe door". They were not. A provider refusal worded "child sexual abuse", "child pornography"
+ * or "sexual content involving a minor" -- the exact three the keyframe door was written to
+ * anticipate -- missed this needle and was booked as a polish degrade.
+ *
+ * The irony is worth keeping, because it is the whole lesson: `BACKEND_SOFT_DEGRADE` sits directly
+ * above this function and exists so "the four call sites cannot drift into four spellings of it",
+ * and then this same file hand-rolled a second, narrower copy of a SAFETY matcher. Sharing a
+ * constant to prevent drift and then duplicating the predicate beside it is the defect one file
+ * away from its own remedy.
+ *
+ * The claim that this matches the keyframe door is no longer in the docstring because it is no
+ * longer a claim: `cloud-keyframe` imports this function, and the test asserts the two agree.
+ *
+ * WIDEN, NEVER NARROW. A false negative here is a missed refusal; a false positive is a film that
+ * hard-fails and gets looked at. Those costs are not comparable, so this list only grows.
+ */
 export function isCsamRefusalReason(text: unknown): boolean {
-  return typeof text === "string" && text.toLowerCase().includes("csam");
+  if (typeof text !== "string") return false;
+  const s = text.toLowerCase();
+  return s.includes("csam")
+    || s.includes("child sexual")
+    || s.includes("child pornography")
+    || s.includes("sexual content involving a minor");
 }
 
 /** Shared body of both entry points below: given an envelope whose `output` is already known to be

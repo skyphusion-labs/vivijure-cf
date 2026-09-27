@@ -865,7 +865,17 @@ function finalizeRenderPoll(data) {
     // the panel used to drop that on the floor and paint a plain green "completed".
     const degrade = window.finishDegrade ? window.finishDegrade.degradeFrom(out) : null;
     const clipFinish = window.finishDegrade ? window.finishDegrade.clipFinishFrom(out) : null;
-    const limited = !!(degrade || clipFinish);
+    // cf#853 / core#317: speech, master and dialogue degrades reach the payload as their own
+    // top-level keys. Before this they were console.warn only, so a film that was never
+    // mastered, whose speech chain passed everything through, or that shipped without
+    // voices was painted plain green and was indistinguishable from a clean one.
+    //
+    // `limited` is an OR over signals that REPORTED a limit, which is deliberately not a
+    // worst-of over bands: an unmeasured stage is not a limit and must not warn, and an
+    // unreadable one is handled by its own band rather than by claiming the studio named
+    // something it did not. See combineBands() in finish-degrade.js.
+    const stageDegrades = stageDegradesOf(out);
+    const limited = !!(degrade || clipFinish || stageDegrades.length);
     setRenderStatus((limited ? "completed with limits" : "completed") + elapsed, limited ? "warn" : "success");
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
@@ -924,13 +934,28 @@ function renderDeliverable(out, degrade) {
 // The disclosure block: our structural sentence, the studio reason VERBATIM, and the
 // per-shot clips as real links when they are what was delivered. Rebuilt from scratch on
 // every call so a stale note can never outlive the render that produced it.
+// cf#853: every per-stage degrade this payload REPORTS, in the declared stage order so the
+// disclosure reads the same way twice. Absent and clean stages are not here by construction
+// (stageFrom returns null for both), which is what keeps a healthy render silent.
+function stageDegradesOf(out) {
+  const fd = window.finishDegrade;
+  if (!fd || !fd.STAGE_KEYS) return [];
+  const found = [];
+  for (let i = 0; i < fd.STAGE_KEYS.length; i++) {
+    const info = fd.stageFrom(out, fd.STAGE_KEYS[i]);
+    if (info) found.push(info);
+  }
+  return found;
+}
+
 function renderDegradeNote(degrade, deliv, out) {
   const host = $("#planner-render-degrade");
   if (!host) return;
   while (host.firstChild) host.removeChild(host.firstChild);
   const fd = window.finishDegrade;
   const clip = fd ? fd.clipFinishFrom(out) : null;
-  if (!degrade && !clip) {
+  const stages = stageDegradesOf(out);
+  if (!degrade && !clip && !stages.length) {
     host.hidden = true;
     return;
   }
@@ -967,6 +992,31 @@ function renderDegradeNote(degrade, deliv, out) {
       why.textContent = clip.reasons[i];
       host.appendChild(why);
     }
+  }
+
+  // cf#853: one block per reported stage. A separate block per stage on purpose -- a speech
+  // passthrough and an unmastered audio bed are different facts, and one merged sentence
+  // would be the same collapse the band vocabulary exists to prevent.
+  for (let s = 0; s < stages.length; s++) {
+    const info = stages[s];
+    const wrap = document.createElement("div");
+    wrap.className = "render-degrade-stage";
+    wrap.setAttribute("data-stage", info.stage);
+    const stageSummary = fd ? fd.stageSummary(info) : null;
+    if (stageSummary) {
+      const p = document.createElement("p");
+      p.className = "render-degrade-summary";
+      p.textContent = stageSummary;
+      wrap.appendChild(p);
+    }
+    // VERBATIM. The studio wrote the truest available description of what it could not do.
+    for (let i = 0; i < info.reasons.length; i++) {
+      const why = document.createElement("p");
+      why.className = "render-degrade-reason";
+      why.textContent = info.reasons[i];
+      wrap.appendChild(why);
+    }
+    host.appendChild(wrap);
   }
 
   if (deliv.kind === "clips" && deliv.clips.length) {
