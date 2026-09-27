@@ -10,6 +10,7 @@ import { presignR2Get } from "@skyphusion-labs/vivijure-core/presign";
 import { voiceLockHint } from "@skyphusion-labs/vivijure-core/voices";
 import type { Env } from "./env";
 import { studioEnv } from "./orchestrator-env";
+import { getServedArtifact } from "./shared";
 
 function fail(status: 400 | 404, msg: string): never {
   const e = new Error(msg) as Error & { sampleStatus: 400 | 404 };
@@ -283,7 +284,8 @@ export async function attachCastVoiceSampleFromKey(
   const cast = await getCastById(env, castId);
   if (!cast) fail(404, "cast member");
   if (!isSafeRelKey(srcKey)) fail(400, "unsafe key");
-  const obj = await env.R2_RENDERS.get(srcKey);
+  // Same served-space read as the image copy path, for the same reason (GHSA-5fj8-6pc2-x9p5).
+  const obj = await getServedArtifact(env.R2_RENDERS, srcKey);
   if (!obj) fail(404, "source clip not found");
   const bytes = new Uint8Array(await obj.arrayBuffer());
   return persistVoiceRef(env, castId, bytes, obj.httpMetadata?.contentType || "");

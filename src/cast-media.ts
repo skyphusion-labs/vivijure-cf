@@ -13,6 +13,7 @@ import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "./cast-public";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
+import { getServedArtifact } from "./shared";
 
 export const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
 export const CAST_MAX_BYTES = 16 * 1024 * 1024;
@@ -104,7 +105,11 @@ export async function copyChatArtifactToRenders(
   srcKey: string,
   destPrefix: string,
 ): Promise<{ key: string; mime: string }> {
-  const obj = await env.R2_RENDERS.get(srcKey);
+  // Read through served artifact space: the source must be an object this deployment would SERVE.
+  // A key outside it (a held object, anything outside the artifact namespaces) reads as absent, so it
+  // cannot become the source of a new served key. The constraint is at the read, not here, so a copy
+  // path added later inherits it. Ref: GHSA-5fj8-6pc2-x9p5.
+  const obj = await getServedArtifact(env.R2_RENDERS, srcKey);
   if (!obj) throw new HttpError(404, `source artifact not found: ${srcKey}`);
   const bytes = new Uint8Array(await obj.arrayBuffer());
   if (bytes.length > CAST_MAX_BYTES) {
