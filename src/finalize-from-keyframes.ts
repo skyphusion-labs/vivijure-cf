@@ -32,6 +32,13 @@ import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types"
 import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { readIdempotencyKey } from "./film-idempotency";
+import {
+  bundleScenesHaveLines,
+  hostedMotionFallback,
+  prepareSpokenClip,
+  spokenLinesPresent,
+  withMotionBackend,
+} from "./motion-scatter";
 
 export interface AnimateFromPreviewArgs {
   parent: RenderRow;
@@ -155,9 +162,16 @@ export async function animateFromPreview(
 
   const tier = coerceQualityTier(args.parent.quality_tier) ?? "final";
   const modules = await discoverModules(env);
-  const mapped = mapRenderOverridesToModuleConfigs(args.parent.render_overrides ?? undefined, tier, modules);
+  let mapped = mapRenderOverridesToModuleConfigs(args.parent.render_overrides ?? undefined, tier, modules);
   const cloudAllowed = cloudMotionModules(modules).map((m) => m.name);
   const gpuDoor = defaultGpuDoorModule(modules)?.name;
+  let previewBundleScenes: Awaited<ReturnType<typeof readBundleScenes>> = [];
+  try {
+    previewBundleScenes = await readBundleScenes(env, args.parent.bundle_key);
+  } catch (e) {
+    return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
+  }
+  const previewSpoken = bundleScenesHaveLines(previewBundleScenes);
 
   let motionBackend: string | undefined;
   let perShotMotion: Record<string, string> | undefined;
@@ -186,9 +200,24 @@ export async function animateFromPreview(
   } else {
     // cf#347: honour a caller-supplied motion backend (panel sends motion_backend on finalize).
     // Parent-row mapped override remains the fallback when the body omits one.
-    motionBackend = args.motionBackend ?? mapped.motion_backend ?? gpuDoor;
-    if (!motionBackend) {
-      return { ok: false, error: 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed', status: 400 };
+    // The last resort is the hosted door for this board: InfiniteTalk (or another driving-only
+    // cloud door) when a line is present, otherwise one silent catalog door. own-gpu is the
+    // hybrid "gpu" shot above, not this default.
+    // mapped.motion_backend is the pipeline default (often the byo door). That is not a
+    // caller choice. Only the request body or the stored overrides bag counts as one.
+    const rawExplicit = (args.motionBackend && args.motionBackend.trim())
+      || parseModuleRenderOverrides(args.parent.render_overrides).motion_backend;
+    const picked = hostedMotionFallback(modules, rawExplicit, previewSpoken);
+    if (!("name" in picked)) {
+      return { ok: false, error: picked.error, status: 400 };
+    }
+    motionBackend = picked.name;
+    if (!rawExplicit) {
+      mapped = mapRenderOverridesToModuleConfigs(
+        withMotionBackend(args.parent.render_overrides, motionBackend),
+        tier,
+        modules,
+      );
     }
   }
 
@@ -242,14 +271,13 @@ export async function animateFromPreview(
   let dialogue_lines: DialogueLine[] | undefined;
   let voice_ref_keys: Record<string, string> | undefined;
   try {
-    const bundleScenes = await readBundleScenes(env, args.parent.bundle_key);
     const resolved = await resolveCastLoras(env, args.castLoras ?? {});
-    let lines = dialogueLinesFromBundleScenes(bundleScenes, resolved.voices);
+    let lines = dialogueLinesFromBundleScenes(previewBundleScenes, resolved.voices);
     if (lines.length) {
-      lines = resolveExplicitLineVoices(lines, bundleScenes, resolved.voices);
+      lines = resolveExplicitLineVoices(lines, previewBundleScenes, resolved.voices);
       dialogue_lines = lines;
     }
-    voice_ref_keys = voiceRefKeysFromScenes(bundleScenes, resolved.voiceRefs);
+    voice_ref_keys = voiceRefKeysFromScenes(previewBundleScenes, resolved.voiceRefs);
   } catch (e) {
     // fc#2250: the original intent here ("missing bundle dialogue must not block finalize") is
     // PRESERVED and did not need the blanket catch to hold -- readBundleScenes returns [] for a
@@ -258,6 +286,22 @@ export async function animateFromPreview(
     // gzip, unparseable YAML, or cast resolution), so whether this film has spoken lines is
     // UNDETERMINED. Swallowing it finalized a voiced film silent and called it success.
     return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
+  }
+
+  // One door for the whole film (the finalized path). Hybrid and cloud-per-shot keep their
+  // own door map; refusing those here would judge only the gpu default.
+  let motionConfig = mapped.motion_config;
+  if (!perShotMotion) {
+    const clip = prepareSpokenClip(
+      modules,
+      modules.find((m) => m.name === motionBackend),
+      mapped.motion_config,
+      voice_ref_keys,
+      spokenLinesPresent(dialogue_lines),
+    );
+    if (!clip.ok) return { ok: false, error: clip.error, status: 400 };
+    motionConfig = clip.config ?? mapped.motion_config;
+    voice_ref_keys = clip.voiceRefs;
   }
 
   // dialogue_lines is runtime-supported on startFilmFromKeyframes (core >=1.6.0); published
@@ -271,7 +315,7 @@ export async function animateFromPreview(
       keyframes,
       motion_backend: motionBackend,
       per_shot_motion: perShotMotion,
-      motion_config: mapped.motion_config,
+      motion_config: motionConfig,
       finish_config: mapped.finish_config,
       // cf#537: inherited from the PARENT render's stored overrides bag, so a derived render keeps
       // the selection the original was submitted with. Dropping it here would silently re-enable
