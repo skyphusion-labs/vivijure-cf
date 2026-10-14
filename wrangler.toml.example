@@ -609,3 +609,15 @@ service = "vivijure-module-subtitle"
 pattern = "vivijure.skyphusion.org"
 custom_domain = true
 
+# >>> SELFHOST-SKIP: flagship host app.studio.vivijure.com
+# Main studio host, decided 2026-10-14. Same worker as the route above.
+# The wildcard *.studio.vivijure.com stays on the control plane. This exact
+# host is more specific, so requests for it land here. `app` is a reserved
+# slug, so signup cannot mint it. The skyphusion.org name stays until this
+# host is proven. A self-host strips this block and keeps one route, which
+# deploy.sh retargets to DEPLOY_HOSTNAME.
+[[routes]]
+pattern = "app.studio.vivijure.com"
+custom_domain = true
+# <<< SELFHOST-SKIP: flagship host app.studio.vivijure.com
+
