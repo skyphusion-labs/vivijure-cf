@@ -123,6 +123,8 @@ const SPEND_PATTERNS: RegExp[] = [
   // tests/spend-surface-cast-family.test.ts, which derives the cast-child population from the
   // router rather than transcribing it, because a transcribed list is what drifted here.
   /^\/api\/cast\/[^/]+\/voice-sample$/,
+  // One Aura-1 line (cf#982). Cheap next to a clip, still a paid model call.
+  /^\/api\/cast\/[^/]+\/voice-line$/,
   /^\/api\/storyboard\/score-bed$/,
   /^\/api\/storyboard\/music-generate$/,
   // Paid-AI submits (cf#256): the four POST routes that dispatch the plan.enhance hook. /api/chat
