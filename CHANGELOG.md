@@ -5,6 +5,888 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.36.0 -- 2026-10-14
+
+### fix(ci)!: the capability-matrix gate tolerates ONE declared transition, in both directions (vivijure#830)
+
+`scripts/check-capability-matrix.mjs` enforces agreement in both directions between `modules/` here and
+`docs/CAPABILITIES.md` in the hub, **read from the hub's `main`**. Those live in two repos, so the two
+edits cannot be atomic and **every order goes red mid-flight**: retiring hub-first leaves a module with
+no row, cf-first leaves a row with no module, and adding does the same in mirror image.
+
+**The part that made it urgent is not the inconvenience, it is where the red lands.** Because the gate
+reads the hub at `main`, it fails on PRs whose diff has nothing to do with either edit. A check that
+freezes unrelated merges over a condition outside their change is the shape this estate refuses
+everywhere else. My own header in that script said "the remedy is a one-row edit", which was wrong: the
+row is in another repo.
+
+**The generalisable rule, recorded because it is not specific to this gate:** a bidirectional
+consistency gate across two repos cannot be satisfied atomically, so it must tolerate one declared
+transitional state or it forbids the transition it exists to keep honest.
+
+`scripts/matrix-transition.txt` is that declaration, one line of `<module> <retiring|adding> <issue>`.
+It is deliberately hard to abuse, and each of these is a test:
+
+- **every entry is printed** with which side it currently exists on;
+- **an entry must exist on at least one side**, so it cannot be speculative;
+- **a COMPLETED transition is a hard FAIL, not a no-op.** `retiring` completes when module and row are
+  both gone; `adding` when both are present. **An exemption that cannot be left behind is not a hiding
+  place**, and that is the only property standing between this file and one;
+- **a `retiring` module whose row is already gone must be named in the hub's `## Retired` section.**
+  Erasing a capability from the matrix outright is the exact failure this gate exists to catch, so a
+  transition entry must not become the quiet way to do it;
+- **a malformed line FAILS the run.** A lenient parser would drop an exemption, which silently
+  reintroduces the deadlock while looking like the gate working.
+
+**Symmetric on purpose: this unblocks a module ADDITION exactly as it unblocks a retirement.** The
+deadlock hit `kling`'s retirement first, and it would have hit the next new door the same way.
+
+**The gate had ZERO tests while blocking two lanes**, and it exported `parseMatrixModules` "so a test
+can import it" with no such test ever existing. Its whole judgement is now the pure `evaluateMatrix`,
+with the I/O left in `main()`, so the verdicts can be driven directly instead of only against whatever
+state two live repos happen to be in. `scripts/check-capability-matrix.d.mts` types it for the test
+rather than casting to `any`.
+
+**Every tolerance has a paired control, because a widening is only safe if the un-widened cases still
+fail.** 15 cases in `tests/capability-matrix-gate-830.test.ts`, including: a module with no row still
+fails; a row naming a module that does not exist still fails **and is not excused by the Retired
+section alone**; over-crediting a module in more rows than it declares hooks still fails; and a
+transition exempts **only its own name**, never the rest of the disagreement.
+
+Both mutations were watched red rather than assumed. Making the exemption blanket (exempt every name
+once any transition is declared) fails 2 of 15, including "exempts ONLY its own name". Disabling the
+completed-transition checks fails exactly the 2 staleness cases. The controls discriminate instead of
+going red together.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3785 passed, 3 skipped); `conformance`,
+`check:catalog`, `check:matrix` all exit 0. `check:matrix` prints
+`TRANSITION kling (retiring, cf#921) -- in modules/, in the matrix; exempted`.
+
+**Ordering, which is the whole point:** this lands FIRST. With it on `main`, the hub row edit
+(`skyphusion-labs/vivijure` #829) and the `modules/kling` retirement (cf#921) are each independently
+green in either order, and the `kling` line gets deleted in the same PR as the second of the two.
+
+### fix(ci): an empty directory left by a merge is not a module (vivijure#831)
+
+`check-capability-matrix.mjs` counted a module by its DIRECTORY. **Git does not track empty
+directories**, so when a module's tracked files are removed by a merge, `git pull` leaves the parent
+behind, and the tree is then wrong in a way **no git instrument reports**: `git status` clean,
+`git ls-files` nothing, `git check-ignore` not-ignored, while `readdirSync` counts a module that does
+not exist.
+
+**So the gate fails LOCALLY while CI is green on the same commit**, because CI is a fresh checkout and
+never sees them. A developer cannot debug that with git: every git command agrees the tree is correct.
+
+Measured by mackaye on 2026-09-27: `finish-lipsync` and `speech-upscale` survived as empty directories
+after their retirement merges (cf#785, cf#787) and produced exactly that unexplainable local red,
+costing about twenty minutes. Reproduced deliberately here, both directions:
+
+```
+mkdir -p modules/ghost-empty-dir && npm run check:matrix
+  BEFORE: 35 modules on disk, 34 named in 12 matrix rows
+          FAIL -- 1 module(s) exist but are NOT in the matrix: ghost-empty-dir
+  AFTER:  34 modules on disk, 34 named in 12 matrix rows   OK
+```
+
+A directory is a module when it holds a module ENTRY FILE. `MODULE_ENTRY_FILES` is now shared between
+the population (`realModules`) and `declaredHookCount`, **which already read those same two paths** --
+so the two cannot drift into describing different sets, which was a latent second bug in the same
+file. `isModuleDirectory(name, exists)` takes its existence check as a parameter, so both answers are
+driven in a test without touching disk.
+
+Four cases added to `tests/capability-matrix-gate-830.test.ts`, and the control was watched red:
+making the predicate `return true` (every directory counts again) fails **exactly one** case, the one
+named "CONTROL: does NOT count a directory with no entry file -- the whole defect". It discriminates
+rather than going red alongside everything else.
+
+**The class, since this is not one gate's problem:** any check deriving a population from `readdirSync`
+over a directory of directories has it, and the failure is local-only, invisible in CI, and
+undebuggable with the tool a developer reaches for first. Other `readdirSync` populations in this repo
+were NOT swept; several read `modules/*/src/index.ts` directly and are immune by construction. Naming
+which are which is worth a deliberate pass rather than an assumption, and vivijure#831 says so.
+
+Also in this change, from the same review: `scripts/matrix-transition.txt` now states **how many PRs
+each order costs**. The transition file lives in this repo, so the line can only be deleted by a
+vivijure-cf PR. If the hub edit lands SECOND, the deletion cannot ride with it and the sequence is
+THREE PRs, not two. Neither order is wrong and both stay green; hub-first is simply one PR shorter.
+That was not obvious from the previous wording and it should not have to be rediscovered.
+
+### fix(cf): nine small residue items from the cf#764 doc audit (CB-9, MD-6, AC-9, SC-15, CX-3, CX-4, CX-6, CX-7, CX-8, cf#881)
+
+A maintenance sweep over the small items cf#764's audit left behind. Six landed as code/comment
+fixes, three were checked against the running code and reported without a change:
+
+- **CB-9**: `POST /api/cast/import` read the whole body with `arrayBuffer()` before the 80MB cap in
+  `importCastBundle` ever ran. Added a `Content-Length` precheck ahead of the read; the existing
+  post-read cap stays as the backstop (Content-Length can be absent or wrong under chunked
+  transfer).
+- **AC-9**: removed `assertConfigMapShape` / `assertModuleConfigMap` (and the `describeJsonType`
+  helper they alone used) from `src/index.ts` -- genuinely dead since `checkRenderRequestShape`
+  (src/render-door.ts) took over config-map shape checking; nothing else called them.
+- **CX-3**: `scripts/studio-consumer-token.sh mint` did a plain `INSERT`, but `name` is the
+  `api_tokens` primary key and `revoke` only sets `revoked_at` -- so a properly revoked name could
+  never be re-minted. Now clears the row first, but only when it was revoked, so a still-live name
+  still refuses (loud) instead of being silently overwritten.
+- **CX-4**: `scripts/install-module.ts` only ever sent CF Access service-token headers, so it could
+  not authenticate against a token-mode core (`AUTH_MODE=token`). Added an optional
+  `STUDIO_API_TOKEN` env var that sends `Authorization: Bearer`. Also fixed the usage comment's
+  `--hook-name` flag, which the arg parser never reads -- the real optional flag is `--name`.
+- **SC-15**: checked live; already fixed on `main` (8c12476d, PR #791/cf#790, landed after the audit
+  ran) -- `enforceSpendLimit`'s posture comment now correctly says fail-CLOSED. No change needed.
+- **CX-6**: checked live; `resolvePlanningTarget`'s sole-installed-module fallback already returns
+  the module's own declared id (or its name) as `config.model`, never the caller's unmatched string
+  -- covered by `tests/planning-models.test.ts` ("falls back to the sole installed module for an
+  unknown id"). No change needed.
+- **CX-7**: confirmed real (`servingForHook(preModules, "dialogue")[0]` with `config: {}`,
+  film-orchestrator.js), but the invoking code lives in the published `@skyphusion-labs/vivijure-core`
+  package, not in this repo's own `src/`. Out of scope for a vivijure-cf-only change; needs its own
+  vivijure-core issue.
+- **CX-8** (hygiene, comments only):
+  - `wrangler.toml.example`'s `MEDIA_FINISH_TOKEN` comment said "unset is fail-open"; an unseeded
+    store secret hard-fails `wrangler deploy` with CF error 10182, same as any other declared
+    `secrets_store_secrets` entry. Corrected.
+  - `containers/compose.yaml`'s header described routing over Workers VPC / a "VPC Service" per
+    container. `scripts/setup-media-vpc.py`'s own docstring says the opposite ("HOSTED DOES NOT USE
+    WORKERS VPC FOR MEDIA... This script does NOT create those VPC services"); the real path is a
+    Cloudflare Tunnel to Traefik over public HTTPS plus `MEDIA_FINISH_TOKEN`. Corrected throughout
+    the file.
+  - `withFilmDownloadUrl`'s comment said the presigned URL TTL is 24h; `FILM_DOWNLOAD_TTL_SECONDS`
+    is 6h. Corrected.
+  - `wrangler.demo.toml.example` and `migrations/demo/0001_demo_seed.sql` said the base schema was
+    `migrations/0001..0010`; it is 21 files now (and will drift again), so both now say "every
+    migrations/*.sql file" instead of a number range.
+  - `modules/google-veo`'s header comments said `generate_audio` defaults false; its `config_schema`
+    default is `true` and `cfg.generate_audio !== false` matches. Corrected in both `index.ts` and
+    `veo.ts`.
+  - `ci.yml`'s `VPC_VIDEO_FINISH_ID` / `VPC_AUDIO_BEAT_SYNC_ID` / `VPC_AUDIO_MASTER_ID` comment still
+    claimed they were "filled per-module below" and functional; per cf#840 (documented two lines
+    below in the same file) they substitute nothing. Added the same "no consumer" correction already
+    applied to the other VPC_* entries in that block. The secrets and env wiring themselves are left
+    in place, matching the same file's own precedent that removing them is "a separate deliberate
+    change", not a comment fix.
+  - `containers/compose.yaml`'s VPC routing description not covered above (not part of this sweep;
+    verified NOT stale -- `deploy.sh` still calls `scripts/setup-media-vpc.py` and `docker compose`).
+
+**Not fixed, reported instead**: **MD-6** (`scripts/install-module.ts` has no `uninstall` mode at
+all -- the CLI can install/rollback but never evicts a resident WfP script; `installed-modules.ts`'s
+own comment already describes the intended two-step design). Implementing an uninstall CLI mode is
+a real feature addition (new argument mode, core-route + WfP-eviction orchestration), not a small
+correctness fix, so it stays open on cf#881/a follow-up rather than being forced into this sweep.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3704 passed, 3 skipped); `npm run guard:resolve`,
+`npm run check:catalog`, `npm run check:matrix` all exit 0.
+
+### fix(deps+docs): vivijure-mcp 1.3.0, and a parity denominator that can hold two surfaces (cf#894)
+
+`@skyphusion-labs/vivijure-mcp` 1.2.1 -> 1.3.0. The bump was red because
+`tests/mcp-parity-317.test.ts` asserts a published denominator, which is the test working: the
+catalog changed shape and the doc had to change with it.
+
+**The growth is not what the issue assumed, and measuring it first changed the work.** 42 -> 109 is
+**37 new `cp_*` control-plane tools AND 30 new STUDIO tools**, not ~67 control-plane ones. Nothing
+was removed. The 30 studio tools are why curated route coverage moved **41 -> 70 of 92** rather
+than staying flat: module config, storage, prefs, demo, clips, frames and identity all gained
+purpose-built tools.
+
+**Split by CALL TARGET, not by name prefix.** Measured on 1.3.0: **37 tools are named `cp_*` and 38
+build a call with `target: "control_plane"`.** The one that differs is `control_plane_request` -- a
+control-plane escape hatch that a prefix test files as a studio tool. A name is a convention; the
+call's target is the contract. The disagreement is pinned by its own case so it cannot quietly
+become two.
+
+**`curatedCoverage()` was iterating every tool and skipping one name.** Control-plane tools' paths
+were going into the studio-route coverage map, and `control_plane_request` was being treated as a
+curated tool. Measured: **0 of 38 control-plane tools collide with a studio route key today** -- but
+only because control-plane paths happen to live under `/api/admin` and `/api/platform`, which
+nothing maintains against the route table. That accident is now a rule: a test asserts the
+collision set is empty *and* that there was a population to collide with, so a zero cannot come
+from an empty list.
+
+`PUBLISHED` now carries three tool numbers instead of one (`tools` 109, `studioTools` 71,
+`controlPlaneTools` 38) and asserts they reconcile, so a third target would fail to add up rather
+than vanish from both denominators. Route-relative counts are measured against studio tools only,
+because a control-plane tool cannot reach a studio route.
+
+Re-measured with 1.3.0: curated coverage **41 -> 70**, panel-reachable-with-no-curated-tool
+**34 -> 15**, path-only **38 -> 19**. `docs/mcp-parity.md` updated in the same change, which the
+suite enforces.
+
+Also fixes the sub-item the issue diagnosed: `placeholderArgs()` had no `boolean` case, so a
+required boolean fell through to the string `"PLACEHOLDER"` and 1.3.0's `set_module_enabled` threw
+`'enabled' must be a boolean` inside `build()`. **A missing type in that switch does not report as a
+missing type; it reports as whatever the tool does with a string it did not ask for.**
+
+Supersedes dependabot #676, which carried the bump without the denominator work.
+
+### fix(panel): derive the talking-door lists from the installed modules, not from a literal (cf#919)
+
+Two hardcoded lists told a filmmaker to pick doors this deploy does not have. On a hosted tenant both
+named **InfiniteTalk**, which is not in `TENANT_MODULE_CATALOG` and cannot be installed there, so the
+product surface named a door that is not in the picker.
+
+- **The spoken-lines refusal**, byte-identical at three render doors (`src/index.ts` panel,
+  render-from-keyframes, agent), was a literal naming seven doors while the predicate it guards
+  (`doorCanSpeakLines`) read the live module set one line above it. It now calls
+  `spokenLinesRefusalMessage(modules, chosen, audioOn)`, which projects the remedy from
+  `servingForHook(modules, "motion.backend")` filtered by that same predicate.
+- **`TALKING_VOICE_HONOR`**, shipped to the cast voice picker as `talking_doors` on `GET /api/voices`,
+  is now projected through the installed serving set by `talkingVoiceHonorFor`. `catalogForDeploy`
+  already refused to advertise capability a DEMO deploy lacks; this is that rule one deploy mode over,
+  except the authority is the live registry rather than a mode flag. Deploy mode does not scrub it.
+
+**Also fixed, same message, found while rewriting it:** the guard is `(door cannot speak) OR (talking
+audio off)` and ONE sentence served both causes, so a filmmaker who had already chosen the right door
+was told to go choose a different one. Three states now get three sentences, including an honest
+"this studio has no talking door installed" instead of an empty parenthetical.
+
+`moduleLabel` (`src/module-catalog.ts`) is exported rather than copied, so the refusal names a door
+the same way the catalog rows do; a second copy of that rule is how two surfaces start calling one
+module different things. `public/cast.js` gained an authored empty state, because an empty
+`talking_doors` is now a real answer rather than only a failed fetch.
+
+**Watched red before the fix, not after.** The route assertion in
+`tests/render-film-dialogue.test.ts` failed against the unfixed code with the live literal printed
+(`expected 'This storyboard has spoken lines. Pic...' not to match /infinitetalk/i`), in an env whose
+only bound talking door is `seedance`. Then the control of the control: re-hardcoding
+`talkingDoorLabels` to return the old seven names fails **8 of 14** cases in
+`tests/door-lists-projected-919.test.ts`, and the 6 that survive are the honor-table and audio-switch
+branches a door list cannot affect. The assertions are written about doors ABSENT from the installed
+set, because the present-door half is what a literal passes by accident.
+
+`tests/auth-gate.test.ts` now binds one talking door (`cf-seedance`) in both the demo and token envs
+and asserts the NEGATIVE half: `cf-veo` and `infinitetalk` are rows in the table, are not bound, and
+must not appear. Without a bound door the projection would be trivially empty and the test could not
+tell "projected" from "nothing installed" -- the same reasoning the neighbouring
+`planEnhanceBinding` comment already gives for the planning catalog.
+
+**Fixture correctness, worth recording:** `parseMotionUsage` rejects a PARTIAL `usage` block and
+discovery then drops the module entirely, so a stub like `usage: { native_audio: true }` is a module
+production cannot produce and it silently tested nothing. Every fixture here carries a full
+`MotionUsageDecl`.
+
+Docs: `docs/CONTRACT.md` 2.4 records that `talking_doors` is projected (and can be empty), and the
+2.20 refusal text is replaced by the three-state table plus a note that a client must not match on the
+old literal.
+
+**Scope of the two lists, measured rather than assumed.** Reading the `usage` block of each of the 17
+`motion.backend` manifests in `modules/` (a file-wide grep for `native_audio: true` is wrong here: it
+reports `kling`, `minimax-hailuo` and `cf-hailuo` as talking, and all three declare `native_audio:
+false` inside `usage`), there are **9** talking doors: `alibaba-wan`, `cf-flux-3-video`,
+`cf-grok-video`, `cf-seedance`, `cf-veo`, `google-veo`, `infinitetalk`, `seedance`, `vidu-q3`. The 9
+`TALKING_VOICE_HONOR` rows are exactly those 9, so that table was never wrong about WHICH doors talk;
+it was wrong to ship all 9 to a deploy that installs fewer. The retired literal named seven, which
+also collapsed the Cloudflare and RunPod pairs of one vendor into a single word.
+
+**Not claimed:** whether a hosted tenant can install InfiniteTalk is a control-plane question moving
+in parallel (`strummer` on cp#, cf#919's chain). This change makes the panel tell the truth about
+whatever set is installed; it does not decide what that set should be.
+
+### chore(ci): delete the spent kling transition line, unbreaking main (cf#921, vivijure#830)
+
+Both halves of the kling retirement are now on `main`: the hub row moved to Retired
+(`skyphusion-labs/vivijure`#829) and `modules/kling` is gone (cf#921, #958). **That completes the
+declared transition, and a completed transition is a hard FAIL by design**, so `main` went red on
+`check:matrix` the moment the second half landed:
+
+```
+check-capability-matrix: 33 modules on disk, 33 named in 12 matrix rows, 0 in declared transition
+FAIL -- scripts/matrix-transition.txt still lists "kling" as retiring (cf#921) but the retirement
+        is COMPLETE (NOT in modules/, NOT in the matrix). Delete the line; a spent exemption is a
+        standing hole.
+```
+
+**This is the mechanism working, not a defect.** The whole argument for letting a gate tolerate a
+transitional state was that the tolerance must not be able to outlive the transition, and the only
+thing that makes that true is failing loudly when it does. It did, in CI, on the real retirement,
+naming the file and the line. The file is now back to its steady state of no entries.
+
+**It is also the third PR of the sequence this same PR documents**, and the documentation was written
+before the sequence ran: the transition file lives in this repo, so when the hub edit lands SECOND the
+line cannot be deleted alongside it. cf-first costs three PRs. That prediction is now observed rather
+than reasoned about.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3776 passed, 3 skipped); `conformance`,
+`check:catalog`, `check:matrix` all exit 0, with `check:matrix` reading
+`33 modules on disk, 33 named in 12 matrix rows, 0 in declared transition ... OK`.
+
+### fix(modules)!: retire the kling door, the vendor no longer sells the capability (cf#921)
+
+`modules/kling` pinned the RunPod public slug `kling-v2-1-i2v-pro`, which returned 401 (exists) on
+2026-08-05 and returns **404 `endpoint not found`** now. Every render dispatched to that door failed
+at submit, and the scheduled liveness census (cf#934) re-filed it every run as cf#941.
+
+**Retiring rather than repointing is forced by the vendor, not chosen.** All 41 live RunPod public
+endpoints were enumerated (three `list-public-endpoints` pages, 41 of 41). Exactly two are Kling and
+neither does plain image-to-video: `kling-v2-6-std-motion-control` needs a reference motion VIDEO,
+which the `motion.backend` hook carries no field for, and `kling-video-o1-r2v` is multi-reference
+r2v, already shipped as the separate `kling-o1-r2v` door, which stays. Silent cinematic i2v is still
+served by the other doors in that capability row, so nothing is lost but a name that could not work.
+
+The estate had half-decided this already and never finished: `wrangler.toml.example` said "Kling 2.1
+stays in modules/kling but is NOT bound on hosted" with the binding commented out, while the tenant
+catalog shipped it anyway. cp#538 dropped the catalog row; this removes the module.
+
+**What went with it, because a retirement that leaves references behind is the next dead reference
+somebody finds in three weeks.** The module directory and its unit test; four test rosters; the
+commented binding block; `scripts/tenant-release-modules.txt`, so the bundle stops being published
+too; and **the demo seed**, which was still installing a door that 404s into every demo tenant
+(`migrations/demo/0001_demo_seed.sql`, caught by `security-demo-manifest-count-534`).
+
+**Ten count-bearing assertions moved with it, and that is the system working rather than churn.**
+Populations 1 (34 -> 33) and 3 (23 -> 22); the job-log writers (15 -> 14); the cost-door roster
+(eight -> seven); the `/ready` roster (24 -> 23); the vendored-contract census (34 -> 33 contracts,
+65 -> 63 arms, and the PollResponse/CancelResponse split beneath it); and the published page's
+prose denominators. Each one existed because somebody made this exact number wrong before.
+
+**The published-not-catalogued asymmetry CLOSES rather than becoming permanent.** `kling` spent one
+day as the only member of that set that arrived by SUBTRACTION (cp#538 took its row while the bundle
+stayed published) rather than by being published ahead of a capability. Retiring the module
+unpublishes the bundle, so the set is back to six and every member again has the single cause it had
+before. The page says so instead of leaving a reader to infer it.
+
+**This PR carries a DECLARED TRANSITION and that is deliberate.** `scripts/matrix-transition.txt`
+holds `kling retiring cf#921` (vivijure#830). The hub's row is still live, so the module is gone
+while the row remains, and the gate tolerates exactly that one declared name. **Proven load-bearing
+rather than assumed:** commenting the line out turns `check:matrix` red with
+`1 module(s) named in the matrix do NOT exist ... kling`, and with it the run reads
+`TRANSITION kling (retiring, cf#921) -- NOT in modules/, in the matrix; exempted`.
+
+**The line must be DELETED once `skyphusion-labs/vivijure`#829 merges**, and the gate enforces that
+rather than trusting anyone to remember: once both sides are consistent the transition is COMPLETE
+and a surviving entry is a hard FAIL.
+
+**Not in this change, and it is not mine:** `kling-v2-1-i2v-pro` stays in the control plane's
+`PUBLIC_ENDPOINT_ALLOWLIST`. That list is pinned by the plane's own `runpod-proxy-census.test.ts`,
+which states in its docstring that it does NOT re-scan this repo: it compares a constant to a
+constant and a comment to itself. **So this retirement will not turn the plane red; it will leave the
+plane green while the allowlist holds a slug for a module that no longer exists**, and that census is
+structurally unable to notice. Routed to the infra lane rather than worked around here.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3772 passed, 3 skipped); `conformance`,
+`guard:resolve`, `check:catalog`, `check:matrix` all exit 0.
+
+cf#941 is left OPEN on purpose. It should self-close on the next scheduled census run now that the
+slug is no longer in `modules/`, and that path has never executed. If it does not, that is a finding
+about the workflow and worth more than a tidy issue list.
+
+### fix(modules)!: send the keys the vendors actually read, and the values they actually accept (cf#922)
+
+Two RunPod motion doors sent parameter names the endpoint does not define. Both are fixed, and the
+vendor's behaviour is now MEASURED rather than assumed.
+
+- **`seedance`** sent `last_frame_image`; the endpoint reads **`last_image`**. The wrong name is the
+  Cloudflare bytedance door's key (`modules/cf-seedance`, where it is still correct) carried across.
+  `seedance-v1-5-pro-i2v` is the only endpoint in RunPod's public catalog that accepts an ending frame
+  at all, and this door's manifest declares `usage.first_last: true`, so the end frame meant to hold
+  the cut was riding on a key the endpoint ignores.
+- **`alibaba-wan`** sent `resolution: "720p"`; the endpoint reads **`size`**.
+
+**What the vendor actually does with an unknown key: IGNORES it. Measured, not inferred.** RunPod's
+public endpoints do no submit-time validation of the envelope; the worker validates with a pydantic
+model that does not forbid extra fields. A body carrying the unknown key `resolution` plus a bad
+`duration` came back with ONLY the duration complaint, from the upstream vendor, never a word about
+`resolution`. So our value was silently dropped and the vendor applied its own default. **That is why
+the 1270x726 clip measured last sprint looked correct: it was the vendor default and never a
+configured outcome.**
+
+The decisive pair is on `seedance`, identical garbage value on each key:
+
+| submitted | result |
+| --- | --- |
+| `last_image: "notaurl"` | **FAILED**, `Input must be a public http(s) URL, a data: URI, or a base64-encoded file` |
+| `last_frame_image: "notaurl"` | **COMPLETED** normally, $0.096 |
+
+The live key validates the value; the retired key was not looked at. Both outcomes producible, which
+is what makes this a reading rather than a guess.
+
+**RUNPOD'S DOCS ARE WRONG ABOUT THE `size` VALUE FORMAT, and the schema-conformant fix would have
+broken every wan shot.** The docs page says `size` takes `1280*720` / `1920*1080`. It does not. The
+worker forwards our value verbatim into the VENDOR's `resolution` field, and `size: "9999*9999"`
+returns the vendor's own enum: `field "resolution" must be one of ["720p", "1080p"]`. So this door now
+sends `720p` / `1080p`. Had this landed on the documented value, a silent wrong default would have
+become a hard 400 on every shot, which is the exact failure the seedance 1080p incident already cost
+us a film to learn.
+
+**The `size` knob is EARNED, which is the cf#935 test.** Rollins removed the infinitetalk `size` knob
+days ago for being inert at the vendor while RunPod billed 720p at double 480p. So this one is not
+added on the strength of a corrected key: `size: "1080p"` was submitted and the DELIVERED artifact
+measured **1920x1080 at 30fps** with `ffprobe`. A non-default delivery is the falsifiable positive, so
+this knob demonstrably moves pixels. It projects into a select automatically through the generic
+render path, no frontend wiring. **720p stays the default because 1080p bills $0.15/s against
+$0.10/s.** The published 1080p tier was unreachable before this, and the cause was our key, not the
+vendor.
+
+**Tests.** `tests/seedance.test.ts` asserted the same wrong key the module sent, so the suite was green
+while the wire was wrong; it now asserts `last_image` AND that `last_frame_image` is never present.
+Watched red first: `expected undefined to be 'https://r2/end.png'`. New cases pin the vendor's value
+space against RunPod's docs, and mutating the door back to the documented `1280*720` fails **4 of 12**
+cases in `tests/alibaba-wan.test.ts`.
+
+**Evidence (RunPod job ids, all on 2026-09-27):** unknown-key-ignored
+`sync-5333abdf-39aa-4634-9f8b-87e456abbee9-u2`; vendor enum for `size`
+`sync-7334e207-526d-4c70-8ca4-ffcb3284687b-u2`; 1080p delivered
+`sync-7eb360c7-9111-43da-91f8-8b2c80f5c72b-u1` ($0.75); `last_image` validated
+`sync-5b49ab0a-c139-4db9-afa9-b8b674e6c1c0-u2`; `last_frame_image` ignored
+`sync-0c87ae96-ebee-4c80-9fe0-e556bc6c1fb1-u1` ($0.096). Total billed **$0.846**; the four rejected
+probes returned no `cost` field. All three docs defects were reported upstream to RunPod.
+
+**Not claimed.** Whether the end frame VISIBLY holds the cut now. `last_image` is proven live and
+validated, which is strictly more than was known, but no one has compared final frames. Also unchanged:
+`modules/cf-seedance` keeps `last_frame_image`, which is correct for the Cloudflare API.
+
+### fix(modules): measure fps and frames from the delivered artifact, not the request (cf#923)
+
+Both talking doors declared `OUT_FPS = 24` and **neither delivered it**. `infinitetalk` returns 25,
+`alibaba-wan` returns 30. The constant had never been compared to a real file.
+
+Two shapes of the same bug. `infinitetalk` was half-measured: real container duration, multiplied by an
+assumed rate. `alibaba-wan` never opened the artifact at all, reporting `frames: st.seconds * 24` -- the
+**requested** seconds times an assumed rate -- so a 5s clip reported 120 frames against an actual 150,
+with the error scaling linearly (a 15s clip would report 360 against 450).
+
+The rule, since it generalises past these two fields: **a value computed from the request is not a
+measurement, no matter what the field is named.**
+
+Both doors now read the MP4 sample table. `frames` is the sum of `stts` sample counts, which *is* the
+frame count rather than an estimate; `fps` is that count over the track duration in the `mdhd`
+timescale. The video track is identified by its `hdlr` handler type, so an audio track cannot be
+mistaken for it.
+
+**Unmeasured is reported as `0/0`, never as a constant** -- and that is the contract's existing
+not-available channel rather than a new invention. Conformance checks `isNum(o.fps)`, not `> 0`, and
+core records a delivery only when `fps > 0 && frames > 0`. So an unparseable container costs a telemetry
+field and never a render: the clip still ships, and nothing downstream stores a rate nobody measured.
+
+The parser lives in `modules/_shared/mp4-timing.ts` rather than being vendored into each door, a
+deliberate departure from the per-module vendoring convention: **the defect WAS a vendored copy**, one
+constant pasted into two modules where nobody re-checked it. A copied helper forks at copy time and
+inherits the assumption without inheriting the check. A test asserts both doors return identical values
+for identical bytes, as the guard against the copy returning.
+
+Fixtures are real libx264-muxed containers at 25 and 30fps, not hand-built byte arrays, because a
+hand-built fixture encodes the same assumptions the parser makes and cannot falsify it. The parser was
+first validated against three real delivered clips and agrees with `ffprobe` exactly: 25fps/73 frames
+twice, 30fps/150 frames once.
+
+An existing assertion expected 72 frames and passed. It measured nothing -- 72 is 3s times an assumed
+24. Corrected in place, and it now pins the unmeasured case, since that fixture is an `mvhd`-only stub
+with no video track.
+
+No module version bumps here: cf#935 and cf#929 bump `infinitetalk` to `0.2.0` and `alibaba-wan` to
+`0.2.1` in the same unreleased cycle, and a second bump per module would be noise.
+
+### feat(renders): record what the modules were actually told, not just which door ran (cf#924)
+
+A render recorded **which** door ran (`motion_backend` / `keyframe_backend`, cf#393) and never **what it
+was told to do**. The config bag was accepted at submit, carried into the job, handed to the module, and
+then dropped, so the knobs a render actually used were unreadable afterwards -- including the one that
+doubles the price on a door.
+
+New `output.applied_module_config` on every film render, carrying the resolved config each module
+received, the raw config the caller requested, and both door names.
+
+**Resolved and requested are separate fields and never conflated.** `motion_resolved` is what core's
+`validateConfig` produced per shot and the module actually received (core already retains it as
+`shot.config`, #767). `motion_requested` is the raw caller bag. `keyframe_requested` is labelled
+requested-only, because the keyframe worker resolves its own config and the host never sees that value.
+They differ exactly when something coerced, which is the case worth seeing. Per-shot configs collapse to
+a single object when every shot agrees (compared by value with sorted keys, so a reordered bag is not a
+disagreement) and fall back to `motion_resolved_by_shot` when a per-shot backend override makes them
+genuinely differ.
+
+**Absent means NOT RECORDED**, never "no config was used": the builder returns `null` rather than an
+empty shape, which is the honest answer for legacy rows and for a film that has not reached the clips
+phase.
+
+The specific thing this prevents: a `size: "720p"` request to `infinitetalk` produced an 832x464
+artifact, and separating "the value never reached the vendor" from "the vendor ignored it" took reading
+four files and running the real compiled `validateConfig` against a probe table, and **still ended
+undetermined** -- resolved only later by a direct vendor submit (cf#935). One recorded field answers it
+in a single read. It also catches the inverse error made in the same sprint: reading 832x464 as proof
+the 480p request was *honoured*, when 480p is the schema default and the artifact cannot distinguish
+"applied" from "never arrived".
+
+Carried on the `output` bag rather than a new column, matching the relay core already uses for
+`clip_deliveries` / `keyframes_incomplete` and the host already uses for `wan_lora_projection` (cf#392).
+`NewRenderRow`, `buildInsertRenderStmt` and the `SELECT` projection all live in `vivijure-core`, so a
+first-class column would need a core change, a D1 migration, a core release and a pin bump here. The
+field is queryable in D1 via `json_extract`, and **if a real column is wanted later this field is what
+backfills it** -- the option stays open rather than foreclosed.
+
+### docs(modules): correct the stale cp#284 catalog claim in 10 wrangler.toml, and the infinitetalk header (cf#925)
+
+Comment-only; no binding, no `compatibility_date`, no code path changed.
+
+- Ten module `wrangler.toml` files (`alibaba-wan`, `alibaba-wan-lora`, `google-veo`, `kling`,
+  `kling-o1-r2v`, `minimax-hailuo`, `narration-gen`, `seedance`, `vidu-q3`, `infinitetalk`) carried
+  a byte-identical block asserting "TENANT_MODULE_CATALOG is six entries, none of them these" and
+  concluding "every row this binding writes is our own traffic". cp#284 was answered "tenants get
+  the cost door" by cp#317 and the comment never moved: measured against
+  `vivijure-control-plane@main` by the array BOUNDS, the catalog is 17 entries and eight of them are
+  exactly these modules. `npm run check:catalog` prints the same 17 from the live authority.
+- The cross-tenant `TELEMETRY_DB` write that block predicted has not happened, and the replacement
+  says why it structurally cannot: `scripts/build-module-release.ts` publishes a manifest of
+  `{module, worker.sha256, compatibility_date, compatibility_flags}` and no bindings, so the plane's
+  binding array is the complete set a tenant module gets, and it binds `R2_RENDERS` to the tenant
+  bucket and `TELEMETRY_DB` to the tenant D1, throwing rather than falling back in both cases. The
+  two changes that WOULD break it are named in the new block.
+- `modules/infinitetalk/wrangler.toml` and `modules/infinitetalk/src/index.ts` both described the
+  worker as "Kuaishou Kling V2.1 I2V Pro on RunPod". It is MeiGen-AI InfiniteTalk on the RunPod
+  public endpoint `api.runpod.ai/v2/infinitetalk`. Both also called it "the second motion.backend
+  backend"; the live projection serves 15 on that hook.
+
+Found while establishing what blocks a hosted tenant from lip-synced dialogue
+(vivijure-control-plane#524).
+
+### docs(alibaba-wan): disclose that the mouth keeps moving after the line ends (cf#929)
+
+Wan 2.6 keeps the speaker articulating once the driving line stops. The vendor doing that is the
+vendor's business; what was ours is that **nothing we published let a user predict it**. The blurb
+stopped at "Mouth follows the storyboard line", which reads as a promise that it tracks the line;
+`ui.limits` never mentioned the tail; and `duration_steps: [5, 10, 15]` read as a menu when it is a
+floor plus a rounding rule.
+
+Measured against an `infinitetalk` control on the identical keyframe and the identical Cast track, so
+only the door differed. A **1.4s line in a 5s clip**:
+
+| | InfiniteTalk | Wan 2.6 |
+|---|---|---|
+| mouth motion, speaking | 7.724 | 3.256 |
+| mouth motion, silence | **0.744** | **3.787** |
+| speech -> silence | **10.4x quieter** | **1.16x LOUDER** |
+| mouth/audio correlation, whole clip | +0.693 | **+0.066** |
+
+Read the within-clip change rather than the absolute means: frame-to-frame pixel delta shrinks as fps
+rises and these clips are 25fps vs 30fps, so only the speech-to-silence ratio is comparable across
+doors. Wan's whole-clip correlation of **+0.066** is the summary -- across the clip there is no
+relationship between mouth motion and the audio. **72% of that clip is the speaker mouthing nothing.**
+
+Not an audio-provenance problem: the output audio is our Cast track at raw-sample `r=+0.9996` at zero
+lag, with `infinitetalk` as a known-good control at `r=+0.9997`. Wan took the driving path, used our
+track, and carried on past it.
+
+`clampDuration` snaps **up** to the next of `{5, 10, 15}`, so a line shorter than 5s cannot produce a
+clip shorter than 5s. Ordinary dialogue is shorter than 5s, which makes the tail the normal case rather
+than an edge case.
+
+Disclosure only -- no behaviour change. The blurb now says the mouth keeps moving after the line ends,
+two `limits` entries name the tail and the short-line case that guarantees it, the duration limit says a
+shorter shot is rounded up, and a comment on `duration_steps` records the floor-plus-rounding reading.
+Module `0.2.0` -> `0.2.1`.
+
+A machine-readable `usage` flag for the property is deliberately **not** added: it shares a contract
+surface with the `length_follows_audio` question and should not land twice in different shapes.
+
+### fix(infinitetalk)!: remove the size knob the vendor ignores (cf#935)
+
+`infinitetalk` advertised a `size` choice of `480p` or `720p`. The provider ignores it: both values
+deliver **832x464**. The knob is removed from `config_schema` rather than defaulted, a `ui.limits` entry
+states the real output so the removal is not a silent loss, and the reason sits at the call site in
+`kling.ts` so it is not re-added from the vendor docs later.
+
+Measured three ways across two independent paths -- a full film, a clips-door render with
+`size: "720p"`, and a **direct submit to RunPod that bypassed this worker, core, `validateConfig` and
+the invoke transport entirely** (job `d159bf34-3f84-41fa-a472-1d3875178638-u1`). All three returned
+832x464, dimensions read off the artifact rather than a response field. Our pipeline is exonerated: the
+value reaches the vendor and the vendor discards it.
+
+This had a money edge. RunPod publishes InfiniteTalk at **$0.25 (480p) and $0.50 (720p)**, so a user
+selecting 720p could pay double for byte-identical pixels. Whether RunPod bills on the requested or the
+delivered size is **unmeasured and currently unmeasurable** -- their billing API has read $0.00 for all
+of September while renders demonstrably ran (`vivijure-control-plane#525`) -- so no figure is asserted
+here.
+
+RunPod's own documentation still lists `input.size` as required with both values valid, and prices each
+tier. The parameter is documented, priced, accepted, and inert; reporting that upstream is a separate
+decision.
+
+An existing test expected `size: "720p"` back and passed. It was not measuring the vendor, it was
+measuring our own ternary echoing the caller -- a green test confirming a knob that never worked.
+Corrected in place rather than deleted, so the wrong expectation stays visible in history.
+
+**BREAKING**: `size` is removed from `infinitetalk`'s `config_schema` (module `0.1.1` -> `0.2.0`). A
+caller still passing it is unaffected in behaviour, since 480p was always what the vendor produced.
+
+### feat(release): the module release manifest carries the bindings a module DECLARES (cf#942)
+
+The manifest carried `{module, main_module, compatibility_date, compatibility_flags, worker}` and no
+bindings at all, so the array the control plane builds at upload WAS the complete binding set a
+tenant module got -- derived from a hand-maintained catalog on the other side of a repo boundary.
+That is why four catalogued motion doors and the hosted `dialogue` door cannot be given their
+Workflows binding: nothing tells the plane they need one.
+
+`build-module-release.ts` now reads each module's own `[[workflows]]` blocks out of the
+`wrangler.toml` the bundle was built from, and publishes them as `bindings_required.workflows`:
+
+```json
+"bindings_required": { "workflows": [
+  { "binding": "DIALOGUE_WORKFLOW", "class_name": "DialogueGenWorkflow", "name": "dialogue-gen" }
+] }
+```
+
+**The split is by who can possibly know each part.** The module knows WHAT it needs, and its own
+config is the only copy of that fact which cannot drift from the code calling `env.X.create()`. Only
+the plane knows WHO it is for, so the plane composes the account-scoped resource name from the
+tenant, exactly as it already derives the script name. Neither half is hand-maintained, which is the
+point: a triple typed into `TENANT_MODULE_CATALOG` would be the third hand-maintained list to rot in
+this estate in a month.
+
+**Always present, even empty, and that is load-bearing rather than tidy.** `"workflows": []` means
+"declares none"; the whole field being ABSENT means the artifact predates this contract and cannot
+say. Only the second is a reason for a consumer to refuse, and collapsing them is how a module that
+needs a binding provisions silently unbound -- which the live API measurably accepts
+(vivijure-control-plane cp#526), so it is invisible until the first invoke.
+
+A partial `[[workflows]]` block (missing `binding`, `class_name` or `name`) fails the RELEASE BUILD
+rather than publishing a requirement the plane cannot act on: at build beats at provision, and at
+provision beats a green install that throws.
+
+The parser is line-oriented and tracks the current table header, because the alternatives produce a
+plausible wrong answer rather than an error: a pattern matching `name =` anywhere picks up the
+worker's own top-level name, and a block reader that does not stop at the next header absorbs
+`binding` from the `[[secrets_store_secrets]]` block that follows in six of these files. Both traps
+have a test, and both were watched RED against a mutation that removed the header boundary -- along
+with a third case that only discriminates because the mutation showed it did not.
+
+### feat(release): publish `dialogue-gen` as a tenant bundle (cp#524)
+
+A hosted tenant has had no way to synthesize a spoken line at all. Both `dialogue` providers,
+`dialogue-gen` and `chatterbox`, were absent from `scripts/tenant-release-modules.txt`, so no studio
+release published either as a tenant bundle -- and nothing withheld them: a `grep -rc` of the
+control plane returns `chatterbox` 0 and `dialogue-gen` 0 against positive controls `keyframe` 29
+and `seedance` 3. It was never a decision, only an unwired lane.
+
+`dialogue-gen` goes first because it is the simpler of the two: Deepgram Aura-1 through our own AI
+Gateway, so it needs the AI-Gateway trio the plane already binds plus the tenant R2 bucket.
+`chatterbox` additionally reaches a RunPod public slug (`chatterbox-turbo`, which is not in the
+plane's `PUBLIC_ENDPOINT_ALLOWLIST`) and so carries a second decision; it stays unpublished here.
+
+**This publishes a bundle and catalogues nothing**, which is the established shape: a published
+bundle with no `TENANT_MODULE_CATALOG` row uploads nothing to anybody, and it exists so the plane
+can add the row in one repo instead of the two taking turns. The row genuinely cannot land yet --
+`dialogue-gen` declares a Workflows binding (`DIALOGUE_WORKFLOW`) and the plane cannot emit one.
+cp#526 grew the `workflow` variant and live-proved Workers for Platforms accepts it and reads it
+back, and the same run measured that a bound upload does NOT create the account-scoped Workflow, so
+an emitter owes both. Until then a catalog row would give a tenant a door that provisions, passes
+`/ready` (which reports `gateway_id` and nothing else) and throws at the first invoke.
+
+Ordering, which is the trap on this change and is why the bundle leads: a catalog row naming a
+module the pinned `STUDIO_RELEASE` does not publish fails EVERY provision at `modules_upload`, and
+typecheck cannot see it. The bundle has to exist in a released artifact before the plane may name it.
+
+Population 3 goes 22 to 23 in `docs/module-readiness-coverage.md`, and the published-not-catalogued
+set gains a third distinct reason alongside `image-generate`'s operator credential and the four
+own-iron finishing modules' VPC binding.
+
+### docs(keyframe): 1344x768 is 1.75, not 16:9 -- correct four comments that asserted the wrong ratio (cf#945)
+
+Comment and README text only. **No behaviour change, no default changed.**
+
+`modules/keyframe`, `modules/cloud-keyframe` and `modules/local-gpu` all default the keyframe to
+**1344x768**, and four places described that as "16:9":
+
+- `modules/keyframe/src/manifest.ts` (block comment above the default, said 16:9 four times)
+- `modules/cloud-keyframe/src/index.ts` (block comment above the default, three times)
+- `modules/keyframe/README.md` (config table: "16:9 so the whole chain stays 16:9")
+- `modules/cloud-keyframe/README.md` (same table row)
+
+**1344 / 768 = 1.75 (7:4). 16:9 is 1.7778.** 16:9 at width 1344 would be height **756**. Each comment
+was otherwise accurate, which is what made it durable: 1344x768 really is a standard SDXL bucket, and
+"image-to-video backends conform the clip to the keyframe's aspect ratio" is exactly right and was
+confirmed by render this sprint. One wrong token sat inside two true sentences, on the line a reader
+checks to confirm the ratio, so every downstream assumption that clips arrive 16:9 traced back to a
+line that said so.
+
+Measured consequence (vivijure#826, three live `alibaba/wan-2.7-i2v` renders): i2v doors preserve the
+caller's aspect ratio and fill the requested class's pixel budget, so a 1.75 keyframe yields 1270x726
+at 720P and 1904x1088 at 1080P, and `containers/video-finish`'s fixed 1920x1080 target must then
+pillarbox them (content box 1890x1080, black bars 14px left / 16px right, baked in at crf 18). A 16:9
+keyframe yields exactly 1280x720, which scales to 1920x1080 with no bars at all.
+
+Each corrected comment now states the ratio **numerically** rather than by label, so the next reader
+gets a number to check instead of a word to trust, and points at cf#945 for the residual mismatch.
+
+**Deliberately NOT changed here**, and tracked on cf#945:
+
+- The `1344`/`768` defaults themselves. 16:9 is unreachable at height 768 (768 x 16/9 = 1365.33), so
+  the candidates are 1280x720 or 1920x1080, and whether SDXL keyframe quality holds at either is
+  unmeasured. That measurement is the content of that change, not the arithmetic.
+- `modules/local-gpu/src/manifest.ts` carries the same defaults with no comment, so it had no wrong
+  token to correct. It is named on cf#945 so the three do not drift apart when the defaults move.
+- `nearestAspectRatio(1344, 768) === "16:9"` in `modules/cloud-keyframe/src/image-gen.ts` is correct
+  and intentional: it snaps to the nearest ratio a proxied model accepts so the provider *composes*
+  for that shape, and `normalizeKeyframe` then crops to the exact configured dimensions. Its test
+  comment already reads "1.75 -> nearest 16:9", which is honest about the snap.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0; `npm run guard:resolve`, `npm run check:catalog`,
+`npm run check:matrix` exit 0.
+
+### chore(mirror): follow the plane dropping the `kling` catalog row (cp#538)
+
+The control plane removed `kling` from `TENANT_MODULE_CATALOG` because its RunPod slug
+`kling-v2-1-i2v-pro` returns 404 endpoint-not-found -- it answered 401-exists on 2026-08-05, so it
+was retired upstream between those dates (cf#921, and the scheduled liveness census cf#941 is what
+keeps reporting it). A catalogued door with nothing behind it fails 100% of submits, which is worse
+than absent, and `wrangler.toml.example:387` had already said Kling 2.1 is NOT bound on hosted while
+the catalog shipped it to hosted tenants anyway.
+
+This repo's mirror, its provenance stanza and every population-4 denominator follow: population 4
+goes 17 to 16, `16 of 34` replaces `17 of 34` in both places the prose states it, the
+not-provisioned bullet goes 17 names to 18, and `kling` joins the published-not-catalogued set as
+its fourth distinct reason -- the only one there that is not waiting on something we could build.
+
+**The BUNDLE keeps publishing.** `kling` stays in `tenant-release-modules.txt`: whether
+`modules/kling` itself is retired is cf#921, in this repo, and a published bundle with no catalog
+row uploads to nobody. The plane's catalog and this repo's module tree are allowed to disagree in
+that direction, which is the whole point of the gap.
+
+**This PR is RED until cp#539 merges, by design.** `check-tenant-module-catalog.mjs` fetches the
+plane's `main` and asserts set-equality, so a mirror corrected before the authority moves is a
+mirror that disagrees with it. The check currently reports, precisely: `in the plane, NOT in the
+mirror: kling`. It inverts to green the moment the plane's PR lands, and that ordering cannot be
+reversed without defeating the control.
+
+### fix(tests): the RunPod-reaching census classified COMMENTS as code, and four copies of it drifted from their own comment (cf#951)
+
+Four census tests classified a module as RunPod-reaching with a substring match over the whole
+file. `cf#289`'s own comment states the assumption that rested on: those strings "only ever live in
+index.ts" as RUNTIME CODE. **Nothing enforced it.** A module that merely CITES
+`_shared/runpod-route` in a comment was enrolled in the RunPod population and then required to
+carry a plane-refusal guard for a plane it never calls.
+
+Found building `modules/fal-wan-27`, a fal-only door with no RunPod import anywhere, enrolled by
+one comment line. **In CI that is a loud red. In the cf#289 / cf#578 / cf#604 censuses it silently
+inflates a denominator published as fact**, and it trains authors to delete accurate citations to
+go green, which is the wrong pressure to put on anyone.
+
+The suite already had a sharp negative control for a lookalike **behaviour** (`local-gpu` polls
+`<LOCAL_BACKEND_URL>/status/<id>` and is correctly excluded) and none for a lookalike **mention**.
+Right instinct, one level too shallow.
+
+**The fix is one shared classifier**, `tests/runpod-census.ts`, imported by all four censuses in
+place of four inline copies. It strips comments and then applies the same two-part predicate, so
+the author's stated intent (runtime code only) is now enforced rather than assumed.
+
+**The stripper is string-aware, and that is the sharp edge rather than a detail.** The host matched
+for is `https://api.runpod.ai/...`, which CONTAINS `//`. A naive line-comment stripper deletes the
+rest of that line and the host half of the predicate silently goes to ZERO. That is not
+hypothetical: this suite already survived it once, when cf#394 moved the base URL into the shared
+helper and, in cf#289's own words, "THE HOST-ONLY PREDICATE WENT TO ZERO THE MOMENT THAT LANDED".
+`tests/runpod-census.test.ts` asserts the stripper preserves a URL inside a string literal, across
+single quotes, double quotes, backticks and escapes.
+
+**Proven behaviour-preserving before landing:** both predicates were run over all 35 modules.
+Old 16, new 16, zero dropped and zero added. With the offending comment restored in the fal door,
+old 17 and new 16, dropped exactly `fal-wan-27`. The fix removes the false positive and moves
+nothing else.
+
+**A second defect, in the comment that described the first.** `cf#398` said the predicate was
+shared with "the cf#289 and cf#394 censuses" and that "the three cannot drift into three different
+populations". Both halves were wrong: **cf#394 does not carry the predicate, and the files that do
+are four, not three** (cf#289, cf#398, cf#578, cf#604). Anyone following that comment to fix all
+three would have edited a file with nothing to fix and missed two that had, producing the exact
+drift the sentence warned against. Corrected, and the wish is now a mechanism: one function, four
+importers.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0; `npm run guard:resolve`, `npm run
+check:catalog`, `npm run check:matrix` exit 0.
+
+### docs(flip-control): make the `data:` URI the default way to supply the flipped frame (cf#954)
+
+The flip control needs an end frame that does not exist anywhere public: you make it locally, so the
+bytes have to reach the vendor somehow. **The obvious move is to host or proxy it, and that is the
+move that fails.**
+
+Measured on `seedance-v1-5-pro-i2v`, 2026-09-27, after doing it the hard way first. Serving the flip
+through `images.weserv.nl` was verified from the caller (HTTP 200, and 2.71 mean-abs-diff against the
+local flip, i.e. re-encode noise only). The vendor answered:
+
+> `Could not download the input from images.weserv.nl (HTTP 403)`
+
+**Reachable by us, 403 to them.** That cost a render, and it cost it to the person who had already
+written "the images must be reachable BY THE VENDOR" into this very file. The compliant path
+(presign, or find a host the vendor will fetch) was more expensive than the convenient one, so the
+convenient one got used. **A warning that costs more to obey than to ignore is not a mechanism**,
+which is why this lands as a documented default rather than a sharper warning.
+
+**The `data:` URI is a first-class accepted form, in the endpoint's own words:**
+
+> `Input must be a public http(s) URL, a data: URI, or a base64-encoded file`
+
+It needs no bucket, no presigning, no proxy and no public URL, and the bytes the vendor reads are
+byte-identical to the ones the caller measures against, which removes re-encoding from the comparison
+as well. Verified end to end: a `data:` URI flip was accepted and rendered
+(`sync-492c7275-2c2c-498c-a216-f8fc4d1086a3-u2`). Size is the only real constraint, so the note gives
+a worked figure: 256x144 at moderate JPEG quality is about 4KB, roughly 5.4KB base64, and the flip
+should match the start frame's dimensions or the door may reject or letterbox the pair.
+
+Also here, in `scripts/check-capability-matrix.mjs`: **when NOT to copy the cross-repo gate pattern**,
+recorded because it nearly was (cp#541). That gate is correct only when the two sides are genuinely
+the same set. `modules/` and the capability matrix are. The control plane's
+`PUBLIC_ENDPOINT_ALLOWLIST` looked like the same shape and is not: **nine cf modules declare a literal
+`ENDPOINT_ID` while `narration-gen` is catalogued and allow-listed and declares none**, so a gate
+equating that allow-list with cf's module-declared slugs would be **red on a correct estate, in both
+directions at once**. strummer read this file before deciding not to copy it and asserted the
+allow-list against the plane's catalog instead, which is the set it actually mirrors. The header now
+says to ask what the two populations ARE before reusing the shape, rather than what they look like.
+
+Comments only; no behaviour change. Gate: `npm run typecheck` exit 0; `flip-control` and
+`capability-matrix-gate-830` suites 24 passed; `check:matrix` exit 0.
+
+### test(flip-control): a shared end-frame control that can return every verdict, including VOID (cf#954)
+
+`usage.first_last: true` is a DECLARATION. Five doors carry it and, measured on `main` before
+cf#922 landed, **only one had been proven to honour it**. A door that accepts an end frame and
+silently discards it produces a perfectly plausible clip, so nothing in the output betrays it.
+
+This adds the instrument that does, as **one shared helper** rather than a copy per door.
+
+**The trick:** render with an end frame that is a **horizontal flip of the start frame**. Honoured
+and ignored then give different readings, because a door that discarded the end frame ends near the
+START image while one that used it ends near the flipped image. Without the flip the two inputs
+look alike and both verdicts produce identical numbers.
+
+**It carries its own control of the control.** `startVsEnd` is the discriminator's discriminator:
+if the two INPUT images barely differ, no reading of the output can separate the verdicts, and the
+answer is **VOID** rather than a confident "honoured". `endFrameReport` surfaces
+`controlSeparation` and `controlOk` so a caller asserts on the numbers rather than on a boolean,
+because a helper that hides the control line lets a near-identical input pair report a confident
+nothing.
+
+`tests/flip-control.test.ts` asserts **all four verdicts are reachable** (honoured, ignored, void,
+ambiguous) before any door is judged. **A flip control that can only report "honoured" is worth
+less than no control at all**, and this repo has now fixed two instruments with that shape in one
+day (cf#951's census, and a resolution check that could not distinguish a live knob from an inert
+one defaulting to the same value).
+
+Calibration reading baked into the test, from the one door proven to honour an end frame:
+
+```
+inputs differ by 62.25    (near-zero here voids the test)
+FIRST frame  vs start  2.01   vs end 62.89  -> START
+LAST  frame  vs start 62.63   vs end  3.75  -> END       verdict: honoured
+```
+
+Carries two field notes measured by joan on `seedance-v1-5-pro-i2v` the same day, because both
+change how a caller must use it: **the images must be reachable BY THE VENDOR** (a Wikimedia thumb
+URL 400s where a resolved direct URL works), and **RunPod public endpoints do NO submit-time
+envelope validation** -- `{"input": {}}` is accepted, starts a worker and fails after ~47s, and
+unknown keys are silently ignored. So a malformed probe is not free, and **the absence of a schema
+error proves nothing about whether a key was read**.
+
+No module or `src/` change. Helper plus its own tests only; no door consumes it yet.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0; `npm run guard:resolve`, `npm run
+check:catalog`, `npm run check:matrix` exit 0.
+
+### feat(host): serve the studio on app.studio.vivijure.com
+
+The flagship worker gains a custom domain for `app.studio.vivijure.com`. It is the same Worker, the same D1, and the same R2. `vivijure.skyphusion.org` stays until that host is proven. The route is `SELFHOST-SKIP`, so a self-host still has one route and `deploy.sh` retargets it.
+
+The post-deploy auth check now requests every custom domain. It used to stop at the first pattern.
+
+A merge to `main` does not deploy this worker. The deploy job runs only on a `v*` tag.
+
 ## v1.35.0 -- 2026-09-27
 
 **READ BEFORE UPGRADING. This release changes what SUCCESS MEANS, which is why it is a MINOR and
