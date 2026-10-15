@@ -21,7 +21,7 @@ reopening either issue on the strength of the original body.
 | reconciler for lost terminal write | PR #425 (cf#298; open for Mackaye) |
 | visible detail truncation | PR #426 (cf#320; open for Mackaye) |
 
-**Measured coverage today (source, not memory):** 14 of 14 RunPod-polling modules call
+**Measured 2026-08-05 (source, not memory):** 14 of 14 RunPod-polling modules call
 `recordRunpodJob`. The modules that soft-degrade and poll RunPod are instrumented.
 
 **Structural residual (not this issue):** cast-LoRA / wan-train jobs are submitted from
@@ -42,7 +42,7 @@ tell "broken" from "not implemented".
 | `/ready` on all 26 modules | PR #308 / v1.14.0 |
 | published denominators + CI guard | PR #313, `docs/module-readiness-coverage.md`, `tests/module-readiness-denominators-295.test.ts` |
 
-**Measured coverage today:** 26 of 26 modules have an anchored `url.pathname === "/ready"` handler.
+**Measured 2026-08-05:** 26 of 26 modules have an anchored `url.pathname === "/ready"` handler.
 
 **What moved, and stays true:** `module-readiness` on the control plane only probes
 **population 4** (tenant catalog, currently 7 modules). A green result is "7 of 26 provisioned
