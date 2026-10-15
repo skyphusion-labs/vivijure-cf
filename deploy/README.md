@@ -111,8 +111,10 @@ The pieces are mutually dependent, so the order is load-bearing:
 5. **Deploy** module workers, then the core (the core binds each module as a `[[services]]`
    dependency, so modules ship first).
 6. **(Phase 2, optional)** the five CPU helper containers on your own box (video-finish, image-prep,
-   audio-beat-sync, audio-mix, audio-master) + their CF VPC services.
-   Without them the studio still renders clips; it just cannot do the final concat / title cards.
+   audio-beat-sync, audio-mix, audio-master). video-finish, audio-beat-sync, audio-mix, and
+   audio-master are one image (`containers/cpu`) selected by `CPU_APP`. image-prep is its own image.
+   `docker compose -f containers/compose.yaml up -d --build` builds them.
+   A film whose join does not run fails. The clips stay in R2.
 
 ## State + idempotency
 
