@@ -37,6 +37,14 @@ const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown
 
 const NOT_GZIP = new TextEncoder().encode("this is not a gzip bundle");
 
+// Uint8Array.buffer is ArrayBufferLike. Copy into a real ArrayBuffer so the
+// stub matches R2's arrayBuffer() return type under tsc.
+function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(out).set(bytes);
+  return out;
+}
+
 function r2(body: ArrayBuffer | null) {
   return {
     get: async () => (body === null ? null : { arrayBuffer: async () => body }),
@@ -104,7 +112,7 @@ describe("cf#927 a non-gzip bundle is undetermined dialogue", () => {
   it("render-from-keyframes returns 503 and does not start a film", async () => {
     const res = await worker.fetch(
       post("/api/storyboard/render-from-keyframes", { bundleKey: "bundles/bad.tar.gz" }),
-      env(r2(NOT_GZIP.buffer)),
+      env(r2(asArrayBuffer(NOT_GZIP))),
       ctx,
     );
     expect(res.status).toBe(503);
@@ -132,7 +140,7 @@ describe("cf#927 a non-gzip bundle is undetermined dialogue", () => {
         scenes: [{ shot_id: "shot_01", prompt: "a shot", seconds: 4 }],
         motion_backend: "silent-look-door",
       }),
-      env(r2(NOT_GZIP.buffer)),
+      env(r2(asArrayBuffer(NOT_GZIP))),
       ctx,
     );
     expect(res.status).toBe(503);
