@@ -218,6 +218,10 @@ export async function handleCastPortraitUpload(
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await setPortrait(env, id, key, mime);
+      // local#446: the staged object is already in the bucket, so this path has no put.
+      // The previous portrait is still superseded once the row write returns a row. The
+      // helper returns immediately when oldKey is empty or equal to newKey.
+      if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
       return castRowResponse(row, "portrait upload (staged key)", id);
     }
 
