@@ -95,11 +95,10 @@ export interface Env {
   FINISH_UPSCALE_DOORS?: string;
   FINISH_BLENDER_DOORS?: string;
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
-  // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
-  // VIDEO_FINISH_URL is empty. "unprovisionable" = provisioned before the tier existed, with no
-  // operator action that can reach it (the cp#112 population). Absent -> the conservative default,
-  // "provisionable". Nothing sets this today; the plane-side half is a control-plane decision.
-  // A configured URL always wins over this var: see videoFinishState (an observation beats a label).
+  // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in.
+  // "unprovisionable" = no operator action reaches this studio. Absent -> the conservative
+  // default, "provisionable". The control plane writes it. A live door beats this label; the
+  // label beats a set VIDEO_FINISH_URL. See videoFinishState.
   VIDEO_FINISH_TIER_STATE?: string;
 
   // OPTIONAL var (control-plane#130), NOT a binding: where a reporter should be sent to report
