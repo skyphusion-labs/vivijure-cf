@@ -96,6 +96,10 @@ assert renders          output_ms 0016_render_output_ms.sql
 assert renders finish_elapsed_ms 0017_finish_elapsed_ms.sql
 assert renders          motion_backend 0018_render_motion_backend.sql
 assert renders          keyframe_backend 0018_render_motion_backend.sql
+assert shot_records     still_key 0022_shot_records.sql
+assert shot_records     wav_key 0022_shot_records.sql
+assert shot_records     clip_key 0022_shot_records.sql
+assert shot_records     step 0022_shot_records.sql
 
 if [ "$fail" -ne 0 ]; then
   echo "MIGRATION CHAIN VERIFY: FAILED" >&2

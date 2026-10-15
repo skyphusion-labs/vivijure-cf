@@ -91,6 +91,9 @@ export { ARTIFACT_PREFIXES } from "./shared";
 // whose class is not exported from the entrypoint, so removing this line arms a deploy failure
 // that only surfaces at the next `v*` tag and takes the whole studio release with it.
 export { FinishContainer } from "./finish-container";
+// wrangler [[workflows]] class_name "ShotWorkflow". The deploy rejects a workflow
+// whose class is not exported from the entrypoint.
+export { ShotWorkflow } from "./shot-workflow";
 import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
