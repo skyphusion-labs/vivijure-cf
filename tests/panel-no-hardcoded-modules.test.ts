@@ -58,6 +58,10 @@ const DECLARED: Record<string, { sites: string[]; why: string }> = {
     sites: ["cast.js"],
     why: "voice-sample copy names the one door that can lock a take; product copy, needs a capability flag to generalise",
   },
+  "infinitetalk": {
+    sites: ["planner-render-config.js"],
+    why: "hosted spoken default: the driving-only door that plays the cast line. Retires when a usage flag marks that door, so the name is not compiled in",
+  },
   "finish-blender": {
     sites: ["planner-restore.js"],
     why: "legacy draft key only (LEGACY_FINISH_PICK_KEYS); retires once saved drafts age out",
