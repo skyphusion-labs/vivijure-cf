@@ -127,6 +127,7 @@ describe("fc#2250 item 3 -- every cast-child POST route is classified for spend"
   it("meters /voice-sample specifically, and only under POST (fc#2250 regression)", () => {
     // The route this file was written for. startCastVoiceSample invokes a paid motion.backend.
     expect(isSpendRoute("POST", "/api/cast/7/voice-sample")).toBe(true);
+    expect(isSpendRoute("POST", "/api/cast/7/voice-line")).toBe(true);
     // GET is the poll and DELETE clears the row; neither spends.
     expect(isSpendRoute("GET", "/api/cast/7/voice-sample")).toBe(false);
   });

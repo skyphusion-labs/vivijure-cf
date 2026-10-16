@@ -120,6 +120,7 @@ describe("fc#2250 item 5 -- every byte-writing POST route passes the storage cei
       "/api/storyboard/renders/abc-123/retry",
       "/api/cast/7/voice-sample",
       "/api/cast/7/voice-sample/attach",
+      "/api/cast/7/voice-line",
       "/api/render/frames",
     ];
     const nowInCore = samples.filter((s) => isStorageSubmitRoute("POST", s));
