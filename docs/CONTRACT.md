@@ -712,6 +712,8 @@ and `400` on an empty body or over-size.
 | POST `/api/storyboard/character-ref` | same image mimes | 25 MB | `character-refs/` |
 | POST `/api/storyboard/audio-upload` | `audio/mpeg\|mp3\|wav\|x-wav\|aac\|mp4\|x-m4a\|ogg\|webm` | 32 MB | `audio/` |
 
+A full song is mp3 or m4a. The cap is 32 MB. A stereo 44.1 kHz WAV is 176400 bytes/second (44100 x 2 channels x 2 bytes), so about three minutes fills the cap. Shorter wav, aac, and ogg uploads still stage. The planner says this next to the file picker.
+
 **There is no fallback extension.** Each route looks its `Content-Type` up in a fixed table and
 REFUSES a miss with `400 { "error": "unsupported content-type <mime> (png/jpeg/webp/gif only)" }`
 (or the audio equivalent). This table previously said "(else `bin`)", which describes the fallback in

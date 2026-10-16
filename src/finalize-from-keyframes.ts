@@ -32,6 +32,7 @@ import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types"
 import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { readIdempotencyKey } from "./film-idempotency";
+import { songStartRefusal } from "./film-join-gate";
 
 export interface AnimateFromPreviewArgs {
   parent: RenderRow;
@@ -259,6 +260,14 @@ export async function animateFromPreview(
     // UNDETERMINED. Swallowing it finalized a voiced film silent and called it success.
     return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
   }
+
+  // A staged song starts this film only after beat-sync has stored its read.
+  const songRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    args.audioKey,
+    dialogue_lines,
+  );
+  if (songRefusal) return { ok: false, error: songRefusal, status: 400 };
 
   // dialogue_lines is runtime-supported on startFilmFromKeyframes (core >=1.6.0); published
   // .d.ts lag omits it, so widen the arg type here rather than ship silent films (cf#334).
