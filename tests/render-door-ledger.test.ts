@@ -276,6 +276,7 @@ const NOT_DOORS = new Set<string>([
   "/api/cast/:id/source",
   "/api/cast/:id/train-lora",
   "/api/cast/:id/train-wan-lora",
+  "/api/cast/:id/voice-line",
   "/api/cast/:id/voice-sample",
   "/api/cast/:id/voice-sample/keep",
   "/api/cast/:id/voice-sample/attach",

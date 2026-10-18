@@ -15,6 +15,9 @@ import type { CastImageInput, CastImageOutput } from "@skyphusion-labs/vivijure-
 import { hookOutputViolation } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { presignR2Get } from "./r2-presign";
 import { getCastById, addRefs, type CastRefImage } from "@skyphusion-labs/vivijure-core/cast-db";
+import { handleCastTrainLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
+import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
+import { orchestratorEnv } from "./orchestrator-env";
 
 /** A cast-refs generation job. The module keeps its OWN run state (an R2 doc) + poll token; this job
  *  doc only tracks the orchestrator's view: which module answers, the module's poll token, and the
@@ -33,6 +36,8 @@ export interface CastRefsJob {
   applied: string[];           // what the module did (e.g. ["model:flux-2-klein-9b", "generated:10"])
   registered: number;          // how many refs were appended to the cast member
   error?: string;
+  lora_job_id?: string;        // SDXL train started when the set landed (cf#982)
+  lora_error?: string;
   created_at: number;
 }
 
@@ -68,11 +73,13 @@ export interface CastRefsSummary {
   registered: number;
   images: CastRefImage[];
   error?: string;
+  lora_job_id?: string;
+  lora_error?: string;
 }
 
 /** Pure: the caller-facing view of a job (what the route returns). */
 export function summarizeCastRefs(job: CastRefsJob): CastRefsSummary {
-  return {
+  const summary: CastRefsSummary = {
     job_id: job.job_id,
     cast_id: job.cast_public_id,
     phase: job.phase,
@@ -81,6 +88,55 @@ export function summarizeCastRefs(job: CastRefsJob): CastRefsSummary {
     images: job.images,
     error: job.error,
   };
+  // Omit an unset train result. A caller that has not trained sees the same shape as before.
+  if (job.lora_job_id) summary.lora_job_id = job.lora_job_id;
+  if (job.lora_error) summary.lora_error = job.lora_error;
+  return summary;
+}
+
+/** The reference set is finished and the SDXL LoRA is not already training or ready. */
+export const SDXL_TRAIN_MIN_REFS = 4;
+
+export function sdxlTrainDue(
+  phase: CastRefsJob["phase"],
+  registered: number,
+  loraStatus: string | null | undefined,
+): boolean {
+  if (phase !== "done") return false;
+  if (registered < SDXL_TRAIN_MIN_REFS) return false;
+  if (loraStatus === "training" || loraStatus === "ready") return false;
+  return true;
+}
+
+/** Body for the cast train route. Explicit SDXL: an absent family trains Wan when that endpoint is wired. */
+export const CAST_SDXL_TRAIN_BODY = JSON.stringify({ model_family: "sdxl" });
+
+/** The train route wants core's presigner. A live request already has one (studioEnv). */
+function envForTrain(env: Env): OrchestratorEnv {
+  const carried = env as Env & Partial<OrchestratorEnv>;
+  if (carried.PRESIGNER) return carried as OrchestratorEnv;
+  return orchestratorEnv(env);
+}
+
+/** Start the SDXL LoRA once the training set has landed. A train failure stays on the job; the refs stay done. */
+async function startSdxlTrainIfDue(env: Env, job: CastRefsJob): Promise<void> {
+  if (job.lora_job_id || job.lora_error) return;
+  const cast = await getCastById(env, job.cast_id);
+  if (!cast || !sdxlTrainDue(job.phase, job.registered, cast.lora_status)) return;
+  const req = new Request("https://studio.local/api/cast/train-lora", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: CAST_SDXL_TRAIN_BODY,
+  });
+  try {
+    const res = await handleCastTrainLora(req, envForTrain(env), job.cast_id);
+    const body = await res.json().catch(() => ({})) as { error?: string; jobId?: string };
+    if (res.status >= 400) job.lora_error = body.error || `SDXL train failed (${res.status})`;
+    else if (body.jobId) job.lora_job_id = body.jobId;
+    else job.lora_error = "SDXL train returned no job id";
+  } catch (e) {
+    job.lora_error = e instanceof Error ? e.message : String(e);
+  }
 }
 
 const putJob = (env: Env, job: CastRefsJob) =>
@@ -172,6 +228,7 @@ async function finalize(env: Env, job: CastRefsJob, output: CastImageOutput): Pr
     return;
   }
   job.phase = "done";
+  await startSdxlTrainIfDue(env, job);
 }
 
 /** Start a cast-refs job: resolve the cast.image module, presign the seed refs, invoke it, persist

@@ -47,6 +47,8 @@ export const PANEL_STORAGE_SUBMIT_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/renders\/[^/]+\/retry$/,
   // A paid 5s or 10s image-to-video clip, plus the sample state doc under casts/voice-sample/.
   /^\/api\/cast\/[^/]+\/voice-sample$/,
+  // One Aura-1 line, stored as cast/<id>/voice-line.wav. Small, but it is new artifact bytes.
+  /^\/api\/cast\/[^/]+\/voice-line$/,
   // Caller-supplied bytes, bounded at 32MB per call by VOICE_REF_MAX and by nothing else.
   /^\/api\/cast\/[^/]+\/voice-sample\/attach$/,
   // buildFramesSheet renders a frame or a contact sheet and stores it.
