@@ -293,7 +293,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**92 route entries** (distinct `method` + `pattern`) over **74 distinct path patterns**. Those two
+**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -333,6 +333,7 @@ unchanged.
 | 21 | POST | `/api/cast/:id/generate-refs` | 2.8 |
 | 22 | GET | `/api/cast/:id/refs-job/:jobId` | 2.8 |
 | 23 | POST | `/api/cast/:id/train-lora` | 2.9 |
+| 23a | POST | `/api/cast/:id/voice-line` | 2.9 |
 | 24 | GET | `/api/cast/:id/lora-status` | 2.9 |
 | 24a | POST | `/api/cast/:id/voice-sample` | 2.9 |
 | 24b | GET | `/api/cast/:id/voice-sample` | 2.9 |
@@ -540,11 +541,10 @@ Each of these registers an image onto a cast member. The request body is one of 
 **Mime note:** the cast allowlist is **png / jpeg / webp**. `POST /api/upload` additionally accepts
 `gif`, so a gif can be staged and then refused here; that asymmetry is real, not a typo.
 
-> **Open defect (cf#317):** the studio panel's own file-upload path on the cast page uploads through
-> `/api/upload` and then sends form 2 with the resulting `uploads/...` key, which form 2 rejects.
-> Confirmed against the shipped handler with a four-row matrix including a positive control and a
-> row whose answer is fixed under every hypothesis. Whether the guard should widen or the panel
-> should switch to form 3 is not settled here; this section now states what the code does.
+The cast page uses form 3. `public/cast.js` stages the file with `POST /api/upload`, then
+registers the portrait, a reference, or a source with `{ from_chat_artifact: <key> }`. Form 2
+still rejects an `uploads/...` key. Issue 317 is the closed Studio MCP issue and is not this
+contract. The character-before-a-film work is issue 982.
 
 | Route | Purpose | Response |
 |-------|---------|----------|
@@ -612,6 +612,8 @@ Both respond `200 { ok: true, ...CastRefsSummary }` (POST: `201`). `CastRefsSumm
 | `registered` | number | Count of generated images already written onto the member. Moves while the job runs when the module reports progressive images on pending polls (cf#386); a legacy bare-pending module stays at `0` until `phase === "done"`. |
 | `images` | `{ key, mime }[]` | The generated reference images so far (R2 keys + mime). Grows with `registered`. |
 | `error?` | string | Set when `phase === "failed"`. |
+| `lora_job_id?` | string | Set when the finished set started an SDXL LoRA train (at least 4 registered stills, and the member was not already `training` or `ready`). |
+| `lora_error?` | string | Set when that train was due and did not return a job id. The refs job stays `done`. |
 
 A `cast.image` module's progressive images are held to the same output contract as its terminal batch
 (each needs a string `key` + `mime`); a pending poll carrying a non-conformant image fails the job
@@ -626,7 +628,8 @@ Errors: `404` if the cast member (POST) or job (GET) is unknown.
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
-| POST `/api/cast/:id/voice-sample` | `{ seconds?: 5\|10, line?: string, motion_backend?: string }` | `202 { poll, module_name, seconds }` | 5/10s talking preview from the portrait |
+| POST `/api/cast/:id/voice-line` | `{ voice_id?: string, text?: string }` | `200 { key, url, voice_id }` | Speak one Aura-1 line (default "Hello. This is how I sound.", cap 300 chars), store `cast/<id>/voice-line.wav`, and keep that `voice_id` on the member. Does not set `voice_ref_key`. `400` if no Aura-1 speaker is picked or the id is not one of the 12. `503` if the AI binding is down. `502` if the synth fails or returns empty audio. |
+| POST `/api/cast/:id/voice-sample` | `{ seconds?: 5\|10, line?: string, motion_backend?: string }` | `202 { poll, module_name, seconds }` | 5/10s talking preview from the portrait. The cast page no longer calls this. |
 | GET `/api/cast/:id/voice-sample` | -- | `{ status, clip_key?, error?, module_name? }` | poll the preview |
 | POST `/api/cast/:id/voice-sample/keep` | -- | `{ voice_ref_key }` | save the preview as the talking-door lock |
 | POST `/api/cast/:id/voice-sample/attach` | raw video/audio body, or `{ from_chat_artifact }` | `{ voice_ref_key, mime }` | attach a clip or reference audio the filmmaker already has |

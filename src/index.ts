@@ -19,6 +19,7 @@ import { readIdempotencyKey } from "./film-idempotency";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
+import { hearCastVoiceLine } from "./cast-voice-line";
 import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
@@ -1319,6 +1320,8 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
 };
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
+const hHearCastVoice: Handler = async (req, env, _c, p) =>
+  hearCastVoiceLine(req, env, await resolveCastId(env, p.id));
 const hTrainCastWanLora: Handler = async (req, env, _c, p) =>
   handleCastTrainWanLora(req, env, await resolveCastId(env, p.id));
 const hCastLoraStatus: Handler = async (_req, env, _c, p) =>
@@ -2239,6 +2242,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/generate-refs",          scope: "consumer",    handler: hGenerateCastRefs },
   { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        scope: "consumer",    handler: hPollCastRefs },
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/voice-line",             scope: "consumer",    handler: hHearCastVoice },
   { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
   { method: "POST",   pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hStartCastVoiceSample },
