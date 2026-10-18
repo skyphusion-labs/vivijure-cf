@@ -196,6 +196,14 @@ binding = "DB"
 database_name = "vivijure-studio"
 database_id = "${D1_DATABASE_ID}"
 
+# One workflow per shot. still, wav, and clip are separate steps, so a failed
+# step retries on its own. Vendor modules that already have a workflow are not
+# wrapped again. The class is exported from src/index.ts.
+[[workflows]]
+name = "shot"
+binding = "SHOT_WORKFLOW"
+class_name = "ShotWorkflow"
+
 # --- Off-GPU CPU work runs always-on on the fleet (issue #83), reached over public HTTPS / Traefik
 # --- origins (VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL above). The CF Container + its
 # --- Durable Object class were removed once the fleet path was validated end-to-end in prod

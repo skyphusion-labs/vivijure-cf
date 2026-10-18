@@ -115,12 +115,14 @@ describe("fc#2250 item 5 -- every byte-writing POST route passes the storage cei
 
   it("THE SUPPLEMENT IS SELF-RETIRING: no panel pattern duplicates one core already covers", () => {
     // The property that keeps a second route list from becoming permanent drift. When core absorbs
-    // one of these four, this row fails and PANEL_STORAGE_SUBMIT_PATTERNS must shrink by one.
+    // one of these samples, this row fails and PANEL_STORAGE_SUBMIT_PATTERNS must shrink by one.
     const samples = [
       "/api/storyboard/renders/abc-123/retry",
       "/api/cast/7/voice-sample",
       "/api/cast/7/voice-sample/attach",
+      "/api/cast/7/voice-line",
       "/api/render/frames",
+      "/api/audio/analyze",
     ];
     const nowInCore = samples.filter((s) => isStorageSubmitRoute("POST", s));
     console.log(`[fc2250-storage] panel patterns already covered by core: ${nowInCore.length} of ${samples.length}`);

@@ -293,7 +293,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**92 route entries** (distinct `method` + `pattern`) over **74 distinct path patterns**. Those two
+**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -333,6 +333,7 @@ unchanged.
 | 21 | POST | `/api/cast/:id/generate-refs` | 2.8 |
 | 22 | GET | `/api/cast/:id/refs-job/:jobId` | 2.8 |
 | 23 | POST | `/api/cast/:id/train-lora` | 2.9 |
+| 23a | POST | `/api/cast/:id/voice-line` | 2.9 |
 | 24 | GET | `/api/cast/:id/lora-status` | 2.9 |
 | 24a | POST | `/api/cast/:id/voice-sample` | 2.9 |
 | 24b | GET | `/api/cast/:id/voice-sample` | 2.9 |
@@ -540,11 +541,10 @@ Each of these registers an image onto a cast member. The request body is one of 
 **Mime note:** the cast allowlist is **png / jpeg / webp**. `POST /api/upload` additionally accepts
 `gif`, so a gif can be staged and then refused here; that asymmetry is real, not a typo.
 
-> **Open defect (cf#317):** the studio panel's own file-upload path on the cast page uploads through
-> `/api/upload` and then sends form 2 with the resulting `uploads/...` key, which form 2 rejects.
-> Confirmed against the shipped handler with a four-row matrix including a positive control and a
-> row whose answer is fixed under every hypothesis. Whether the guard should widen or the panel
-> should switch to form 3 is not settled here; this section now states what the code does.
+The cast page uses form 3. `public/cast.js` stages the file with `POST /api/upload`, then
+registers the portrait, a reference, or a source with `{ from_chat_artifact: <key> }`. Form 2
+still rejects an `uploads/...` key. Issue 317 is the closed Studio MCP issue and is not this
+contract. The character-before-a-film work is issue 982.
 
 | Route | Purpose | Response |
 |-------|---------|----------|
@@ -612,6 +612,8 @@ Both respond `200 { ok: true, ...CastRefsSummary }` (POST: `201`). `CastRefsSumm
 | `registered` | number | Count of generated images already written onto the member. Moves while the job runs when the module reports progressive images on pending polls (cf#386); a legacy bare-pending module stays at `0` until `phase === "done"`. |
 | `images` | `{ key, mime }[]` | The generated reference images so far (R2 keys + mime). Grows with `registered`. |
 | `error?` | string | Set when `phase === "failed"`. |
+| `lora_job_id?` | string | Set when the finished set started an SDXL LoRA train (at least 4 registered stills, and the member was not already `training` or `ready`). |
+| `lora_error?` | string | Set when that train was due and did not return a job id. The refs job stays `done`. |
 
 A `cast.image` module's progressive images are held to the same output contract as its terminal batch
 (each needs a string `key` + `mime`); a pending poll carrying a non-conformant image fails the job
@@ -626,7 +628,8 @@ Errors: `404` if the cast member (POST) or job (GET) is unknown.
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
-| POST `/api/cast/:id/voice-sample` | `{ seconds?: 5\|10, line?: string, motion_backend?: string }` | `202 { poll, module_name, seconds }` | 5/10s talking preview from the portrait |
+| POST `/api/cast/:id/voice-line` | `{ voice_id?: string, text?: string }` | `200 { key, url, voice_id }` | Speak one Aura-1 line (default "Hello. This is how I sound.", cap 300 chars), store `cast/<id>/voice-line.wav`, and keep that `voice_id` on the member. Does not set `voice_ref_key`. `400` if no Aura-1 speaker is picked or the id is not one of the 12. `503` if the AI binding is down. `502` if the synth fails or returns empty audio. |
+| POST `/api/cast/:id/voice-sample` | `{ seconds?: 5\|10, line?: string, motion_backend?: string }` | `202 { poll, module_name, seconds }` | 5/10s talking preview from the portrait. The cast page no longer calls this. |
 | GET `/api/cast/:id/voice-sample` | -- | `{ status, clip_key?, error?, module_name? }` | poll the preview |
 | POST `/api/cast/:id/voice-sample/keep` | -- | `{ voice_ref_key }` | save the preview as the talking-door lock |
 | POST `/api/cast/:id/voice-sample/attach` | raw video/audio body, or `{ from_chat_artifact }` | `{ voice_ref_key, mime }` | attach a clip or reference audio the filmmaker already has |
@@ -711,6 +714,8 @@ and `400` on an empty body or over-size.
 | POST `/api/upload` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` | 25 MB | `uploads/` |
 | POST `/api/storyboard/character-ref` | same image mimes | 25 MB | `character-refs/` |
 | POST `/api/storyboard/audio-upload` | `audio/mpeg\|mp3\|wav\|x-wav\|aac\|mp4\|x-m4a\|ogg\|webm` | 32 MB | `audio/` |
+
+A full song is mp3 or m4a. The cap is 32 MB. A stereo 44.1 kHz WAV is 176400 bytes/second (44100 x 2 channels x 2 bytes), so about three minutes fills the cap. Shorter wav, aac, and ogg uploads still stage. The planner says this next to the file picker.
 
 **There is no fallback extension.** Each route looks its `Content-Type` up in a fixed table and
 REFUSES a miss with `400 { "error": "unsupported content-type <mime> (png/jpeg/webp/gif only)" }`
@@ -1089,6 +1094,12 @@ Analyze an audio bed for beat / duration slicing.
 **Response 200:** `{ ok: true, output: <beat plan>, module: string }`; `502 { ok: false, error }` on
 analysis failure. `400` if `audioKey` missing.
 
+A successful analyze also writes R2 object `<audioKey>.beats.json`. The key is the trimmed
+`audioKey`. The body is `{ audioKey, beats_read: true }`. If that put throws, the route answers
+`502 { ok: false, error: "beats were read but the marker was not stored" }` and does not report ok.
+A song analyzed before this marker existed has no object. The film doors below refuse it until the
+track is analyzed again.
+
 ### 2.18 Storyboard render path (module render bridge)
 
 `POST /api/storyboard/render` (`hSubmitRender`) submits a render through the **module pipeline**
@@ -1153,6 +1164,17 @@ carried a literal seven-door list, which on a hosted tenant sent the filmmaker t
 InfiniteTalk, a door the hosted catalog cannot install. A client MUST NOT match on the old literal;
 match on `spoken lines` if it must match at all. The same three sentences serve all three render
 doors (panel, render-from-keyframes, agent).
+
+When `audioKey` is set (and, on this route, the render is not `keyframesOnly`), two more `400`
+sentences apply. They also apply on `POST /api/storyboard/render-from-keyframes`, on
+`POST /api/render/film`, and on the finalize family (`finalize`, `animate-cloud`,
+`animate-hybrid`), which shares `animateFromPreview`. A missing `<audioKey>.beats.json` answers
+`400 "beats were not read for this song. Analyze the track before starting the film."` A spoken
+line whose word count divided by 2.5 exceeds 12 seconds answers
+`400 "<shot> line is about <seconds>s (<words> words at 2.5 words/second). That estimate does not fit one 12s window."`
+`<shot>` is the line's `shot_id`, or `a shot` when that id is blank. The seconds figure is the
+word-count estimate, not a measured WAV. A client that must match should match on `beats were not read`
+or `does not fit one`. There is no song, so no refusal, when `audioKey` is absent.
 **Response 201:** the RunPod-shaped poll view (2.24.1).
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
@@ -1170,7 +1192,8 @@ the #696 `renderOverrides` shape `400`s; `503 "no motion.backend module installe
 `400 "bundle has no storyboard scenes"`; `400 "bundle has no injected keyframes
 (clips/<id>_keyframe.png)"`; the no-gpu-door `400` above; the #577 motion-config, local-pairing and
 cf#593 finish `400`s as on `POST /api/storyboard/render` (judged against the RESOLVED backend); the
-spoken-lines talking-door `400` above; `422 { error }` if the job fails to start. **Response 201:**
+spoken-lines talking-door `400` above; the song-read `400` above when `audioKey` is set;
+`422 { error }` if the job fails to start. **Response 201:**
 the RunPod-shaped poll view.
 
 **POST `/api/storyboard/render-plan`** (dry run, no submission): body `{ selection?:
@@ -1239,6 +1262,27 @@ there (the noise catch); a `suspect` verdict is a warn/degrade marker (the film 
 emit a `clip.content_validate` event (see `docs/observability.md`). This runs on the film path only; the
 standalone clips route gets the structural check only.
 
+### 2.19.1 Shot record (`shot_records`)
+
+The film job document in R2 is still the orchestrator's copy: keyframes, `dialogue_audio`,
+and clips live on that document, and the `renders` row holds one output key for the film.
+There is no per-shot row on that path. `shot_records` (migration `0022_shot_records.sql`)
+is the step record for one shot. Columns: `film_id`, `shot_id`, `still_key`, `wav_key`,
+`clip_key`, `step` (`still`, `wav`, `clip`, or `done`), `step_error`, `step_token`,
+`updated_at`. The bytes stay in R2. The studio worker does not buffer the MP4. The clip
+call is a presigned `still_url` and, when the shot has a line, a presigned `wav_url`.
+
+`ShotWorkflow` (`[[workflows]]` binding `SHOT_WORKFLOW`) runs three steps: `still`, `wav`,
+`clip`. A throw retries that step. A step whose key is already set does not run again.
+A shot with no line skips the wav step. Vendor modules that already run their vendor call
+inside a Workflow (dialogue-gen, the cf catalog doors, music-gen, chatterbox) are not
+wrapped a second time. This workflow records the key and retries the step. It does not
+open their vendor call again.
+
+A tenant worker and a dispatch module do not receive the R2 credential
+(`R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`, or a body field `secret_access_key` /
+`access_key_id`). An R2 binding is not that credential.
+
 ### 2.20 POST /api/render/film -- start a film job
 
 The direct film-render entry (the planner film render and API clients such as the Slate bot). Submits
@@ -1298,7 +1342,7 @@ motion door is paired with a non-local `keyframe_backend` (vivijure-local#153); 
 missing-SDXL message) when a bound cast has no SDXL keyframe adapter; and, when the dialogue lines
 (explicit or bundle-derived) are non-empty, `400 "This storyboard has spoken lines. Pick a talking
 door ... Silent look doors cannot say the script."` unless the chosen motion module can speak lines
-and its talking audio is on.
+and its talking audio is on. When a song is attached, the song-read `400` in 2.18 applies here too.
 
 **Response 201:** `{ ok: true, ...FilmSummary, download_url? }` (see 2.21). A renders-table row is
 inserted so the film shows in history.
@@ -1427,6 +1471,9 @@ Each derives a new render from a parent preview (`getRenderByIdForUser`). All re
 | POST `/api/storyboard/renders/:id/finalize` | `{ audioKey?, castLoras?, motion_backend?, idempotency_key? }` (empty body ok) | GPU finalize. Optional `motion_backend` (cf#347; alias `motionBackend`, trimmed, blank = absent). `idempotency_key` (alias `idempotencyKey`) is the duplicate-submit guard of 2.18. |
 | POST `/api/storyboard/renders/:id/animate-cloud` | `{ model?, perShot?, audioKey? }` | Cloud i2v finalize (`perShot` = per-shot model map). |
 | POST `/api/storyboard/renders/:id/animate-hybrid` | `{ backends?, defaultBackend? ("gpu"\|"cloud", default "gpu"), defaultCloudModel?, audioKey? }` | Mixed GPU/cloud backends; `backends` validated against installed `motion.backend` modules (excluding `own-gpu`). `400` if the backend set is invalid. |
+
+When a song is attached, `finalize`, `animate-cloud`, and `animate-hybrid` return the song-read
+`400` from 2.18. They share `animateFromPreview`.
 
 ### 2.28 POST /api/storyboard/renders/adopt
 

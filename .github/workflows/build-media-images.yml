@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        svc: [video-finish, image-prep, audio-beat-sync, audio-mix, audio-master]
+        svc: [video-finish, image-prep, audio-beat-sync, audio-mix, audio-master, cpu]
     steps:
       - uses: actions/checkout@v7
 
@@ -85,7 +85,8 @@ jobs:
       - name: Build + push
         uses: docker/build-push-action@v7
         with:
-          context: containers/${{ matrix.svc }}
+          context: ${{ matrix.svc == 'cpu' && 'containers' || format('containers/{0}', matrix.svc) }}
+          file: ${{ matrix.svc == 'cpu' && 'containers/cpu/Dockerfile' || format('containers/{0}/Dockerfile', matrix.svc) }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
