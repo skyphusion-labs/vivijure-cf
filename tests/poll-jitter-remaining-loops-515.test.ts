@@ -49,15 +49,11 @@ describe("cf#515: every remaining poll loop arms through the shared policy", () 
       .match(/setTimeout\(\(\) => pollLoraStatus\(id\), LORA_POLL_MS\)/g)?.length).toBe(1);
     expect(code.match(/setTimeout\(\(\) => pollLoraStatus\(id\), LORA_POLL_MS\)/g)).toBe(null);
     expect(code).toContain("baseMs: LORA_POLL_MS");
-    // cf#581: the per-file error streak moved INTO the shared primitive, which owns
-    // the timer, the streak and the paused flag together. Backoff is still a
-    // SEPARATE property from jitter, so both directions are still asserted; they are
-    // now named calls rather than a hand-rolled counter, which is what removed the
-    // declaration-satisfies-the-assertion trap this test used to have to dodge.
-    // Two loops: LoRA training + Cast voice-sample preview. Each has one error arm
-    // and one success arm. A drop to 1 means a loop went flat again.
-    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(2);
-    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(2);
+    // The cast page no longer polls a voice-sample clip. One loop remains: LoRA
+    // training. It still has one error arm and one success arm. Zero means that
+    // loop went flat again.
+    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(1);
+    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(1);
   });
 
   it("planner-audio.js routes BOTH arms through one scheduler and backs off", () => {

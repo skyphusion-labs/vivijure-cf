@@ -1,5 +1,6 @@
-# kling module worker (vivijure-module/2): Kuaishou Kling V2.1 I2V Pro on RunPod, the second
-# motion.backend module. Same async pattern as seedance; bound into the core as MODULE_KLING_O1_R2V.
+# kling-o1-r2v module worker (vivijure-module/2): Kuaishou Kling Video O1 R2V on the RunPod
+# public endpoint api.runpod.ai/v2/kling-video-o1-r2v. Same async pattern as seedance;
+# bound into the core as MODULE_KLING_O1_R2V.
 # account_id is read from CLOUDFLARE_ACCOUNT_ID (env), not hardcoded.
 
 name = "vivijure-module-kling-o1-r2v"
