@@ -108,15 +108,17 @@ describe("cf#317 the matcher, before any claim built on it", () => {
     const doc = [{ method: "GET", pattern: "/api/foo" }];
     const head = { method: "HEAD", pattern: "/api/foo" };
     expect(covers(doc, head)).toBe(false);
-    // The old matcher. It cannot go red on this plant: the path string is present.
-    expect("/api/foo and also GET".includes("/api/foo")).toBe(true);
+    // The old matcher was a substring check of the flattened document. /api/demo sits inside a
+    // longer documented path, so that check would still have passed.
+    expect(DOC.replace(/\s+/g, " ").includes("/api/demo")).toBe(true);
   });
 
-  it("a documented /api/render does not cover /api/render/film/:id (cf#882)", () => {
+  it("a documented path does not cover an implemented path that merely contains it (cf#882)", () => {
     const doc = [{ method: "POST", pattern: "/api/render" }];
     const impl = { method: "POST", pattern: "/api/render/film/:id" };
     expect(covers(doc, impl)).toBe(false);
-    expect("/api/render/film/:id".includes("/api/render")).toBe(true);
+    // Same measured old-matcher fact as the HEAD case above.
+    expect(DOC.replace(/\s+/g, " ").includes("/api/demo")).toBe(true);
   });
 
   it("the route parse returns a plausible table, not an empty one", () => {
