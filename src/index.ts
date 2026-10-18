@@ -19,6 +19,7 @@ import { readIdempotencyKey } from "./film-idempotency";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
+import { hearCastVoiceLine } from "./cast-voice-line";
 import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
@@ -91,6 +92,9 @@ export { ARTIFACT_PREFIXES } from "./shared";
 // whose class is not exported from the entrypoint, so removing this line arms a deploy failure
 // that only surfaces at the next `v*` tag and takes the whole studio release with it.
 export { FinishContainer } from "./finish-container";
+// wrangler [[workflows]] class_name "ShotWorkflow". The deploy rejects a workflow
+// whose class is not exported from the entrypoint.
+export { ShotWorkflow } from "./shot-workflow";
 import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
@@ -1082,7 +1086,14 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     return json({ error: "no motion.backend module installed" }, 503);
   }
 
-  const parsedScenes = await readBundleScenes(env, fromKfBundleKey);
+  // The read throws on a corrupt bundle. That is undetermined dialogue, not "no scenes".
+  // The cast try below stays about cast resolution only.
+  let parsedScenes;
+  try {
+    parsedScenes = await readBundleScenes(env, fromKfBundleKey);
+  } catch (e) {
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
+  }
   if (!parsedScenes.length) {
     return json({ error: "bundle has no storyboard scenes" }, 400);
   }
@@ -1316,6 +1327,8 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
 };
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
+const hHearCastVoice: Handler = async (req, env, _c, p) =>
+  hearCastVoiceLine(req, env, await resolveCastId(env, p.id));
 const hTrainCastWanLora: Handler = async (req, env, _c, p) =>
   handleCastTrainWanLora(req, env, await resolveCastId(env, p.id));
 const hCastLoraStatus: Handler = async (_req, env, _c, p) =>
@@ -1642,23 +1655,27 @@ const hStartFilm: Handler = async (req, env) => {
   const castIds = Object.keys(resolvedLoras.castIds).length ? resolvedLoras.castIds : undefined;
 
   let dialogue_lines = a.dialogue_lines;
-  if (!dialogue_lines || !dialogue_lines.length) {
-    const bundleScenes = await readBundleScenes(env, filmBundleKey);
-    if (bundleScenes.some((s) => s.dialogue)) {
-      dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+  try {
+    if (!dialogue_lines || !dialogue_lines.length) {
+      const bundleScenes = await readBundleScenes(env, filmBundleKey);
+      if (bundleScenes.some((s) => s.dialogue)) {
+        dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+      }
+    } else if (
+      // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
+      // to DEFAULT_VOICE_ID even when the shot's speaking slot is bound to a cast member WITH a voice
+      // (Wren spoke as angus, film-08dd5777). When any line lacks a voice and the caller's cast_loras
+      // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
+      // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
+      // resolve, the downstream default stands.
+      Object.keys(resolvedLoras.voices).length &&
+      dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
+    ) {
+      const bundleScenes = await readBundleScenes(env, filmBundleKey);
+      dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
     }
-  } else if (
-    // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
-    // to DEFAULT_VOICE_ID even when the shot's speaking slot is bound to a cast member WITH a voice
-    // (Wren spoke as angus, film-08dd5777). When any line lacks a voice and the caller's cast_loras
-    // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
-    // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
-    // resolve, the downstream default stands.
-    Object.keys(resolvedLoras.voices).length &&
-    dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
-  ) {
-    const bundleScenes = await readBundleScenes(env, filmBundleKey);
-    dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
+  } catch (e) {
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
   }
   // project is optional; derive it from the bundle key (mirrors hSubmitRender) so a caller that
   // only has a bundle (e.g. the Slate bot) lands in the same project namespace the monolith uses.
@@ -2236,6 +2253,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/generate-refs",          scope: "consumer",    handler: hGenerateCastRefs },
   { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        scope: "consumer",    handler: hPollCastRefs },
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/voice-line",             scope: "consumer",    handler: hHearCastVoice },
   { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
   { method: "POST",   pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hStartCastVoiceSample },
