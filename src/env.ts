@@ -97,8 +97,8 @@ export interface Env {
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
   // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in.
   // "unprovisionable" = no operator action reaches this studio. Absent -> the conservative
-  // default, "provisionable". The control plane writes it. A live door beats this label; the
-  // label beats a set VIDEO_FINISH_URL. See videoFinishState.
+  // default, "provisionable". The control plane writes it. A configured URL always wins
+  // over this var: see videoFinishState (an observation beats a label).
   VIDEO_FINISH_TIER_STATE?: string;
 
   // OPTIONAL var (control-plane#130), NOT a binding: where a reporter should be sent to report

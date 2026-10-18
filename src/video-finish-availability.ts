@@ -177,8 +177,7 @@ export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
 type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> &
   Partial<VideoFinishDoorHost>;
 
-/** Which state this studio is in. A live door is available. Then an unprovisionable label.
- *  Then a non-empty URL. Then the default.
+/** Which state this studio is in. A bound container, or a public URL, is available.
  *
  *  cf#810: THE BINDING IS CHECKED FIRST, and this is not a preference, it is the file's own rule
  *  applied to a case that did not exist when it was written. The header above says a studio that has
@@ -190,13 +189,9 @@ type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> 
  *  This is load-bearing for the repoint, not a tidy-up. The end state of cf#810 UNSETS
  *  VIDEO_FINISH_URL, because the door replaces it. Without this line that unset would flip a working
  *  film tier to "unavailable" and the panel would grey out capability that works -- the exact
- *  failure this file exists to prevent, arriving through the change meant to fix the tier.
- *
- *  cf#871: the label is checked before the URL. A typed URL is not that door, so
- *  `unprovisionable` overrides a set URL. Only the live door still beats the label. */
+ *  failure this file exists to prevent, arriving through the change meant to fix the tier. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
   if (videoFinishDoorOf(env)) return "available";
-  if (env.VIDEO_FINISH_TIER_STATE === "unprovisionable") return "unprovisionable";
   if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
   return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
 }

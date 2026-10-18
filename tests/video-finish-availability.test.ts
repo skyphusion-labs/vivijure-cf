@@ -180,12 +180,12 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     ).toBe("unprovisionable");
   });
 
-  it("a typed URL does not beat an unprovisionable label (cf#871)", () => {
-    // The observation that beats a label is a live door, asserted below. A URL is a string
-    // someone typed, so the plane's declaration still reaches the panel while it is set.
+  it("an OBSERVATION beats a label: a bound tier is available whatever the var says", () => {
+    // The failure this forbids is a stale var outliving the provisioning it described, with the
+    // panel then telling a studio that HAS a working tier that it has none.
     expect(
       videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org", VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
-    ).toBe("unprovisionable");
+    ).toBe("available");
   });
 
   it("an unrecognised var value falls back to the default rather than inventing a state", () => {
@@ -226,34 +226,6 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     // what makes the estate honest is the bindings refresh and the bytes move, not this constant.
     expect(videoFinishState({ VIDEO_FINISH_URL: undefined } as never)).toBe("provisionable");
     expect(videoFinishReason("provisionable")).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
-  });
-});
-
-describe("cf#871 an unprovisionable tier overrides a set URL", () => {
-  const door = { fetch: async () => new Response("{}") };
-  const url = "https://video-finish.skyphusion.org";
-
-  it("a live door beats an unprovisionable label", () => {
-    expect(
-      videoFinishState({
-        VIDEO_FINISH_URL: url,
-        VIDEO_FINISH_TIER_STATE: "unprovisionable",
-        MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door },
-      } as never),
-    ).toBe("available");
-  });
-
-  it("an unprovisionable label beats a set URL", () => {
-    expect(
-      videoFinishState({ VIDEO_FINISH_URL: url, VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
-    ).toBe("unprovisionable");
-  });
-
-  it("a set URL with no unprovisionable tier state is available", () => {
-    expect(videoFinishState({ VIDEO_FINISH_URL: url })).toBe("available");
-    expect(
-      videoFinishState({ VIDEO_FINISH_URL: url, VIDEO_FINISH_TIER_STATE: "banana" } as never),
-    ).toBe("available");
   });
 });
 
