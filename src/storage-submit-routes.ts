@@ -53,6 +53,8 @@ export const PANEL_STORAGE_SUBMIT_PATTERNS: RegExp[] = [
   /^\/api\/cast\/[^/]+\/voice-sample\/attach$/,
   // buildFramesSheet renders a frame or a contact sheet and stores it.
   /^\/api\/render\/frames$/,
+  // Beat-sync stores <audioKey>.beats.json. A film door refuses a song that has no marker.
+  /^\/api\/audio\/analyze$/,
 ];
 
 /**

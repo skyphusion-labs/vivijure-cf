@@ -16,6 +16,7 @@ import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-mo
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
 import { readIdempotencyKey } from "./film-idempotency";
+import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
@@ -994,6 +995,13 @@ const hSubmitRender: Handler = async (req, env) => {
       );
     }
   }
+  const songKey = b.keyframesOnly ? undefined : b.audioKey;
+  const panelSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    songKey,
+    panelDialogue,
+  );
+  if (panelSongRefusal) throw badRequest(panelSongRefusal);
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -1011,7 +1019,7 @@ const hSubmitRender: Handler = async (req, env) => {
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
     keyframes_only: !!b.keyframesOnly,
-    audio_key: b.keyframesOnly ? undefined : b.audioKey,
+    audio_key: songKey,
     // Opening title + end-credit card TEXT (FilmTitleSpec / FilmCreditSpec); the film.finish chain
     // reads it off the job. Mirrors hStartFilm. Skipped on a keyframes-only preview (no assembled
     // film to card), exactly like audio_key above.
@@ -1162,6 +1170,12 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
       );
     }
   }
+  const fromKfSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    b.audioKey,
+    fromKfDialogue,
+  );
+  if (fromKfSongRefusal) throw badRequest(fromKfSongRefusal);
 
   const job = await startFilmFromKeyframes(env, {
     project,
@@ -1289,10 +1303,11 @@ const hPollRender: Handler = async (_req, env, ctx, p) => {
   }
   const r = await advanceFilmJob(env, p.jobId);
   if (!r) throw notFound("render job");
-  const kfDone = r.job.phase === "keyframe" && r.job.keyframe_job_id
-    ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
+  const job = jobAfterSkippedJoin(r.job);
+  const kfDone = job.phase === "keyframe" && job.keyframe_job_id
+    ? await readKeyframeDone(env, job.project, job.keyframe_job_id)
     : undefined; // #318: keyframe sub-progress from the GPU job's snapshot (best-effort)
-  const view = filmJobToPollView(r.job, r.clipJob, kfDone);
+  const view = filmJobToPollView(job, r.clipJob, kfDone);
   await updateRenderFromView(env, view, ctx);
   if (
     r.job.derive_mode === "cloud-finalized"
@@ -1706,6 +1721,12 @@ const hStartFilm: Handler = async (req, env) => {
       );
     }
   }
+  const filmSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    a.audio_key,
+    dialogue_lines,
+  );
+  if (filmSongRefusal) throw badRequest(filmSongRefusal);
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
@@ -1754,18 +1775,20 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   }
   const r = await advanceFilmJob(env, p.id);
   if (!r) throw notFound("film job");
+  // A missed join is a failed film even when the published package still marked the job done.
+  const job = jobAfterSkippedJoin(r.job);
   // Insert-if-missing (ON CONFLICT(job_id) DO NOTHING) so a film started before history
   // unification -- or via a path that did not insert -- still surfaces in history on its next
   // poll/sweep tick; then sync the live status/output exactly like hPollRender (#164).
-  await insertRender(env, filmRowFromJob(r.job));
+  await insertRender(env, filmRowFromJob(job));
   // #318: during the keyframe phase, fold the GPU job's live keyframe_done tally into the poll view so
   // the bar/ETA subdivide the keyframe band (instead of pinning scene_index=1). Best-effort.
-  const kfDone = r.job.phase === "keyframe" && r.job.keyframe_job_id
-    ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
+  const kfDone = job.phase === "keyframe" && job.keyframe_job_id
+    ? await readKeyframeDone(env, job.project, job.keyframe_job_id)
     : undefined;
-  await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob, kfDone), ctx);
+  await updateRenderFromView(env, filmJobToPollView(job, r.clipJob, kfDone), ctx);
   // cf#392: host summarize relays wan_lora_projection from the job doc when present.
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(r.job, r.clipJob))) });
+  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
 };
 
 const hEnhance: Handler = async (req, env) => {
@@ -1862,6 +1885,14 @@ const hAudioAnalyze: Handler = async (req, env) => {
   if (!a.audioKey) throw badRequest("audioKey required");
   const result = await analyzeAudioBeats(env, a, a.module?.trim() || undefined);
   if (!result.ok) return json({ ok: false, error: result.error }, 502);
+  try {
+    await env.R2_RENDERS.put(
+      beatsMarkerKey(a.audioKey),
+      JSON.stringify({ audioKey: a.audioKey.trim(), beats_read: true }),
+    );
+  } catch {
+    return json({ ok: false, error: "beats were read but the marker was not stored" }, 502);
+  }
   return json({ ok: true, output: result.plan, module: result.module });
 };
 

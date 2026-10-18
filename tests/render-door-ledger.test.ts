@@ -121,7 +121,12 @@ const env = {
   ASSETS: { fetch: async () => new Response("ASSET") },
   SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
   DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
-  R2_RENDERS: { get: async () => null, put: async () => {}, head: async () => null },
+  R2_RENDERS: {
+    get: async () => null,
+    put: async () => {},
+    // The ledger sends a song. The start reaches core only when that song has been read.
+    head: async (key: string) => (key.endsWith(".beats.json") ? { size: 32 } : null),
+  },
   MODULE_KEYFRAME: moduleBinding("keyframe-sdxl", ["keyframe"], "cloud"),
   MODULE_ALIBABA_WAN: moduleBinding("alibaba-wan", ["motion.backend"], "byo"),
   MODULE_SEEDANCE: moduleBinding("seedance", ["motion.backend"], "cloud", TALKING_USAGE),

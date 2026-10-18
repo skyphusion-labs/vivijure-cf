@@ -95,6 +95,7 @@ const PANEL_ROUTES: { name: string; path: string }[] = [
   { name: "POST /api/cast/:id/voice-sample/attach", path: `/api/cast/${PUB}/voice-sample/attach` },
   { name: "POST /api/cast/:id/voice-line", path: `/api/cast/${PUB}/voice-line` },
   { name: "POST /api/render/frames", path: "/api/render/frames" },
+  { name: "POST /api/audio/analyze", path: "/api/audio/analyze" },
 ];
 
 async function post(env: Env, path: string, body: unknown = {}) {
