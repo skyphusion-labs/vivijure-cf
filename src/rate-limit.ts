@@ -125,6 +125,9 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/cast\/[^/]+\/voice-sample$/,
   /^\/api\/storyboard\/score-bed$/,
   /^\/api\/storyboard\/music-generate$/,
+  // The beat read writes <audioKey>.beats.json and runs the analyze module. The film
+  // doors refuse a song that has no marker, so this route is the write they depend on.
+  /^\/api\/audio\/analyze$/,
   // Paid-AI submits (cf#256): the four POST routes that dispatch the plan.enhance hook. /api/chat
   // covers BOTH of its branches -- the text planner (chatComplete) and the image branch
   // (chatImageViaModule), which is paid image generation and belongs here just as much.

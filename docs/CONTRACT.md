@@ -1091,6 +1091,12 @@ Analyze an audio bed for beat / duration slicing.
 **Response 200:** `{ ok: true, output: <beat plan>, module: string }`; `502 { ok: false, error }` on
 analysis failure. `400` if `audioKey` missing.
 
+A successful analyze also writes R2 object `<audioKey>.beats.json`. The key is the trimmed
+`audioKey`. The body is `{ audioKey, beats_read: true }`. If that put throws, the route answers
+`502 { ok: false, error: "beats were read but the marker was not stored" }` and does not report ok.
+A song analyzed before this marker existed has no object. The film doors below refuse it until the
+track is analyzed again.
+
 ### 2.18 Storyboard render path (module render bridge)
 
 `POST /api/storyboard/render` (`hSubmitRender`) submits a render through the **module pipeline**
@@ -1155,6 +1161,17 @@ carried a literal seven-door list, which on a hosted tenant sent the filmmaker t
 InfiniteTalk, a door the hosted catalog cannot install. A client MUST NOT match on the old literal;
 match on `spoken lines` if it must match at all. The same three sentences serve all three render
 doors (panel, render-from-keyframes, agent).
+
+When `audioKey` is set (and, on this route, the render is not `keyframesOnly`), two more `400`
+sentences apply. They also apply on `POST /api/storyboard/render-from-keyframes`, on
+`POST /api/render/film`, and on the finalize family (`finalize`, `animate-cloud`,
+`animate-hybrid`), which shares `animateFromPreview`. A missing `<audioKey>.beats.json` answers
+`400 "beats were not read for this song. Analyze the track before starting the film."` A spoken
+line whose word count divided by 2.5 exceeds 12 seconds answers
+`400 "<shot> line is about <seconds>s (<words> words at 2.5 words/second). That estimate does not fit one 12s window."`
+`<shot>` is the line's `shot_id`, or `a shot` when that id is blank. The seconds figure is the
+word-count estimate, not a measured WAV. A client that must match should match on `beats were not read`
+or `does not fit one`. There is no song, so no refusal, when `audioKey` is absent.
 **Response 201:** the RunPod-shaped poll view (2.24.1).
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
@@ -1172,7 +1189,8 @@ the #696 `renderOverrides` shape `400`s; `503 "no motion.backend module installe
 `400 "bundle has no storyboard scenes"`; `400 "bundle has no injected keyframes
 (clips/<id>_keyframe.png)"`; the no-gpu-door `400` above; the #577 motion-config, local-pairing and
 cf#593 finish `400`s as on `POST /api/storyboard/render` (judged against the RESOLVED backend); the
-spoken-lines talking-door `400` above; `422 { error }` if the job fails to start. **Response 201:**
+spoken-lines talking-door `400` above; the song-read `400` above when `audioKey` is set;
+`422 { error }` if the job fails to start. **Response 201:**
 the RunPod-shaped poll view.
 
 **POST `/api/storyboard/render-plan`** (dry run, no submission): body `{ selection?:
@@ -1300,7 +1318,7 @@ motion door is paired with a non-local `keyframe_backend` (vivijure-local#153); 
 missing-SDXL message) when a bound cast has no SDXL keyframe adapter; and, when the dialogue lines
 (explicit or bundle-derived) are non-empty, `400 "This storyboard has spoken lines. Pick a talking
 door ... Silent look doors cannot say the script."` unless the chosen motion module can speak lines
-and its talking audio is on.
+and its talking audio is on. When a song is attached, the song-read `400` in 2.18 applies here too.
 
 **Response 201:** `{ ok: true, ...FilmSummary, download_url? }` (see 2.21). A renders-table row is
 inserted so the film shows in history.
@@ -1429,6 +1447,9 @@ Each derives a new render from a parent preview (`getRenderByIdForUser`). All re
 | POST `/api/storyboard/renders/:id/finalize` | `{ audioKey?, castLoras?, motion_backend?, idempotency_key? }` (empty body ok) | GPU finalize. Optional `motion_backend` (cf#347; alias `motionBackend`, trimmed, blank = absent). `idempotency_key` (alias `idempotencyKey`) is the duplicate-submit guard of 2.18. |
 | POST `/api/storyboard/renders/:id/animate-cloud` | `{ model?, perShot?, audioKey? }` | Cloud i2v finalize (`perShot` = per-shot model map). |
 | POST `/api/storyboard/renders/:id/animate-hybrid` | `{ backends?, defaultBackend? ("gpu"\|"cloud", default "gpu"), defaultCloudModel?, audioKey? }` | Mixed GPU/cloud backends; `backends` validated against installed `motion.backend` modules (excluding `own-gpu`). `400` if the backend set is invalid. |
+
+When a song is attached, `finalize`, `animate-cloud`, and `animate-hybrid` return the song-read
+`400` from 2.18. They share `animateFromPreview`.
 
 ### 2.28 POST /api/storyboard/renders/adopt
 
