@@ -16,9 +16,11 @@ import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-mo
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
 import { readIdempotencyKey } from "./film-idempotency";
+import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
+import { hearCastVoiceLine } from "./cast-voice-line";
 import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
@@ -91,6 +93,9 @@ export { ARTIFACT_PREFIXES } from "./shared";
 // whose class is not exported from the entrypoint, so removing this line arms a deploy failure
 // that only surfaces at the next `v*` tag and takes the whole studio release with it.
 export { FinishContainer } from "./finish-container";
+// wrangler [[workflows]] class_name "ShotWorkflow". The deploy rejects a workflow
+// whose class is not exported from the entrypoint.
+export { ShotWorkflow } from "./shot-workflow";
 import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
@@ -990,6 +995,13 @@ const hSubmitRender: Handler = async (req, env) => {
       );
     }
   }
+  const songKey = b.keyframesOnly ? undefined : b.audioKey;
+  const panelSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    songKey,
+    panelDialogue,
+  );
+  if (panelSongRefusal) throw badRequest(panelSongRefusal);
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -1007,7 +1019,7 @@ const hSubmitRender: Handler = async (req, env) => {
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
     keyframes_only: !!b.keyframesOnly,
-    audio_key: b.keyframesOnly ? undefined : b.audioKey,
+    audio_key: songKey,
     // Opening title + end-credit card TEXT (FilmTitleSpec / FilmCreditSpec); the film.finish chain
     // reads it off the job. Mirrors hStartFilm. Skipped on a keyframes-only preview (no assembled
     // film to card), exactly like audio_key above.
@@ -1082,7 +1094,14 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     return json({ error: "no motion.backend module installed" }, 503);
   }
 
-  const parsedScenes = await readBundleScenes(env, fromKfBundleKey);
+  // The read throws on a corrupt bundle. That is undetermined dialogue, not "no scenes".
+  // The cast try below stays about cast resolution only.
+  let parsedScenes;
+  try {
+    parsedScenes = await readBundleScenes(env, fromKfBundleKey);
+  } catch (e) {
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
+  }
   if (!parsedScenes.length) {
     return json({ error: "bundle has no storyboard scenes" }, 400);
   }
@@ -1151,6 +1170,12 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
       );
     }
   }
+  const fromKfSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    b.audioKey,
+    fromKfDialogue,
+  );
+  if (fromKfSongRefusal) throw badRequest(fromKfSongRefusal);
 
   const job = await startFilmFromKeyframes(env, {
     project,
@@ -1278,10 +1303,11 @@ const hPollRender: Handler = async (_req, env, ctx, p) => {
   }
   const r = await advanceFilmJob(env, p.jobId);
   if (!r) throw notFound("render job");
-  const kfDone = r.job.phase === "keyframe" && r.job.keyframe_job_id
-    ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
+  const job = jobAfterSkippedJoin(r.job);
+  const kfDone = job.phase === "keyframe" && job.keyframe_job_id
+    ? await readKeyframeDone(env, job.project, job.keyframe_job_id)
     : undefined; // #318: keyframe sub-progress from the GPU job's snapshot (best-effort)
-  const view = filmJobToPollView(r.job, r.clipJob, kfDone);
+  const view = filmJobToPollView(job, r.clipJob, kfDone);
   await updateRenderFromView(env, view, ctx);
   if (
     r.job.derive_mode === "cloud-finalized"
@@ -1316,6 +1342,8 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
 };
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
+const hHearCastVoice: Handler = async (req, env, _c, p) =>
+  hearCastVoiceLine(req, env, await resolveCastId(env, p.id));
 const hTrainCastWanLora: Handler = async (req, env, _c, p) =>
   handleCastTrainWanLora(req, env, await resolveCastId(env, p.id));
 const hCastLoraStatus: Handler = async (_req, env, _c, p) =>
@@ -1642,23 +1670,27 @@ const hStartFilm: Handler = async (req, env) => {
   const castIds = Object.keys(resolvedLoras.castIds).length ? resolvedLoras.castIds : undefined;
 
   let dialogue_lines = a.dialogue_lines;
-  if (!dialogue_lines || !dialogue_lines.length) {
-    const bundleScenes = await readBundleScenes(env, filmBundleKey);
-    if (bundleScenes.some((s) => s.dialogue)) {
-      dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+  try {
+    if (!dialogue_lines || !dialogue_lines.length) {
+      const bundleScenes = await readBundleScenes(env, filmBundleKey);
+      if (bundleScenes.some((s) => s.dialogue)) {
+        dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+      }
+    } else if (
+      // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
+      // to DEFAULT_VOICE_ID even when the shot's speaking slot is bound to a cast member WITH a voice
+      // (Wren spoke as angus, film-08dd5777). When any line lacks a voice and the caller's cast_loras
+      // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
+      // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
+      // resolve, the downstream default stands.
+      Object.keys(resolvedLoras.voices).length &&
+      dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
+    ) {
+      const bundleScenes = await readBundleScenes(env, filmBundleKey);
+      dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
     }
-  } else if (
-    // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
-    // to DEFAULT_VOICE_ID even when the shot's speaking slot is bound to a cast member WITH a voice
-    // (Wren spoke as angus, film-08dd5777). When any line lacks a voice and the caller's cast_loras
-    // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
-    // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
-    // resolve, the downstream default stands.
-    Object.keys(resolvedLoras.voices).length &&
-    dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
-  ) {
-    const bundleScenes = await readBundleScenes(env, filmBundleKey);
-    dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
+  } catch (e) {
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
   }
   // project is optional; derive it from the bundle key (mirrors hSubmitRender) so a caller that
   // only has a bundle (e.g. the Slate bot) lands in the same project namespace the monolith uses.
@@ -1689,6 +1721,12 @@ const hStartFilm: Handler = async (req, env) => {
       );
     }
   }
+  const filmSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    a.audio_key,
+    dialogue_lines,
+  );
+  if (filmSongRefusal) throw badRequest(filmSongRefusal);
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
@@ -1737,18 +1775,20 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   }
   const r = await advanceFilmJob(env, p.id);
   if (!r) throw notFound("film job");
+  // A missed join is a failed film even when the published package still marked the job done.
+  const job = jobAfterSkippedJoin(r.job);
   // Insert-if-missing (ON CONFLICT(job_id) DO NOTHING) so a film started before history
   // unification -- or via a path that did not insert -- still surfaces in history on its next
   // poll/sweep tick; then sync the live status/output exactly like hPollRender (#164).
-  await insertRender(env, filmRowFromJob(r.job));
+  await insertRender(env, filmRowFromJob(job));
   // #318: during the keyframe phase, fold the GPU job's live keyframe_done tally into the poll view so
   // the bar/ETA subdivide the keyframe band (instead of pinning scene_index=1). Best-effort.
-  const kfDone = r.job.phase === "keyframe" && r.job.keyframe_job_id
-    ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
+  const kfDone = job.phase === "keyframe" && job.keyframe_job_id
+    ? await readKeyframeDone(env, job.project, job.keyframe_job_id)
     : undefined;
-  await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob, kfDone), ctx);
+  await updateRenderFromView(env, filmJobToPollView(job, r.clipJob, kfDone), ctx);
   // cf#392: host summarize relays wan_lora_projection from the job doc when present.
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(r.job, r.clipJob))) });
+  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
 };
 
 const hEnhance: Handler = async (req, env) => {
@@ -1845,6 +1885,14 @@ const hAudioAnalyze: Handler = async (req, env) => {
   if (!a.audioKey) throw badRequest("audioKey required");
   const result = await analyzeAudioBeats(env, a, a.module?.trim() || undefined);
   if (!result.ok) return json({ ok: false, error: result.error }, 502);
+  try {
+    await env.R2_RENDERS.put(
+      beatsMarkerKey(a.audioKey),
+      JSON.stringify({ audioKey: a.audioKey.trim(), beats_read: true }),
+    );
+  } catch {
+    return json({ ok: false, error: "beats were read but the marker was not stored" }, 502);
+  }
   return json({ ok: true, output: result.plan, module: result.module });
 };
 
@@ -2236,6 +2284,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/generate-refs",          scope: "consumer",    handler: hGenerateCastRefs },
   { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        scope: "consumer",    handler: hPollCastRefs },
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/voice-line",             scope: "consumer",    handler: hHearCastVoice },
   { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
   { method: "POST",   pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hStartCastVoiceSample },

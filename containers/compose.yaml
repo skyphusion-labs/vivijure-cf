@@ -14,6 +14,10 @@
 #
 # Deploy:  docker compose -p vivijure-media -f compose.yaml up -d --build
 # Health:  curl http://127.0.0.1:8780/health   (video-finish; 8781 prep, 8782 beat-sync, 8783 mix, 8784 master)
+#
+# video-finish, audio-beat-sync, audio-mix, and audio-master run ONE image
+# (containers/cpu: ffmpeg and librosa). CPU_APP selects which app listens.
+# image-prep stays its own image.
 
 name: vivijure-media
 
@@ -35,11 +39,23 @@ x-common: &common
   networks:
     - vivijure
 
+x-cpu-build: &cpu-build
+  context: .
+  dockerfile: cpu/Dockerfile
+
+x-cpu-env: &cpu-env
+  PORT: "8000"
+  LOCAL_FINISH_TOKEN: "${LOCAL_FINISH_TOKEN:-}"
+  LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "${LOCAL_FINISH_ALLOW_UNAUTHENTICATED:-}"
+
 services:
   video-finish:
     <<: *common
-    build: ./video-finish
-    image: vivijure-cf-video-finish:local
+    build: *cpu-build
+    image: vivijure-cf-cpu:local
+    environment:
+      <<: *cpu-env
+      CPU_APP: video-finish
     ports:
       - "127.0.0.1:8780:8000"
     healthcheck:
@@ -64,8 +80,11 @@ services:
 
   audio-beat-sync:
     <<: *common
-    build: ./audio-beat-sync
-    image: vivijure-cf-audio-beat-sync:local
+    build: *cpu-build
+    image: vivijure-cf-cpu:local
+    environment:
+      <<: *cpu-env
+      CPU_APP: audio-beat-sync
     ports:
       - "127.0.0.1:8782:8000"
     healthcheck:
@@ -80,8 +99,11 @@ services:
   # clean; the service name MUST match its Traefik-routed hostname (audio-mix).
   audio-mix:
     <<: *common
-    build: ./audio-mix
-    image: vivijure-cf-audio-mix:local
+    build: *cpu-build
+    image: vivijure-cf-cpu:local
+    environment:
+      <<: *cpu-env
+      CPU_APP: audio-mix
     ports:
       - "127.0.0.1:8783:8000"
     healthcheck:
@@ -98,8 +120,11 @@ services:
   # hostname (audio-master).
   audio-master:
     <<: *common
-    build: ./audio-master
-    image: vivijure-cf-audio-master:local
+    build: *cpu-build
+    image: vivijure-cf-cpu:local
+    environment:
+      <<: *cpu-env
+      CPU_APP: audio-master
     ports:
       - "127.0.0.1:8784:8000"
     healthcheck:

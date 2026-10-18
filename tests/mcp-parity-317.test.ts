@@ -455,7 +455,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 92, // studio API route entries (method+pattern); scatter submit retired
+  routes: 93, // studio API route entries (method+pattern); hear-one-line added, voice-sample API kept
   // cf#894: vivijure-mcp 1.3.0 took the catalog from 42 to 109. The growth is NOT what the issue
   // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
   // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
@@ -464,13 +464,13 @@ const PUBLISHED = {
   studioTools: 71, // tools whose call targets the studio (includes studio_request)
   controlPlaneTools: 38, // the cp_* operator surface plus control_plane_request
   curatedCovered: 70, // route entries reached by a CURATED tool
-  panelReachable: 71, // scatter submit retired
+  panelReachable: 67, // cast page dropped the voice-sample calls and added hear-one-line
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
-  panelUncurated: 15, // scatter submit retired
-  panelUncuratedPathOnly: 19, // method-aware + the 4 uncurated path-only false positives
-  hatchReachable: 89, // reachable via studio_request = routes minus the raw-body class
+  panelUncurated: 11, // voice-sample panel calls left; hear-one-line is uncurated
+  panelUncuratedPathOnly: 15, // method-aware 11 + the 4 uncurated path-only false positives
+  hatchReachable: 90, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously

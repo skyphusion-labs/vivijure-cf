@@ -37,6 +37,13 @@ export interface Env {
   R2: R2Bucket;
   R2_RENDERS: R2Bucket;
   DB: D1Database;
+  // Per-shot workflow (still, wav, clip). Optional so a deploy that has not
+  // applied the [[workflows]] binding still typechecks. The class is exported
+  // from the entrypoint as ShotWorkflow.
+  SHOT_WORKFLOW?: {
+    create(options?: { id?: string; params?: unknown }): Promise<{ id: string }>;
+    get(id: string): Promise<{ id: string; status(): Promise<{ status: string }> }>;
+  };
 
   // The video-finish Cloudflare Container, fronted by its Durable Object (#797).
   // Mirrors [[containers]] class_name "FinishContainer" plus the matching
