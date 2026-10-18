@@ -5,7 +5,7 @@
 > advice and reading it does not create an attorney-client relationship. If you are unsure how it
 > applies to you, or you run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-07-03
+**Effective date:** 2026-10-18
 
 ---
 
@@ -13,8 +13,8 @@
 
 We do not want your data. With Vivijure that is not a slogan, it is a literal fact: **there is no
 Vivijure service that we operate to hold your content, so there is almost nothing for us to
-collect.** The read-only demo, while its host was served, was built to collect nothing about you
-(Section 1a). That public host was removed on purpose on 2026-10-08.
+collect.** The public demo host was removed on purpose on 2026-10-08. It is not a live site.
+Re-adding one custom domain restores it (Section 1a).
 
 - **Vivijure is free software (AGPL-3.0-only) that you run yourself.** You deploy it on your own
   infrastructure (your own Cloudflare account, your own GPU/RunPod), and your storyboards, prompts,
@@ -28,11 +28,7 @@ collect.** The read-only demo, while its host was served, was built to collect n
   own named API token), not a service anyone signs up for; it processes Conrad's own creative
   content, not data collected from outside users. The public demo host `demo.vivijure.com` was
   removed on purpose on 2026-10-08. It is not a live site. Re-adding one custom domain restores it.
-  While it was served it was a second, read-only instance: anonymous visitors could browse a seeded
-  catalog and pre-made showcase films, it rendered nothing, had no account or sign-in, and collected
-  no visitor data beyond the standard edge request logs any website receives. Neither shape is a
-  hosted, multi-tenant service that holds your content. Section 1a records what the demo did and
-  did not process.
+  Section 1a records the retirement.
 
 If you want a privacy policy for your Vivijure instance, you write it, because you are the operator
 and the only person who can see that data. This document explains why the software collects so
@@ -52,7 +48,7 @@ is always "whoever runs that instance," never Skyphusion Labs as some central op
 |---|---|---|
 | **You self-host** | You (or whoever deployed that instance) | Yours, on your infrastructure. Skyphusion Labs never receives it. |
 | **Conrad's private instance (`vivijure.skyphusion.org`)** | Skyphusion Labs (Conrad), for Conrad and the crew only | Conrad's own creative content on Conrad's infrastructure. Not data collected from outside users; there are no outside users. |
-| **The public demo (`demo.vivijure.com`), retired 2026-10-08** | Was Skyphusion Labs (Conrad). The custom domain was removed on purpose. Not a live site. Re-adding one custom domain restores it. | While served: no visitor data. Read-only, rendered nothing, no account, and nothing a visitor submitted. Only standard edge request logs (Section 1a). |
+| **The public demo (`demo.vivijure.com`), retired 2026-10-08** | Was Skyphusion Labs (Conrad). The custom domain was removed on purpose. Not a live site. Re-adding one custom domain restores it. | Not stated here. Section 1a records the retirement only. |
 
 We still do not host instances that hold OTHER people's content, and will not get into hosting or
 managing them for anyone. If you reach a Vivijure instance, whoever deployed it is the operator; the AGPL
@@ -66,27 +62,8 @@ what Conrad's own private instance does, as a worked, honest example.
 
 ## 1a. The public demo studio (`demo.vivijure.com`)
 
-Retired 2026-10-08. The custom domain was removed on purpose. This section records what that demo
-did while it was served. It is not a live site. Re-adding one custom domain restores it.
-
-Separate from Conrad's private instance, Skyphusion Labs ran a public, read-only **demo** so anyone
-could see what the studio is without deploying it. It was built to collect nothing about a visitor:
-
-- **No account, no sign-in, no token.** A visitor browsed anonymously. There was nothing to register
-  and no profile to create.
-- **It rendered nothing and stored nothing a visitor submitted.** Every state-changing request
-  (anything that would create, edit, or render) was refused. The money/compute integrations (AI,
-  GPU/RunPod, file storage) were simply not connected to the demo, so there was no pipeline for
-  input to enter. The projects, cast, and finished films on display were a fixed, in-house seeded
-  catalog; the films streamed from Skyphusion's own asset host (`assets.skyphusion.net`).
-- **No identity cookie and no tracking.** The demo set no cookie that identified a visitor (the
-  studio's functional token cookie was never populated because no token was ever entered), and the
-  demo shipped no analytics beacon, tracker, or advertising pixel.
-- **What was processed:** only the ordinary server request logs that Cloudflare (and the asset host)
-  keep for any website (IP address, user agent, and the paths requested), used for security, abuse
-  prevention, and rate limiting, on Skyphusion's own infrastructure, never sold or used to profile a
-  visitor. To render your own work with your own data, you self-host (the rest of this policy
-  explains why that keeps the data yours).
+Retired 2026-10-08. The custom domain was removed on purpose. It is not a live site. Re-adding one
+custom domain restores it.
 
 ## 2. How the system is built (why there is so little data)
 
