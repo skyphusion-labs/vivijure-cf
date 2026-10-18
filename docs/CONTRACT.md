@@ -1239,6 +1239,27 @@ there (the noise catch); a `suspect` verdict is a warn/degrade marker (the film 
 emit a `clip.content_validate` event (see `docs/observability.md`). This runs on the film path only; the
 standalone clips route gets the structural check only.
 
+### 2.19.1 Shot record (`shot_records`)
+
+The film job document in R2 is still the orchestrator's copy: keyframes, `dialogue_audio`,
+and clips live on that document, and the `renders` row holds one output key for the film.
+There is no per-shot row on that path. `shot_records` (migration `0022_shot_records.sql`)
+is the step record for one shot. Columns: `film_id`, `shot_id`, `still_key`, `wav_key`,
+`clip_key`, `step` (`still`, `wav`, `clip`, or `done`), `step_error`, `step_token`,
+`updated_at`. The bytes stay in R2. The studio worker does not buffer the MP4. The clip
+call is a presigned `still_url` and, when the shot has a line, a presigned `wav_url`.
+
+`ShotWorkflow` (`[[workflows]]` binding `SHOT_WORKFLOW`) runs three steps: `still`, `wav`,
+`clip`. A throw retries that step. A step whose key is already set does not run again.
+A shot with no line skips the wav step. Vendor modules that already run their vendor call
+inside a Workflow (dialogue-gen, the cf catalog doors, music-gen, chatterbox) are not
+wrapped a second time. This workflow records the key and retries the step. It does not
+open their vendor call again.
+
+A tenant worker and a dispatch module do not receive the R2 credential
+(`R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`, or a body field `secret_access_key` /
+`access_key_id`). An R2 binding is not that credential.
+
 ### 2.20 POST /api/render/film -- start a film job
 
 The direct film-render entry (the planner film render and API clients such as the Slate bot). Submits
