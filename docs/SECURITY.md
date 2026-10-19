@@ -274,7 +274,11 @@ token mode is enough. A team, an org, or anything with staff turnover: put Acces
 
 ## 1d. Demo mode: the public demo studio (`AUTH_MODE = "demo"`, #625)
 
-`demo.vivijure.com` is a Skyphusion-Labs-operated PUBLIC deploy that shows the studio to anonymous
+The public host `demo.vivijure.com` was removed on purpose on 2026-10-08. It is not a live site.
+Re-adding one custom domain restores it. The rest of this section is how `AUTH_MODE = "demo"`
+behaves on a demo deploy. It is not an invitation to publish the hostname.
+
+`demo.vivijure.com` was a Skyphusion-Labs-operated PUBLIC deploy that showed the studio to anonymous
 visitors. Its posture is a distinct, documented auth mode -- deliberately the INVERSE
 of the section-3 "`/api/*` is gated" default: in demo mode the entire READ surface is public by
 design, and the write surface is exactly two capped routes (#631 Phase B).

@@ -24,7 +24,9 @@ is a separate product in its own repo,
 [`vivijure-control-plane`](https://github.com/skyphusion-labs/vivijure-control-plane). It installs
 this studio's published release unmodified, so hosted and self-hosted never drift apart.
 
-**Vivijure Studio:** https://vivijure.com · **Live demo:** https://demo.vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+**Vivijure Studio:** https://vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+
+The public demo host `demo.vivijure.com` was removed on purpose on 2026-10-08. It is not a live site. Re-adding one custom domain restores it.
 
 ## Layout
 

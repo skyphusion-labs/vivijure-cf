@@ -1,9 +1,15 @@
 # The Public Demo Studio (`demo.vivijure.com`)
 
-The demo studio is a **browse-first** deployment of the SAME studio Worker (`src/index.ts`), running at
-**demo.vivijure.com** so anyone can browse the real catalog and watch finished showcase films without an
-account or an operator token. Phase A bills no GPU second at all; Phase B (below) adds a capped
-click-to-render and a capped OSS assistant.
+**Retired 2026-10-08.** The Workers custom domain for `demo.vivijure.com` was removed on purpose.
+The hostname is not a live site. The `vivijure-demo` and `vivijure-demo-local-gpu` scripts were left
+in place: a Worker costs nothing at rest, and deleting one cannot be undone. Re-adding one custom
+domain restores the public host. This document is the record of how the demo was built, not a
+recipe that publishes the hostname.
+
+The demo studio is a **browse-first** deployment of the SAME studio Worker (`src/index.ts`). While
+the host was served, it ran at `demo.vivijure.com` so anyone could browse the real catalog and watch
+finished showcase films without an account or an operator token. Phase A bills no GPU second at all;
+Phase B (below) adds a capped click-to-render and a capped OSS assistant.
 
 It is a separate deploy from the production studio: its own Worker (`vivijure-demo`), its own D1, and
 `AUTH_MODE=demo`. It shares NO bindings, secrets, or data with production.
@@ -129,8 +135,10 @@ All commands run with `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` in the en
    `assets.skyphusion.net` portrait image -- still no R2 binding), and COMPLETED render rows whose
    `output_key` is an absolute `assets.skyphusion.net` showcase MP4.
 
-4. **Deploy the Worker** (creates the `demo.vivijure.com` custom domain -- Workers custom domains own
-   DNS + the cert; a first-level subdomain under `vivijure.com` gets Universal SSL, NO ACM needed):
+4. **Deploy the Worker** with no custom domain. As of 2026-10-08 the example has no routes table.
+   The custom domain was removed on purpose, and re-adding one custom domain restores
+   `demo.vivijure.com`. A first-level subdomain under `vivijure.com` would get Universal SSL with
+   no ACM if a route were added. Do not add one unless restoring that public host is the intent.
 
    ```bash
    wrangler deploy -c wrangler.demo.toml
@@ -216,6 +224,10 @@ zero routes to two; the Phase A verdict does not carry over).
 
 ## Live verify (assert on JSON/headers, not prose)
 
+Historical. These checks applied while `demo.vivijure.com` was served. The custom domain was
+removed on purpose on 2026-10-08, so do not run them against that hostname. Re-adding one custom
+domain restores it.
+
 | # | Request | Expect |
 |---|---------|--------|
 | 1 | `GET /api/modules` | `200`, one module per enabled seeded `installed_modules` row (25 as of v1.33.9), `host` contains `dispatch:false, readonly:true` |
@@ -233,5 +245,7 @@ zero routes to two; the Phase A verdict does not carry over).
 | 10 | `GET /api/storyboard/models` | `200` with `{"models":[]}` -- a demo never advertises frontier planning models it cannot invoke |
 | 11 | `GET /api/voices` | `200` with `{"voices":[]}` -- the same honesty rule for the TTS voice catalog |
 
-> Note: for the first few seconds after the custom domain provisions, the edge may return a
-> transient `500 (error code 1104)` while the cert warms; retry and it clears.
+> Historical, while the custom domain existed: the first few seconds after it provisioned, the edge
+> could return a transient `500 (error code 1104)` while the cert warmed. The domain was removed
+> on purpose on 2026-10-08. Re-adding one custom domain restores the host; this note is not a
+> reason to do that.

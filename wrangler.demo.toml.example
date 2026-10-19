@@ -1,11 +1,16 @@
 # Vivijure PUBLIC DEMO STUDIO -- wrangler config (#625). SEPARATE deploy from the studio core.
 #
-# This is the read-only, zero-spend public demo at demo.vivijure.com. It runs the SAME Worker code
-# (src/index.ts) as the core, but AUTH_MODE=demo flips it to a browse-only projection: reads open to
-# everyone, every mutation denied at the gate (src/auth-gate.ts verifyDemoRequest), and GET
-# /api/modules advertises host.readonly = true. The catalog + content come entirely from a dedicated
-# demo D1 seeded out of band (migrations/demo/0001_demo_seed.sql); no live module, GPU, or storage is
-# reachable.
+# RETIRED 2026-10-08. The Workers custom domain for demo.vivijure.com was removed on purpose.
+# This file is the record of how that demo was built, not a recipe that publishes the hostname.
+# Re-adding one custom domain restores the public host. Do not add one unless that restore is
+# the intent. The vivijure-demo script may still exist; a Worker costs nothing at rest.
+#
+# While the host was served, this was the read-only, zero-spend public demo. It runs the SAME
+# Worker code (src/index.ts) as the core, but AUTH_MODE=demo flips it to a browse-only projection:
+# reads open to everyone, every mutation denied at the gate (src/auth-gate.ts verifyDemoRequest),
+# and GET /api/modules advertises host.readonly = true. The catalog + content come entirely from a
+# dedicated demo D1 seeded out of band (migrations/demo/0001_demo_seed.sql); no live module, GPU,
+# or storage is reachable.
 #
 # account_id is NOT hardcoded; it is read from CLOUDFLARE_ACCOUNT_ID (env / CI secret), exactly like
 # wrangler.toml.example. The real wrangler.demo.toml is gitignored and rendered from this example (or
@@ -16,8 +21,9 @@ main = "src/index.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
 
-# No preview URLs, no workers.dev: the demo lives ONLY at its custom domain (below). A *.workers.dev
-# hostname would be an unlabeled second door onto the same read-only surface -- keep it off.
+# No preview URLs, no workers.dev. A *.workers.dev hostname would be an unlabeled second door onto
+# the same read-only surface -- keep it off. There is no custom-domain route in this file. The
+# one for demo.vivijure.com was removed on purpose on 2026-10-08; see the note at the bottom.
 preview_urls = false
 workers_dev = false
 
@@ -126,8 +132,8 @@ database_id = "${D1_DEMO_DATABASE_ID}"
 #
 # If boot/deploy demands one of the absent bindings, that is a BLOCKER to escalate -- NOT a binding to add.
 
-# demo.vivijure.com on the vivijure.com zone. Workers custom domain owns DNS + the cert (Universal SSL
-# for a first-level subdomain -- NO Advanced Certificate Manager needed).
-[[routes]]
-pattern = "demo.vivijure.com"
-custom_domain = true
+# RETIRED 2026-10-08. No routes table, on purpose. The Workers custom domain for
+# demo.vivijure.com was removed on purpose that day. Re-adding one custom domain restores the
+# public host. This example does not carry that route, so a deploy from this file cannot
+# re-create it. A first-level name under vivijure.com would get Universal SSL with no Advanced
+# Certificate Manager if a route were added; that is why the route stays out.
