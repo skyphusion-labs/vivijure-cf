@@ -455,7 +455,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 93, // studio API route entries (method+pattern); hear-one-line added, voice-sample API kept
+  routes: 89, // studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
   // cf#894: vivijure-mcp 1.3.0 took the catalog from 42 to 109. The growth is NOT what the issue
   // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
   // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
@@ -463,14 +463,18 @@ const PUBLISHED = {
   tools: 109, // every tool in the catalog, both targets
   studioTools: 71, // tools whose call targets the studio (includes studio_request)
   controlPlaneTools: 38, // the cp_* operator surface plus control_plane_request
-  curatedCovered: 70, // route entries reached by a CURATED tool
-  panelReachable: 67, // cast page dropped the voice-sample calls and added hear-one-line
+  // RE-MEASURED after the public demo door was removed (pr1019). The four demo tools still ship in
+  // the installed vivijure-mcp catalog, so `tools` / `studioTools` are unchanged and those four now
+  // cover no route: that is what the orphan assertion below reports, and the fix is a vivijure-mcp
+  // release that drops them, never a relaxed assertion here.
+  curatedCovered: 66, // route entries reached by a CURATED tool
+  panelReachable: 63, // cast page dropped the voice-sample calls and added hear-one-line; the 4 demo routes are gone
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
   panelUncurated: 11, // voice-sample panel calls left; hear-one-line is uncurated
   panelUncuratedPathOnly: 15, // method-aware 11 + the 4 uncurated path-only false positives
-  hatchReachable: 90, // reachable via studio_request = routes minus the raw-body class
+  hatchReachable: 86, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously

@@ -205,7 +205,6 @@ estate-wide ledger.
 | a named token (`api_tokens`) | its own `scope` column | migration `0020`; `operator` or `consumer`, no default at mint |
 | a verified Access JWT | `operator` | Access is how the operator reaches his own studio |
 | `ALLOW_UNAUTHENTICATED=true` (dev opt-out) | `operator` | unchanged: a conscious "no boundary here" switch |
-| a demo visitor (`AUTH_MODE=demo`) | `consumer` | there is no operator path into a demo deploy |
 
 **Refusal.** An authorized-but-insufficient caller gets `403 { "error": "insufficient scope: this
 credential is not authorized for this route", "code": "scope_denied" }` with response header
@@ -264,9 +263,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
    bound, fail closed), `"missing API token: send Authorization: Bearer <your studio API token>"`
    (no bearer; also a cookie-only mutation, since the `vivijure_token` cookie is honoured for
    GET/HEAD only), or `"bad API token"` (neither the operator secret nor a live named token).
-   `AUTH_MODE="demo"`: GET/HEAD and `POST /api/demo/render` / `POST /api/demo/chat` pass; every other
-   method is `403 "demo studio is read-only: mutations are disabled on this deployment. ..."`.
-   `AUTH_MODE="access"` or unset: the Access JWT check, `403` with a verification reason (e.g.
+     `AUTH_MODE="access"` or unset: the Access JWT check, `403` with a verification reason (e.g.
    `"missing Cf-Access-Jwt-Assertion"`, `"bad signature"`, `"token expired"`, `"wrong audience"`), or
    `503` when the Access keys cannot be loaded, or when `ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` are not
    set and `ALLOW_UNAUTHENTICATED` is not `"true"` (`"auth not configured: ..."`). Any
@@ -293,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
+**89 route entries** (distinct `method` + `pattern`) over **71 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -398,10 +395,6 @@ unchanged.
 | 77 | PATCH | `/api/modules/install/:name` | 2.31 |
 | 78 | GET | `/api/storage/usage` | 2.32 |
 | 79 | POST | `/api/storage/reconcile` | 2.32 |
-| 80 | GET | `/api/demo/menu` | 2.33 |
-| 81 | POST | `/api/demo/render` | 2.33 |
-| 82 | GET | `/api/demo/render/:id` | 2.33 |
-| 83 | POST | `/api/demo/chat` | 2.33 |
 
 ### 2.2 GET /health
 
@@ -443,9 +436,6 @@ rather than hardcoding a hook list; it is independent of the `catalog` array ord
 | `dispatch` | boolean | `true` when this deploy binds the Workers-for-Platforms namespace (`MODULE_DISPATCH`), i.e. a module can be installed without a core redeploy (2.31). |
 | `hooks_unavailable?` | `{ [hook or "capability:<name>"]: string }` | Hooks this host cannot serve right now, each mapped to a reason the panel prints verbatim (cf#98). Absent key = available. `plan.enhance` appears when the AI Gateway is not usable; `master`, `film.finish`, `notify` and the `capability:video-finish` key appear when the video-finish tier is unavailable (`VIDEO_FINISH_URL` unset). |
 | `abuse_report_url?` | string | Where a reporter is sent for abuse of THIS studio (control-plane#130). Present only when the operator set it. |
-| `readonly?` | `true` | Demo deploys only (`AUTH_MODE=demo`, #625): the one flag the panel gates every mutation affordance on. |
-| `render?` | `{ available: boolean }` | Demo deploys only: whether demo rendering is switched on. (Distinct from the top-level `render`.) |
-| `assistant?` | `{ model: "oss", note: string }` | Demo deploys only, and only when the AI Gateway is usable: the capped open-weights demo assistant (2.33). |
 
 #### 2.3.1 render.quality_tiers (canonical values)
 
@@ -473,15 +463,13 @@ string, "honor": "exact" | "neighborhood" | "line" | "none", "label": string }[]
 The catalog is the Aura-1 speakers, in this stable order (the `id` values): `angus`, `asteria`,
 `arcas`, `orion`, `orpheus`, `athena`, `luna`, `zeus`, `perseus`, `helios`, `hera`, `stella`. The
 cast voice picker renders from this; one source of truth. These 12 ids are the **only** valid
-`voice_id` values (see cast PATCH, 2.6). On a demo deploy (`AUTH_MODE=demo`) `voices` is the EMPTY
-array (`catalogForDeploy`: a demo cannot invoke TTS, so it advertises none); the valid-id set for
-PATCH is unchanged.
+`voice_id` values (see cast PATCH, 2.6). The valid-id set for PATCH is unchanged.
 
 `talking_doors` (`TALKING_VOICE_HONOR`, `src/cast-voice-sample.ts`) says, per talking
 `motion.backend` module `name`, how far that door honours a cast's kept voice sample (2.9):
 `exact` = uses the kept sample (same voice every shot), `neighborhood` = same description, not the
 same take, `line` = mouth follows the storyboard line in the cast TTS voice, `none` = cannot lock the
-sample. `label` is the user-facing sentence. It is served on every deploy, demo included.
+sample. `label` is the user-facing sentence. It is served on every deploy.
 
 **PROJECTED, not served raw (cf#919).** The table is filtered through the modules actually installed
 on this deploy (`talkingVoiceHonorFor`, over `servingForHook(modules, "motion.backend")`), so a row
@@ -1531,26 +1519,6 @@ The operator surface for the R2 storage ledger and its quota.
 lifecycle-expiry drift or a failed ledger write. **`unsized` is objects the bucket would not report a
 size for**: they are accounted as `0` and reported honestly in their own field rather than folded
 into the total as a guess.
-
-### 2.33 Public demo door (`AUTH_MODE=demo` deploys only)
-
-The zero-spend public demo: one seeded shot rendered as a single i2v clip, plus a capped
-open-weights assistant. **Every handler double-guards demo mode** and answers `404 { "error":
-"route" }` on a non-demo deploy, so a misconfigured gate still cannot expose them. A demo deploy also
-projects `host.readonly: true` in `GET /api/modules` (2.3), which is the flag the panel gates every
-mutation affordance on.
-
-| Route | Body | Response | Errors |
-|-------|------|----------|--------|
-| GET `/api/demo/menu` | none | `200 { available, scenes }` -- `available` is whether demo rendering is switched on; `scenes` is the seeded renderable list | `404` off-demo |
-| POST `/api/demo/render` | `{ scene (req) }` | `200 { jobId, status, position, waitSeconds }` | `400` unknown scene; `429` over the per-IP burst limit or the daily cap; `503` paused; `404` off-demo |
-| GET `/api/demo/render/:id` | none | `200` the demo poll view | `404` unknown render, or off-demo |
-| POST `/api/demo/chat` | `{ message (req) }` | `200 { reply, model: "oss" }` | `400` bad input; `429 { reason: "exhausted" }` over the per-IP cap; `503 { reason: "error" }`; `404` off-demo |
-
-The demo render path is rate-limited per IP by the same fail-closed spend primitive as every other
-spend route (2.0), on top of the per-day submission caps. The assistant runs a free open-weights
-model and says so in the projection's `host.assistant.note` rather than presenting itself as the
-studio brain.
 
 ### 2.30 Film render lifecycle (sequence)
 

@@ -6,10 +6,6 @@ Documented dismissals for adversarial-audit (K2.7/K3) findings that are not acti
 
 `deploy.sh` substitutes `DEPLOY_HOSTNAME` and store ids via sed. Values come from the operator's shell environment at deploy time, not from untrusted HTTP input. A malicious operator already controls the Worker.
 
-## Demo gallery video URLs
-
-`demo-steer.js` loads `output_key` URLs from demo render rows written by the studio's demo queue. Demo output origins are operator-configured (`artifactOrigin`); this is not an open redirect from user-supplied keys.
-
 ## Control-plane bound InvokeContext
 
 `InvokeRequest.context.project` is set by the authenticated control plane from the render job row (`vivijure-module/2` `InvokeContext`), not from untrusted module HTTP clients. Module workers are internal service bindings; the studio edge is gated in-Worker (AUTH_MODE=token since v0.12.0, formerly CF Access -- re-validated 2026-07-25: the gate NAME changed, the authenticated-edge property the disposition rests on did not). Forwarding `context.project` into RunPod bodies **enables** backend R2 tenancy (`check_scoped_job_key` in vivijure-backend), it does not bypass it. Chain `clip_key` / `audio_key` values are produced by upstream stages under the same job; the GPU worker re-validates them against `project` before any store I/O.

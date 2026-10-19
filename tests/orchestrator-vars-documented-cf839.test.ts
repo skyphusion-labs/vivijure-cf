@@ -30,10 +30,8 @@ const ROOT = join(import.meta.dirname, "..");
  *  pass reasoned about "the wrangler example" as if there were one, and there are five. */
 const EXAMPLES = [
   "wrangler.toml.example",
-  "wrangler.demo.toml.example",
   "wrangler.mcp.toml.example",
   "tail/wrangler.toml.example",
-  "modules/local-gpu/wrangler.demo.toml.example",
 ];
 
 /**
@@ -93,7 +91,9 @@ describe("every orchestrator var is visible to an operator (cf#839)", () => {
     expect(mentionedIn("AUTH_MODE")).toContain("wrangler.toml.example");
     // Both matchers must be able to fire, or one of them is decoration.
     expect(settableIn("AUTH_MODE")).toContain("wrangler.toml.example");
-    expect(ORCHESTRATOR_VAR_KEYS.length).toBeGreaterThan(20);
+    // Floor, not a pin: it exists so an empty or truncated list cannot satisfy the matchers
+    // above. Lowered from 20 when the eight DEMO_* vars went with the public demo door (pr1019).
+    expect(ORCHESTRATOR_VAR_KEYS.length).toBeGreaterThan(15);
   });
 
   it("the instrument can REPORT A MISS (NEGATIVE control)", () => {

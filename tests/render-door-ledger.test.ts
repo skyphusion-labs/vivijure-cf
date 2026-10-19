@@ -282,8 +282,6 @@ const NOT_DOORS = new Set<string>([
   "/api/cast/:id/voice-sample/attach",
   "/api/cast/import",
   "/api/chat",
-  "/api/demo/chat",
-  "/api/demo/render",
   "/api/modules/install",
   "/api/render/clips",
   "/api/render/frames",

@@ -13,11 +13,11 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **93** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. `POST /api/cast/:id/voice-line` speaks one Aura-1 line. The voice-sample routes stay. |
-| Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (67) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. The cast page calls hear-one-line and no longer calls the voice-sample routes. |
+| Studio API route entries | **89** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. `POST /api/cast/:id/voice-line` speaks one Aura-1 line. The voice-sample routes stay. |
+| Panel-reachable | **63** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (63) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. The cast page calls hear-one-line and no longer calls the voice-sample routes. |
 | MCP tools | **109** | The whole catalog, BOTH targets (`vivijure-mcp` v1.3.0). It splits **71 studio** (70 curated plus the `studio_request` hatch) and **38 control-plane** (37 `cp_*` operator tools plus the `control_plane_request` hatch). Only the studio figure may be measured against the route-relative rows below: a control-plane tool cannot reach a studio route. The split is derived from each tool's CALL TARGET, not its name -- 37 tools are named `cp_*` and 38 target the control plane, and the one that differs is `control_plane_request`. |
-| Reached by a CURATED tool | **70** | Route entries with a purpose-built tool. Rose from 41 with v1.3.0's **30 new studio tools** (module config, storage, prefs, demo, clips, frames, identity). |
-| Reachable via `studio_request` | **90** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. Hear-one-line is JSON. |
+| Reached by a CURATED tool | **66** | Route entries with a purpose-built tool. Rose from 41 with v1.3.0's **30 new studio tools** (module config, storage, prefs, clips, frames, identity). |
+| Reachable via `studio_request` | **86** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. Hear-one-line is JSON. |
 | Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
 | Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **90 of 93** route
-entries there is nothing an agent cannot invoke. Curated coverage is 70 of 93 (75%), and that number
+`studio_request` sends any method to any path with the studio bearer, so for **86 of 89** route
+entries there is nothing an agent cannot invoke. Curated coverage is 66 of 89 (74%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 90 a low number costs discoverability, not reach, and 23
+contract to find the route. For those 86 a low number costs discoverability, not reach, and 23
 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
@@ -163,7 +163,7 @@ Every measurement in this document can err in ONE direction, and a reader a year
 work that out from the number. Both instrument defects found while producing this revision ran in
 the flattering direction, which is exactly why they survived.
 
-- **Panel-reachable (67) can be too LOW.** Until cf#333 this was a path-only matcher published as
+- **Panel-reachable (63) can be too LOW.** Until cf#333 this was a path-only matcher published as
   **70**, and that number could only ever be too HIGH: it compared path segments and ignored METHOD,
   so a route entry inherited reachability from any panel call to its path. It is now derived from the
   panel's own call sites (`fetch`/`api` calls, `.href`/`.src` DOM assignments, one hop of variable
@@ -172,10 +172,10 @@ the flattering direction, which is exactly why they survived.
   covers, is invisible to it. The five entries the old path-only matcher over-counted are named and
   pinned as a regression test (`GET /api/storyboard/projects/:id`, `POST /api/cast/export/:id`,
   `DELETE /api/cast/:id/ref`, `DELETE /api/cast/:id/source`, `HEAD /api/artifact/*key`).
-- **Reached by a curated tool (70) can only be too HIGH**, for the same reason at one remove: it is
+- **Reached by a curated tool (66) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
-- **Route entries (93) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+- **Route entries (89) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
   registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
   added explicitly; a second would be invisible.
 - **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.
@@ -213,10 +213,6 @@ structurally invisible to the MCP.
 |---|---|---|---|---|
 | `GET` | `/api/storage/usage` | no | -- | json |
 | `POST` | `/api/storage/reconcile` | no | -- | json |
-| `GET` | `/api/demo/menu` | yes | -- | json |
-| `POST` | `/api/demo/render` | yes | -- | json |
-| `GET` | `/api/demo/render/:id` | yes | -- | json |
-| `POST` | `/api/demo/chat` | yes | -- | json |
 | `GET` | `/api/storyboard/projects` | yes | `list_projects` | json |
 | `POST` | `/api/storyboard/projects` | yes | `create_project` | json |
 | `GET` | `/api/storyboard/projects/:id` | yes | `get_project` | json |

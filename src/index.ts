@@ -1,6 +1,6 @@
 // Vivijure studio core: module host, render API router, planner/cast UI server.
 
-import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError, invokeModule, pollModule, resolveFetcher } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
@@ -58,16 +58,9 @@ import {
   voiceRefKeysFromScenes,
   isSampleError,
 } from "./cast-voice-sample";
-import { gateApi, isDemoMode, catalogForDeploy } from "./auth-gate";
+import { gateApi } from "./auth-gate";
 import { authorizeRoute, AUTHZ_DENY_REASON, AUTHZ_DENY_CODE, type Scope } from "./authz";
-import { DEMO_MEDIA_ORIGIN } from "./asset-response";
-import type { MotionBackendInput, MotionBackendOutput } from "@skyphusion-labs/vivijure-core/modules/types";
-import { aiRun, aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
-import {
-  submitDemoRender, pollDemoRender, listRenderables, DEFAULT_DEMO_RENDER_CAPS,
-  type DemoRenderDeps, type DemoRenderCaps, type DemoBackend, type D1Like,
-} from "./demo-render";
-import { runDemoChat, DEFAULT_DEMO_CHAT_CAPS, type DemoChatCaps, type DemoChatModel } from "./demo-chat";
+import { aiGatewayReady, PLANNER_UNAVAILABLE_REASON } from "./ai-binding";
 import { isSpendRoute, enforceSpendLimit } from "./rate-limit";
 import {
   checkStorageQuota,
@@ -298,7 +291,7 @@ const hListCast: Handler = async (_req, env) => json({ cast: (await listCast(env
 // picker advertised a door that is not in the picker. Same 60s discovery cache as the other read
 // routes; an empty result is an honest answer and public/cast.js has an authored empty state for it.
 const hListVoices: Handler = async (_req, env) => json({
-  voices: catalogForDeploy(env, VOICE_CATALOG),
+  voices: VOICE_CATALOG,
   talking_doors: talkingVoiceHonorFor(
     await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 }),
   ),
@@ -1829,7 +1822,7 @@ const hModels: Handler = async (_req, env) => {
   const modules = await discoverModules(env as unknown as Record<string, unknown>, {
     cacheTtlMs: 60_000,
   });
-  return json({ models: catalogForDeploy(env, planningModelsFromModules(modules)) });
+  return json({ models: planningModelsFromModules(modules) });
 };
 // GET /api/models -- the CANONICAL full catalog, both hosts (cf#129). Serves every row the studio
 // can dispatch: the PROJECTED planning rows (from installed plan.enhance modules, cf#62) plus the
@@ -1849,7 +1842,7 @@ const hAllModels: Handler = async (_req, env) => {
   });
   // BOTH halves are projections now (cf#129 phase 2): the studio hardcodes no model names at all.
   const models = [...planningModelsFromModules(modules), ...imageModelsFromModules(modules)];
-  return json({ models: catalogForDeploy(env, models) });
+  return json({ models });
 };
 const hYaml: Handler = async (req) => {
   const a = await readBody<{ storyboard?: unknown }>(req);
@@ -2014,153 +2007,6 @@ const hSetModuleEnabled: Handler = async (req, env, _ctx, p) => {
 };
 
 // --- route table ---------------------------------------------------------
-// ---------------------------------------------------------------------------
-// #631 Phase B: public demo click-to-render (a SEEDED shot -> one LTX i2v clip on the standing Vultr box
-// via the demo-scoped local-gpu door) + a capped OSS assistant. Every handler double-guards isDemoMode
-// (defense in depth: the gate already denies these routes off-demo, but a non-demo deploy must never
-// expose them even if the gate were misconfigured). Bounded by construction; see src/demo-render.ts.
-// ---------------------------------------------------------------------------
-
-const DEMO_ASSISTANT_DEFAULT_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-const DEMO_ASSISTANT_NOTE =
-  "running on a free open-weights model here -- not as sharp as the full studio brain; run your own Vivijure for the good one.";
-
-function demoIp(req: Request): string {
-  return req.headers.get("cf-connecting-ip") || "global";
-}
-
-function positiveIntVar(v: string | undefined, dflt: number): number {
-  const n = Number(v);
-  return Number.isInteger(n) && n > 0 ? n : dflt;
-}
-
-function demoRenderCaps(env: StudioEnv): DemoRenderCaps {
-  return {
-    ...DEFAULT_DEMO_RENDER_CAPS,
-    perIpDaily: positiveIntVar(env.DEMO_RENDER_PER_IP_DAILY, DEFAULT_DEMO_RENDER_CAPS.perIpDaily),
-    globalDaily: positiveIntVar(env.DEMO_RENDER_GLOBAL_DAILY, DEFAULT_DEMO_RENDER_CAPS.globalDaily),
-    queueDepth: positiveIntVar(env.DEMO_RENDER_QUEUE_DEPTH, DEFAULT_DEMO_RENDER_CAPS.queueDepth),
-  };
-}
-
-function demoChatCaps(env: StudioEnv): DemoChatCaps {
-  return {
-    ...DEFAULT_DEMO_CHAT_CAPS,
-    perIpDaily: positiveIntVar(env.DEMO_CHAT_PER_IP_DAILY, DEFAULT_DEMO_CHAT_CAPS.perIpDaily),
-    globalDaily: positiveIntVar(env.DEMO_CHAT_GLOBAL_DAILY, DEFAULT_DEMO_CHAT_CAPS.globalDaily),
-  };
-}
-
-/** Is the demo render backend armed in config? DEMO_RENDER_ENABLED="true" AND the demo-scoped
- *  local-gpu door is bound. This is NOT a live door-box healthcheck (cf#28): a down box still
- *  reports available=true and fails at submit. Post-credits the operator unsets the var (or unbinds
- *  the door) -> renders paused, no outage. */
-function demoRenderEnabled(env: StudioEnv): boolean {
-  return (env.DEMO_RENDER_ENABLED || "").trim() === "true"
-    && !!resolveFetcher(env as unknown as Record<string, unknown>, "MODULE_LOCAL_GPU");
-}
-
-/** The DemoBackend adapter over the demo-scoped local-gpu motion.backend door. The box reads the seeded
- *  keyframe from its OWN R2 prefix (by key) and writes the clip there, returning clip_key; the demo never
- *  touches R2. Submit/poll mirror the module async contract (invokeModule/pollModule). */
-function demoBackend(env: StudioEnv): DemoBackend {
-  const envRec = env as unknown as Record<string, unknown>;
-  return {
-    async reachable() {
-      return demoRenderEnabled(env);
-    },
-    async submit(r, jobId) {
-      const f = resolveFetcher(envRec, "MODULE_LOCAL_GPU");
-      if (!f) return { ok: false, error: "local-gpu door not bound" };
-      const input: MotionBackendInput = {
-        shot_id: jobId,
-        keyframe_url: r.keyframe_url,
-        keyframe_key: r.keyframe_key,
-        prompt: r.prompt,
-        seconds: r.seconds,
-      };
-      const resp = await invokeModule<MotionBackendInput, MotionBackendOutput>(f, {
-        hook: "motion.backend", input, config: { quality: r.quality }, context: { project: "demo", job_id: jobId },
-      });
-      if (resp.ok && (resp as { pending?: boolean }).pending) return { ok: true, poll: (resp as { poll: string }).poll };
-      if (!resp.ok) return { ok: false, error: (resp as { error?: string }).error || "submit failed" };
-      return { ok: false, error: "local-gpu returned no poll token" };
-    },
-    async poll(token) {
-      const f = resolveFetcher(envRec, "MODULE_LOCAL_GPU");
-      if (!f) return { ok: false, error: "local-gpu door not bound" };
-      const p = await pollModule<MotionBackendOutput>(f, { poll: token });
-      if (p.ok && (p as { pending?: boolean }).pending) return { ok: true, pending: true };
-      if (p.ok) {
-        const clip = (p as { output: MotionBackendOutput }).output?.clip_key;
-        return clip ? { ok: true, clipKey: clip } : { ok: false, error: "backend returned no clip_key" };
-      }
-      return { ok: false, error: (p as { error?: string }).error || "poll failed" };
-    },
-  };
-}
-
-function demoRenderDeps(env: StudioEnv): DemoRenderDeps {
-  return {
-    db: env.DB as unknown as D1Like,
-    backend: demoBackend(env),
-    artifactOrigin: (env.DEMO_ARTIFACT_ORIGIN || DEMO_MEDIA_ORIGIN).trim(),
-    caps: demoRenderCaps(env),
-    now: Date.now(),
-  };
-}
-
-const hDemoMenu: Handler = async (req, env) => {
-  if (!isDemoMode(env)) throw notFound("route");
-  const scenes = await listRenderables(env.DB as unknown as D1Like);
-  return json({ available: demoRenderEnabled(env), scenes });
-};
-
-const hDemoRender: Handler = async (req, env) => {
-  if (!isDemoMode(env)) throw notFound("route");
-  // Per-IP BURST limiter (the existing spend primitive, fail-closed) on top of the per-day submission caps.
-  const rl = await enforceSpendLimit(req, env);
-  if (!rl.ok) return json({ error: rl.message }, rl.status);
-  const b = await readBody<{ scene?: string }>(req);
-  const r = await submitDemoRender(demoRenderDeps(env), {
-    renderableId: String(b.scene || ""), ip: demoIp(req), jobId: crypto.randomUUID(),
-  });
-  if (!r.ok) {
-    const status = r.reason === "paused" ? 503 : r.reason === "unknown-scene" ? 400 : 429;
-    return json({ error: r.message, reason: r.reason }, status);
-  }
-  return json({ jobId: r.jobId, status: r.status, position: r.position, waitSeconds: r.waitSeconds });
-};
-
-const hDemoPoll: Handler = async (req, env, ctx, p) => {
-  if (!isDemoMode(env)) throw notFound("route");
-  const r = await pollDemoRender(demoRenderDeps(env), p.id);
-  if (r.status === "not_found") throw notFound("render");
-  return json(r);
-};
-
-const hDemoChat: Handler = async (req, env) => {
-  if (!isDemoMode(env)) throw notFound("route");
-  const b = await readBody<{ message?: string }>(req);
-  const model: DemoChatModel = async ({ system, user, maxTokens }) => {
-    const modelId = env.DEMO_ASSISTANT_MODEL || DEMO_ASSISTANT_DEFAULT_MODEL;
-    const out = await aiRun(env, modelId, {
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      max_tokens: maxTokens,
-    });
-    const resp = (out as { response?: unknown }).response;
-    return typeof resp === "string" ? resp : "";
-  };
-  const r = await runDemoChat(
-    { db: env.DB as unknown as D1Like, model, caps: demoChatCaps(env), now: Date.now() },
-    { ip: demoIp(req), message: String(b.message || "") },
-  );
-  if (!r.ok) {
-    const status = r.reason === "exhausted" ? 429 : r.reason === "error" ? 503 : 400;
-    return json({ error: r.message, reason: r.reason, model: "oss" }, status);
-  }
-  return json({ reply: r.reply, model: "oss" });
-};
 
 // core#52 operator surface. GET reports what the ledger says; POST rebuilds it from the bucket (the
 // one-time backfill for a studio that predates accounting, and the repair for lifecycle-expiry drift or
@@ -2219,8 +2065,6 @@ const hModules: Handler = async (_req, env) => {
   // Advertise the host's transport capability (the CORE describing itself, orthogonal to the module
   // `api` version): `dispatch` is true when this deploy binds the WfP namespace, so an operator /
   // the studio UI can tell an install-without-redeploy host from a service-binding-only one.
-  // `readonly` (#625, demo deploys only) is the ONE projected capability the frontend gates every
-  // mutation affordance on; it reads from the same normalization the auth gate dispatches on.
   // cf#287: studio release / build identity is a TOP-LEVEL field on the modules projection
   // (orthogonal to `host`, which is transport capability). Two tag deploys must never project a
   // byte-identical registry. Spread AFTER modulesResponse so a future core field of the same name
@@ -2234,17 +2078,6 @@ const hModules: Handler = async (_req, env) => {
       // operator set it, because the same bundle self-hosts and must never advertise an address
       // that reaches someone who cannot act on that studio content. See src/abuse-contact.ts.
       ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
-      ...(isDemoMode(env)
-        ? {
-            readonly: true,
-            render: { available: demoRenderEnabled(env) },
-            // Assistant capability only when the host can actually reach the gateway. This used
-            // to test `env.AI` alone, which said yes on a deploy with the binding but no usable
-            // GATEWAY_ID -- advertising a chat that 500s. Now it asks the same question the
-            // hook report asks, so the two can never disagree.
-            ...(aiReady ? { assistant: { model: "oss", note: DEMO_ASSISTANT_NOTE } } : {}),
-          }
-        : {}),
     }),
     studio_release: release.studio_release,
     ...(release.git_sha ? { git_sha: release.git_sha } : {}),
@@ -2254,10 +2087,6 @@ const hModules: Handler = async (_req, env) => {
 export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/storage/usage",                   scope: "operator",    handler: hStorageUsage },
   { method: "POST",   pattern: "/api/storage/reconcile",               scope: "operator",    handler: hStorageReconcile },
-  { method: "GET",    pattern: "/api/demo/menu",                       scope: "consumer",    handler: hDemoMenu },
-  { method: "POST",   pattern: "/api/demo/render",                     scope: "consumer",    handler: hDemoRender },
-  { method: "GET",    pattern: "/api/demo/render/:id",                 scope: "consumer",    handler: hDemoPoll },
-  { method: "POST",   pattern: "/api/demo/chat",                       scope: "consumer",    handler: hDemoChat },
   { method: "GET",    pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hListProjects },
   { method: "POST",   pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hCreateProject },
   { method: "GET",    pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hGetProject },
@@ -2409,7 +2238,7 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     if (WELCOME_REDIRECT_PATHS.has(url.pathname) && (request.method === "GET" || request.method === "HEAD")) {
       return Response.redirect(WELCOME_REDIRECT_TARGET, 301);
     }
-    const studioPage = resolveStudioPage(env, url.pathname);
+    const studioPage = STUDIO_PAGE_ASSETS[url.pathname];
     if (studioPage && (request.method === "GET" || request.method === "HEAD")) {
       return serveStudioAsset(env, request, url, studioPage);
     }
@@ -2502,18 +2331,4 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
       }
     }
     return env.ASSETS.fetch(request);
-}
-
-// The demo (#631, S30) lands on the PLANNER, not the module host: the planner is the one interactive
-// surface a demo visitor has (render a free clip). In demo mode ONLY, the root (the bare root path and
-// /index.html) remaps to planner.html; every other route and every other mode is byte-identical, so the
-// module host stays in the nav and reachable at /modules. The SET of page routes is unchanged, so the
-// STUDIO_PAGE_PATHS mirror in asset-response.ts (and its studio-page CSP classification) stays correct
-// with no edit there.
-function resolveStudioPage(env: StudioEnv, pathname: string): string | undefined {
-  const asset = STUDIO_PAGE_ASSETS[pathname];
-  if (asset && isDemoMode(env) && (pathname === "/" || pathname === "/index.html")) {
-    return "/planner.html";
-  }
-  return asset;
 }
