@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const OLD_KEY = "cast/7/portrait.jpg";
 const NEW_PNG_KEY = "cast/7/portrait.png";
+const STAGED_KEY = "cast/7/staged.png";
 const SRC_KEY = "uploads/u1.png";
 const ROW = { id: 7, name: "Ada" };
 
@@ -105,6 +106,14 @@ function bytesReq(mime: string, bytes: Uint8Array): Request {
   });
 }
 
+function stagedReq(key: string, mime: string): Request {
+  return new Request("https://cf/api/cast/7/portrait", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key, mime }),
+  });
+}
+
 beforeEach(async () => {
   r2 = makeR2();
   env = { R2_RENDERS: r2.binding, DB: {} };
@@ -139,6 +148,31 @@ describe("local#407 parity: the superseded portrait is deleted only after the re
     // The guard on the FIX itself. Dropping the oldKey === newKey check turns this red: the handler
     // would delete the object its own put had just written in place.
     expect(r2.ops, "must not delete the key the put just overwrote").toEqual([`put:${OLD_KEY}`]);
+    expect(await r2.binding.head(OLD_KEY), "the portrait the row points at is gone").not.toBeNull();
+  });
+
+  // local#446. The staged-key branch registers an object that is already in the bucket, so
+  // there is no put to order against. Removing the delete leaves the previous key in place
+  // and this control goes red. The same-key case is the helper's own skip: a re-register of
+  // the key the row already holds must not delete the object just named.
+  it("CONTROL: a staged-key replacement deletes the previous portrait key", async () => {
+    const h = await portraitHandler();
+    const res = await h(stagedReq(STAGED_KEY, "image/png"), env, 7);
+    expect(res.status, `ops=${r2.ops.join(" ")}`).toBe(200);
+    expect(setPortrait).toHaveBeenCalledTimes(1);
+    expect(setPortrait.mock.calls[0][2]).toBe(STAGED_KEY);
+    expect(r2.ops, "the previous portrait must be collected; the staged key is not rewritten").toEqual([
+      `delete:${OLD_KEY}`,
+    ]);
+    expect(await r2.binding.head(OLD_KEY), "superseded object was not collected").toBeNull();
+  });
+
+  it("CONTROL: a staged-key re-register of the same key does not delete it", async () => {
+    const h = await portraitHandler();
+    const res = await h(stagedReq(OLD_KEY, "image/jpeg"), env, 7);
+    expect(res.status, `ops=${r2.ops.join(" ")}`).toBe(200);
+    expect(setPortrait).toHaveBeenCalledTimes(1);
+    expect(r2.ops, "a same-key re-register must not delete the object the row still names").toEqual([]);
     expect(await r2.binding.head(OLD_KEY), "the portrait the row points at is gone").not.toBeNull();
   });
 
@@ -212,6 +246,14 @@ describe("local#407 parity: the superseded portrait is deleted only after the re
       },
       req: () => bytesReq("image/png", PNG),
       // Same as the copy-register case above: status literal only, claim untouched.
+      status: 404,
+    },
+    {
+      name: "staged-key, the row write produces no row (previous object stays)",
+      arrange: () => {
+        setPortrait.mockResolvedValue(null);
+      },
+      req: () => stagedReq(STAGED_KEY, "image/png"),
       status: 404,
     },
   ];
