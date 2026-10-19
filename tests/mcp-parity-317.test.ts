@@ -460,13 +460,19 @@ const PUBLISHED = {
   // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
   // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
   // the studio figure is the only one the route-relative counts below may be measured against.
-  tools: 109, // every tool in the catalog, both targets
-  studioTools: 71, // tools whose call targets the studio (includes studio_request)
+  //
+  // vivijure-mcp 2.0.0 is the first release to REMOVE tools: 109 -> 105 and 71 -> 67 studio, the
+  // four `/api/demo/*` tools dropped with the public demo door (vivijure-mcp#69). The split is
+  // why that reads correctly: every one of the four targeted the STUDIO, so `controlPlaneTools`
+  // does not move and 105 - 67 = 38 still reconciles.
+  tools: 105, // every tool in the catalog, both targets
+  studioTools: 67, // tools whose call targets the studio (includes studio_request)
   controlPlaneTools: 38, // the cp_* operator surface plus control_plane_request
-  // RE-MEASURED after the public demo door was removed (pr1019). The four demo tools still ship in
-  // the installed vivijure-mcp catalog, so `tools` / `studioTools` are unchanged and those four now
-  // cover no route: that is what the orphan assertion below reports, and the fix is a vivijure-mcp
-  // release that drops them, never a relaxed assertion here.
+  // RE-MEASURED after the public demo door was removed (pr1019), in TWO steps, and the ordering is
+  // the point. While the catalog still shipped the four demo tools they covered no route, and the
+  // orphan assertion below reported exactly that rather than being relaxed: cf stayed RED on
+  // purpose until vivijure-mcp 2.0.0 dropped them. `curatedCovered` is UNCHANGED across that
+  // release, and it should be, because a tool covering no route never counted toward it.
   curatedCovered: 66, // route entries reached by a CURATED tool
   panelReachable: 63, // cast page dropped the voice-sample calls and added hear-one-line; the 4 demo routes are gone
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the

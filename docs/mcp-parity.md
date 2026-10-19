@@ -15,7 +15,7 @@ without saying so is the defect, not the subset.
 |---|---|---|
 | Studio API route entries | **89** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. `POST /api/cast/:id/voice-line` speaks one Aura-1 line. The voice-sample routes stay. |
 | Panel-reachable | **63** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (63) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. The cast page calls hear-one-line and no longer calls the voice-sample routes. |
-| MCP tools | **109** | The whole catalog, BOTH targets (`vivijure-mcp` v1.3.0). It splits **71 studio** (70 curated plus the `studio_request` hatch) and **38 control-plane** (37 `cp_*` operator tools plus the `control_plane_request` hatch). Only the studio figure may be measured against the route-relative rows below: a control-plane tool cannot reach a studio route. The split is derived from each tool's CALL TARGET, not its name -- 37 tools are named `cp_*` and 38 target the control plane, and the one that differs is `control_plane_request`. |
+| MCP tools | **105** | The whole catalog, BOTH targets (`vivijure-mcp` v2.0.0). It splits **67 studio** (66 curated plus the `studio_request` hatch) and **38 control-plane** (37 `cp_*` operator tools plus the `control_plane_request` hatch). Only the studio figure may be measured against the route-relative rows below: a control-plane tool cannot reach a studio route. The split is derived from each tool's CALL TARGET, not its name -- 37 tools are named `cp_*` and 38 target the control plane, and the one that differs is `control_plane_request`. v2.0.0 is the first release to REMOVE tools (109 -> 105, 71 -> 67 studio): the four `/api/demo/*` tools went with the public demo door, all four targeted the studio, so the control-plane figure does not move. |
 | Reached by a CURATED tool | **66** | Route entries with a purpose-built tool. Rose from 41 with v1.3.0's **30 new studio tools** (module config, storage, prefs, clips, frames, identity). |
 | Reachable via `studio_request` | **86** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. Hear-one-line is JSON. |
 | Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
@@ -128,12 +128,22 @@ moves nothing here; a published version this repo resolves does.
 
 `vivijure-mcp` **v1.3.0** took the catalog from 42 to 109 (41 -> 70 covered route entries). The
 growth is **37 new `cp_*` control-plane tools AND 30 new STUDIO tools**, not ~67 control-plane ones
-as first assumed, and nothing was removed. That is why `MCP tools` above is three numbers: a single
-109 would let a control-plane tool be counted against a studio-route denominator, which is the one
-direction nobody questions because it reads as better parity.
+as first assumed, and nothing was removed at that release. That is why `MCP tools` above is three
+numbers: a single total would let a control-plane tool be counted against a studio-route
+denominator, which is the one direction nobody questions because it reads as better parity.
+
+**v2.0.0 is the first release to REMOVE tools**, and it is the case that split pays for. It dropped
+the four `/api/demo/*` tools with the public demo door (vivijure-mcp#69): 109 -> 105 and 71 -> 67
+studio. All four targeted the studio, so the control-plane figure does not move and 105 - 67 = 38
+still reconciles. It moved **no** covered-route count, because a tool pointing at a deleted route
+covered nothing: `curatedCovered` is 66 on both sides of that release. That is also why cf sat RED
+between the two changes rather than relaxing the orphan assertion -- the dead tools were real and
+the assertion was right about them.
 
 `vivijure-mcp` **v1.2.0** added 21 curated tools (21 -> 42 tools, 20 -> 41 covered route entries) and
-this repo's dependency floor is now `^1.2.0`. What it closed, by band:
+this repo's dependency floor moved to `^1.2.0` at that point. (It is `^2.0.0` today; the floor
+figures in these historical sections are the ones that applied when each was written, not the
+current one.) What it closed, by band:
 
 - **bytes IN** -- `upload_image`, `upload_audio`. The class described in Finding 1.
 - **project + render-library write** -- an agent could list and read projects and renders and could
