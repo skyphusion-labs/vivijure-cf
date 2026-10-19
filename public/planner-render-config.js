@@ -349,44 +349,35 @@
     return mod && mod.usage && typeof mod.usage === "object" ? mod.usage : {};
   }
 
-  function boundCastHasSample() {
-    const st = global.planState;
-    if (!st) return false;
-    const bindings = st.castBindings || {};
-    const catalog = st.castCatalog || [];
-    for (const slot of Object.keys(bindings)) {
-      const id = bindings[slot];
-      const c = catalog.find((x) => x && (x.id === id || String(x.id) === String(id)));
-      if (c && typeof c.voice_ref_key === "string" && c.voice_ref_key) return true;
-    }
-    return false;
+  // driving_audio and not native_audio. InfiniteTalk. A door that is both (alibaba-wan)
+  // can invent speech, so it is not this.
+  function isDrivingOnly(mod) {
+    const u = usageOf(mod);
+    return u.driving_audio === true && u.native_audio !== true;
   }
 
-  function byUiOrder(a, b) {
-    const ao = Number(uiHint(a, "order"));
-    const bo = Number(uiHint(b, "order"));
-    const an = Number.isFinite(ao) ? ao : 99;
-    const bn = Number.isFinite(bo) ? bo : 99;
-    return an - bn;
+  // A declared silent catalog door: usage exists, it does not speak, and it is not the
+  // studio GPU. A module with no usage is not a guess.
+  function isSilentCatalog(mod) {
+    if (isQualityDoor(mod)) return false;
+    const loc = localityValue(mod);
+    if (loc === "local" || loc === "byo") return false;
+    if (!mod || !mod.usage || typeof mod.usage !== "object") return false;
+    const u = usageOf(mod);
+    return u.native_audio !== true && u.driving_audio !== true;
   }
 
-  // Hosted talking default: Seedance if a Cast sample is kept (usage.voice_ref);
-  // else InfiniteTalk if the board has a line (driving_audio, not native);
-  // Wan last (driving_audio + native auto-dub). Else first talking door by ui.order.
+  // Spoken board: infinitetalk when that driving-only door is installed, else the first
+  // other driving-only door. A kept Cast sample does not switch this to Seedance.
+  // Silent board: the first silent catalog door. own-gpu and alibaba-wan are not defaults.
   function defaultSpeedDoor(mods) {
     const list = Array.isArray(mods) ? mods : [];
-    if (boundCastHasSample()) {
-      const seedance = list.find((m) => usageOf(m).voice_ref === true);
-      if (seedance) return seedance;
-    }
     if (storyboardHasSpokenLines()) {
-      const ourFile = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === false);
-      if (ourFile) return ourFile;
+      const named = list.find((m) => moduleName(m) === "infinitetalk" && isDrivingOnly(m));
+      if (named) return named;
+      return list.find(isDrivingOnly) || null;
     }
-    const wan = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === true);
-    if (wan) return wan;
-    const talking = talkingMotionMods(list).slice().sort(byUiOrder);
-    return talking[0] || null;
+    return list.find(isSilentCatalog) || null;
   }
 
   function doorTitle(mod) {
@@ -668,8 +659,8 @@
     doors.className = "planner-backend-doors";
 
     if (mods.length > 1) {
-      // Default: Seedance if a sample is kept, else InfiniteTalk if any line,
-      // Wan last, else first talking door. Leave the pick empty when none apply.
+      // Spoken: InfiniteTalk when it is installed. Silent: one catalog door.
+      // Leave the pick empty when neither applies.
       if (speed) {
         sel.value = speed.name;
       } else {
@@ -754,7 +745,7 @@
             motionWrap.hidden = false;
             const empty = document.createElement("p");
             empty.className = "planner-backend-caption-hint";
-            empty.textContent = "This storyboard has spoken lines, but no talking door is installed. Bind Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok.";
+            empty.textContent = "This storyboard has spoken lines, and this studio has no talking door installed.";
             motionWrap.appendChild(empty);
           }
         } else if (renderBackendSelector(doors, motionWrap)) motionShown = true;

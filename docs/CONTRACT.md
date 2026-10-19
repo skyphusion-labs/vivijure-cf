@@ -1134,7 +1134,11 @@ schema rejects (#577), and `400` when a `local` motion door is paired with a non
 module (vivijure-local#153); `400 "finish module(s) requested but not serving: ..."` (cf#593);
 `400` (the untrained-cast message) if a bound cast LoRA is not ready, or a bound cast lacks the SDXL
 keyframe adapter; and, when the bundle storyboard has spoken lines on a full render, `400` unless the
-chosen motion module can speak lines and its talking audio is on.
+chosen motion module can speak lines. A native-audio door still needs talking audio on.
+A driving-only door (`driving_audio` set, `native_audio` not set; InfiniteTalk is that
+shape) is accepted with talking audio off. When that module's schema declares
+`generate_audio`, the studio sets it false. It does not send `voice_ref_keys` on that
+path. The clip is the shot still. The cast training set is not attached.
 
 That last refusal is **PROJECTED from the installed module set (cf#919)**, in the same spirit as
 `Choose one of: <names>` above, and it is one of exactly three sentences:
@@ -1143,7 +1147,7 @@ That last refusal is **PROJECTED from the installed module set (cf#919)**, in th
 |-------|---------|
 | chosen door cannot speak, and at least one installed door can | `This storyboard has spoken lines. Pick a talking door (<installed talking doors>) and leave talking audio on. Silent look doors cannot say the script.` |
 | chosen door cannot speak, and NO installed door can | `This storyboard has spoken lines, and this studio has no talking door installed. Every motion door installed here is a silent look door, which cannot say the script. Install a talking door, or clear the spoken lines.` |
-| chosen door CAN speak, only `generate_audio` is off | `This storyboard has spoken lines, and talking audio is switched off on <door>. Turn talking audio back on, or clear the spoken lines.` |
+| chosen door CAN speak, it is native audio, and only `generate_audio` is off | `This storyboard has spoken lines, and talking audio is switched off on <door>. Turn talking audio back on, or clear the spoken lines.` |
 
 `<installed talking doors>` is `servingForHook(modules, "motion.backend")` filtered by
 `doorCanSpeakLines`, in registry display order, each named by its `provides[0].label` (else its
@@ -1152,6 +1156,8 @@ carried a literal seven-door list, which on a hosted tenant sent the filmmaker t
 InfiniteTalk, a door the hosted catalog cannot install. A client MUST NOT match on the old literal;
 match on `spoken lines` if it must match at all. The same three sentences serve all three render
 doors (panel, render-from-keyframes, agent).
+The third sentence is for a native-audio door. A driving-only door is not refused for
+having talking audio off.
 
 When `audioKey` is set (and, on this route, the render is not `keyframesOnly`), two more `400`
 sentences apply. They also apply on `POST /api/storyboard/render-from-keyframes`, on
@@ -1168,17 +1174,19 @@ or `does not fit one`. There is no song, so no refusal, when `audioKey` is absen
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
 (default final), renderOverrides?, audioKey?, projectId?, motion_backend?, castLoras?,
 idempotency_key? }`. Reads scenes + injected keyframes from the bundle. `motion_backend` resolves as:
-the top-level value, else `renderOverrides.motion_backend`, else the default GPU door
-(`defaultGpuDoorModule`: the `ui.order`-first serving `motion.backend` module with
-`ui.locality: "byo"`, else the `ui.order`-first `"local"` one); with none of those it is
-`400 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed'`. There is no
-hardcoded `own-gpu` default. `castLoras` (`{ [slot]: cast public id }`) is used only to voice the
+the top-level value, else `renderOverrides.motion_backend`, else the hosted door for this bundle.
+A bundle with a spoken line uses installed `infinitetalk` when that module is a cloud driving-only
+door, otherwise the first other cloud driving-only door. A bundle with no spoken line uses the
+first cloud door whose usage declares neither `native_audio` nor `driving_audio`. A `byo` or
+`local` door is not this fallback. With none of those, a spoken bundle returns the projected
+spoken-lines `400`, and a silent bundle returns `400 "no silent catalog motion.backend module is installed"`.
+`castLoras` (`{ [slot]: cast public id }`) is used only to voice the
 bundle-derived dialogue lines. `idempotency_key` (alias `idempotencyKey`) is the same duplicate-submit
 guard as on `POST /api/storyboard/render`. Errors: `400 "bundleKey required"`;
 `400 "bundleKey must be a plain relative key under bundles/"` (path-format guard);
 the #696 `renderOverrides` shape `400`s; `503 "no motion.backend module installed"`;
 `400 "bundle has no storyboard scenes"`; `400 "bundle has no injected keyframes
-(clips/<id>_keyframe.png)"`; the no-gpu-door `400` above; the #577 motion-config, local-pairing and
+(clips/<id>_keyframe.png)"`; the missing-door `400` above; the #577 motion-config, local-pairing and
 cf#593 finish `400`s as on `POST /api/storyboard/render` (judged against the RESOLVED backend); the
 spoken-lines talking-door `400` above; the song-read `400` above when `audioKey` is set;
 `422 { error }` if the job fails to start. **Response 201:**

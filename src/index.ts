@@ -1,6 +1,6 @@
 // Vivijure studio core: module host, render API router, planner/cast UI server.
 
-import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, defaultGpuDoorModule, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
@@ -120,7 +120,7 @@ import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
-import { generateAudioOn, spokenLinesPresent, doorCanSpeakLines, spokenLinesRefusalMessage } from "./motion-scatter";
+import { spokenLinesPresent, bundleScenesHaveLines, hostedMotionFallback, prepareSpokenClip, withMotionBackend } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
@@ -1043,13 +1043,15 @@ const hSubmitRender: Handler = async (req, env) => {
     }
   }
   const panelMotionMod = modules.find((m) => m.name === motionBackend);
-  if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
-    if (!doorCanSpeakLines(panelMotionMod) || !generateAudioOn(mapped.motion_config)) {
-      throw badRequest(
-        spokenLinesRefusalMessage(modules, panelMotionMod, generateAudioOn(mapped.motion_config)),
-      );
-    }
-  }
+  const panelSpoken = !b.keyframesOnly && spokenLinesPresent(panelDialogue);
+  const panelClip = prepareSpokenClip(
+    modules,
+    panelMotionMod,
+    mapped.motion_config,
+    voiceRefKeysFromScenes(scenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], panelPre.cast.voiceRefs),
+    panelSpoken,
+  );
+  if (!panelClip.ok) throw badRequest(panelClip.error);
   const songKey = b.keyframesOnly ? undefined : b.audioKey;
   const panelSongRefusal = await songStartRefusal(
     (key) => env.R2_RENDERS.head(key),
@@ -1064,7 +1066,7 @@ const hSubmitRender: Handler = async (req, env) => {
     motion_backend: motionBackend,
     keyframe_backend: mapped.keyframe_backend,
     keyframe_config: mapped.keyframe_config,
-    motion_config: mapped.motion_config,
+    motion_config: panelClip.config,
     finish_config: mapped.finish_config,
     // cf#537: which finish modules this render asked for. Resolved out of `renderOverrides.select`
     // by the core, so it rides the SAME bag that `renders.render_overrides` already persists, and a
@@ -1084,7 +1086,7 @@ const hSubmitRender: Handler = async (req, env) => {
     dialogue_lines: panelDialogue,
     style_prefix: typeof b.style_prefix === "string" ? b.style_prefix : undefined,
     voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
-    voice_ref_keys: voiceRefKeysFromScenes(scenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], panelPre.cast.voiceRefs),
+    voice_ref_keys: panelClip.voiceRefs,
     idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
@@ -1172,11 +1174,21 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   }
 
   b.renderOverrides = withFastestKeyframeDefault(b.renderOverrides, modules) as typeof b.renderOverrides;
-  const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
-  const motionBackend = b.motion_backend ?? mapped.motion_backend ?? defaultGpuDoorModule(modules)?.name;
-  if (!motionBackend) {
-    return json({ error: 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed' }, 400);
+  const fromKfExplicit = b.motion_backend ?? parseModuleRenderOverrides(b.renderOverrides).motion_backend;
+  const fromKfSpoken = bundleScenesHaveLines(parsedScenes);
+  const fromKfPick = hostedMotionFallback(modules, fromKfExplicit, fromKfSpoken);
+  if (!("name" in fromKfPick)) {
+    return json({ error: fromKfPick.error }, 400);
   }
+  // The mapper reads motion_backend off the override bag only. A panel that names the door on the
+  // request body (this handler's motion_backend field) was leaving the bag empty, so the pipeline
+  // default (often the byo door) won and the named door never rendered.
+  const bagNamed = parseModuleRenderOverrides(b.renderOverrides).motion_backend;
+  if (bagNamed !== fromKfPick.name) {
+    b.renderOverrides = withMotionBackend(b.renderOverrides, fromKfPick.name) as typeof b.renderOverrides;
+  }
+  const mapped = mapRenderOverridesToModuleConfigs(b.renderOverrides, tier, modules);
+  const motionBackend = fromKfPick.name;
   // The RESOLVED backend is what this door actually renders with, so it is what #577 and the pairing
   // rule are judged against. That is weaker than judging a caller's explicit choice and it is the
   // honest maximum here: there is no explicit choice to judge (cf#344).
@@ -1218,13 +1230,14 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
   }
 
   const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
-  if (spokenLinesPresent(fromKfDialogue)) {
-    if (!doorCanSpeakLines(fromKfMotionMod) || !generateAudioOn(mapped.motion_config)) {
-      throw badRequest(
-        spokenLinesRefusalMessage(modules, fromKfMotionMod, generateAudioOn(mapped.motion_config)),
-      );
-    }
-  }
+  const fromKfClip = prepareSpokenClip(
+    modules,
+    fromKfMotionMod,
+    mapped.motion_config,
+    voiceRefKeysFromScenes(parsedScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], fromKfVoiceRefs),
+    spokenLinesPresent(fromKfDialogue),
+  );
+  if (!fromKfClip.ok) throw badRequest(fromKfClip.error);
   const fromKfSongRefusal = await songStartRefusal(
     (key) => env.R2_RENDERS.head(key),
     b.audioKey,
@@ -1238,7 +1251,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     scenes,
     keyframes: staged,
     motion_backend: motionBackend,
-    motion_config: mapped.motion_config,
+    motion_config: fromKfClip.config,
     finish_config: mapped.finish_config,
     finish_select: mapped.finish_select, // cf#537
     speech_config: mapped.speech_config,
@@ -1247,7 +1260,7 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     derive_mode: "finalized",
     audio_key: b.audioKey,
     dialogue_lines: fromKfDialogue,
-    voice_ref_keys: voiceRefKeysFromScenes(parsedScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], fromKfVoiceRefs),
+    voice_ref_keys: fromKfClip.voiceRefs,
     idempotency_key: readIdempotencyKey(b),
   } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] }, modules);
   if (job.phase === "failed") {
@@ -1765,17 +1778,15 @@ const hStartFilm: Handler = async (req, env) => {
     a.motion_config = filmMotionConfig;
   }
   const filmMotionMod = filmModules.find((m) => m.name === a.motion_backend);
-  if (spokenLinesPresent(dialogue_lines)) {
-    if (!doorCanSpeakLines(filmMotionMod) || !generateAudioOn(a.motion_config as Record<string, unknown> | undefined)) {
-      throw badRequest(
-        spokenLinesRefusalMessage(
-          filmModules,
-          filmMotionMod,
-          generateAudioOn(a.motion_config as Record<string, unknown> | undefined),
-        ),
-      );
-    }
-  }
+  const filmSpoken = spokenLinesPresent(dialogue_lines);
+  const filmClip = prepareSpokenClip(
+    filmModules,
+    filmMotionMod,
+    a.motion_config,
+    voiceRefKeysFromScenes(filmScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], resolvedLoras.voiceRefs),
+    filmSpoken,
+  );
+  if (!filmClip.ok) throw badRequest(filmClip.error);
   const filmSongRefusal = await songStartRefusal(
     (key) => env.R2_RENDERS.head(key),
     a.audio_key,
@@ -1784,7 +1795,7 @@ const hStartFilm: Handler = async (req, env) => {
   if (filmSongRefusal) throw badRequest(filmSongRefusal);
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
-    motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
+    motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: filmClip.config,
     // audio_key: a staged bed (score-bed music/narration) to mux after assemble. startFilmJob runs it
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
     // silent even when the caller supplied a bed (the scored/narrated render path).
@@ -1813,7 +1824,7 @@ const hStartFilm: Handler = async (req, env) => {
     // value coerces to undefined -> filmRowFromJob defaults "final" (pre-#762 behavior preserved).
     quality_tier: coerceQualityTier(a.qualityTier),
     idempotency_key: readIdempotencyKey(a),
-    voice_ref_keys: voiceRefKeysFromScenes(filmScenes as { shot_id?: string; dialogue?: { slot?: string; text?: string } }[], resolvedLoras.voiceRefs),
+    voice_ref_keys: filmClip.voiceRefs,
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
