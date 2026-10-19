@@ -5,7 +5,7 @@
 > it does not create an attorney-client relationship. If you are unsure how it applies to you, or you
 > run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-10-18
+**Effective date:** 2026-10-19
 
 ---
 
@@ -37,8 +37,9 @@ your own setup govern your instance; you become the operator, not a customer of 
   account anyone creates with us, and we do not host anyone else's content. Skyphusion Labs does not
   host or manage Vivijure instances for other people and will not get into that business.
 - **The public demo** (`demo.vivijure.com`): the custom domain was removed on purpose on
-  2026-10-08. It is not a live site. Re-adding one custom domain restores it. Sections 4 and 7
-  record the scope of the policy and the warranty while that host was served.
+  2026-10-08. It is not a live site. The deployment was deleted on 2026-10-19 (both Worker scripts,
+  the D1 database, the R2 bucket, the AI Gateway) and no configuration change brings it back.
+  Sections 4 and 7 record the scope of the policy and the warranty while that host was served.
 
 If you deploy Vivijure yourself, you are an operator, not a customer of ours, and these Terms are not
 a service agreement between you and us. The AGPL applies to the code, including its requirement that
