@@ -16,7 +16,10 @@ Cloudflare account, their own GPU/RunPod). Skyphusion Labs maintains the softwar
 hosted, multi-tenant, sign-up service. Skyphusion Labs runs one instance: Conrad's own private,
 gated instance at `vivijure.skyphusion.org` (for Conrad and the crew, plus the Slate Discord bot via
 its own named API token), which is not a public offering anyone signs up for. The public demo
-hostname `demo.vivijure.com` was removed on 2026-10-08. It is not a live site. These documents are
+hostname `demo.vivijure.com` was removed on 2026-10-08, and the demo deployment behind it (Worker
+scripts, database, storage bucket, AI Gateway) was deleted on 2026-10-19. The demo no longer
+exists; `PRIVACY.md` Section 1a is the dated record of what it collected and that the data is gone.
+These documents are
 written accordingly: use terms for the software and the project, an honest privacy baseline (you
 self-host, so we never see your data), and an acceptable-use policy for the project and Conrad's
 instance.

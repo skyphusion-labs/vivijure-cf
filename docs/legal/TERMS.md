@@ -5,7 +5,7 @@
 > it does not create an attorney-client relationship. If you are unsure how it applies to you, or you
 > run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-10-18
+**Effective date:** 2026-10-19
 
 ---
 
@@ -36,9 +36,11 @@ your own setup govern your instance; you become the operator, not a customer of 
   for Conrad and the crew, for internal use and testing. It is not a public service, there is no
   account anyone creates with us, and we do not host anyone else's content. Skyphusion Labs does not
   host or manage Vivijure instances for other people and will not get into that business.
-- **The public demo** (`demo.vivijure.com`): the custom domain was removed on purpose on
-  2026-10-08. It is not a live site. Re-adding one custom domain restores it. Sections 4 and 7
-  record the scope of the policy and the warranty while that host was served.
+- **The public demo** (`demo.vivijure.com`) no longer exists. Skyphusion Labs ran it from
+  2026-07-10 to 2026-10-08 as a public showcase; the hostname was removed on 2026-10-08 and the
+  deployment behind it was deleted on 2026-10-19. Sections 4, 7 and 8 keep the terms that applied
+  while it was served. The Privacy Policy, Section 1a, records what it collected and that the data
+  is gone.
 
 If you deploy Vivijure yourself, you are an operator, not a customer of ours, and these Terms are not
 a service agreement between you and us. The AGPL applies to the code, including its requirement that
@@ -75,9 +77,10 @@ your access, and you will not attempt to bypass the gate or rate limits. Partici
 ## 4. Acceptable use
 
 Use of the software, the project, and Conrad's instance is subject to the **Acceptable Use Policy**
-(`ACCEPTABLE-USE.md`), which is incorporated by reference. The public demo host
-(`demo.vivijure.com`) was removed on purpose on 2026-10-08 and is not a live site; while it was
-served, the same policy applied to it. Violating the policy, especially the CSAM red line,
+(`ACCEPTABLE-USE.md`), which is incorporated by reference. The public demo
+(`demo.vivijure.com`) no longer exists (hostname removed 2026-10-08, deployment deleted
+2026-10-19); while it was served, the same policy applied to it. Violating the policy, especially
+the CSAM red line,
 is a material breach and can end your access to Conrad's instance and your standing in the project
 immediately.
 
@@ -130,8 +133,9 @@ IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, 
 We do not warrant that the software will be uninterrupted, error-free, secure, or that any output will
 be accurate, lawful to use, original, or fit for any purpose. You use it at your own risk. This is
 free, best-effort, labor-of-love software; it may change, break, or be discontinued at any time
-without notice. While it was served, the public demo at `demo.vivijure.com` was provided on those
-same terms. The custom domain was removed on purpose on 2026-10-08. It is not a live site.
+without notice. While it was served (2026-07-10 to 2026-10-08), the public demo at
+`demo.vivijure.com` was provided on those same terms. It no longer exists; the deployment behind it
+was deleted on 2026-10-19.
 
 (This mirrors the "no warranty" stance of the AGPL itself.)
 
@@ -142,7 +146,7 @@ same terms. The custom domain was removed on purpose on 2026-10-08. It is not a 
 TO THE MAXIMUM EXTENT PERMITTED BY LAW, SKYPHUSION LABS AND CONRAD (AND ANYONE INVOLVED IN MAKING THE
 SOFTWARE AVAILABLE) WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY,
 OR PUNITIVE DAMAGES, OR FOR LOST PROFITS, DATA, OR GOODWILL, ARISING OUT OF OR RELATED TO YOUR USE OF
-(OR INABILITY TO USE) THE SOFTWARE, CONRAD'S INSTANCE, OR THE PUBLIC DEMO, EVEN IF ADVISED OF THE POSSIBILITY. BECAUSE
+(OR INABILITY TO USE) THE SOFTWARE, CONRAD'S INSTANCE, OR THE PUBLIC DEMO WHILE IT WAS SERVED, EVEN IF ADVISED OF THE POSSIBILITY. BECAUSE
 THE SOFTWARE IS PROVIDED FREE OF CHARGE, THE TOTAL AGGREGATE LIABILITY WILL NOT EXCEED $0 USD (THE
 AMOUNT YOU PAID FOR THE SOFTWARE, WHICH IS ZERO).
 

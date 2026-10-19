@@ -5,7 +5,7 @@
 > advice and reading it does not create an attorney-client relationship. If you are unsure how it
 > applies to you, or you run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-10-18
+**Effective date:** 2026-10-19
 
 ---
 
@@ -13,8 +13,9 @@
 
 We do not want your data. With Vivijure that is not a slogan, it is a literal fact: **there is no
 Vivijure service that we operate to hold your content, so there is almost nothing for us to
-collect.** The public demo host was removed on purpose on 2026-10-08. It is not a live site.
-Re-adding one custom domain restores it (Section 1a).
+collect.** The public demo that used to run at `demo.vivijure.com` no longer exists. Section 1a
+records what it collected while it ran (2026-07-10 to 2026-10-08) and that the data was deleted,
+unrecoverably, on 2026-10-19.
 
 - **Vivijure is free software (AGPL-3.0-only) that you run yourself.** You deploy it on your own
   infrastructure (your own Cloudflare account, your own GPU/RunPod), and your storyboards, prompts,
@@ -26,9 +27,9 @@ Re-adding one custom domain restores it (Section 1a).
 - **Skyphusion Labs runs one Vivijure instance.** Conrad's own private instance at
   `vivijure.skyphusion.org`: gated, used by Conrad and the crew (plus the Slate Discord bot via its
   own named API token), not a service anyone signs up for; it processes Conrad's own creative
-  content, not data collected from outside users. The public demo host `demo.vivijure.com` was
-  removed on purpose on 2026-10-08. It is not a live site. Re-adding one custom domain restores it.
-  Section 1a records the retirement.
+  content, not data collected from outside users. The public demo at `demo.vivijure.com` is gone:
+  the hostname was removed on 2026-10-08 and the deployment behind it was deleted on 2026-10-19.
+  Section 1a is the dated record of what it was, what it collected, and what happened to that data.
 
 If you want a privacy policy for your Vivijure instance, you write it, because you are the operator
 and the only person who can see that data. This document explains why the software collects so
@@ -48,7 +49,7 @@ is always "whoever runs that instance," never Skyphusion Labs as some central op
 |---|---|---|
 | **You self-host** | You (or whoever deployed that instance) | Yours, on your infrastructure. Skyphusion Labs never receives it. |
 | **Conrad's private instance (`vivijure.skyphusion.org`)** | Skyphusion Labs (Conrad), for Conrad and the crew only | Conrad's own creative content on Conrad's infrastructure. Not data collected from outside users; there are no outside users. |
-| **The public demo (`demo.vivijure.com`), retired 2026-10-08** | Was Skyphusion Labs (Conrad). The custom domain was removed on purpose. Not a live site. Re-adding one custom domain restores it. | Not stated here. Section 1a records the retirement only. |
+| **The public demo (`demo.vivijure.com`), ran 2026-07-10 to 2026-10-08, deleted 2026-10-19** | Was Skyphusion Labs (Conrad), for anyone to browse. It no longer exists. | Visitor IP addresses in a daily cap counter and a render queue, for abuse caps only. Deleted 2026-10-18, unrecoverable since 2026-10-19. Section 1a. |
 
 We still do not host instances that hold OTHER people's content, and will not get into hosting or
 managing them for anyone. If you reach a Vivijure instance, whoever deployed it is the operator; the AGPL
@@ -60,10 +61,53 @@ what Conrad's own private instance does, as a worked, honest example.
 
 ---
 
-## 1a. The public demo studio (`demo.vivijure.com`)
+## 1a. The public demo (`demo.vivijure.com`): retired, with a corrective disclosure
 
-Retired 2026-10-08. The custom domain was removed on purpose. It is not a live site. Re-adding one
-custom domain restores it.
+**Status.** The demo no longer exists. The `demo.vivijure.com` hostname was removed on 2026-10-08.
+On 2026-10-19 the deployment behind it was deleted outright: the two demo Worker scripts, the demo
+database, the demo storage bucket, and the demo AI Gateway. Nothing remains that a configuration
+change could switch back on; a future demo would be a new build and a new deployment, and this
+policy would be revised before it opened. Skyphusion Labs now runs one Vivijure instance, Conrad's
+private one (Section 1).
+
+**What the demo was.** From 2026-07-10 (when its database and storage bucket were created) to
+2026-10-08, Skyphusion Labs ran a public demo studio at `demo.vivijure.com` so anyone could browse a
+seeded catalog and watch pre-made showcase films without an account. It had no account system, no
+sign-in, no identity cookie, and no analytics beacon. It also had two interactive doors, added later
+as its "Phase B": a visitor could ask a capped assistant a question, and could ask the demo to
+render one of a fixed set of pre-vetted scenes. The render request carried a scene id only; no free
+text and no uploads reached the render path.
+
+**What it collected, and the correction.** The version of this policy in force at the time said the
+demo rendered nothing and processed nothing beyond ordinary edge request logs. Once Phase B was
+live that was not accurate, and this section corrects it. To enforce per-visitor daily caps and a
+serial render queue, the demo's own database recorded visitor IP addresses:
+
+- in the render queue table, one row per render request carrying the requester's IP address (14
+  rows in total, 7 distinct addresses, created between 2026-07-10 and 2026-08-01);
+- in a daily counter table, keyed by IP address and day, for the assistant and render caps (26 rows
+  in total, covering 8 days between 2026-07-10 and 2026-08-29).
+
+These were abuse caps and nothing else. The addresses were not joined to any other data, not used to
+profile anyone, and not shared or sold. Assistant messages went to a Workers AI model through the
+demo's own Cloudflare AI Gateway and were not stored in the demo database. Demo render outputs (13
+clips of seeded scenes, 5445989 bytes in total) were written to a dedicated demo storage bucket. A
+per-IP burst limiter at the edge was part of the Worker configuration. Beyond that, the hostname
+received the ordinary edge request logs that Cloudflare keeps for any site, on Cloudflare's own
+retention schedule.
+
+**What happened to that data.** The IP-bearing rows were deleted on 2026-10-18: all 14 queue rows
+and all 26 counter rows. Row counts were recorded; no address was read or displayed. Because a
+deleted row in Cloudflare D1 stays recoverable through point-in-time history for as long as the
+database exists, the whole demo database was deleted on 2026-10-19, which ended that
+recoverability. The same day, the 13 render objects were purged and their bucket deleted, the two
+demo Worker scripts were deleted, and the demo AI Gateway was deleted together with any request
+logs it held. As of 2026-10-19 Skyphusion Labs holds no data from the demo.
+
+**Notice to affected visitors.** The only visitor identifier the demo kept was an IP address, so
+there is nothing to contact anyone by. This section is the notice. Questions go to Section 10.
+
+---
 
 ## 2. How the system is built (why there is so little data)
 
