@@ -22,9 +22,11 @@ D1, and the same R2. `studio.vivijure.com` stays the control-plane door. `viviju
 stays the site. The old host redirects only after the new one is proven. Local-GPU is
 opt-in and on-box; the fleet named tunnel
 (`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). The public
-demo host `demo.vivijure.com` was removed on purpose on 2026-10-08. It is not a live
-site. Re-adding one custom domain restores it. `AUTH_MODE=demo` and
-`DEMO_RENDER_ENABLED=false` remain the zero-spend shape of that deploy.
+demo is REMOVED ENTIRELY (Conrad's ruling), not deprecated, and it went in TWO
+steps whose dates are distinct: the `demo.vivijure.com` custom domain was removed
+**2026-10-08**, and the DEPLOYMENT was deleted **2026-10-19** (the `vivijure-demo`
+and `vivijure-demo-local-gpu` Worker scripts, the D1, the R2 bucket and the AI
+Gateway). `AUTH_MODE=demo` is no longer a mode this panel accepts. Do not re-add it.
 
 ## TWO panels (honesty)
 
@@ -76,7 +78,6 @@ of these areas, update the matching doc.
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
-- `docs/demo-studio.md` -- public demo record. The `demo.vivijure.com` custom domain was removed on purpose on 2026-10-08; `AUTH_MODE=demo` and `DEMO_RENDER_ENABLED=false` describe the deploy, not a live host.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
 - Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.

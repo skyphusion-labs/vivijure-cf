@@ -249,7 +249,9 @@ describe("record-reclaim pure core", () => {
   });
 
   it("treats a stored absolute URL as foreign, never as a key to delete", () => {
-    // migrations/demo/0001_demo_seed.sql stores these on purpose; the demo binds no R2.
+    // An absolute value in these columns is a live shape, not a dead one: the panel's artifactUrl
+    // returns an absolute http(s):// value verbatim rather than routing it through /api/artifact/.
+    // The demo seed that first produced them is gone (pr1019); the guard and this case are not.
     expect(isForeignRef("https://assets.skyphusion.net/vivijure/showcase/a.mp4")).toBe(true);
     expect(isForeignRef("renders/film-aaa/film.mp4")).toBe(false);
   });

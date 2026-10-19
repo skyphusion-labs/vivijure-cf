@@ -235,7 +235,6 @@ credential carries:
 | Verified Access JWT, email or service token (access mode / legacy unset) | `operator` |
 | `ALLOW_UNAUTHENTICATED = "true"` dev opt-out (legacy unset mode only) | `operator` |
 | Named token (`api_tokens` row) | the row's `scope`; migration 0020 DEFAULTS every pre-existing row to `consumer` until reissued |
-| Demo visitor (`AUTH_MODE = "demo"`, section 1d) | `consumer` |
 
 The `operator` routes are installation, configuration, or estate-wide state: `GET /api/storage/usage`,
 `POST /api/storage/reconcile`, `GET /api/modules/installed`, `POST /api/modules/install`,
@@ -271,81 +270,6 @@ token mode is enough. A team, an org, or anything with staff turnover: put Acces
 > account. Go directly to `https://dash.cloudflare.com/<account-id>/one/dashboard` (paste your account
 > id), pick a team name (this sets `ACCESS_TEAM_DOMAIN` = `<team>.cloudflareaccess.com`), create
 > the Access application for your studio hostname, and copy its AUD tag into `ACCESS_AUD`.
-
-## 1d. Demo mode: the public demo studio (`AUTH_MODE = "demo"`, #625)
-
-The public host `demo.vivijure.com` was removed on purpose on 2026-10-08. It is not a live site.
-Re-adding one custom domain restores it. The rest of this section is how `AUTH_MODE = "demo"`
-behaves on a demo deploy. It is not an invitation to publish the hostname.
-
-`demo.vivijure.com` was a Skyphusion-Labs-operated PUBLIC deploy that showed the studio to anonymous
-visitors. Its posture is a distinct, documented auth mode -- deliberately the INVERSE
-of the section-3 "`/api/*` is gated" default: in demo mode the entire READ surface is public by
-design, and the write surface is exactly two capped routes (#631 Phase B).
-
-- **Gate (`verifyDemoRequest`, `src/auth-gate.ts`).** `GET`/`HEAD` are open to EVERYONE,
-  unauthenticated. `POST /api/demo/render` and `POST /api/demo/chat` (the `DEMO_WRITE_ROUTES` set,
-  the demo's ENTIRE write surface) are also open to everyone, unauthenticated. Every other mutating
-  request (`POST`/`PUT`/`PATCH`/`DELETE`/anything else) is denied `403` for everyone,
-  credential-independently: a bearer token unlocks nothing, because there is no operator path into
-  a demo deploy through the API.
-- **A demo visitor is `consumer` scope (section 1b-i).** Every admitted demo request carries
-  `consumer`, so the `operator` routes (`GET /api/storage/usage`, `GET /api/modules/installed`,
-  `GET /api/modules/:name/config`, and the operator mutations) answer `403 scope_denied` even
-  though they are `GET`s.
-- **`POST /api/demo/render`** (seeded click-to-render, `src/demo-render.ts`). The only input is a
-  seeded `demo_renderable` id (no free text, no uploads). It runs only when `DEMO_RENDER_ENABLED =
-  "true"` AND the demo-scoped `MODULE_LOCAL_GPU` door is bound; otherwise `503` (`reason: "paused"`).
-  Bounds, checked before enqueue: the per-IP `SPEND_RATE_LIMITER` burst limiter (`enforceSpendLimit`,
-  fail closed, section 6), a per-IP daily cap (`DEMO_RENDER_PER_IP_DAILY`, default 3), a global daily
-  cap (`DEMO_RENDER_GLOBAL_DAILY`, default 2000), and a queue depth cap (`DEMO_RENDER_QUEUE_DEPTH`,
-  default 10); the queue is serial (one job running). A cap refusal is `429`, an unknown scene `400`.
-  Poll is `GET /api/demo/render/:id`, keyed by a `crypto.randomUUID()` job id.
-- **`POST /api/demo/chat`** (OSS assistant, `src/demo-chat.ts`). One Workers AI call
-  (`DEMO_ASSISTANT_MODEL`, default a llama-3.3-70b class model) through `env.AI` and the demo's own
-  AI Gateway (`GATEWAY_ID`), which carries a hard daily budget set at provisioning. Bounds, checked
-  BEFORE the model is called: input at most 1500 characters, a pre-model refusal of clear
-  jailbreak / free-LLM-proxy shapes, a per-IP daily cap (`DEMO_CHAT_PER_IP_DAILY`, default 20), and a
-  global daily cap (`DEMO_CHAT_GLOBAL_DAILY`, default 2000); output is capped at 400 tokens. It is
-  NOT behind the `SPEND_RATE_LIMITER` burst limiter; the daily counters and the gateway budget are
-  the bound. Exhaustion is `429`.
-- **Counters store the raw visitor IP.** Both routes count in the demo D1 table `demo_counter`
-  (`migrations/demo/0002_demo_render.sql`) under bucket keys `render:ip:<ip>:<day>` /
-  `chat:ip:<ip>:<day>`, where `<ip>` is the raw `CF-Connecting-IP` value (the literal `global` when
-  the header is absent); every queued render row in `demo_render_queue` also stores the raw IP in its
-  `ip` column. Nothing purges either table. (This is a privacy defect tracked as LG-1 in #764; it is
-  stated here because it is the demo's only stored visitor data.)
-- **Zero-spend holds only for the Phase A binding set.** A Phase A (browse-only) demo binds none of
-  the money surfaces (no AI Gateway, no RunPod, no R2, no module service bindings, no dispatch
-  namespace), so there is physically nothing to spend, and the gate is the independent second
-  barrier. Phase B OPENS `MODULE_LOCAL_GPU` (a demo-scoped GPU door), `AI` + `GATEWAY_ID` (the demo
-  gateway), `SPEND_RATE_LIMITER`, and the `DEMO_*` vars (see `docs/demo-studio.md`, "Binding
-  delta"). With those bound, the demo DOES spend: GPU time on the door's box and Workers AI tokens,
-  bounded by the caps above and the gateway budget, not by absence. RunPod, R2, and frontier-model
-  credentials stay absent in both phases. `DEMO_RENDER_ENABLED` unset or `"false"` (the documented
-  zero-spend posture) pauses renders; the chat route still runs whenever `AI` + `GATEWAY_ID` are
-  bound.
-- **Own seeded D1, no prod data.** The demo binds its own D1 seeded from
-  `migrations/demo/0001_demo_seed.sql` (captured module manifests -- see GET /api/modules -- plus fictional
-  projects/cast + completed renders whose films are the S23 showcase MP4s). The seed lives in a subdirectory so it
-  can never auto-apply to prod (see the seed file header) and carries high explicit ids (>=9000).
-- **`host.readonly` projection (`@skyphusion-labs/vivijure-core modules/registry` `isDemoEnv`, the structural twin of
-  `isDemoMode`; change both together).** `GET /api/modules` projects `host.readonly = true` in demo
-  mode; the frontend read-only gate (`public/readonly-gate.js`) renders the honest banner and blocks
-  mutations client-side BEFORE the network. The server gate is authoritative; the client gate is UX
-  on top of it.
-- **CSP: `STUDIO_DEMO_CSP` (`src/asset-response.ts`).** Demo PAGES get `STUDIO_CSP` with the
-  host-pinned asset origin `https://assets.skyphusion.net` (`DEMO_MEDIA_ORIGIN`) admitted on TWO
-  directives: `img-src 'self' data: blob: https://assets.skyphusion.net` (the seeded cast portraits)
-  and an added, last `media-src 'self' https://assets.skyphusion.net` (the showcase films; no R2
-  binding needed). When `DEMO_ARTIFACT_ORIGIN` is set to a DIFFERENT origin (the isolated demo R2
-  public origin Phase B render clips are served from), `applyResponseSecurity` appends it verbatim
-  to that `media-src` directive (no wildcard). Every other directive is byte-identical to prod, and
-  a non-demo deploy never serves this policy. All non-page responses keep the locked CSP (section 8).
-- **Cookies / identity.** No token is ever entered on the demo, so no identity cookie is set and the
-  server sends no `Set-Cookie` on anonymous responses (live-verified). The client token shim
-  (`public/auth-token.js`) writes only an empty, immediately-expiring placeholder cookie via
-  `document.cookie` when no token is present; it carries nothing.
 
 ## 2. Job ids are capabilities (possession = access)
 
@@ -391,9 +315,7 @@ authentication, by design:
   `/api/*` behind the gate, and the token prompt is part of the shell. A secret must therefore never
   be placed under `public/`.
 
-(A demo deploy, `AUTH_MODE = "demo"`, additionally opens the entire `GET`/`HEAD` surface plus
-`POST /api/demo/render` and `POST /api/demo/chat` to anonymous visitors, while denying every other
-mutation `403`; see section 1d.) On the production
+On the production
 instance `/welcome` and `/health` each sit behind their own path-scoped Cloudflare Access app whose
 policy is a public bypass (everyone for `/welcome`, a production-IP allowlist for `/health`); those
 path-scoped apps are independent of `AUTH_MODE` and do NOT extend to `/api/*`. The public
@@ -466,8 +388,7 @@ auditable `SPEND_PATTERNS` list). As of v1.33.9 that list is:
 - Paid-AI submits: `/api/storyboard/plan`, `/api/storyboard/refine`, `/api/storyboard/enhance`,
   `/api/chat` (both its text-planner and image-generation branches).
 
-`POST /api/demo/render` (demo deploys only, section 1d) is not in the list but calls the same
-`enforceSpendLimit` inside its handler. `add-audio` is deliberately absent (it muxes an existing
+`add-audio` is deliberately absent (it muxes an existing
 artifact and dispatches nothing). `tests/spend-surface-render-children.test.ts` fails when a new
 render-child `POST` route is added without being classified. Backend: the Cloudflare native Rate Limiting binding
 (`SPEND_RATE_LIMITER`), keyed by `CF-Connecting-IP`; over-limit returns `429` + `Retry-After`.
@@ -597,8 +518,7 @@ them (the release-purge flow that flushes the old `/welcome` page and `/` depend
 
 **`POST /api/report` is an actual-knowledge quarantine door, not a scanner** (`handleAbuseReport`,
 `src/abuse-report.ts`). Nothing in the studio inspects content; a report from a person is the whole
-detection surface. The route is `consumer` scope, so any admitted credential can call it (it is not
-open on a demo deploy). Body `{ project, reason?, keys? }`: `project` is required (non-empty, at most
+detection surface. The route is `consumer` scope, so any admitted credential can call it. Body `{ project, reason?, keys? }`: `project` is required (non-empty, at most
 128 characters, no `/` or `..`, else `400 project is required`); `reason` is trimmed and cut to 2000
 characters; `keys` is at most 32 entries (else `400 too many keys`), each passing `isSafeRelKey` and
 not already under `quarantine/` (else `400 unsafe key`). Each key that exists is COPIED to
@@ -632,11 +552,9 @@ lines, NOT a security hash: a short input is trivially recoverable from one.
 
 - [ ] New hostname or route -> confirm the active auth gate still covers it (in production the
       in-worker token gate; in access mode the Cloudflare Access app). `/api/*` must stay gated;
-      only `/welcome`, `/health`, and the static studio shell are public (section 3). (A demo deploy is the deliberate exception, section 1d: all `GET`/`HEAD` plus `POST /api/demo/render` and `POST /api/demo/chat` are intentionally public, every other mutation `403`.)
+      only `/welcome`, `/health`, and the static studio shell are public (section 3).
 - [ ] New `/api/*` route -> declare its `scope` in `API_ROUTES` (section 1b-i): `operator` if it
       touches installation, configuration, or estate-wide state; `consumer` otherwise.
-- [ ] New demo write route -> it must be added to `DEMO_WRITE_ROUTES` deliberately, capped, and
-      re-reviewed on the live demo (section 1d); the demo write surface is exactly that set.
 - [ ] New job-keyed OR resource-`:id` route -> the id must be an unguessable `crypto.randomUUID()`
       capability (a job id, or a resource `public_id` per section 1c); never expose or accept a
       sequential integer or other low-entropy id as a capability.
@@ -678,7 +596,7 @@ lines, NOT a security hash: a short input is trivially recoverable from one.
 - #416 -- byte-range media serving on `/api/artifact` + worker-authoritative `Cache-Control` (section 8; the zone cache-bypass rule is optional hardening).
 - #423 -- built-in token auth mode (section 1b); Cloudflare Access becomes optional hardening, not a deploy prerequisite.
 - cf#520 -- per-route `operator` / `consumer` authorization; named tokens carry a scope (section 1b-i, migration 0020).
-- #625 / #631 -- demo auth mode and the Phase B capped demo render + assistant (section 1d).
+- #625 / #631 -- the public demo auth mode and its capped render + assistant. REMOVED ENTIRELY (Conrad's ruling), in two steps: the custom domain went 2026-10-08, the deployment went 2026-10-19 (both Worker scripts, D1, R2 bucket, AI Gateway). `AUTH_MODE=demo` is no longer accepted. Kept here as the record of what the section-1d posture was.
 - cp#270 -- `InvokeRequest.r2`: the R2 key pair handed to first-party `needs_tenant_r2` modules (sections 4, 7a).
 - #345 (F5b) -- runtime `hookOutputViolation` at the terminal consumption seams (section 7).
 - cf#223 / control-plane#130 -- content-free log labels; the abuse report contact (section 9).

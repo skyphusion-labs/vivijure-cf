@@ -296,9 +296,13 @@ export function ownsVoiceRefKey(castId: number, key: string | null | undefined):
 /**
  * True for a stored value that is not a key in OUR bucket and must never be handed to `delete`.
  *
- * `migrations/demo/0001_demo_seed.sql` seeds `portrait_key` and `output_key` with absolute
- * `https://assets.skyphusion.net/...` URLs, on purpose: the demo deploy binds no R2, so the
- * frontend uses the column verbatim. A delete of such a value is a harmless no-op today, but it
+ * THE GUARD IS CORRECT INDEPENDENTLY OF WHERE IT CAME FROM, and it came from a seed that no longer
+ * exists: `migrations/demo/0001_demo_seed.sql` seeded `portrait_key` and `output_key` with absolute
+ * `https://assets.skyphusion.net/...` URLs, and that migration went with the public demo door
+ * (pr1019). What survives is the reason to keep this: `artifactUrl` in `public/cast.js` and
+ * `public/planner-history-row.js` still returns an absolute `http(s)://` value VERBATIM instead of
+ * routing it through `/api/artifact/`, so an absolute value is a shape these columns can legitimately
+ * carry and any writer can still put one there. A delete of such a value is a harmless no-op, but it
  * would be counted as a freed object and reported as one, which is a lie in the reassuring
  * direction.
  */

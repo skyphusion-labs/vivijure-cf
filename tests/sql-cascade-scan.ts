@@ -77,9 +77,16 @@ export function stripSqlComments(sql: string): string {
  * intact (a `--` inside one would otherwise swallow the rest of the line and hide a real cascade),
  * while a keyword search must drop them.
  *
- * MEASURED REASON THIS EXISTS: `migrations/demo/0001_demo_seed.sql` seeds a module manifest whose
- * JSON carries `"label":"Training references (FLUX 2 / Nano Banana)"`. A `\bREFERENCES\b` search
- * over comment-stripped SQL matches that ENGLISH WORD and reports a foreign key that is not there.
+ * MEASURED REASON THIS EXISTS, and the case is now HISTORICAL rather than live:
+ * `migrations/demo/0001_demo_seed.sql` seeded a module manifest whose JSON carried
+ * `"label":"Training references (FLUX 2 / Nano Banana)"`, and a `\bREFERENCES\b` search over
+ * comment-stripped SQL matched that ENGLISH WORD and reported a foreign key that was not there.
+ * That migration went with the public demo door (pr1019), and MEASURED on the tree that removed
+ * it: ZERO of the 23 surviving migrations carry an FK keyword inside a string literal. So this
+ * stripper currently changes nothing for the premise check, and it STAYS anyway for two reasons
+ * -- any future literal reintroduces the case, and its behaviour is gated by a PLANTED positive
+ * control in migration-fk-cascade-guard-1014.test.ts rather than by live data, so deleting it
+ * turns that control red. Do not read an empty live corpus as this being unmotivated.
  * (A search without word boundaries is worse still: `SharedPreferences` in a comment contains
  * `references` as a substring.) Matching prose is the productive-looking direction, and a guard
  * whose premise check cries wolf is a guard someone loosens.

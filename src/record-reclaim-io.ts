@@ -295,7 +295,7 @@ export async function reclaimRenderRows(
     extraKeys: await outputKeyGate(env, rows, budget),
   });
 
-  // A stored absolute URL is not a key in this bucket (the demo seed stores one on purpose). Drop it
+  // A stored absolute URL is not a key in this bucket; see isForeignRef for the shape and why. Drop it
   // before planning so it is never counted as a freed object.
   const plan = planReclaim(candidates.filter((k) => !isForeignRef(k)), live);
 

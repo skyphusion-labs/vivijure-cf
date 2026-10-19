@@ -154,9 +154,6 @@ describe("isSpendRoute -- the planner/chat surface (cf#256)", () => {
     expect(isSpendRoute("POST", "/api/storyboard/yaml")).toBe(false);
     expect(isSpendRoute("POST", "/api/storyboard/markers")).toBe(false);
     expect(isSpendRoute("POST", "/api/storyboard/bundle")).toBe(false);
-    // The demo assistant is deliberately NOT here: it runs a Workers AI OSS model behind its own
-    // per-IP + global D1 caps (src/demo-chat.ts) and holds no gateway credential.
-    expect(isSpendRoute("POST", "/api/demo/chat")).toBe(false);
   });
 });
 

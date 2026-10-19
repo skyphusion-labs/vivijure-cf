@@ -26,7 +26,7 @@ this studio's published release unmodified, so hosted and self-hosted never drif
 
 **Vivijure Studio:** https://vivijure.com · **Skyphusion Labs:** https://skyphusion.org
 
-The public demo host `demo.vivijure.com` was removed on purpose on 2026-10-08. It is not a live site. Re-adding one custom domain restores it.
+The public demo is removed entirely, in two steps: the `demo.vivijure.com` custom domain went on 2026-10-08, and the deployment went on 2026-10-19 (both Worker scripts, the D1, the R2 bucket and the AI Gateway). This panel no longer carries a demo door.
 
 ## Layout
 

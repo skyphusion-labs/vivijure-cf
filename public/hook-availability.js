@@ -1,8 +1,8 @@
 // Vivijure studio -- hook availability gate (cf#98). A GATE, not a feature, exactly
-// like readonly-gate.js: no nav entry, no page of its own. It is a PROJECTION of the
+// like abuse-link.js: no nav entry, no page of its own. It is a PROJECTION of the
 // registry, never a hardcoded per-feature availability check. The sole signal is
 // host.hooks_unavailable on GET /api/modules (the core describing ITSELF, sibling of
-// host.dispatch and host.readonly). On a deploy that does not report it, the map is
+// host.dispatch). On a deploy that does not report it, the map is
 // empty and this shim is completely inert.
 //
 // WHY (cf#98): a hosted tenant studio provisioned without the AI binding / GATEWAY_ID

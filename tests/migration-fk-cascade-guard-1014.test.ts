@@ -227,11 +227,17 @@ describe("the real migrations declare no delete cascade on a key-naming column",
     // rather than silently carrying on.
     //
     // COMMENTS AND LITERALS BOTH HAVE TO GO, and finding that out is why this assertion exists in
-    // this form. Over comment-stripped SQL alone it goes RED on
-    // `migrations/demo/0001_demo_seed.sql`, whose seeded module manifest contains the English words
-    // "Training references". That is a keyword matching PROSE, which is the productive-looking
-    // direction, and it is the same class of error as a word-boundary-free search matching
-    // `references` inside `SharedPreferences` in a comment.
+    // this form. Over comment-stripped SQL alone it went RED on
+    // `migrations/demo/0001_demo_seed.sql`, whose seeded module manifest contained the English
+    // words "Training references". That is a keyword matching PROSE, which is the
+    // productive-looking direction, and it is the same class of error as a word-boundary-free
+    // search matching `references` inside `SharedPreferences` in a comment.
+    //
+    // THAT CASE IS NOW HISTORICAL: the demo seed went with the public demo door (pr1019), and
+    // measured on the tree that removed it, ZERO of the 23 surviving migrations carry an FK
+    // keyword inside a literal. So `stripSqlLiterals` is a no-op for THIS corpus today. It stays
+    // because the next literal reintroduces the case, and because the planted control below is
+    // what actually holds its behaviour, not the live data.
     const corpus = stripSqlLiterals(stripSqlComments(files.map((f) => readFileSync(f, "utf8")).join("\n")));
     expect(corpus, "a REFERENCES clause appeared; re-read the cf#1014 reasoning").not.toMatch(/\bREFERENCES\b/i);
     expect(corpus).not.toMatch(/\bFOREIGN\s+KEY\b/i);

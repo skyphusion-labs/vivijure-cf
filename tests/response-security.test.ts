@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   applyResponseSecurity,
-  STUDIO_DEMO_CSP,
   LOCKED_CSP,
   STUDIO_CSP,
 } from "../src/asset-response";
@@ -13,35 +12,30 @@ function req(path: string): Request {
   return new Request("https://vivijure.skyphusion.org" + path);
 }
 
-describe("applyResponseSecurity -- demo media-src (#625)", () => {
-  it("a studio page on a DEMO deploy gets STUDIO_DEMO_CSP (img-src + media-src admit exactly the showcase host)", () => {
-    const out = applyResponseSecurity(htmlResponse("<html></html>"), req("/planner"), { AUTH_MODE: "demo" } as any);
-    const csp = out.headers.get("content-security-policy")!;
-    expect(csp).toBe(STUDIO_DEMO_CSP);
-    // seeded cast portraits are absolute assets.skyphusion.net URLs -> img-src must admit the host
-    expect(csp).toContain("img-src 'self' data: blob: https://assets.skyphusion.net;");
-    // showcase films -> media-src admits the host AND stays the LAST directive (Phase-B append invariant)
-    expect(csp).toContain("media-src 'self' https://assets.skyphusion.net");
-    expect(csp.endsWith("media-src 'self' https://assets.skyphusion.net")).toBe(true);
-    // the non-image prod directives are byte-identical (only img-src is widened)
-    expect(csp).toContain("default-src 'self'; script-src 'self'; style-src 'self'; img-src");
-    expect(csp).toContain("; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self';");
-  });
-  it("prod STUDIO_CSP is NOT widened by the demo change -- img-src has no external origin", () => {
+describe("applyResponseSecurity -- the page CSP does not vary by env", () => {
+  // The demo door used to widen img-src and add media-src for assets.skyphusion.net. That door was
+  // removed (pr1019), so a studio page gets STUDIO_CSP whatever the env says, and no env value can
+  // widen it. The external origin must not reappear in the prod policy.
+  it("prod STUDIO_CSP admits no external origin on img-src", () => {
     expect(STUDIO_CSP).toContain("img-src 'self' data: blob:;");
     expect(STUDIO_CSP).not.toContain("assets.skyphusion.net");
   });
-  it("a NON-demo env (token mode) gets STUDIO_CSP byte-identical -- no media-src", () => {
+  it("token mode gets STUDIO_CSP", () => {
     const out = applyResponseSecurity(htmlResponse("<html></html>"), req("/planner"), { AUTH_MODE: "token" } as any);
     expect(out.headers.get("content-security-policy")).toBe(STUDIO_CSP);
   });
-  it("env omitted (every existing call/test shape) is never demo", () => {
+  it("env omitted (every existing call/test shape) gets STUDIO_CSP", () => {
     const out = applyResponseSecurity(htmlResponse("<html></html>"), req("/planner"));
     expect(out.headers.get("content-security-policy")).toBe(STUDIO_CSP);
   });
-  it("a demo NON-page response stays LOCKED (media-src is a page policy, nothing else widens)", () => {
+  it("an UNRECOGNISED AUTH_MODE cannot widen the page policy either", () => {
+    const out = applyResponseSecurity(htmlResponse("<html></html>"), req("/planner"), { AUTH_MODE: "demo" } as any);
+    expect(out.headers.get("content-security-policy")).toBe(STUDIO_CSP);
+    expect(out.headers.get("content-security-policy")).not.toContain("media-src");
+  });
+  it("a NON-page response stays LOCKED whatever the env", () => {
     const j = new Response("{}", { headers: { "content-type": "application/json" } });
-    const out = applyResponseSecurity(j, req("/api/modules"), { AUTH_MODE: "demo" } as any);
+    const out = applyResponseSecurity(j, req("/api/modules"), { AUTH_MODE: "token" } as any);
     expect(out.headers.get("content-security-policy")).toBe(LOCKED_CSP);
   });
 });
