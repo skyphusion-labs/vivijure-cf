@@ -5,6 +5,140 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.37.0 -- 2026-10-19
+
+### fix(delete): project and render delete now free their R2 objects (cf#1007, cf#779)
+
+`PRIVACY.md` Section 7 promises that the studio's delete actions "remove the
+corresponding records and free their stored files". Cast delete has done that
+since #298; project and render delete dropped the D1 row and freed nothing, and
+because `r2-orphan-reconcile.ts` treats every non-cast key as out-of-scope, the
+row was the last thing that named those objects.
+
+Both routes now reclaim before the row goes. Candidates come from the RECORDS,
+never from a prefix: the row's key columns, its film and clips job documents
+(including takes, which `archiveExistingClipTakes` records nowhere else), its
+`shot_records`, its own `renders/<job_id>/` tree, the `renders/logs/<job_id>.txt`
+log that nothing in D1 names, and the suffix sidecars of each key that is
+actually going. A project delete reclaims all of its renders as one operation
+and drops them with it.
+
+Every candidate is gated on not being referenced by a surviving record.
+`renders/<project>/...` is a cross-render namespace that `assertProjectKey`
+enforces and that take-archiving and keyframe adoption both read, so a prefix
+sweep there would destroy a sibling render's only copy of its clips.
+`countOtherRowsWithOutputKey` is the gate for `output_key`, which is its first
+caller; it is used only for a single-row delete, because in a cascade it counts
+the other doomed rows as live.
+
+Ordering: R2 first, the row last, and only on a complete reclaim. An incomplete
+reclaim keeps the record and answers 409, so the keys stay findable and a retry
+converges. The reverse ordering turns one failed delete into a permanent
+invisible leak.
+
+Cast delete also collects `wan_lora_key_high` / `wan_lora_key_low`, and
+`voice_ref_key` when it is the member's own `cast/<id>/` object. The generated
+sample shape is ONE key shared by every cast member and is left behind
+deliberately; see cf#1008. The remaining orphan backlog is cf#1009.
+
+### feat(demo)!: the public demo door is removed entirely
+
+The public demo is gone, not deprecated, and it went in two steps: the `demo.vivijure.com` custom domain was removed on 2026-10-08, and the deployment was deleted on 2026-10-19 (the D1 database, the R2 bucket, both Worker scripts and the AI Gateway). No demo DNS record, worker route or custom domain remains on any zone, so every demo binding in this panel addressed something that no longer exists.
+
+Removed: the four `/api/demo/*` routes and their handlers, the seeded demo render and the capped open-weights assistant, the `AUTH_MODE=demo` gate branch, the eight `DEMO_*` vars in the `Env` interface and in the orchestrator var contract, the demo page CSP, the `host.readonly` / `host.render` / `host.assistant` fields on `GET /api/modules`, the demo-only remap of `/` to the planner, the two demo frontend shims with their styles, the demo D1 migrations, both demo wrangler templates, and `docs/demo-studio.md`.
+
+`AUTH_MODE` now accepts `token`, `access` and unset. A deploy that still sets it to `demo` is denied, which is the fail-closed path.
+
+The route table is 89 entries over 71 path patterns, down from 93 over 75. The published parity and contract numbers are re-measured from the table, not adjusted by hand.
+
+The `local-gpu` module stays. It is a live deployed worker that the ordinary render path reaches through the registry; only the demo-scoped door was dead.
+
+### test(migrations): guard against an ON DELETE CASCADE that would undo cf#1007
+
+Conrad ruled on 2026-10-19 that deleting a project deletes its renders. The
+schema does not say so: `renders.project_id` and `renders.parent_id` are
+comments (`-- logical FK`), and this schema declares no foreign keys at all.
+So "make the schema honest about the ruling" is a plausible future cleanup
+whose obvious spelling is `ON DELETE CASCADE`, and that would silently undo
+cf#1007.
+
+A cascade on either column deletes the rows that NAME a render's R2 keys
+inside the same statement that deletes the parent, so the reclaim in
+`hDeleteProject` / `hDeleteRender` can never run first. Every object is
+orphaned with nothing left to find it by, the orphan sweep is cast-only and
+will not collect it, and the DELETE succeeds with D1 looking perfectly
+consistent. It fails in the reassuring direction.
+
+`ON DELETE RESTRICT` was considered and rejected as the primary control. It
+orders the two D1 deletes against each other and says nothing about R2:
+deleting the render rows and then the project row satisfies it and leaks
+every object. It would also read as though the class were closed, which is
+worse than the prose it replaces.
+
+Test only. No FK is declared, no table is rebuilt, no handler changes.
+
+The detector strips SQL comments with quote tracking rather than by line,
+because a migration DOCUMENTING this prohibition is the likeliest thing to
+land in that directory, and a `--` inside a string literal would otherwise
+hide a real cascade. A second pass blanks string literals for the premise
+check, since the demo seed contains the English words "Training references".
+Both FK spellings are covered, both guarded columns, subdirectories included,
+and the scan asserts it read the tree so a wrong path cannot pass as a clean
+schema.
+
+### fix(cast-media): collect the superseded portrait on the staged-key path
+
+The JSON `{ key, mime }` branch of `handleCastPortraitUpload` wrote the row
+and returned, so every panel-staged portrait replacement left the previous
+object in the bucket with nothing pointing at it. The chat-artifact and
+raw-bytes branches already call `deleteSupersededPortrait` after the row
+write, and only when that write returned a row. The staged-key branch now
+does the same. The helper still returns immediately when the old key is
+empty or equal to the new key, so a same-key re-register does not delete
+the object just registered. No bucket sweep.
+
+Parity with vivijure-local#446.
+
+### docs(video-finish): the plane writes the tier-state var (cf#871)
+
+The comment said nothing sets `VIDEO_FINISH_TIER_STATE`. The control plane
+projects it on provision, studio upgrade, and the admin route. That sentence
+is removed. Precedence is unchanged: a live door or a non-empty URL is
+available, and the label applies only when both are absent.
+
+### fix(render): refuse when the bundle dialogue cannot be read (cf#927)
+
+`render-from-keyframes` and the agent door read the bundle outside the dialogue guard. A bundle that is not gzip now returns 503 and does not start the film. A missing bundle is still "no scenes".
+
+### docs(kling-o1-r2v): name Kling Video O1 R2V in the module headers (cf#928)
+
+The headers said Kling V2.1 I2V Pro. The worker submits to `kling-video-o1-r2v`. Comments only.
+
+### feat(cast): finish the character before a film (cf#982)
+
+The cast page binds a portrait with `{ from_chat_artifact }` (the copy form in
+CONTRACT 2.7). It no longer offers a Seedance voice sample. Hear one Aura-1 line
+and that `voice_id` stays on the member. When the reference job lands at least
+four stills, the studio starts the SDXL LoRA on the keyframe endpoint. The first
+storyboard does not train it. Wan cast training stays a separate button.
+
+### feat(shot): a shot is a Workflow over D1 and R2 (cf#984)
+
+The film job document in R2 stays the orchestrator's copy. `shot_records` is the
+per-shot step record: still key, wav key, clip key, and which step is running.
+A failed step retries that step. The clip call is a presigned URL. The studio
+worker does not buffer the MP4. A tenant worker and a dispatch module do not
+receive the R2 credential. Vendor modules that already have a Workflow are not
+wrapped again.
+
+### fix(film): a film is not done until it is joined
+
+The poll reports a film failed when the join did not run, including when the published package still marks that job done. A song starts a film only after beat-sync has read it. The analyze route stores that read in R2, and the film start doors refuse a song with no read. A spoken line whose word-count estimate is longer than 12 seconds is refused at those same doors when a song is attached. The planner sets a spoken shot to that estimate when the line fits the beat window, and it reports the shot when the line does not fit. The upload hint says a full song is mp3 or m4a, the cap is 32 MB, and a stereo 44.1 kHz WAV of about three minutes fills the cap.
+
+video-finish, audio-beat-sync, audio-mix, and audio-master run one image that contains ffmpeg and librosa. image-prep stays its own image. Compose selects the service with CPU_APP.
+
+A song analyzed before this marker existed has no `<audioKey>.beats.json`. Those doors refuse it until the track is analyzed again.
+
 ## v1.36.0 -- 2026-10-14
 
 ### fix(ci)!: the capability-matrix gate tolerates ONE declared transition, in both directions (vivijure#830)
