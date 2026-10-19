@@ -11,6 +11,7 @@ import {
 } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "./cast-public";
+import { ownsVoiceRefKey } from "./record-reclaim";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 import { getServedArtifact } from "./shared";
@@ -377,6 +378,17 @@ export async function deleteCastArtifacts(env: Env, cast: CastMember): Promise<v
     ...cast.ref_keys.map((r) => r.key),
     ...cast.source_keys.map((s) => s.key),
     cast.lora_key,
+    // cf#779: THREE key columns were added to cast_members after #298 and never reached this list,
+    // so every cast delete has leaked them since. `wan_lora_key_high` / `wan_lora_key_low` are the
+    // Wan expert adapters beside the single-file `lora_key` (migration 0012); each is written per
+    // cast per training run, so they are this member's alone. A key column added to the row and not
+    // added here is a silent leak by construction, which is what this list is for.
+    cast.wan_lora_key_high,
+    cast.wan_lora_key_low,
+    // `voice_ref_key` (migration 0021) only when it is this member's OWN object. The generated-sample
+    // shape is one key SHARED by every cast member; see ownsVoiceRefKey for why it is left behind
+    // rather than deleted. Still a leak, and reported as one.
+    ownsVoiceRefKey(cast.id, cast.voice_ref_key) ? cast.voice_ref_key : null,
   ].filter((k): k is string => typeof k === "string" && k.length > 0);
   for (const key of keys) {
     try { await env.R2_RENDERS.delete(key); } catch { /* ignore: best-effort GC */ }
