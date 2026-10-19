@@ -5,7 +5,7 @@
 > advice and reading it does not create an attorney-client relationship. If you are unsure how it
 > applies to you, or you run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-10-18
+**Effective date:** 2026-10-19
 
 ---
 
@@ -14,7 +14,8 @@
 We do not want your data. With Vivijure that is not a slogan, it is a literal fact: **there is no
 Vivijure service that we operate to hold your content, so there is almost nothing for us to
 collect.** The public demo host was removed on purpose on 2026-10-08. It is not a live site.
-Re-adding one custom domain restores it (Section 1a).
+The deployment was deleted on 2026-10-19 (both Worker scripts, the D1 database, the R2 bucket,
+the AI Gateway) and no configuration change brings it back (Section 1a).
 
 - **Vivijure is free software (AGPL-3.0-only) that you run yourself.** You deploy it on your own
   infrastructure (your own Cloudflare account, your own GPU/RunPod), and your storyboards, prompts,
@@ -27,8 +28,9 @@ Re-adding one custom domain restores it (Section 1a).
   `vivijure.skyphusion.org`: gated, used by Conrad and the crew (plus the Slate Discord bot via its
   own named API token), not a service anyone signs up for; it processes Conrad's own creative
   content, not data collected from outside users. The public demo host `demo.vivijure.com` was
-  removed on purpose on 2026-10-08. It is not a live site. Re-adding one custom domain restores it.
-  Section 1a records the retirement.
+  removed on purpose on 2026-10-08. It is not a live site. The deployment was deleted on 2026-10-19
+  (both Worker scripts, the D1 database, the R2 bucket, the AI Gateway) and no configuration change
+  brings it back. Section 1a records the retirement.
 
 If you want a privacy policy for your Vivijure instance, you write it, because you are the operator
 and the only person who can see that data. This document explains why the software collects so
@@ -48,7 +50,7 @@ is always "whoever runs that instance," never Skyphusion Labs as some central op
 |---|---|---|
 | **You self-host** | You (or whoever deployed that instance) | Yours, on your infrastructure. Skyphusion Labs never receives it. |
 | **Conrad's private instance (`vivijure.skyphusion.org`)** | Skyphusion Labs (Conrad), for Conrad and the crew only | Conrad's own creative content on Conrad's infrastructure. Not data collected from outside users; there are no outside users. |
-| **The public demo (`demo.vivijure.com`), retired 2026-10-08** | Was Skyphusion Labs (Conrad). The custom domain was removed on purpose. Not a live site. Re-adding one custom domain restores it. | Not stated here. Section 1a records the retirement only. |
+| **The public demo (`demo.vivijure.com`), retired 2026-10-08** | Was Skyphusion Labs (Conrad). The custom domain was removed on purpose. Not a live site. The deployment was deleted on 2026-10-19 and no configuration change brings it back. | Not stated here. Section 1a records the retirement only. |
 
 We still do not host instances that hold OTHER people's content, and will not get into hosting or
 managing them for anyone. If you reach a Vivijure instance, whoever deployed it is the operator; the AGPL
@@ -62,8 +64,9 @@ what Conrad's own private instance does, as a worked, honest example.
 
 ## 1a. The public demo studio (`demo.vivijure.com`)
 
-Retired 2026-10-08. The custom domain was removed on purpose. It is not a live site. Re-adding one
-custom domain restores it.
+Retired 2026-10-08. The custom domain was removed on purpose. It is not a live site. The deployment
+was deleted on 2026-10-19 (both Worker scripts, the D1 database, the R2 bucket, the AI Gateway) and
+no configuration change brings it back.
 
 ## 2. How the system is built (why there is so little data)
 
