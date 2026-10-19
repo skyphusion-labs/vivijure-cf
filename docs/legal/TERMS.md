@@ -5,7 +5,7 @@
 > it does not create an attorney-client relationship. If you are unsure how it applies to you, or you
 > run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-06-26
+**Effective date:** 2026-10-18
 
 ---
 
@@ -109,8 +109,13 @@ rights. That determination is between you, your facts, and your own legal advice
 ## 6. Third-party providers and pass-through terms
 
 Running Vivijure routes work through third-party infrastructure (the Privacy Policy lists them:
-Cloudflare, RunPod, and AI model providers reached via the Cloudflare AI Gateway or, for the i2v and cast
-modules, the RunPod backend). When you self-host,
+Cloudflare, RunPod, and AI model providers reached via Cloudflare (the AI Gateway or Workers AI) or
+via the RunPod backend for several of the i2v modules). The image-generate module is separate. When
+the operator has configured an OpenAI API key and an OpenAI image model is selected, that module
+sends the prompt text only to OpenAI's own image API, under the operator's own OpenAI account.
+Reference images are not forwarded. The Cloudflare AI Gateway is not in that path, so the Gateway's
+logging, retention, spend controls, and Unified Billing do not apply. OpenAI's API data terms apply.
+When you self-host,
 these are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
 acceptable-use policies. A provider's content rules may restrict what you can generate independently of
 this document. Skyphusion Labs is not responsible for those providers' acts, outages, or model
