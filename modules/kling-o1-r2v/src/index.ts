@@ -1,7 +1,7 @@
-// kling-o1-r2v: a motion.backend module worker (vivijure-module/2), Kuaishou Kling V2.1 I2V Pro on RunPod.
+// kling-o1-r2v: a motion.backend module worker (vivijure-module/2), Kuaishou Kling Video O1 R2V
+// on the RunPod public endpoint api.runpod.ai/v2/kling-video-o1-r2v.
 // Async (same shape as seedance): GET /module.json, POST /invoke (submit -> poll token), POST /poll
-// (check GET /status, finalize to R2 on completion). The second motion.backend backend -> the UI's
-// pick_one hook now has a real choice. Failures are DATA.
+// (check GET /status, finalize to R2 on completion). Failures are DATA.
 
 import {
   MODULE_API,
@@ -54,7 +54,7 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "3-10 second clips",
       "Silent motion",
-      "Speaking is Cast voice plus MuseTalk",
+      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
     ],
   },
   usage: {

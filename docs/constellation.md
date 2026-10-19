@@ -30,7 +30,7 @@ flowchart TD
 
     subgraph modules[Modules: one job each, opt-in]
         cloudmods[Cloud video modules<br/>Seedance, Kling, Veo, Wan, ...]
-        finishmods[Finish modules<br/>upscale, smooth, lip-sync, titles]
+        finishmods[Finish modules<br/>upscale, smooth, grade, titles]
         audiomods[Audio modules<br/>music, narration]
     end
 
@@ -41,9 +41,7 @@ flowchart TD
     end
 
     subgraph finish[Finish helper engines]
-        musetalk[vivijure-musetalk<br/>lip-sync]
         upscale[vivijure-upscale<br/>video upscale]
-        audioup[vivijure-audio-upscale<br/>audio cleanup]
     end
 
     discord --> slate
@@ -53,9 +51,7 @@ flowchart TD
     studio --> finishmods
     studio --> audiomods
     cloudmods --> backend
-    finishmods --> musetalk
     finishmods --> upscale
-    audiomods --> audioup
     studio --> backend
     studio --> local12
     studio --> local16

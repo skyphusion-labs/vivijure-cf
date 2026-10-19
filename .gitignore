@@ -4,6 +4,12 @@ node_modules/
 dist/
 *.log
 worker-configuration.d.ts
+
+# cf#780: wrangler's own bundler output dir. studio-release.yml regenerates it on every tagged
+# run (`wrangler deploy --dry-run --outdir=bundle-out`) and consumes it from there, so the tree
+# copy is never what ships. One got committed on 2026-07-24 and sat 30+ releases stale, a second
+# copy of bundled core that reads as source to a grep and shadows the real definition.
+bundle-out/
 .DS_Store
 __pycache__/
 *.pyc

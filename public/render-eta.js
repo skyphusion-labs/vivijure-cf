@@ -8,7 +8,9 @@
 // lora-preflight.js).
 //
 // Why this exists: the render-status poll envelope (filmJobToPollView ->
-// phaseProgress in src/film-render-bridge.ts) only carries a `progress`
+// phaseProgress, both in core's film-render-bridge; the host's own
+// src/film-render-bridge.ts is a re-export shim and does not carry
+// phaseProgress) only carries a `progress`
 // float during the i2v (clips) phase. The keyframe phase pins scene_index
 // to 1 (so the old scene-count fraction was 0 the whole phase), and the
 // finish / assemble / mux phases carry no per-unit signal at all -- so the
@@ -55,9 +57,11 @@
   // Cumulative progress bands, in pipeline order. start + span per phase; the
   // spans sum to 1. i2v (video generation) is the heaviest GPU phase, so it
   // owns the widest band; finish / assemble / mux are comparatively cheap. The
-  // phase keys match the `phase` strings the backend poll view emits
-  // (src/film-render-bridge.ts phaseProgress: keyframe / i2v / finish /
-  // assemble / mux).
+  // phase keys match the `phase` strings the backend poll view emits.
+  // phaseProgress in core's film-render-bridge emits five of them (keyframe /
+  // i2v / finish / assemble / mux); the rest below are emitted by core's other
+  // progress paths (scatter shards, the pre-clip audio stages), which is why
+  // this table is deliberately wider than any single emitter.
   const PIPELINE_PHASES = [
     { key: "keyframe", start: 0.0, span: 0.35 },
     { key: "pre_clip_dialogue", start: 0.30, span: 0.05 },

@@ -865,7 +865,17 @@ function finalizeRenderPoll(data) {
     // the panel used to drop that on the floor and paint a plain green "completed".
     const degrade = window.finishDegrade ? window.finishDegrade.degradeFrom(out) : null;
     const clipFinish = window.finishDegrade ? window.finishDegrade.clipFinishFrom(out) : null;
-    const limited = !!(degrade || clipFinish);
+    // cf#853 / core#317: speech, master and dialogue degrades reach the payload as their own
+    // top-level keys. Before this they were console.warn only, so a film that was never
+    // mastered, whose speech chain passed everything through, or that shipped without
+    // voices was painted plain green and was indistinguishable from a clean one.
+    //
+    // `limited` is an OR over signals that REPORTED a limit, which is deliberately not a
+    // worst-of over bands: an unmeasured stage is not a limit and must not warn, and an
+    // unreadable one is handled by its own band rather than by claiming the studio named
+    // something it did not. See combineBands() in finish-degrade.js.
+    const stageDegrades = stageDegradesOf(out);
+    const limited = !!(degrade || clipFinish || stageDegrades.length);
     setRenderStatus((limited ? "completed with limits" : "completed") + elapsed, limited ? "warn" : "success");
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
@@ -924,13 +934,25 @@ function renderDeliverable(out, degrade) {
 // The disclosure block: our structural sentence, the studio reason VERBATIM, and the
 // per-shot clips as real links when they are what was delivered. Rebuilt from scratch on
 // every call so a stale note can never outlive the render that produced it.
+// cf#853: every per-stage degrade this payload REPORTS, in the declared stage order so the
+// disclosure reads the same way twice. Absent and clean stages are not here by construction
+// (stageFrom returns null for both), which is what keeps a healthy render silent.
+function stageDegradesOf(out) {
+  // cf#864: ONE enumeration, shared with the block builder and with render history, so the flag
+  // and the blocks can never disagree about which stages reported.
+  return window.stageDegradeView
+    ? window.stageDegradeView.reportedStages(out, window.finishDegrade)
+    : [];
+}
+
 function renderDegradeNote(degrade, deliv, out) {
   const host = $("#planner-render-degrade");
   if (!host) return;
   while (host.firstChild) host.removeChild(host.firstChild);
   const fd = window.finishDegrade;
   const clip = fd ? fd.clipFinishFrom(out) : null;
-  if (!degrade && !clip) {
+  const stages = stageDegradesOf(out);
+  if (!degrade && !clip && !stages.length) {
     host.hidden = true;
     return;
   }
@@ -968,6 +990,15 @@ function renderDegradeNote(degrade, deliv, out) {
       host.appendChild(why);
     }
   }
+
+  // cf#864: one block per reported stage, built by the SHARED builder. cf#853 wrote this loop
+  // here and again in planner-history-row.js; two loops that must agree forever, with nothing
+  // asserting they do, is the copy-forks-at-copy-time shape. stage-degrade-view.js is now the one
+  // place a stage degrade becomes DOM, and it is unit-tested in both directions.
+  const stageEls = window.stageDegradeView
+    ? window.stageDegradeView.stageBlocksFor(document, out, fd, { className: "render-degrade-stage" })
+    : [];
+  for (let s = 0; s < stageEls.length; s++) host.appendChild(stageEls[s]);
 
   if (deliv.kind === "clips" && deliv.clips.length) {
     const h = document.createElement("h5");

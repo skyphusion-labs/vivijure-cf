@@ -6,10 +6,10 @@ checklist, not an automation; nothing here deploys until a human runs it. Cut ta
 audio-master (master hook) modules, so it is a MINOR bump, see section 3).
 
 > **Status (post-deploy reconciliation):** this cut SHIPPED. v0.3.0 went live with all five new modules
-> (cloud-keyframe, alibaba-wan-lora, subtitle, speech-upscale, audio-master); the follow-ups v0.3.1
+> (cloud-keyframe, alibaba-wan-lora, subtitle, speech-upscale [since removed], audio-master); the follow-ups v0.3.1
 > (keyframe backend selectable), v0.3.2 (`tail_consumers` -> `vivijure-tail` observability), and v0.3.3
 > (cloud i2v duration fixes) are also live. The sections below have been reconciled to that shipped
-> reality (module names, audio-master = CPU VPC container not RunPod, speech-upscale shipped).
+> reality (module names, audio-master = CPU VPC container not RunPod, speech-upscale shipped and was later removed).
 
 > **Historical runbook (the 2026-06 v0.3.0 cut) -- read with today's map.** The deploy-ordering
 > rules here (modules before core, tag-gated CI, rollback) still hold, and this stays the reference
@@ -19,6 +19,16 @@ audio-master (master hook) modules, so it is a MINOR bump, see section 3).
 > maintain), the studio gained a built-in token login (#423; Cloudflare Access is optional
 > hardening now), and Phase 3 WfP dispatch SHIPPED (v0.8.0, 2026-07-01). Standing up a NEW studio?
 > Use `./deploy.sh` + [DEPLOYMENT.md](DEPLOYMENT.md), not this document.
+
+> **Superseded: Workers VPC for media (#764, RB-1).** Every `[[vpc_services]]` / `*_VPC` binding below
+> (`VIDEO_FINISH_VPC`, `AUDIO_MASTER_VPC`, `AUDIO_MIX_VPC`, ...) is historical. Today
+> `wrangler.toml.example` has no `[[vpc_services]]`: the core and the media modules reach the CPU
+> containers over the public HTTPS URL vars `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
+> `AUDIO_MIX_URL`, `AUDIO_MASTER_URL` (plus `FINISH_UPSCALE_DOORS` /
+> `FINISH_BLENDER_DOORS`), authenticated with `MEDIA_FINISH_TOKEN` (store secret `FINISH_DOOR_TOKEN`).
+> `scripts/fill-module-placeholders.sh` refuses a leftover `[[vpc_services]]` or VPC placeholder, and
+> `scripts/setup-media-vpc.py` only writes the compose tunnel token. Read "VPC" below as "the media
+> URL var" for the same container.
 
 Scope decision: this is ONE feature-complete v0.3.0 cut WITH master. The QA contract walk runs after
 master merges and before we tag, so master is merged + green before the tag. The out-of-band fleet
@@ -32,12 +42,18 @@ Style: no em-dashes or en-dashes (double hyphen `--` only).
 ## 0. Context you must hold before touching anything
 
 - **Deploy is tag-gated.** `.github/workflows/ci.yml` deploys ONLY on a pushed `v*` tag, after `ci`
-  (typecheck + test) passes. A bare push/merge to `main` runs the gate but NEVER deploys. So merging
+  (typecheck + test) passes. (Today the `deploy` job `needs: [ci, container-tests, migrations-gate,
+  assert-on-main]`; the same four gate the sibling `studio-release` job, which calls
+  `studio-release.yml` via `workflow_call`, publishes the release asset and advances the hosted studio
+  pin with `STUDIO_PIN_VARIABLE_TOKEN`.) A bare push/merge to `main` runs the gate but NEVER deploys. So merging
   the release-prep change to `main` is safe; the deploy happens only when you push the tag.
 - **Deploy ordering is the whole game.** The CI `deploy` job runs, in order:
   1. deploy every module worker in the loop list,
   2. apply D1 migrations (`wrangler d1 migrations apply vivijure-studio --remote`),
   3. deploy the core worker (`npm run deploy`).
+  (Today it also renders the core `wrangler.toml` before step 2, then after step 3 runs a post-deploy
+  gate self-check, an optional edge-cache purge, and the optional Studio MCP Worker deploy when the
+  `MCP_HOST` + `MCP_STUDIO_URL` repo variables are set.)
   The core binds each module as a `[[services]]` dependency. **A `[[services]]` binding pointing at a
   worker that does not exist makes the core `wrangler deploy` FAIL.** Typecheck/test does NOT catch a
   dangling binding; only a real deploy does. Modules therefore MUST exist before the core deploys.
@@ -45,8 +61,9 @@ Style: no em-dashes or en-dashes (double hyphen `--` only).
   in the SAME change.
 - **The 5 CPU containers are NOT deployed by `wrangler`.** `video-finish`, `image-prep`,
   `audio-beat-sync`, `audio-mix`, and `audio-master` run always-on on the operator's container host
-  as Docker services via `containers/compose.yaml`, reached over Workers VPC bindings
-  (`VIDEO_FINISH_VPC` etc.). They are deployed OUT OF BAND. Self-hosts: `docker compose` build.
+  as Docker services via `containers/compose.yaml`, reached (at the time) over Workers VPC bindings
+  (`VIDEO_FINISH_VPC` etc.; today the `*_URL` vars, see the superseded note above). They are deployed
+  OUT OF BAND. Self-hosts: `docker compose` build.
   Skyphusion fleet: GHCR packages `ghcr.io/skyphusion-labs/vivijure-cf-<svc>` published by
   `.github/workflows/build-media-images.yml` (see [containers/README.md](../containers/README.md)).
   **This cut changes `video-finish` (new `/subtitle` route), so the container must be rebuilt +
@@ -85,8 +102,10 @@ curl -fsS http://<video-finish-host>:<port>/health        # liveness
 # /subtitle is a POST; reachability is verified via the VPC smoke in section 4.
 ```
 
-No `service_id` change: `VIDEO_FINISH_VPC` stays `019ecbe6-9fc1-70a0-9946-14bbec0f51bc`. This is a
-container content update only, so the core/module VPC bindings are unaffected.
+No `service_id` change: `VIDEO_FINISH_VPC` kept its existing (account-internal, deploy-injected)
+service id. This is a container content update only, so the core/module VPC bindings are unaffected.
+(Superseded: there is no `VIDEO_FINISH_VPC` today; the core reaches the container at
+`VIDEO_FINISH_URL`.)
 
 ### 1.1 cloud-keyframe -> `MODULE_CLOUD_KEYFRAME`  (NEW binding, add fresh)
 
@@ -101,6 +120,11 @@ npx wrangler deploy -c modules/cloud-keyframe/wrangler.toml
 #    FLUX-2 runs direct on the AI binding and needs no secret. Seed only if enabling the proxied path:
 npx wrangler secret put GATEWAY_ID -c modules/cloud-keyframe/wrangler.toml   # AI Gateway slug
 ```
+
+> **Do not run this today (#764, RB-6).** `GATEWAY_ID` (and `RUNPOD_API_KEY` in 1.2) are now
+> `[[secrets_store_secrets]]` bindings in the module configs; a `wrangler secret put` of the same name
+> collides with the store binding (#479). Seed the Secrets Store instead (DEPLOYMENT.md "Module secrets
+> via the Secrets Store").
 
 Core binding to ADD to `wrangler.toml` (no block exists yet; place it beside the other keyframe/cloud
 modules; note it is SEPARATE from the existing GPU `MODULE_KEYFRAME`):
@@ -152,26 +176,13 @@ binding = "MODULE_SUBTITLE"
 service = "vivijure-module-subtitle"
 ```
 
-### 1.4 speech-upscale -> `MODULE_SPEECH_UPSCALE`  (shipped in v0.3.0)
+### 1.4 speech-upscale -- REMOVED (cf#786)
 
-Shipped on `main` as `modules/speech-upscale/` (service `vivijure-module-speech-upscale`). It is a
-RunPod module -- the dedicated `vivijure-audio-upscale` CUDA endpoint, NOT a CPU container -- so the
-deploy pattern matches alibaba-wan-lora; since #238 its two RunPod secrets are Secrets-Store-bound (not per-module wrangler secret put):
-
-```bash
-npx wrangler deploy -c modules/speech-upscale/wrangler.toml
-# RUNPOD_API_KEY (shared) + RUNPOD_ENDPOINT_ID (store secret AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID = the
-# vivijure-audio-upscale endpoint) are seeded ONCE in the account Secrets Store, not per-module
-# `wrangler secret put`; deploy.sh (full profile) seeds them. See docs/DEPLOYMENT.md.
-```
-
-Core binding:
-
-```toml
-[[services]]
-binding = "MODULE_SPEECH_UPSCALE"
-service = "vivijure-module-speech-upscale"
-```
+This step is gone. `modules/speech-upscale/`, the `MODULE_SPEECH_UPSCALE` binding, the
+`AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID` store secret and the `vivijure-audio-upscale` endpoint are all
+removed: the endpoint no longer existed (cf#757), the module had no planner trigger after MuseTalk
+went (cf#783), and its purpose was cleaning dialogue for the post-hoc lip-sync step that no longer
+exists. Numbering is left in place so 1.5 and the cross-references below still resolve.
 
 ### 1.5 audio-master (the `master` hook module) -> shipped in v0.3.0
 
@@ -232,10 +243,10 @@ build). This keeps every binding pointing at an already-deployed module.
    - ADD `[[services]] MODULE_SUBTITLE -> vivijure-module-subtitle` (1.3)
    - ADD `[[services]] MODULE_AUDIO_MASTER -> vivijure-module-audio-master` (1.5; audio-master DOES
      ship a CPU container, so ALSO add its `[[vpc_services]]` `AUDIO_MASTER_VPC` block, see 1.5)
-   - ADD `[[services]] MODULE_SPEECH_UPSCALE -> vivijure-module-speech-upscale` (1.4)
 2. `src/env.ts` (hand-authored `Env`): **no edit needed for the module bindings.** `Env` uses the
    generic template-literal index signature `[key: \`MODULE_${string}\`]: Fetcher | undefined;`
-   (confirmed line 71 on `main`, per Joan's audio-stack assessment), so every `MODULE_*` binding
+   (confirmed line 71 on `main` at the time, per Joan's audio-stack assessment; today it reads
+   `[key: \`MODULE_${string}\`]: Fetcher | DispatchNamespace | undefined;`), so every `MODULE_*` binding
    auto-discovers with no per-binding field. EXCEPTION: a NEW `[[vpc_services]]` binding (e.g. an
    audio-master CONTAINER's `AUDIO_MASTER_VPC`, see 1.5) is NOT covered by that index signature and
    MUST be added as an explicit `Fetcher` field in `Env`, or `npm run typecheck` (the CI gate) fails.
@@ -244,10 +255,10 @@ build). This keeps every binding pointing at an already-deployed module.
    `modules/*/wrangler.toml` with an explicit reviewed skip-list, so this maintenance step no longer
    exists):
    ```
-   for module in own-gpu finish-rife finish-upscale finish-lipsync keyframe seedance kling \
+   for module in own-gpu finish-rife finish-upscale keyframe seedance kling \
      minimax-hailuo google-veo vidu-q3 alibaba-wan film-titles dialogue-gen; do
    ```
-   Add: `cloud-keyframe alibaba-wan-lora subtitle speech-upscale audio-master`. Order within the loop does not matter (all modules
+   Add: `cloud-keyframe alibaba-wan-lora subtitle audio-master`. Order within the loop does not matter (all modules
    deploy before the core); only modules-before-core matters, which the job already guarantees.
 
 Note: the manual `wrangler deploy` of each new module in section 1 is what makes the FIRST tag deploy
@@ -310,11 +321,11 @@ cut; use this split only if master is not ready at go time.
    `applied` includes the subtitle step (NOT a silent degrade to raw clips).
 3. **New module workers healthy.** Confirm each is live and discovered:
    ```bash
-   for m in cloud-keyframe alibaba-wan-lora subtitle speech-upscale audio-master; do
+   for m in cloud-keyframe alibaba-wan-lora subtitle audio-master; do
      npx wrangler deployments list --name vivijure-module-$m | head -3
    done
    curl -fsS https://vivijure.skyphusion.org/api/modules | \
-     grep -oE 'cloud-keyframe|alibaba-wan-lora|subtitle|speech-upscale|audio-master'   # all should appear
+     grep -oE 'cloud-keyframe|alibaba-wan-lora|subtitle|audio-master'   # all should appear
    ```
    If audio-master ships a container, also `curl -fsS http://<audio-master-host>:<port>/health` on the
    fleet, same as video-finish (2).
@@ -364,11 +375,11 @@ gated), so old code runs safely against the newer schema.
   (`containers/audio-master/`) reached over the `AUDIO_MASTER_VPC` `[[vpc_services]]` binding + an
   explicit `Env` `Fetcher` field -- a pure CPU VPC container, NEVER RunPod/GPU (the GPU-money tenet).
   The container needs an out-of-band fleet build, not a `wrangler` deploy. See 1.5 / 2 for the real values.
-- **speech-upscale -- RESOLVED, shipped in v0.3.0:** service `vivijure-module-speech-upscale`, a RunPod
-  module (the `vivijure-audio-upscale` CUDA endpoint, no container). Secrets: `RUNPOD_API_KEY` +
-  `RUNPOD_ENDPOINT_ID`. See 1.4.
+- **speech-upscale -- REMOVED (cf#786).** It shipped in v0.3.0 as a RunPod module on the
+  `vivijure-audio-upscale` CUDA endpoint; both are gone. See 1.4.
 - **src/env.ts mirroring -- RESOLVED:** `Env` uses the generic `[key: \`MODULE_${string}\`]: Fetcher`
-  index signature (line 71 on `main`), so `MODULE_*` bindings need NO `Env` edit. Only a NEW
+  index signature (line 71 on `main` at the time; today `Fetcher | DispatchNamespace | undefined`),
+  so `MODULE_*` bindings need NO `Env` edit. Only a NEW
   `[[vpc_services]]` binding (an audio-master container) needs an explicit `Fetcher` field.
 - **Secrets durability -- RESOLVED since:** PR #237 (Secrets Store bindings) shipped after this
   cut; module secrets are declarative store bindings now, re-established by every deploy.
@@ -412,7 +423,8 @@ Reverse that order and the core deploy trips on a namespace that is not there ye
 
 ### Create the namespace (preferred -- wrangler)
 
-Verified against the repo-pinned wrangler (`4.102.0`): the subcommand is
+Verified against the repo-pinned wrangler of the time (`4.102.0`; the lockfile pins `4.123.0` as of
+v1.33.9): the subcommand is
 `wrangler dispatch-namespace create <name>`.
 
 ```bash
@@ -437,14 +449,14 @@ read from its file, NEVER echoed:
 ```bash
 curl -fsS -X POST \
   "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/dispatch/namespaces" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
   -H "Content-Type: application/json" \
   --data {"name":"vivijure-modules"}
 
 # verify:
 curl -fsS \
   "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/dispatch/namespaces/vivijure-modules" \
-  -H "Authorization: Bearer ${CF_API_TOKEN}"
+  -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
 ```
 
 (Wrap the JSON body in single quotes when you actually run it; it is shown unquoted here only to keep

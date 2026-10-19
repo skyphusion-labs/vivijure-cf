@@ -2,7 +2,7 @@
 // operator config, instead of renting a RunPod serverless worker for the same job (cf#480),
 // across a POOL of such doors (cf#507).
 //
-// Origins are CONFIG, never code. FINISH_UPSCALE_DOORS / SPEECH_UPSCALE_DOORS /
+// Origins are CONFIG, never code. FINISH_UPSCALE_DOORS /
 // FINISH_BLENDER_DOORS are comma-separated HTTPS lists. An empty list is the RunPod path,
 // the same as an unbound VPC binding was. There is no baked fallback origin.
 //

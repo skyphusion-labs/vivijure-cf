@@ -8,7 +8,7 @@ track to R2 for muxing onto the assembled film.
 
 `score` is a film-level audio chain (cardinality `chain`, `0..n`, ordered by `ui.order`), **parallel
 to the per-shot path**. Note the distinction: this is narration laid **over the film** on the score
-lane, not the per-shot `dialogue` hook (lip-synced speech per cast member). narration-gen sits at
+lane, not the per-shot `dialogue` hook (spoken lines per cast member). narration-gen sits at
 `ui.order` 20, after music-gen (10) and before beat-sync (30).
 
 ```mermaid

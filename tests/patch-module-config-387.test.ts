@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 
 // cf#387 -- PATCH /api/modules/:name/config must 400 when the body carries keys the install
 // subschema does not own, instead of returning 200 ok:true on a silent no-op clamp.
@@ -41,8 +41,21 @@ vi.mock("@skyphusion-labs/vivijure-core/operator-config", async (importOriginal)
   };
 });
 
+// cf#807 -- the worker entrypoint is a 92-route module graph that costs ~2s to transform and
+// import ONCE. Paid from inside a test case it lands on that case's 5000ms testTimeout, so the
+// case measures the import rather than the code under test and flips to red on a busy machine.
+// Paid in beforeAll it lands on hookTimeout (10000ms) and is charged to no case at all.
+// Measured on this file's own suite: a case whose entire body is `await import("../src/index")`
+// takes 2049ms, a second import takes 0ms, and every sibling case here runs in 0-3ms.
+// The other 41 suites that touch src/index import it STATICALLY, which is also off the case
+// budget. That is not available here: vi.mock is hoisted above the module body, so a static
+// import would run the mock factory before the vi.fn consts it closes over are initialised.
+let API_ROUTES: (typeof import("../src/index"))["API_ROUTES"];
+beforeAll(async () => {
+  ({ API_ROUTES } = await import("../src/index"));
+});
+
 async function handlerFor(method: string, pattern: string) {
-  const { API_ROUTES } = await import("../src/index");
   const r = API_ROUTES.find((x) => x.method === method && x.pattern === pattern);
   if (!r) throw new Error(`route ${method} ${pattern} is not in API_ROUTES`);
   return r.handler;

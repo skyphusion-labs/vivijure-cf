@@ -18,7 +18,7 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 92;
+export const PINNED_ROUTE_COUNT = 93;
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
 export const PINNED_OPERATOR_COUNT = 8;
@@ -102,6 +102,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "POST", pattern: "/api/cast/:id/generate-refs", scope: "consumer" },
   { method: "GET", pattern: "/api/cast/:id/refs-job/:jobId", scope: "consumer" },
   { method: "POST", pattern: "/api/cast/:id/train-lora", scope: "consumer" },
+  { method: "POST", pattern: "/api/cast/:id/voice-line", scope: "consumer" },
   { method: "POST", pattern: "/api/cast/:id/train-wan-lora", scope: "consumer" },
   { method: "GET", pattern: "/api/cast/:id/lora-status", scope: "consumer" },
   { method: "POST", pattern: "/api/cast/:id/voice-sample", scope: "consumer" },

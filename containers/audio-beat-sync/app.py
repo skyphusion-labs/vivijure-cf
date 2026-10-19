@@ -16,7 +16,7 @@ import librosa
 import numpy as np
 from aiohttp import ClientSession, ClientTimeout, web
 
-from bearer import bearer_middleware
+from bearer import bearer_middleware, require_bearer_config
 from url_guard import guarded_get, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -164,5 +164,12 @@ app.router.add_get("/health", health)
 app.router.add_post("/analyze", analyze)
 
 if __name__ == "__main__":
+    # cf#893: refuse to START without auth configured. At the real entry point rather than at module
+    # scope, and the difference is deliberate: `python app.py` is what the Dockerfile CMD runs, so
+    # this is the door opening, while an IMPORT is a test reading the module. Eleven container tests
+    # import app; gating import would have broken all of them for no security gain, because
+    # bearer_middleware independently answers 503 on every media route when no token is set.
+    # Two layers, each meaningful: this one refuses to bind, that one refuses to serve.
+    require_bearer_config()
     log.info("audio-beat-sync listening on 0.0.0.0:%d", PORT)
     web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)

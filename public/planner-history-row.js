@@ -55,8 +55,29 @@ function buildHistoryRow(r, childrenByParent) {
   const clipFinishBand = window.finishDegrade
     ? window.finishDegrade.clipFinishBand(r.output)
     : "unmeasured";
+  // cf#853 / core#317: speech, master and dialogue are three MORE signals in the same
+  // vocabulary. Each gets its own attribute rather than being folded into one, because the
+  // whole point of the band vocabulary is that a stage nobody measured and a stage that ran
+  // clean are different facts. Folding them here would rebuild cf#549 three stages over.
+  const stageBands = {};
+  if (window.finishDegrade && window.finishDegrade.STAGE_KEYS) {
+    for (let s = 0; s < window.finishDegrade.STAGE_KEYS.length; s++) {
+      const k = window.finishDegrade.STAGE_KEYS[s];
+      stageBands[k] = window.finishDegrade.stageBand(r.output, k);
+    }
+  }
+  // cf#864: the SAME enumeration the live view and the block builder use.
+  const stageInfos = window.stageDegradeView
+    ? window.stageDegradeView.reportedStages(r.output, window.finishDegrade)
+    : [];
+
   li.dataset.finishDegrade = finishBand;
   li.dataset.clipFinish = clipFinishBand;
+  // With the helper absent these stay unset rather than reading "none-reported": an absent
+  // projection measured nothing and must never be recorded as having found nothing.
+  if (stageBands.speech) li.dataset.speechDegrade = stageBands.speech;
+  if (stageBands.master) li.dataset.masterDegrade = stageBands.master;
+  if (stageBands.dialogue) li.dataset.dialogueDegrade = stageBands.dialogue;
 
   const meta = document.createElement("div");
   meta.className = "planner-history-meta";
@@ -206,7 +227,10 @@ function buildHistoryRow(r, childrenByParent) {
   const clipBandNote = window.finishDegrade
     ? window.finishDegrade.bandNote(clipFinishBand)
     : null;
-  const degNote = finishBandNote || clipBandNote;
+  const stageNote = window.finishDegrade && window.finishDegrade.stagesNote
+    ? window.finishDegrade.stagesNote(stageInfos)
+    : null;
+  const degNote = finishBandNote || clipBandNote || stageNote;
   if (degNote) {
     const degBadge = document.createElement("span");
     degBadge.className = "planner-history-mode planner-history-mode-degraded";
@@ -564,6 +588,22 @@ function buildHistoryRow(r, childrenByParent) {
     }
     li.appendChild(clipWrap);
   }
+
+  // cf#864: one note per REPORTED stage, built by the SHARED builder (stage-degrade-view.js).
+  // Separate blocks on purpose -- a speech passthrough, an unmastered bed and a film with no
+  // voices are three different facts, and one merged sentence is the collapse this vocabulary
+  // exists to prevent. Only the "reported" band gets prose; "unreadable" rides on its data
+  // attribute and its badge, because there is nothing readable to quote and inventing a cause is
+  // the one thing this must never do.
+  const stageEls = window.stageDegradeView
+    ? window.stageDegradeView.stageBlocks(
+        document,
+        stageInfos,
+        window.finishDegrade ? window.finishDegrade.stageSummary : null,
+        { className: "render-degrade planner-history-degrade", role: "note" },
+      )
+    : [];
+  for (let s = 0; s < stageEls.length; s++) li.appendChild(stageEls[s]);
 
   // v0.129.0: inline movie player, full card width, directly below the action
   // buttons (view / re-render / delete). Completed rows that produced a silent

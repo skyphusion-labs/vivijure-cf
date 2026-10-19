@@ -61,8 +61,13 @@ case "$cmd" in
     [ -e "$out" ] && die "$out already exists; refusing to overwrite a credential file"
     token="$(openssl rand -hex 32)"
     hash="$(printf %s "$token" | openssl dgst -sha256 -hex | awk '{print $NF}')"
-    # INSERT (not upsert): re-minting an existing name must be an explicit revoke + mint with a
-    # fresh name-or-decision, never a silent overwrite of a credential some consumer still holds.
+    # CX-3: name is the PRIMARY KEY and revoke only sets revoked_at, so a revoked row still
+    # occupies the name and a plain INSERT below would fail even for a properly revoked token.
+    # Clear it first, but ONLY when it was revoked: a still-live row is left in place so the
+    # INSERT fails loud instead of silently overwriting a credential some consumer still holds.
+    d1 "DELETE FROM api_tokens WHERE name = '${name}' AND revoked_at IS NOT NULL;" >/dev/null
+    # INSERT (not upsert): a STILL-LIVE name is never silently overwritten; a name that was never
+    # minted, or was revoked and just cleared above, inserts cleanly.
     d1 "INSERT INTO api_tokens (name, token_hash, scope) VALUES ('${name}', '${hash}', '${scope}');" >/dev/null
     ( umask 177; printf '%s\n' "$token" > "$out" )
     unset token

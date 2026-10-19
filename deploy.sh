@@ -10,7 +10,7 @@
 #                 reached over VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL). deploy.sh writes
 #                 the compose tunnel token only; it does not create Workers VPC services. You set
 #                 the Traefik URLs + MEDIA_FINISH_TOKEN, then `docker compose up` (#519 leftover).
-#   satellites -> also the 3 opt-in GPU satellites (upscale / lip-sync / speech-upscale), each on
+#   satellites -> also the 1 opt-in GPU satellite (upscale), on
 #                 its own RunPod endpoint.
 # The render strips the wrangler.toml.example blocks this deploy does not want: SATELLITE blocks
 # unless the satellites profile, the LOCAL-GPU block unless INSTALL_LOCAL_GPU=1, and SELFHOST-SKIP
@@ -126,8 +126,11 @@ STANDARD_MODULES="own-gpu seedance kling keyframe cloud-keyframe finish-rife pla
 image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo vidu-q3 \
 alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video film-titles subtitle beat-sync audio-master"
 # alibaba-wan-lora is DELISTED for v1.0 (#771): custom-LoRA path unverified; source kept, re-add when fixed.
-# SATELLITES = the 3 opt-in GPU finish modules, each on its own separate RunPod endpoint.
-SATELLITE_MODULES="finish-upscale finish-lipsync speech-upscale"
+# SATELLITES = the 1 opt-in GPU finish module, on its own separate RunPod endpoint.
+# finish-lipsync was the third; MuseTalk is ruled out permanently (cf#783) and its endpoint
+# no longer exists. Audio-driven lip-sync is infinitetalk, a motion.backend door, not a
+# finish satellite.
+SATELLITE_MODULES="finish-upscale"
 MODULES="$STANDARD_MODULES"
 [ "$VIVIJURE_PROFILE" = satellites ] && MODULES="$STANDARD_MODULES $SATELLITE_MODULES"
 # Optional finish-blender: only when the endpoint id is present (not part of the required triad).
@@ -222,11 +225,7 @@ seed_secret R2_S3_ACCESS_KEY_ID       "$R2_S3_ACCESS_KEY_ID"
 seed_secret R2_S3_SECRET_ACCESS_KEY   "$R2_S3_SECRET_ACCESS_KEY"
 if [ "$VIVIJURE_PROFILE" = satellites ]; then
   [ -n "${VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID:-}" ] || die "satellites profile: VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID required (finish-upscale)"
-  [ -n "${MUSETALK_RUNPOD_ENDPOINT_ID:-}" ]      || die "satellites profile: MUSETALK_RUNPOD_ENDPOINT_ID required (finish-lipsync)"
-  [ -n "${AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID:-}" ] || die "satellites profile: AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID required (speech-upscale)"
   seed_secret VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID "$VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID"
-  seed_secret MUSETALK_RUNPOD_ENDPOINT_ID      "$MUSETALK_RUNPOD_ENDPOINT_ID"
-  seed_secret AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID  "$AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID"
 fi
 # Optional blender grade satellite (shared RUNPOD_API_KEY; own endpoint id).
 if [ -n "${BLENDER_RUNPOD_ENDPOINT_ID:-}" ]; then
@@ -365,12 +364,12 @@ command -v envsubst >/dev/null || die "envsubst not found -- install gettext (ap
 export AUTH_MODE ACCESS_TEAM_DOMAIN ACCESS_AUD D1_DATABASE_ID SPEND_RATE_LIMITER_NS_ID
 export R2_S3_ENDPOINT R2_S3_BUCKET   # #238 follow-up: now rendered into [vars], not put as secrets
 export VIDEO_FINISH_URL IMAGE_PREP_URL AUDIO_BEAT_SYNC_URL AUDIO_MIX_URL AUDIO_MASTER_URL
-export FINISH_UPSCALE_DOORS SPEECH_UPSCALE_DOORS FINISH_BLENDER_DOORS
-VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$D1_DATABASE_ID \$VIDEO_FINISH_URL \$IMAGE_PREP_URL \$AUDIO_BEAT_SYNC_URL \$AUDIO_MIX_URL \$AUDIO_MASTER_URL \$FINISH_UPSCALE_DOORS \$SPEECH_UPSCALE_DOORS \$FINISH_BLENDER_DOORS \$SPEND_RATE_LIMITER_NS_ID \$R2_S3_ENDPOINT \$R2_S3_BUCKET"
+export FINISH_UPSCALE_DOORS FINISH_BLENDER_DOORS
+VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$D1_DATABASE_ID \$VIDEO_FINISH_URL \$IMAGE_PREP_URL \$AUDIO_BEAT_SYNC_URL \$AUDIO_MIX_URL \$AUDIO_MASTER_URL \$FINISH_UPSCALE_DOORS \$FINISH_BLENDER_DOORS \$SPEND_RATE_LIMITER_NS_ID \$R2_S3_ENDPOINT \$R2_S3_BUCKET"
 
 # Strip the wrangler.toml.example blocks this deploy does not want, then envsubst the rest:
 #   SELFHOST-SKIP -- OUR-fleet-only (e.g. the vivijure-tail consumer); ALWAYS stripped for a self-host.
-#   SATELLITE     -- the 3 opt-in GPU finish modules; stripped unless VIVIJURE_PROFILE=satellites.
+#   SATELLITE     -- the 1 opt-in GPU finish module; stripped unless VIVIJURE_PROFILE=satellites.
 #   LOCAL-GPU     -- the local-GPU door binding; stripped unless INSTALL_LOCAL_GPU=1 (else it dangles
 #                    10143, the local-gpu module being deployed only with a local backend).
 # The media-stack bindings are unconditional (standard, #519) -- nothing strips them.
@@ -577,8 +576,8 @@ cat <<MSG
   Profile: $VIVIJURE_PROFILE. Bring the media-stack containers up on your box:
       docker network create vivijure   # once, if it does not exist
       docker compose -f containers/compose.yaml up -d --build
-  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 3 extra
-  RunPod endpoint ids) and re-run ./deploy.sh.
+  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 1 extra
+  RunPod endpoint id) and re-run ./deploy.sh.
 MSG
 elif [ "$AUTH_MODE" = token ]; then
 cat <<MSG
@@ -589,8 +588,8 @@ cat <<MSG
   Profile: $VIVIJURE_PROFILE. Bring the media-stack containers up on your box:
       docker network create vivijure   # once, if it does not exist
       docker compose -f containers/compose.yaml up -d --build
-  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 3 extra
-  RunPod endpoint ids) and re-run ./deploy.sh.
+  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 1 extra
+  RunPod endpoint id) and re-run ./deploy.sh.
 MSG
 else
 cat <<MSG
@@ -603,8 +602,8 @@ cat <<MSG
   Profile: $VIVIJURE_PROFILE. Bring the media-stack containers up on your box:
       docker network create vivijure   # once, if it does not exist
       docker compose -f containers/compose.yaml up -d --build
-  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 3 extra
-  RunPod endpoint ids) and re-run ./deploy.sh.
+  To add the GPU satellites later, set VIVIJURE_PROFILE=satellites in deploy.env (with the 1 extra
+  RunPod endpoint id) and re-run ./deploy.sh.
 MSG
 fi
 

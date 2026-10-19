@@ -36,15 +36,21 @@ describe("seedance pure logic", () => {
       {},
     );
     expect(body.input).toMatchObject({ resolution: "720p", aspect_ratio: "16:9", camera_fixed: false, generate_audio: true, seed: -1, duration: 8 });
+    expect(body.input.last_image).toBeUndefined();
+    // cf#922: the retired key must not come back. seedance-v1-5-pro-i2v publishes `last_image`;
+    // `last_frame_image` belongs to the Cloudflare bytedance door and was carried across.
     expect(body.input.last_frame_image).toBeUndefined();
   });
 
-  it("passes last_frame_image from last_keyframe_url", () => {
+  it("passes last_image (the PUBLISHED key) from last_keyframe_url, and never last_frame_image", () => {
     const body = buildSeedanceBody(
       { shot_id: "s", keyframe_url: "u", last_keyframe_url: "https://r2/end.png", prompt: "p", seconds: 8 },
       {},
     );
-    expect(body.input.last_frame_image).toBe("https://r2/end.png");
+    expect(body.input.last_image).toBe("https://r2/end.png");
+    // The whole defect: the suite asserted the key the module sent, so it was green while the wire
+    // was wrong. This line is what makes that impossible to repeat.
+    expect(body.input.last_frame_image).toBeUndefined();
   });
 
   it("#577: the manifest's resolution enum IS the provider-accepted set (no 1080p over-promise)", async () => {

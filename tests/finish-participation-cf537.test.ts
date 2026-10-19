@@ -5,14 +5,15 @@ import { selectForChain } from "@skyphusion-labs/vivijure-core/modules/render-pi
 import { MODULE_API, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import { MANIFEST as BLENDER } from "../modules/finish-blender/src/index";
 import { MANIFEST as RIFE } from "../modules/finish-rife/src/index";
-import { MANIFEST as LIPSYNC } from "../modules/finish-lipsync/src/index";
 import { MANIFEST as UPSCALE } from "../modules/finish-upscale/src/index";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// cf#537, the cf half. The core owns the mechanism; this suite is about the FOUR SHIPPED MANIFESTS
+// cf#537, the cf half. The core owns the mechanism; this suite is about the SHIPPED MANIFESTS
 // and the TWO RENDER DOORS, and it reads the manifests that actually deploy rather than copies.
+// There were four; finish-lipsync was removed with MuseTalk (cf#783), so there are three. The
+// denominator is asserted rather than typed as prose for exactly this reason.
 //
 // The two doors are separate pipelines and this is the whole reason the cf half needs its own tests:
 //   - the PANEL door carries a `renderOverrides` bag, resolved by the core
@@ -24,7 +25,6 @@ import { fileURLToPath } from "node:url";
 const MANIFESTS = [
   { name: "finish-blender", m: BLENDER, expect: "opt_in" as const },
   { name: "finish-rife", m: RIFE, expect: "default" as const },
-  { name: "finish-lipsync", m: LIPSYNC, expect: "opt_in" as const },
   { name: "finish-upscale", m: UPSCALE, expect: "default" as const },
 ];
 
@@ -32,7 +32,7 @@ describe("cf#537: the SHIPPED finish manifests declare their participation", () 
   it("CONTROL: these really are the shipped manifests and they really serve `finish`", () => {
     // Run first. Every row below reads a field off these objects; if they are not the manifests that
     // deploy, or do not serve the hook the gate is about, nothing beneath this is a finding.
-    expect(MANIFESTS.length, "DENOMINATOR: finish modules in this repo").toBe(4);
+    expect(MANIFESTS.length, "DENOMINATOR: finish modules in this repo").toBe(3);
     for (const { name, m } of MANIFESTS) {
       expect(m.name, `${name}: manifest.name`).toBe(name);
       expect(m.api).toBe(MODULE_API);
@@ -42,18 +42,18 @@ describe("cf#537: the SHIPPED finish manifests declare their participation", () 
 
   it("every one declares an EXPLICIT participation (absence is a signal, not a default)", () => {
     const declared = MANIFESTS.filter((x) => x.m.participation !== undefined);
-    expect(declared.length, `${declared.length} of ${MANIFESTS.length} finish manifests declare participation`).toBe(4);
+    expect(declared.length, `${declared.length} of ${MANIFESTS.length} finish manifests declare participation`).toBe(3);
   });
 
-  it("blender and lipsync are opt_in; rife and upscale stay default", () => {
+  it("blender is opt_in; rife and upscale stay default", () => {
     const optIn = MANIFESTS.filter((x) => x.m.participation === "opt_in").map((x) => x.name);
-    expect(optIn, `2 of ${MANIFESTS.length} are opt_in`).toEqual(["finish-blender", "finish-lipsync"]);
+    expect(optIn, `1 of ${MANIFESTS.length} is opt_in`).toEqual(["finish-blender"]);
     for (const { name, m, expect: want } of MANIFESTS) {
       expect(m.participation, `${name}`).toBe(want);
     }
   });
 
-  it("all four still pass conformance with the field present", () => {
+  it("all of them still pass conformance with the field present", () => {
     for (const { name, m } of MANIFESTS) {
       const checks = checkManifest(m);
       expect(allPass(checks), `${name}: ${JSON.stringify(failures(checks))}`).toBe(true);
@@ -92,14 +92,13 @@ const mod = (name: string, order: number, participation?: "default" | "opt_in"):
 // The REAL declared orders, so this is not a fixture that happens to agree with the shipped set.
 const SERVING = [
   mod("finish-rife", RIFE.ui?.order ?? 10, RIFE.participation),
-  mod("finish-lipsync", LIPSYNC.ui?.order ?? 15, LIPSYNC.participation),
   mod("finish-blender", BLENDER.ui?.order ?? 18, BLENDER.participation),
   mod("finish-upscale", UPSCALE.ui?.order ?? 20, UPSCALE.participation),
 ];
 const names = (ms: { name: string }[]) => ms.map((m) => m.name);
 
 describe("cf#537: the shipped manifests produce the ruled behaviour end to end", () => {
-  it("THE TICKET: with no selection, default finish is rife+upscale (lipsync/blender opt_in)", () => {
+  it("THE TICKET: with no selection, default finish is rife+upscale (blender opt_in)", () => {
     const got = selectForChain(SERVING, "finish", undefined);
     expect(names(got.modules)).toEqual(["finish-rife", "finish-upscale"]);
     expect(got.modules.length, `2 of ${SERVING.length} shipped finish modules run by default`).toBe(2);

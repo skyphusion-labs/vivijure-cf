@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 # BAR: VOICED = lipsync:v15 + non-silent audio per shot; FULL also requires upscale:2x.
+#
+# UNSATISFIABLE SINCE cf#783, AND SAID HERE RATHER THAN LEFT TO BE DISCOVERED BY A RED RUN.
+# The `lipsync:v15` tag was emitted by finish-lipsync (MuseTalk), which is removed: MuseTalk is
+# ruled out permanently as a lip-sync provider and its RunPod endpoint no longer exists. No
+# shipped finish module emits that tag, so the VOICED and FULL verdicts below can only ever
+# read FAIL, on a render that is in fact correct.
+#
+# Kept, not deleted, because the AUDIT it performs (per-shot non-silent audio, measured off the
+# artifact rather than off a green pipeline) is the half that caught a silently silent shot, and
+# that half still works. What needs a decision is what VOICED means now that a synced mouth is
+# produced at MOTION time by a driving-audio door (infinitetalk) instead of by a finish tag:
+# there is no per-shot marker for it to assert. That is a product call, not a rename.
 """voiced-verify: honest per-shot proof that a scatter render's shots actually lip-synced + carry
 NON-SILENT audio -- not just nb_streams==2 (which keepClipAudio's silent-pad would pass).
 

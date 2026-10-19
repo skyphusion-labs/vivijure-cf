@@ -79,6 +79,20 @@ jobs:
       - name: Tenant module catalog matches the control plane (cf#470)
         run: npm run check:catalog
 
+      # vivijure#824. The hub's docs/CAPABILITIES.md is the one place that states what the studio
+      # offers, and modules/ here is the authority for what exists. This is the only step that can
+      # tell those two apart, so it runs where the population is and fetches the document.
+      #
+      # DELIBERATE CONSEQUENCE: adding or removing a module in this repo turns THIS repo red until
+      # the matrix row lands at the hub. Same trade as check:catalog above and for the same reason.
+      # The alternative is a public document that quietly stops being true, which is exactly how a
+      # $5/month capability outlived its own removal. The remedy is a one-row edit.
+      #
+      # Credential-free: both repos are public, so this runs on fork PRs too. Fails closed on a
+      # fetch error, a non-200, an empty body or an unparseable one; it never degrades to a skip.
+      - name: Capability matrix matches the modules that exist (vivijure#824)
+        run: npm run check:matrix
+
       # deploy/ has a pytest suite (installer/teardown control plane). Without this step,
       # Python regressions in vivijure_deploy.py pass CI silently (#26).
       - uses: actions/setup-python@v7
@@ -138,6 +152,15 @@ jobs:
   # runs), and `test_ffmpeg_timeout.py` in video-finish / audio-mix / audio-master (cf#571:
   # a real sleep child, named FfmpegTimeout, no ffmpeg binary required).
   #
+  # `test_upload_streams.py` in video-finish (#808) and in audio-master / audio-mix (cf#814) is
+  # the streaming-upload control: a behavioural half that drives the real `_put_file` against a
+  # fake session, plus an `ast` structural scan that refuses the read-then-upload shape so it
+  # cannot be reintroduced by copying a neighbouring route, which is how it reached four sites in
+  # video-finish and both audio containers. It needs aiohttp (app.py imports it) and nothing else
+  # -- no ffmpeg, no network, no large files -- and the pin installed above from video-finish's
+  # requirements.txt is the same `aiohttp==3.14.3` both audio containers pin, so one install
+  # covers all three.
+  #
   # NOT run here, deliberately, and left open on cf#325 rather than silently skipped:
   # `containers/audio-master/test_local.py` and `containers/audio-mix/test_local.py`. Both drive
   # real ffmpeg/ffprobe DSP validation (loudness, ducking) against synthesized audio, and this
@@ -158,19 +181,110 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r containers/video-finish/requirements.txt
+          # cf#869: image-prep's decode bound is a Pillow header read, so the test that proves it
+          # needs Pillow. Pinned to the version image-prep itself ships (containers/image-prep/
+          # requirements.txt) so CI is testing against what runs, not against whatever is newest.
+          # NOT the whole image-prep requirements file: that pulls rembg + onnxruntime, hundreds of
+          # MB of ML runtime this test never touches.
+          python -m pip install "Pillow==12.3.0"
+          # PINNED on purpose (cf#874). A linter whose ruleset moves under you is a gate whose
+          # findings change without a commit, and this one decides by matching text in that output.
+          # Bump it deliberately, like any other pin.
+          python -m pip install pyflakes==3.4.0
 
+      # cf#874. There was NO Python linter in CI at all, and it cost two live outages in one night:
+      # containers/video-finish/app.py called _parse_partial_urls(raw) inside _finish_work(body) where
+      # `raw` was never bound, so every non-remux finish raised NameError (fixed in cedba5a, PR #875).
+      # `py_compile` passes on that file because a NameError is a runtime event and not a syntax one,
+      # so "it imports" was never evidence, and the suite covered the functions on either side of the
+      # defect while nothing covered the line joining them. A linter names it at the column in
+      # milliseconds, and the cf#857 smoke gate CANNOT see it: /health answers, the process is healthy,
+      # and the defect sits on a handler path a boot check never touches. Three layers, three
+      # boundaries, none of them a substitute for another.
+      #
+      # THE CONTROL RUNS FIRST, as everywhere else in this file. The gate decides by matching the text
+      # "undefined name" in pyflakes output, so a reworded or silent linter would stop failing and read
+      # green forever; the control drives it against fixtures including a linter stub that reports
+      # nothing, and the gate must REFUSE that rather than pass.
+      - name: Control -- the undefined-name gate can fail, and refuses a silent linter (cf#874)
+        run: sh tests/lint-python-undefined.test.sh
+
+      # cf#934. The endpoint-liveness probe itself is NOT run here and must never be: it depends on
+      # RunPod being reachable, so as a required check an outage there would freeze merges on unrelated
+      # work. It runs on a schedule (.github/workflows/endpoint-liveness.yml) and reports by issue.
+      #
+      # What DOES belong in ci is the offline half: the census that decides which modules get probed.
+      # That is pure parsing of modules/, it makes no network calls, and it is where the dangerous
+      # failure lives -- a module silently falling out of the population while the sweep still prints a
+      # denominator and an all-clear. The control drives that parser against fixtures and requires it
+      # to REFUSE an ENDPOINT_ID it cannot resolve and a module it cannot classify, rather than
+      # dropping either. Verified by mutation: making the unresolvable-indirection path guess a slug
+      # instead of failing turns exactly this control red and nothing else.
+      - name: Control -- the slug census refuses a module it cannot parse, and probes nothing (cf#934)
+        run: sh tests/probe-runpod-slugs.test.sh
+
+      # Population is every tracked *.py (68 at cf#874), not just containers/: the defect class is not
+      # container-specific and a hand-scoped subdirectory is the artifact that drifts. UNDEFINED NAMES
+      # FAIL; unused imports, unused locals and placeholder-less f-strings are printed as ::warning::
+      # and do NOT block, because a gate that fails a release over an unused import is one somebody
+      # deletes. EIGHT such findings existed when this landed and are visible in this step's log,
+      # a count read off the gate's own output line ("8 non-blocking finding(s)") rather than from my
+      # notes: I first wrote nine, having counted the undefined name itself among the non-blocking.
+      - name: Python undefined-name gate (cf#874)
+        run: sh scripts/lint-python-undefined.sh
+
+      # cf#857 / cf#851. UNCONDITIONAL and DOCKER-FREE on purpose: this is the gate that would have
+      # caught the crash in the PR that caused it, in milliseconds, with no daemon and no build.
+      # cfa321f added containers/video-finish/concat_guard.py plus a column-0 import of it in app.py,
+      # added its test to the list below in the same commit, and never touched the Dockerfile COPY
+      # line. Every image built since then dies at import before binding :8000, and the step below
+      # stayed green the whole time because it runs these scripts from the REPO CHECKOUT, where the
+      # file is present. The image is never involved here. That is the entire gap.
+      - name: Container image file-set guard (cf#857)
+        run: python3 tests/container-image-file-set.test.py
+
+      # cf#893 / GHSA-v8g8-gmcm-22gr. Two halves: the gate fails CLOSED, and EVERY container that
+      # serves HTTP has it. The second is why this is a repo-level step rather than a per-container
+      # script -- image-prep and audio-master shipped with no gate at all, and a per-container test
+      # can only ever check the containers that remembered to add one.
+      - name: Container bearer gate (cf#893)
+        run: python3 tests/container-bearer-gate.test.py
+
+      # cf#893: containers/{video-finish,audio-mix}/test_bearer.py EXISTED and were never in this
+      # list, which is how an assertion labelled fail-open survived the gate being closed: it kept
+      # passing because the new refusal is 503 and 503 is also not 401. A test outside the runner is
+      # a file, not a gate. audio-beat-sync/test_bearer.py is deliberately NOT added -- it imports
+      # librosa, and installing an audio-analysis stack to assert an HTTP status is a worse trade
+      # than the structural coverage tests/container-bearer-gate.test.py already gives all five.
       - name: Run container test scripts
+        env:
+          # cf#893: these scripts drive container routes IN-PROCESS and send no credential, which
+          # is exactly the loopback case the explicit opt-out exists for. A token here would make
+          # every uncredentialed request a 401 and would be testing the auth header rather than the
+          # route. The files that are ABOUT auth -- the three test_bearer.py and
+          # tests/container-bearer-gate.test.py -- pop and restore BOTH vars themselves, so the
+          # fail-closed and armed cases stay reachable underneath this.
+          LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true"
         run: |
           set -eu
           scripts="
           containers/audio-beat-sync/test_url_guard.py
           containers/audio-mix/test_url_guard.py
           containers/image-prep/test_url_guard.py
+          containers/image-prep/test_decode_bound.py
+          containers/video-finish/test_bearer.py
+          containers/audio-mix/test_bearer.py
           containers/video-finish/test_url_guard.py
           containers/video-finish/test_inspect.py
           containers/video-finish/test_photometric_gate.py
           containers/video-finish/test_async.py
           containers/video-finish/test_meta_sidecar.py
+          containers/video-finish/test_concat_guard.py
+          containers/video-finish/test_chunked_contract.py
+          containers/video-finish/test_finish_work_call_site.py
+          containers/video-finish/test_upload_streams.py
+          containers/audio-master/test_upload_streams.py
+          containers/audio-mix/test_upload_streams.py
           containers/video-finish/test_ffmpeg_timeout.py
           containers/audio-mix/test_ffmpeg_timeout.py
           containers/audio-master/test_ffmpeg_timeout.py
@@ -191,10 +305,337 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 11 ]; then
-            echo "::error::expected exactly 11 container test scripts to run, ran ${ran}"
+          if [ "$ran" -ne 20 ]; then
+            echo "::error::expected exactly 20 container test scripts to run, ran ${ran}"
             exit 1
           fi
+
+  # BUNDLE GATE (#797). studio-release.yml runs `wrangler deploy --dry-run` against the real
+  # rendered config, and it is the ONLY gate that can see a durable_objects binding whose class is
+  # not exported from the entrypoint. That workflow is TAG-GATED, so on a pull request it reads
+  # SKIPPED and the defect is invisible at exactly the moment a human is reviewing.
+  #
+  # This is not hypothetical: #798 declared the FinishContainer class in wrangler.toml and was
+  # green on 13 checks with no export in src/. The failure would have fired at the next `v*` tag,
+  # in the release bundle step, taking the whole studio release down and landing on whoever tagged
+  # next for an unrelated reason.
+  #
+  # Credential-free AND Docker-free by design. `--dry-run` never contacts the account, so this runs
+  # on GitHub-hosted ubuntu-latest with no secrets and a fork PR exercises the same gate.
+  # `--containers-rollout=none` skips the container image BUILD, which otherwise requires the Docker
+  # CLI even in dry-run mode, while still validating the config, the bindings and the bundle. That
+  # split is the whole point: the class-export check runs, the image build does not.
+  #
+  # Verified both directions before this landed, because a gate never seen to fail is decoration:
+  # deleting the `export { FinishContainer }` line makes this step exit 1 with "Your Worker depends
+  # on the following Durable Objects, which are not exported in your entrypoint file:
+  # FinishContainer", and restoring it makes it pass.
+  bundle-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # The same render path studio-release.yml uses, with EMPTY substitutions on purpose: this
+      # gate checks the SHAPE of the config and the bundle, never account-specific ids, so unset
+      # vars are correct here and are what keep it credential-free and fork-safe.
+      - name: Render a throwaway wrangler.toml from the committed example
+        run: |
+          set -euo pipefail
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          envsubst < .wrangler.hosted.toml > wrangler.toml
+
+      - name: Bundle the studio worker (wrangler --dry-run, no container build)
+        run: npx wrangler deploy --dry-run --containers-rollout=none --outdir=bundle-out
+
+  # CONTAINER DEPLOY-SHAPE GATE (cf#809 follow-up, asked for in the #812 review).
+  #
+  # WHAT bundle-gate ABOVE CANNOT SEE, and why that is not a criticism of it. bundle-gate passes
+  # --containers-rollout=none so it stays Docker-free, credential-free and fast on every PR. That
+  # flag SKIPS the container image build. So bundle-gate answers "does the worker bundle", and it
+  # was read as answering "does the deploy work" -- which is exactly how cf#798 merged green while
+  # arming a deploy failure that only a v* tag could reach. A gate that passes by not performing the
+  # step it is supposed to cover is the failure mode, and this job is the missing step.
+  #
+  # THE REAL BUILD, and it is `wrangler deploy --dry-run` with the rollout flag OMITTED. MEASURED on
+  # the runner, not assumed: that job's log carries 1317 buildkit step lines, 394 apt-get lines, and
+  # all three of the Dockerfile's ffmpeg sanity-encode markers (libx264, drawtext, libass). --dry-run
+  # keeps it credential-free and fork-safe -- nothing contacts the account, nothing is pushed -- and
+  # it still builds, because the image is an input to the bundle wrangler is asked to produce.
+  #
+  # TWO THINGS I GOT WRONG HERE FIRST, recorded so the next reader does not repeat either.
+  #
+  #   1. I briefly concluded this dry-run does NOT build, from a 40-second duration plus a `grep ...
+  #      | tail -40` of the log. Both were bad instruments: 40s is ample for this image on a runner,
+  #      and a truncated, filtered view is not evidence of absence. Counting over the WHOLE log
+  #      settled it in the opposite direction.
+  #   2. The replacement I reached for, `wrangler containers build <dir> --push=false`, CANNOT be
+  #      used here: it requires CLOUDFLARE_API_TOKEN even when it pushes nothing, and this gate must
+  #      run on fork PRs with no secrets. It exits 1 with "In a non-interactive environment, it's
+  #      necessary to set a CLOUDFLARE_API_TOKEN environment variable".
+  #
+  # WHICH IS WHY THE BUILD IS ASSERTED, not assumed, in the step below. The whole point of this gate
+  # is that bundle-gate passes by skipping the build; a future wrangler that stops building in
+  # dry-run would turn THIS gate into the same decoration without anything going red. I could not
+  # tell those two states apart by eye, so the job is not allowed to either.
+  #
+  # WHY IT IS PATH-FILTERED, and why the filter is NARROWER than container-pr-build.yml's. This job
+  # asks "does the DEPLOY SHAPE still assemble", which changes when the wrangler config changes or
+  # when the Dockerfile wrangler is pointed at changes. It does NOT change when a pin moves in
+  # requirements.txt -- container-pr-build.yml owns that question and builds the real image for it.
+  # Filtering this way keeps an ffmpeg build off every unrelated PR and avoids building the same
+  # image twice for a change that only one of the two gates is about.
+  #
+  # WHY IT IS NOT IN container-pr-build.yml, which already has a path filter and buildx: that
+  # workflow's verify job fail-closes on "zero containers selected", deliberately, to catch a
+  # false-zero matrix. A wrangler-config-only change selects zero CONTAINERS while still needing
+  # this gate, so folding it in would have meant weakening that guard to add this one. Two jobs
+  # answering two questions beats one job with a softened assertion.
+  #
+  # TWO JOBS ON PURPOSE. detect -> gate, rather than one job that exits 0 when not applicable. A
+  # not-applicable run must render as SKIPPED, not as a green tick: an absent check reads exactly
+  # like a passed one, and this repo has now been bitten by that twice in one night.
+  container-deploy-shape-detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.pick.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Does this change touch the deploy shape?
+        id: pick
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # On a push (main or a tag) there is no PR base to diff against, and a tag runs the REAL
+          # deploy anyway. Run the gate rather than invent a base.
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "not a pull_request (no base/head sha): running the gate rather than guessing a diff"
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # THE STRUCTURAL DENOMINATOR. Every Dockerfile named by a [[containers]] image line, read
+          # from the config rather than hand-listed, so adding a second container cannot silently
+          # leave this gate looking at the first one forever.
+          IMAGES="$(grep -E '^image[[:space:]]*=' wrangler.toml.example | sed -E 's/^image[[:space:]]*=[[:space:]]*"(.*)"$/\1/' | sed -E 's#^\./##')"
+          echo "Dockerfiles named by [[containers]]:"; echo "${IMAGES}" | sed 's/^/  /'
+          if [ -z "${IMAGES}" ]; then
+            echo "::error::no [[containers]] image line in wrangler.toml.example. Either the block was removed (then remove this gate in the same change) or the parse drifted; refusing to report a pass over an empty set."
+            exit 1
+          fi
+
+          # Three-dot against the merge base, so commits that landed on the base branch after the
+          # branch point are not attributed to this PR. Same rule as the changelog gate.
+          CHANGED="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")"
+
+          NEEDED=false
+          if echo "${CHANGED}" | grep -qx 'wrangler\.toml\.example'; then
+            echo "wrangler.toml.example changed -> deploy shape may have moved"
+            NEEDED=true
+          fi
+          for img in ${IMAGES}; do
+            if echo "${CHANGED}" | grep -qxF "${img}"; then
+              echo "${img} changed -> what wrangler builds has moved"
+              NEEDED=true
+            fi
+            # cf#857: THE DOCKERFILE IS NOT THE IMAGE. A Dockerfile's build CONTEXT is its directory,
+            # so every file COPYed in can change what the image contains without the Dockerfile path
+            # appearing in the diff at all. Matching only the Dockerfile meant a PR touching just
+            # containers/video-finish/app.py ran neither container gate, which is the hole the
+            # cf#851 class walks through. Widening can only ADD runs, never remove them.
+            ctx="$(dirname "${img}")"
+            for f in ${CHANGED}; do
+              case "$f" in
+                "${ctx}/"*)
+                  echo "${f} changed -> it is inside ${ctx}, the build context of ${img}"
+                  NEEDED=true
+                  ;;
+              esac
+            done
+          done
+          # NO REGEX BUILT FROM A STRING above: `case` prefix matching needs no escaping, so the
+          # incomplete-sanitizer class is unreachable by construction rather than by a correct escape.
+          if echo "${CHANGED}" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "ci.yml changed -> a change to this gate is tested by this gate"
+            NEEDED=true
+          fi
+          for own in scripts/container-smoke.sh tests/container-smoke.test.sh; do
+            if echo "${CHANGED}" | grep -qxF "${own}"; then
+              echo "${own} changed -> a change to the smoke gate is tested by the smoke gate"
+              NEEDED=true
+            fi
+          done
+
+          echo "needed=${NEEDED}" >> "$GITHUB_OUTPUT"
+          echo "deploy-shape gate needed: ${NEEDED}"
+
+  container-deploy-shape:
+    needs: container-deploy-shape-detect
+    if: needs.container-deploy-shape-detect.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      # Same render as bundle-gate: EMPTY substitutions, because this checks the SHAPE of the
+      # config and the build, never account-specific ids. That is what keeps it credential-free.
+      - name: Render a throwaway wrangler.toml from the committed example
+        run: |
+          set -euo pipefail
+          sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          envsubst < .wrangler.hosted.toml > wrangler.toml
+
+      - name: Prove the instrument can see a container at all
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing; this gate cannot make its claim"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon unreachable; this gate cannot make its claim"; exit 1; }
+          grep -q '^\[\[containers\]\]' wrangler.toml || { echo "::error::no [[containers]] block survived the render, so a green result here would mean nothing was built"; exit 1; }
+          echo "docker OK and a [[containers]] block is present; the real build below is a real assertion."
+
+      # NO --containers-rollout=none. That omission IS the gate: it is what makes wrangler build the
+      # [[containers]] image instead of skipping it.
+      - name: wrangler deploy --dry-run WITH the container build
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --dry-run --outdir=shape-out 2>&1 | tee shape-build.log
+
+      # THE CONTROL ON THE CONTROL. A pass here must mean an image was BUILT, and nothing in the
+      # step above distinguishes "built it" from "quietly skipped it" -- which is precisely how
+      # bundle-gate came to be read as covering a step it skips. So the build is proven from the
+      # log's own evidence, and the absence of that evidence is a failure rather than a pass.
+      - name: Prove an image was actually built
+        run: |
+          set -eu
+          if [ ! -s shape-build.log ]; then
+            echo "::error::no build log was produced, so nothing can be claimed about the image"
+            exit 1
+          fi
+          # Any ONE of these only appears when buildkit really ran. CACHED counts: a cache hit is
+          # still a resolved, buildable image, and this runner has no cache on a first run anyway.
+          if grep -qE "exporting to image|sanity-encode OK|^#[0-9]+ (CACHED|DONE)| CACHED$" shape-build.log; then
+            echo "build evidence found:"
+            grep -oE "exporting to image|[a-z0-9()]+ sanity-encode OK" shape-build.log | sort -u | sed 's/^/  /'
+            exit 0
+          fi
+          echo "::error::wrangler exited 0 but produced NO container build output. Either --containers-rollout=none crept back in, or wrangler no longer builds during --dry-run. Do not merge on this green: the gate is not covering the step it claims to. See the header comment above this job."
+          echo "--- last 40 lines of the build log"
+          tail -40 shape-build.log
+          exit 1
+
+  # CONTAINER SMOKE (cf#857). The gate that starts the image and makes it SERVE.
+  #
+  # WHY IT EXISTS, and it is this repo indicting its own work: `container-deploy-shape` above was
+  # built in cf#817/cf#818 and it proves an image was BUILT. `container-tests` runs the container's
+  # python scripts against the repo CHECKOUT. Neither one starts the image, so the only property
+  # anyone wants from a container gate -- does this boot and bind its port -- was unasserted, and the
+  # v1.34.1 tag run (36296493766) went green on all 10 jobs over an image that crashed on every
+  # startup: "Container crashed while checking for ports", 12 occurrences in one tail session,
+  # assemble to failure in 3,211 ms (cf#851). BUILT and RUNS are different properties.
+  #
+  # THE CONTROL RUNS BEFORE THE SUBJECT, and that ordering is the whole design. cf#857 is about a
+  # gate that could not fail, so this job first drives scripts/container-smoke.sh against three
+  # fixtures it builds -- one that serves, one that dies at import (the cf#851 shape, planted), one
+  # that binds the wrong port -- and asserts the EXACT exit code and reason for each. A smoke step
+  # that has only ever gone red is indistinguishable from one that always goes red; a smoke step that
+  # has only ever gone green is the thing we are replacing. Both directions, or neither claim.
+  #
+  # NOTHING HERE IS SKIPPABLE. No docker CLI, no daemon, no curl, an unbuildable image, a container
+  # that exits, a port that never answers: every one is a FAILURE, never a skip. A gate whose
+  # cheapest satisfaction is not running the container is the same defect one level up, which is what
+  # the issue this closes is about.
+  container-smoke:
+    needs: container-deploy-shape-detect
+    # On a version tag this runs UNCONDITIONALLY rather than through the detect, for two reasons: a
+    # release must never be able to skip the only gate that starts the image, and `deploy` lists this
+    # job in `needs`, where a SKIPPED dependency would skip the deploy itself. The detect already
+    # reports needed=true when there is no PR base to diff, so this is belt-and-suspenders against a
+    # future edit to that script, not a second opinion about it.
+    if: needs.container-deploy-shape-detect.outputs.needed == 'true' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove the instrument exists before claiming anything with it
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing; this gate cannot make its claim (and must not pass)"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon unreachable; this gate cannot make its claim (and must not pass)"; exit 1; }
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl missing; this gate cannot probe a port"; exit 1; }
+          echo "docker $(docker version --format '{{.Server.Version}}') and curl are present."
+
+      # FIRST: prove the smoke script can both PASS and FAIL, against subjects whose truth is known
+      # by construction. Everything below is uninterpretable without this.
+      - name: Control -- the smoke script passes a serving image and fails two planted failures
+        run: sh tests/container-smoke.test.sh
+
+      # THEN: the real subject. Built from the Dockerfile the [[containers]] block NAMES, read out of
+      # the committed example rather than hand-listed, so a second container cannot leave this gate
+      # staring at the first one forever.
+      - name: Build every image the [[containers]] block names
+        run: |
+          set -eu
+          IMAGES="$(grep -E '^image[[:space:]]*=' wrangler.toml.example | sed -E 's/^image[[:space:]]*=[[:space:]]*"(.*)"$/\1/' | sed -E 's#^\./##')"
+          if [ -z "${IMAGES}" ]; then
+            echo "::error::no [[containers]] image line in wrangler.toml.example: refusing to report a pass over an empty set. If the block was removed, remove this job in the same change."
+            exit 1
+          fi
+          built=0
+          for img in ${IMAGES}; do
+            [ -f "${img}" ] || { echo "::error::${img} is named by [[containers]] but does not exist on disk"; exit 1; }
+            ctx="$(dirname "${img}")"
+            tag="vivijure-cf857-smoke-$(basename "${ctx}"):ci"
+            echo "=== building ${img} (context ${ctx}) as ${tag}"
+            docker build -f "${img}" -t "${tag}" "${ctx}"
+            echo "${tag}" >> images.txt
+            built=$((built + 1))
+          done
+          echo "built ${built} image(s)"
+          [ "${built}" -gt 0 ] || { echo "::error::built 0 images; a loop that ran zero times exits 0 and looks exactly like a pass"; exit 1; }
+
+      - name: Smoke every built image -- it must SERVE, not merely exist
+        run: |
+          set -eu
+          [ -s images.txt ] || { echo "::error::no images.txt, so the previous step built nothing and this step would pass over an empty list"; exit 1; }
+          n=0
+          while read -r tag; do
+            [ -n "${tag}" ] || continue
+            echo "=== smoking ${tag}"
+            # cf#906: supply what the DEPLOYMENT supplies, not what makes the gate pass. Injecting
+            # a token here was green on an image the hosted tier cannot start, because production
+            # has no way to set one -- cf#857's own defect class reappearing inside the gate built
+            # to close it. FinishContainer.envVars sets exactly this var and nothing else reaches
+            # the container's process, so this is the production configuration.
+            LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true sh scripts/container-smoke.sh "${tag}" 8000 /health 90
+            n=$((n + 1))
+          done < images.txt
+          echo "smoked ${n} image(s)"
+          [ "${n}" -gt 0 ] || { echo "::error::smoked 0 images"; exit 1; }
 
   # MIGRATIONS GATE (cf#358): 0016_render_output_ms.sql shipped in v1.19.0 and the FIRST place
   # it was ever applied was PRODUCTION, at the deploy job's `wrangler d1 migrations apply
@@ -324,9 +765,9 @@ jobs:
   # SECURITY GATE (fc#859): a v* tag can point at ANY commit, including one that never merged.
   # The org tag ruleset enforces deletion + non_fast_forward only, so `git tag v9.9.9 <unmerged>
   # && git push origin v9.9.9` would deploy unreviewed code to prod, routing around branch
-  # protection. This refuses that. It runs on ubuntu-latest -- NOT the deploy job's
-  # node:22-alpine container, which ships without git -- so actions/checkout produces a real
-  # repository and merge-base can walk main. Same tag-only condition as `deploy`: this repo
+  # protection. This refuses that. It has always run on ubuntu-latest with a real git checkout, so
+  # merge-base can walk main; before cf#809 the deploy job could not host this check at all, because
+  # it ran in a container image without git and actions/checkout fell back to the REST API. Same tag-only condition as `deploy`: this repo
   # publishes ONLY on a v* tag (deploy is itself gated on refs/tags/v*), so there is no
   # branch-dispatch publish path to guard.
   assert-on-main:
@@ -348,6 +789,66 @@ jobs:
           fi
           echo "commit ${head} is on origin/main; ancestry guard passed."
 
+  # fc#2250: TAG-VS-VERSION AS A JOB, not a step.
+  #
+  # The assert itself is not new -- studio-release.yml has carried it since cf#272 -- but it lived
+  # as a STEP inside studio-release, and a step cannot gate a SIBLING job. `deploy` and
+  # `studio-release` are siblings on the same needs: array, so:
+  #
+  #   * `v1.99.0` pushed on a commit whose package.json says 1.33.9 deployed the Worker, applied
+  #     remote D1 migrations and deployed MCP; the assert then fired in the other job, after prod
+  #     had already moved. cf#272 caught the mislabelled RELEASE and never guarded the DEPLOY.
+  #   * The fix is the same shape cf#562 used for the ordering problem: promote the thing everyone
+  #     must pass into a JOB both publishing paths depend on, rather than duplicating the step.
+  #
+  # ubuntu-latest, deliberately, and for the reason assert-on-main states one job up: the deploy job
+  # runs in `container: node:22-alpine`, whose actions/checkout falls back to the REST API and leaves
+  # no .git, so gates that need a real checkout live in their own ubuntu-latest job. This one only
+  # needs package.json, but keeping both guards the same shape means the next one is obvious.
+  #
+  # Non-v refs cannot reach here (the if: below), so unlike the studio-release step there is no
+  # notice-and-pass branch: on this trigger the ref is always a v* tag.
+  assert-tag-version:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the declared version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"
+          pkg="$(node -p "require(\"./package.json\").version")"
+          if [ "$want" != "$pkg" ]; then
+            echo "::error::tag ${TAG} does not match package.json version ${pkg} -- refusing to deploy or publish a mislabelled build"
+            exit 1
+          fi
+          echo "tag ${TAG} matches declared version ${pkg}."
+
+      # cf#901. THREE times in one night a change shipped inside a tag with no changelog entry and
+      # nothing refused: v1.34.1 was hand-written so two fragments were never consumed (804 had to be
+      # folded back afterwards as a post-publication correction), and then v1.34.2 was assembled
+      # correctly and TWO more PRs merged before the tag, twice, so cf#858 -- a child-safety fix --
+      # rode a tag undescribed.
+      #
+      # IT RUNS HERE, AT TAG TIME, AND THAT IS THE POINT. A cut-time check would have caught the
+      # first instance and sailed past the other two, because those fragments did not exist when the
+      # assembler ran. The tag is the last boundary the artifact crosses, so it is the one that has
+      # to ask. It is NOT continue-on-error: a gate that cannot refuse is documentation with a tick
+      # next to it, which this repo has now demonstrated the hard way more than once.
+      #
+      # The control runs FIRST, as everywhere else in this file, because a gate whose failing state
+      # has never been observed is decoration. It plants an unconsumed fragment and requires a
+      # refusal, and it plants a fragment that merely QUOTES the hold marker in its prose and
+      # requires that to be refused too -- the cp#245 self-disarm case.
+      - name: Control -- the unconsumed-fragment gate can refuse (cf#901)
+        run: python3 tests/changelog-fragments-consumed.test.py
+
+      - name: Every changelog fragment is consumed or deliberately held (cf#901)
+        run: python3 scripts/changelog-fragments-consumed.py .
+
   deploy:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
@@ -364,26 +865,79 @@ jobs:
     # Adding them cannot deadlock: both run unconditionally on this trigger, so `needs` will always
     # resolve rather than wait on a job that never starts. That is the failure mode to check before
     # widening a `needs` array, and it is why this is safe rather than merely stricter.
-    needs: [ci, container-tests, migrations-gate, assert-on-main]
+    # fc#2250: assert-tag-version added. It is tag-gated exactly like assert-on-main, so needs:
+    # always resolves on this trigger rather than waiting on a job that never starts -- the check to
+    # make before widening a needs: array, and the same argument the paragraph above makes.
+    # cf#857: container-smoke added, by the same argument the two paragraphs above make about
+    # container-tests and migrations-gate. Before this, NOTHING that starts the container gated a
+    # release -- container-deploy-shape is not in this list either, so a tag could deploy with it
+    # RED and the deploy job would simply never look. That is how a crashing image reached
+    # production green (cf#851).
+    #
+    # THE DEADLOCK CHECK, which is the thing to make before widening a needs: array. container-smoke
+    # carries an `if:`, so unlike the other five it COULD be skipped -- and a skipped dependency
+    # skips the dependent job, which would silently turn a release into a no-op. Its `if:` therefore
+    # includes `startsWith(github.ref, 'refs/tags/v')` explicitly, so on this trigger it always runs
+    # and needs: always resolves. container-deploy-shape is deliberately NOT added: it proves a
+    # BUILD, and container-smoke builds each image itself before starting it, so the stronger gate
+    # subsumes it on this path rather than adding a second conditional dependency.
+    needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    container: node:22-alpine
-    timeout-minutes: 15
+    # cf#809: this job used to run in `container: node:22-alpine`, and #798 broke it the moment it
+    # merged. The [[containers]] block added there sets `image` to a LOCAL Dockerfile path, and
+    # `wrangler deploy` builds that image with the Docker CLI before it uploads anything -- the
+    # alpine image has neither the CLI nor a daemon, so the FIRST v* tag after #798 would have died
+    # at "Deploy core worker", whatever that tag was cut for.
+    #
+    # Measured on b531015, same tree, same command, one flag apart:
+    #   npx wrangler deploy --dry-run --containers-rollout=none  -> RC=0, names the container app
+    #   npx wrangler deploy --dry-run                            -> RC=1, "The Docker CLI is needed
+    #                                                               to build the configured image
+    #                                                               before deploying (even in
+    #                                                               dry-run mode)"
+    #
+    # And NO gate could see it: bundle-gate passes --containers-rollout=none, which is exactly the
+    # flag that skips the build. Green everywhere, reachable only by pushing a tag.
+    #
+    # So the job runs natively on the runner, which ships Docker. Node comes from setup-node instead
+    # of from the image. The steps below were written for BusyBox ash and are plain POSIX, which
+    # bash runs unchanged; the package installs they did at runtime are now presence assertions.
+    timeout-minutes: 30 # the ffmpeg image build is now part of this job, not just the upload
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      # Ancestry gate lives in assert-on-main (ubuntu-latest + real git checkout). Do NOT repeat it
-      # here: node:22-alpine checkout falls back to REST API (no .git), so git fetch always fails.
+      # Ancestry gate lives in assert-on-main. Do NOT repeat it here -- one definition of that
+      # invariant, in the job whose whole purpose is to assert it.
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # The 3 CPU containers (video-finish / image-prep / audio-beat-sync) are NOT built or deployed
-      # here. CF Containers were dropped in wrangler.toml migration v2-drop-cpu-containers (issue #83);
-      # they run always-on on the operator's container host as Docker services, deployed out of band via
-      # containers/compose.yaml. `wrangler deploy` ships ONLY the workers, so no Docker/buildx needed.
+      # Prove the container toolchain BEFORE anything is deployed. `wrangler deploy` needs the
+      # Docker CLI for the [[containers]] image, and a missing CLI must stop the job here rather
+      # than halfway through, with the module workers already live and the core not.
+      - name: Assert the container build toolchain is present
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing on this runner -- wrangler cannot build the [[containers]] image (cf#809)"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon not reachable -- wrangler cannot build the [[containers]] image (cf#809)"; exit 1; }
+          echo "docker OK: $(docker --version)"
+
+      # SUPERSEDED by #797/#798, and left here corrected rather than deleted because the old text
+      # said the exact opposite and someone will come looking for it. video-finish is BACK on
+      # Cloudflare Containers (migration v3-finish-container, class FinishContainer), so the
+      # "Deploy core worker" step below DOES build and push containers/video-finish/Dockerfile --
+      # that is why this job needs Docker (cf#809). The other CPU containers (image-prep,
+      # audio-mix, audio-beat-sync, audio-master) are still out-of-band images and are not built
+      # here; only the one declared in a [[containers]] block is.
 
       # Module workers deploy BEFORE the core. The core binds each module as a [[services]] dependency,
       # and a binding to a not-yet-deployed service makes the core `wrangler deploy` fail. Deploying
@@ -396,11 +950,11 @@ jobs:
       # [[services]] target the list omits, turning the next core deploy into a dangling-binding
       # failure. Deploying every module dir closes both gaps. If a module ever must be skipped, add
       # its dir name to EXCLUDE below (explicit, reviewable) -- do NOT reintroduce an include-list.
-      # POSIX sh ONLY: this job runs in `container: node:22-alpine`, whose /bin/sh is BusyBox ash, and
-      # GitHub's default `run:` shell there is `sh` (not bash). No bash-isms -- no `shopt`, no `arr=()`
-      # arrays, no `${#arr[@]}` -- or the step dies with exit 127 (v0.6.1 failed exactly this way:
-      # `shopt: not found`). A plain glob `for` loop is portable; an unmatched glob stays literal, so
-      # we test `[ -f "$toml" ]` to handle the empty case.
+      # POSIX sh, KEPT DELIBERATELY after cf#809 moved this job off `container: node:22-alpine`.
+      # The alpine shell that forced it is gone (bash runs this unchanged), but v0.6.1 died here
+      # with `shopt: not found` and portable is the cheaper default -- no `shopt`, no `arr=()`
+      # arrays, no `${#arr[@]}`. A plain glob `for` loop is portable; an unmatched glob stays
+      # literal, so we test `[ -f "$toml" ]` to handle the empty case.
       # No secret step here BY DESIGN: module secrets (RUNPOD_API_KEY / RUNPOD_ENDPOINT_ID / GATEWAY_ID)
       # are bound declaratively from the account-level Cloudflare Secrets Store via [[secrets_store_secrets]]
       # in each module's wrangler.toml, so `wrangler deploy` re-establishes them every run. A fresh-create
@@ -426,43 +980,57 @@ jobs:
           AUDIO_MIX_URL: ${{ vars.AUDIO_MIX_URL }}
           AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
           FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
-          SPEECH_UPSCALE_DOORS: ${{ vars.SPEECH_UPSCALE_DOORS }}
           FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
-          # #520: the 5 media modules carry a REPLACE_WITH_VPC_*_ID placeholder (no hardcoded prod VPC
-          # service id in the tracked tomls). Filled per-module below from these repo secrets.
+          # #520 ORIGINALLY: the 5 media modules carried a REPLACE_WITH_VPC_*_ID placeholder, filled
+          # per-module below from these repo secrets. NO LONGER TRUE -- CX-8/cf#764, same correction
+          # as the block below (cf#840): zero module tomls declare a VPC placeholder any more, no
+          # script in this repo reads a VPC_*_ID env var, and these three lines substitute nothing.
+          # Left in place rather than deleted for the same reason as the block below: removing the
+          # secrets and this wiring is a separate deliberate change, not a comment fix.
           VPC_VIDEO_FINISH_ID: ${{ secrets.VPC_VIDEO_FINISH_ID }}
           VPC_AUDIO_BEAT_SYNC_ID: ${{ secrets.VPC_AUDIO_BEAT_SYNC_ID }}
           VPC_AUDIO_MASTER_ID: ${{ secrets.VPC_AUDIO_MASTER_ID }}
-          # OPTIONAL (cf#482/#480). UNSET IS THE NORMAL STATE and is what ships today: an unset id
-          # makes fill-module-placeholders.sh STRIP the door's [[vpc_services]] and
-          # [[secrets_store_secrets]] blocks, so finish-upscale and speech-upscale deploy exactly as
-          # they do now, on RunPod. Referencing a secret that does not exist yields "" here, which
-          # IS the unset state -- so adding these lines changes nothing until someone creates the
-          # secret. Set one only once the matching connectivity-directory service exists.
+          # OPTIONAL (cf#482/#480), AND THESE FOUR NOW HAVE NO CONSUMER -- CORRECTED cf#840.
+          # This comment used to say an unset id makes fill-module-placeholders.sh STRIP the door's
+          # [[vpc_services]] and [[secrets_store_secrets]] blocks. THERE IS NO SUCH STRIP ANY MORE.
+          # Hosted module tomls carry no Workers VPC at all; the script REFUSES a leftover
+          # [[vpc_services]] or ${VPC_ rather than filling or stripping it, and
+          # tests/optional-binding-wiring-cf507.test.ts asserts that ABSENCE across every
+          # modules/*/wrangler.toml. Measured at cf#840: zero module tomls declare a VPC
+          # placeholder, the core wrangler.toml.example declares none either, and no script in this
+          # repo reads a VPC_*_ID env var -- so the VPC_* lines here and in the core render step
+          # below substitute nothing. They are left in place rather than deleted in the cf#840 PR
+          # because removing them is a separate deliberate change and a release was in flight.
+          # The seam an unset id actually strips today is the DOOR URL vars
+          # (FINISH_UPSCALE_DOORS / FINISH_BLENDER_DOORS), and cf#840 made that strip report
+          # itself: fill-module-placeholders.sh now prints BOUND/STRIPPED per declared door var,
+          # with a ::warning:: on each stripped one, so a forgotten variable is distinguishable
+          # from a deliberate opt-out by reading this job's log. Referencing a secret that does not
+          # exist still yields "" here, which IS the unset state.
           VPC_FINISH_UPSCALE_ID: ${{ secrets.VPC_FINISH_UPSCALE_ID }}
-          VPC_SPEECH_UPSCALE_ID: ${{ secrets.VPC_SPEECH_UPSCALE_ID }}
           # cf#489: same OPTIONAL shape. This one was MISSED when the binding was added, and the
           # deploy stayed GREEN while silently stripping the door blocks. The log line reading
           # VPC_FINISH_BLENDER_ID unset, stripped its optional blocks was the ONLY tell.
           #
-          # THAT IS NO LONGER TRUE AND THE OLD WORDING IS WORTH CORRECTING RATHER THAN DELETING.
-          # This comment used to end "nothing asserts this list against the module tomls that
-          # declare the markers". cf#507 shipped exactly that assertion:
-          # tests/optional-binding-wiring-cf507.test.ts derives the marker set from the module
-          # tomls and fails if any declared marker is absent from THIS env block or from the
-          # optional-var loop in fill-module-placeholders.sh, with a denominator and a negative
-          # control so an empty derivation cannot pass vacuously.
+          # CORRECTED TWICE, AND THE SECOND CORRECTION IS cf#840. This comment first said "nothing
+          # asserts this list against the module tomls that declare the markers", then was updated
+          # to say tests/optional-binding-wiring-cf507.test.ts DERIVES the marker set from the
+          # module tomls and fails if any declared marker is absent from THIS env block or from the
+          # optional-var loop in fill-module-placeholders.sh. That is no longer what the file does:
+          # the VPC marker population went to zero, and the test was rewritten to assert the
+          # ABSENCE of [[vpc_services]] / REPLACE_WITH_VPC_* / ${VPC_ on every module toml. It
+          # asserts nothing about this env block. Read the test, not this comment, for what is
+          # covered -- a comment claiming a property the code lacks is what got cf#840 re-filed.
           #
-          # Left as a correction because the stale sentence actively costs time: it invites a
-          # reader to re-file the gap as open, which is the failure mode it was warning about,
-          # pointed at itself.
+          # Corrected rather than deleted because the stale sentence actively costs time: it
+          # invites a reader to re-file the gap as open, which is the failure mode it was warning
+          # about, pointed at itself.
           VPC_FINISH_BLENDER_ID: ${{ secrets.VPC_FINISH_BLENDER_ID }}
           # cf#507: the SECOND door on each upscale module, same OPTIONAL shape. Unset is the
           # normal state and strips the blocks, so adding these lines changes nothing until the
           # secrets exist. They are listed HERE because an id missing from this list is the cf#489
           # failure: the deploy stays GREEN and silently strips the door it was meant to bind.
           VPC_FINISH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_FINISH_UPSCALE_PROPAGANDHI_ID }}
-          VPC_SPEECH_UPSCALE_PROPAGANDHI_ID: ${{ secrets.VPC_SPEECH_UPSCALE_PROPAGANDHI_ID }}
           # CORE-ONLY host switch. vivijure-cf is the stripped host on the PUBLISHED
           # @skyphusion-labs/vivijure-core: it owns the core worker + registry wiring, and the module
           # workers are deployed and managed INDEPENDENTLY (they stay live and are bound by service name
@@ -500,7 +1068,8 @@ jobs:
       # (so the account AUD / resource IDs are not in the public repo); it is rendered fresh here.
       # MUST run BEFORE "Apply D1 migrations": wrangler d1 needs the rendered wrangler.toml to
       # resolve the D1 binding + migrations_dir (the gitignored config does not exist until here).
-      # node:22-alpine has no envsubst, so add gettext (POSIX sh). The explicit SHELL-FORMAT var list
+      # envsubst comes from the runner image now, not from a package install (cf#809); it is asserted
+      # present rather than installed. The explicit SHELL-FORMAT var list
       # means ONLY these placeholders substitute -- any other ${...} in the file is left untouched.
       - name: Render core wrangler.toml
         env:
@@ -539,11 +1108,10 @@ jobs:
           AUDIO_MIX_URL: ${{ vars.AUDIO_MIX_URL }}
           AUDIO_MASTER_URL: ${{ vars.AUDIO_MASTER_URL }}
           FINISH_UPSCALE_DOORS: ${{ vars.FINISH_UPSCALE_DOORS }}
-          SPEECH_UPSCALE_DOORS: ${{ vars.SPEECH_UPSCALE_DOORS }}
           FINISH_BLENDER_DOORS: ${{ vars.FINISH_BLENDER_DOORS }}
         run: |
           set -eu
-          apk add --no-cache gettext >/dev/null
+          command -v envsubst >/dev/null 2>&1 || { echo "::error::envsubst (gettext) missing on this runner"; exit 1; }
           # Fail loud on an unset AUTH_MODE (do NOT default): a silent default mis-postures prod, and
           # since the v0.12.0 flip removed the whole-hostname Access app, an accidental var deletion must
           # break the render rather than quietly ship the wrong door. Mirrors deploy.sh (requires AUTH_MODE).
@@ -556,7 +1124,7 @@ jobs:
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "::error::CLOUDFLARE_ACCOUNT_ID unset -- cannot render R2_S3_ENDPOINT"; exit 1; fi
           R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
           R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
-          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $SPEECH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
           # cf#560: STRIP THE LOCAL-GPU BLOCK. The hosted studio must never bind local-gpu.
           #
           # The door's own manifest blurb says "Self-host only ... Commercial use of Vivijure is
@@ -576,8 +1144,10 @@ jobs:
           # workflows themselves and refusing if any member does not call it.
           #
           # Unconditional here on purpose: hosted has no INSTALL_LOCAL_GPU case to honour.
-          # SATELLITE finish-upscale / speech-upscale stay. SATELLITE finish-lipsync is
-          # stripped next: MuseTalk is homelab only. SELFHOST-SKIP marks fleet-only blocks,
+          # SATELLITE finish-upscale stays. There is no longer a
+          # finish-lipsync block to strip: MuseTalk is ruled out permanently and the module
+          # is gone (cf#783), so the strip script and its gate went with it rather than
+          # staying on as a control with no subject. SELFHOST-SKIP marks fleet-only blocks,
           # which hosted IS.
           #
           # deploy.sh (SELF-HOST, where local-gpu is ALLOWED) keeps its own INSTALL_LOCAL_GPU switch
@@ -585,14 +1155,55 @@ jobs:
           # bolting the unconditional strip onto the self-host path would remove a door its operator
           # is entitled to run.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
-          sh scripts/strip-finish-lipsync.sh .wrangler.hosted.toml .wrangler.hosted2.toml
-          mv .wrangler.hosted2.toml .wrangler.hosted.toml
           envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing secret would leave a
           # literal ${...}); comment-prose mentioning ${...} is fine, and -F keeps the pattern
           # literal on every grep (the v0.16.2 MCP-guard lesson: '${' as a regex is grep-dependent).
           if grep -v '^[[:space:]]*#' wrangler.toml | grep -qF '${'; then echo "::error::unsubstituted placeholder in wrangler.toml"; grep -nF '${' wrangler.toml | grep -v ':[[:space:]]*#'; exit 1; fi
+          # cf#850, and it is the SIBLING of the line above rather than a second opinion about it.
+          # That guard catches a var MISSING from the $VARS shell-format list, because the literal
+          # ${FOO} survives the render. It CANNOT catch a var that is LISTED AND EMPTY: envsubst
+          # substitutes it to "", the config reads FINISH_UPSCALE_DOORS = "", every guard in this step
+          # passes, and the deploy is green with the door off. That is cf#489 failure mode on the one
+          # path cf#840 did not cover, and a deliberate opt-out renders BYTE-IDENTICALLY to a forgotten
+          # variable. The two together cover the space: missing -> the grep above; empty -> this.
+          #
+          # It REPORTS rather than fails on empty, because the template documents empty as meaningful
+          # ("Empty = that service is off") and the door-list modules read an empty list as "use
+          # RunPod", so a self-host legitimately ships most of these empty. A gate that is wrong about
+          # the ordinary case gets routed around. It hard-fails exactly one CONTRADICTION: a config
+          # that binds [[containers]] while VIDEO_FINISH_URL renders empty, which is a working door
+          # sitting bound while src/video-finish-availability.ts degrades the assemble phase as though
+          # no tier existed.
+          #
+          # NOT on bundle-gate, container-deploy-shape or studio-release: those three render the same
+          # template with EMPTY or dummy substitutions ON PURPOSE, so they would hit that refusal for a
+          # reason that is not a defect. tests/origin-vars-report-cf850.test.ts pins both the single
+          # live invocation here and its ABSENCE there, because this is a control that would be WRONG
+          # if generalised.
+          sh scripts/report-origin-vars.sh wrangler.toml
+          # cf#886, and it is REPORT-ONLY BY RULING. The line above says whether a door var is BOUND;
+          # this says whether the host it names resolves. The v1.34.3 deploy is why both exist: the var
+          # report printed "7 bound, 0 empty" on a release where ELEVEN of the thirteen hostnames were
+          # authoritative NXDOMAIN. BOUND is a statement about the CONFIG; this is the cheapest
+          # available statement about the world. ~7 lookups, sub-second, no egress, no credential.
+          #
+          # IT MUST NEVER BE ABLE TO REFUSE. A release gate that depends on a third party being up can
+          # block an unrelated release, and the first time it does that it goes on the bypass list
+          # permanently -- the same family as a jail that can ban your own ingress path. So the script
+          # carries no `set -e`, ends in `exit 0`, and is invoked BARE here: no `||`, no `&&`, nothing
+          # that could convert a warning into a failure. tests/origin-reachability-cf886.test.ts
+          # asserts all of that, including that it still exits 0 when EVERY host fails and when its own
+          # resolver is broken. An HTTP probe here was refused for the same reason, and it would also
+          # need MEDIA_FINISH_TOKEN, putting a credential in a path that needs none.
+          #
+          # Its blind spot is named rather than papered over: a host that RESOLVES but is DEAD reads as
+          # fine. cf#851 is the proof that matters -- that door was a Durable Object binding with no
+          # hostname at all. cf#887 is the readiness surface for "is the tier SERVING now", which is a
+          # different question, and core#327 already ruled the RENDER PATH reads the submit outcome
+          # rather than any predicate.
+          sh scripts/report-origin-reachability.sh wrangler.toml
           # Auth guard (mode-aware since #423): AUTH_MODE must render non-empty, and access mode
           # additionally needs the armed Access vars NON-EMPTY (a blank would unarm -> DENY 503).
           grep -Eq 'AUTH_MODE = ".+"' wrangler.toml || { echo "::error::AUTH_MODE empty after render"; exit 1; }
@@ -650,38 +1261,45 @@ jobs:
       # back a deploy; it turns an accidentally-OPEN studio into a RED CI run instead of a silent
       # ship (the automatic version of the v0.12.0 live matrix). No new secrets: the hostname is the
       # route pattern already in the rendered wrangler.toml. Edge propagation can lag, so a non-403
-      # is retried for ~60s. POSIX sh (BusyBox ash in node:22-alpine); no bash-isms.
+      # is retried for ~60s. Plain POSIX sh; no bash-isms (cf#809).
       - name: Post-deploy gate self-check
         run: |
           set -eu
-          command -v curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null
-          # Derive the hostname from the rendered route pattern; strip a trailing /* if it is a path
-          # pattern. A workers.dev / route-less deploy has no pattern -- skip rather than false-alarm.
-          HOST="$(grep -oE 'pattern = "[^"]+"' wrangler.toml | head -1 | sed -E 's/^pattern = "([^"]+)"$/\1/' | sed -E 's#/\*?$##')"
-          if [ -z "${HOST:-}" ]; then
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl missing on this runner -- cannot run the post-deploy gate self-check"; exit 1; }
+          # Every custom-domain route, not the first only. A second host (app.studio.vivijure.com)
+          # would otherwise pass this job while that host was never asked. Strip a trailing /* if
+          # the pattern is a path. A workers.dev / route-less deploy has no pattern -- skip rather
+          # than false-alarm.
+          patterns="$(grep -oE 'pattern = "[^"]+"' wrangler.toml | sed -E 's/^pattern = "([^"]+)"$/\1/' | sed -E 's#/\*?$##')"
+          if [ -z "${patterns:-}" ]; then
             echo "::warning::no route pattern in wrangler.toml -- skipping post-deploy gate self-check (workers.dev / no custom domain?)"
             exit 0
           fi
-          URL="https://${HOST}/api/modules"
-          echo "Proving the gate: no-bearer GET ${URL} must return 403."
-          n=0
-          code="000"
-          while [ "$n" -lt 12 ]; do
-            # NO Authorization header on purpose: this is the unauthenticated caller the gate denies.
-            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null || echo 000)"
-            if [ "$code" = "403" ]; then
-              echo "gate OK: ${URL} -> 403 (fail-closed confirmed)."
-              exit 0
+          for HOST in $patterns; do
+            URL="https://${HOST}/api/modules"
+            echo "Proving the gate: no-bearer GET ${URL} must return 403."
+            n=0
+            code="000"
+            while [ "$n" -lt 12 ]; do
+              # NO Authorization header on purpose: this is the unauthenticated caller the gate denies.
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL" 2>/dev/null || echo 000)"
+              if [ "$code" = "403" ]; then
+                echo "gate OK: ${URL} -> 403 (fail-closed confirmed)."
+                break
+              fi
+              n=$((n + 1))
+              echo "not gated yet (HTTP ${code}); edge may still be propagating -- retry ${n}/12"
+              [ "$n" -lt 12 ] && sleep 5
+            done
+            if [ "$code" != "403" ]; then
+              if [ "$code" = "200" ]; then
+                echo "::error::DEPLOY GATE CHECK FAILED -- STUDIO MAY BE OPEN: no-bearer ${URL} returned 200 (the API served an unauthenticated caller). Expected 403. See docs/SECURITY.md."
+              else
+                echo "::error::post-deploy gate self-check failed: no-bearer ${URL} returned HTTP ${code} (expected 403). See docs/SECURITY.md."
+              fi
+              exit 1
             fi
-            n=$((n + 1))
-            echo "not gated yet (HTTP ${code}); edge may still be propagating -- retry ${n}/12"
-            [ "$n" -lt 12 ] && sleep 5
           done
-          if [ "$code" = "200" ]; then
-            echo "::error::DEPLOY GATE CHECK FAILED -- STUDIO MAY BE OPEN: no-bearer ${URL} returned 200 (the API served an unauthenticated caller). Expected 403. See docs/SECURITY.md."
-          else
-            echo "::error::post-deploy gate self-check failed: no-bearer ${URL} returned HTTP ${code} (expected 403). See docs/SECURITY.md."
-          fi
           exit 1
 
       # Opt-in, self-host safe edge-cache purge. The core worker is already LIVE by this step, so a
@@ -689,7 +1307,7 @@ jobs:
       # edge until purged. Gated exactly like ENABLE_WFP_DISPATCH: a community
       # self-host sets none of the three values below, so this is a clean no-op (exit 0). Only when a
       # zone id, purge host, and a purge-scoped token (NOT the deploy token) are all set do we purge.
-      # POSIX sh (BusyBox ash in node:22-alpine); no jq/python in the image, so we grep the JSON.
+      # Plain POSIX sh, and we grep the JSON rather than take a jq dependency (cf#809).
       - name: Purge Cloudflare edge cache (/welcome)
         env:
           CF_ZONE_ID: ${{ vars.CF_ZONE_ID }}
@@ -700,7 +1318,7 @@ jobs:
             echo "cache purge not configured, skipping"
             exit 0
           fi
-          command -v curl >/dev/null 2>&1 || apk add --no-cache curl
+          command -v curl >/dev/null 2>&1 || { echo "::error::curl missing on this runner -- cannot purge the edge cache"; exit 1; }
           echo "Purging edge cache for https://${CF_PURGE_HOST}/welcome and https://${CF_PURGE_HOST}/ (zone ${CF_ZONE_ID})"
           CODE="$(curl -s -o /tmp/cf_purge_resp.json -w "%{http_code}" -X POST \
             "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
@@ -724,8 +1342,8 @@ jobs:
       # no-op. Only when BOTH MCP_HOST (the MCP hostname) and MCP_STUDIO_URL (the studio base URL the
       # MCP proxies to) are set do we render wrangler.mcp.toml and deploy. Its two secrets
       # (STUDIO_API_TOKEN, MCP_TOKEN) are seeded ONCE out-of-band (see docs/mcp.md), never in CI --
-      # same doctrine as the module secrets, so no secret value passes through GitHub. POSIX sh
-      # (BusyBox ash in node:22-alpine); no bash-isms.
+      # same doctrine as the module secrets, so no secret value passes through GitHub. Plain POSIX
+      # sh; no bash-isms (cf#809).
       #
       # cf#328: this job deploys ONLY vivijure-studio-mcp (production). The propagandhi / local
       # door (wrangler.mcp.propagandhi.toml, script vivijure-studio-mcp-flatliners) is INTENTIONAL,
@@ -744,7 +1362,7 @@ jobs:
             echo "MCP deploy not configured (MCP_HOST / MCP_STUDIO_URL unset), skipping"
             exit 0
           fi
-          apk add --no-cache gettext >/dev/null
+          command -v envsubst >/dev/null 2>&1 || { echo "::error::envsubst (gettext) missing on this runner"; exit 1; }
           export MCP_HOST MCP_STUDIO_URL
           envsubst '$MCP_HOST $MCP_STUDIO_URL' < wrangler.mcp.toml.example > wrangler.mcp.toml
           # fail-closed: no placeholder may survive OUTSIDE comments (a missing var would leave a
@@ -782,7 +1400,28 @@ jobs:
   # it is skipped, and a required check that never runs blocks every merge. The required contexts on
   # this repo are ci, migrations-gate, coverage and CodeQL.
   studio-release:
-    needs: [ci, container-tests, migrations-gate, assert-on-main]
+    # fc#2250, two additions:
+    #
+    #   assert-tag-version -- the assert this workflow used to carry only as a step, promoted so it
+    #     gates the sibling deploy job too. The step inside studio-release.yml stays: it still guards
+    #     the workflow_dispatch path, where GITHUB_REF_NAME is the launch BRANCH rather than the tag,
+    #     and that path does not pass through this job at all.
+    #
+    #   deploy -- the REVERSE direction, and the one nobody had guarded. This job publishes the
+    #     artifact every hosted tenant is provisioned from and advances the hosted STUDIO_RELEASE
+    #     pin. As siblings, a FAILED deploy did not stop the pin advancing, so tenants provisioned
+    #     afterwards were pinned to a release whose Worker never shipped. The pin must never move
+    #     ahead of the prod deploy it names.
+    #
+    # No deadlock: deploy and assert-tag-version are both gated on refs/tags/v*, the same trigger
+    # this job runs on, so needs: always resolves rather than waiting on a job that never starts.
+    # cf#857: container-smoke added here as well as on deploy. tests/tag-publish-gate-cf562.test.ts
+    # DERIVES this requirement from deploy's own needs: array rather than restating the names, and it
+    # caught the omission on the first run -- which is the gate working: this job publishes the
+    # artifact every hosted tenant is provisioned from, so it must be gated at least as hard as the
+    # deploy. Same deadlock check: container-smoke's if: names the v* tag ref explicitly, so on this
+    # trigger it always runs and needs: resolves rather than skipping this job.
+    needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version, deploy]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # the called workflow uploads the release asset; nothing else

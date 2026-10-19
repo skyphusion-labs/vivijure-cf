@@ -15,7 +15,6 @@ import { describe, it, expect } from "vitest";
 import alibabaWanWorker from "../modules/alibaba-wan/src/index";
 import alibabaWanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import googleVeoWorker from "../modules/google-veo/src/index";
-import klingWorker from "../modules/kling/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
 import seedanceWorker from "../modules/seedance/src/index";
@@ -58,7 +57,9 @@ const RUNPOD_ONLY: { name: string; worker: Worker }[] = [
   { name: "alibaba-wan", worker: alibabaWanWorker as unknown as Worker },
   { name: "alibaba-wan-lora", worker: alibabaWanLoraWorker as unknown as Worker },
   { name: "google-veo", worker: googleVeoWorker as unknown as Worker },
-  { name: "kling", worker: klingWorker as unknown as Worker },
+  // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
+  // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
+  // directory came back; it did not just get re-enabled.
   { name: "minimax-hailuo", worker: minimaxHailuoWorker as unknown as Worker },
   { name: "narration-gen", worker: narrationGenWorker as unknown as Worker },
   { name: "seedance", worker: seedanceWorker as unknown as Worker },
@@ -261,7 +262,7 @@ describe("cf#295: none of the newly-covered modules 404 on GET /ready", () => {
     const { status } = await get(worker, {});
     expect(status).toBe(200);
   });
-  it("the roster itself is the expected 24 (positive control on this file's own coverage)", () => {
-    expect(ALL.length).toBe(24);
+  it("the roster itself is the expected 23 (positive control on this file's own coverage)", () => {
+    expect(ALL.length).toBe(23);
   });
 });

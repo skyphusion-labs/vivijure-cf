@@ -29,17 +29,29 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY url_guard.py inspect_core.py photometric_gate.py bearer.py ffmpeg_run.py app.py .
+# EVERY local module app.py imports at column 0 must be on this line. `concat_guard.py` was
+# missing from 2026-09-27T01:18:31Z (cfa321f2d, #792, which ADDED the module and never touched
+# this file) and the image could not start at all: the import is at column 0 and the bind is a
+# thousand lines below it, so the interpreter died before anything listened on 8000 and the
+# platform reported `Container crashed while checking for ports`.
+COPY url_guard.py inspect_core.py photometric_gate.py bearer.py ffmpeg_run.py concat_guard.py app.py .
 
 # Build-time libx264 sanity-encode. ffmpeg has no JIT/model cache to bake (unlike
 # the numba/pymatting fix the audio + image-prep containers needed), so the only
 # "warm" that makes sense is proving the encoder links and paging it in: encode a
 # 1-frame testsrc with the exact codec /finish uses. Fails the build fast if a
 # slim-image ffmpeg ever ships without libx264, and the first real /finish then
-# pays no encoder-load cost. Bind is immediate at runtime: app.py registers
-# /health and binds :8000 before any ffmpeg subprocess (no startup warm thread to
-# starve the port-ready check). Worker side still wraps /finish in a warm-/health
+# pays no encoder-load cost. Worker side still wraps /finish in a warm-/health
 # + retry-on-503 cold-start guard (see callVideoFinish).
+#
+# THIS COMMENT USED TO CLAIM "Bind is immediate at runtime: app.py registers /health and binds
+# :8000 before any ffmpeg subprocess (no startup warm thread to starve the port-ready check)."
+# That is TRUE about the ordering it names and it is NOT a guarantee that the port comes up, and
+# the difference cost real debugging time on 2026-09-27: with `concat_guard.py` missing from the
+# COPY line above, the process died at an import a thousand lines before any of that ordering
+# mattered, and this comment steered the reader toward ffmpeg startup and away from the imports.
+# A port-ready failure is far more likely to be an import that cannot resolve than an ffmpeg
+# subprocess racing the bind, so check the COPY line FIRST.
 RUN ffmpeg -y -f lavfi -i testsrc=size=320x240:rate=24:duration=0.1 \
         -c:v libx264 -preset ultrafast -pix_fmt yuv420p -movflags +faststart /tmp/warm.mp4 \
     && ffprobe -v error -show_entries stream=codec_name -of csv=p=0 /tmp/warm.mp4 | grep -q h264 \

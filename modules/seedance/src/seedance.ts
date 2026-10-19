@@ -36,7 +36,13 @@ export function buildSeedanceBody(input: MotionBackendInput, cfg: Record<string,
       generate_audio: cfg.generate_audio !== false,
       seed: typeof cfg.seed === "number" ? cfg.seed : -1,
       use_virtual_avatar: true,
-      ...(input.last_keyframe_url ? { last_frame_image: input.last_keyframe_url } : {}),
+      // cf#922: `last_image` is what seedance-v1-5-pro-i2v publishes. This sent
+      // `last_frame_image`, which is the CLOUDFLARE bytedance door's key (modules/cf-seedance,
+      // still correct there) carried across to the RunPod door. seedance-v1-5-pro-i2v is the ONLY
+      // endpoint in RunPod's public catalog that takes an ending frame at all, and this door's
+      // manifest declares usage.first_last: true, so the end frame that is supposed to hold the cut
+      // was riding on a key the endpoint does not define.
+      ...(input.last_keyframe_url ? { last_image: input.last_keyframe_url } : {}),
     },
   };
 }

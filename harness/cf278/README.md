@@ -65,7 +65,8 @@ VJ_STUDIO_TOKEN=... node harness/cf278/enumerate.mjs
 ```
 
 Env: `VJ_STUDIO_TOKEN` (bearer), `VJ_STUDIO_URL` (default prod studio), `VJ_CORE_DIST`,
-`VJ_REGISTRY_FILE`. Credentials come from the environment only; no path to a secret appears in any
+`VJ_REGISTRY_FILE`, `VJ_COVERAGE_JSON` (the coverage declaration as an inline JSON STRING, not a
+path; when set it replaces `coverage.json`). Credentials come from the environment only; no path to a secret appears in any
 file here.
 
 `VJ_REGISTRY_FILE` reads the registry from disk instead of fetching it, for the case where no token
@@ -150,7 +151,9 @@ Constellation write-up (runbook wording, S3 path): **`docs/r2-verification.md`**
   the message DOES carry is that an unauthenticated call returns `missing API token` instead, so
   those two states are separable and the other four are not. Films advance without any poller
   regardless, because the studio's own 1-minute cron sweep drives them.
-- **`speech-upscale` is opt-in and ships `enable: false`.** A default film render therefore never puts a
+- **`speech-upscale` was opt-in and shipped `enable: false`.** REMOVED in cf#786, so a film render
+  cannot reach the audio-upscale endpoint at all now. Kept as the RECORD of what this harness run
+  measured: a default render therefore never put a
   job on the audio-upscale endpoint; the module is invoked and honestly degrades with
   `applied: []`, `degraded: "disabled"`. To exercise that endpoint through the studio path, submit with
   `speech_config: {"speech-upscale": {"enable": true}}`.

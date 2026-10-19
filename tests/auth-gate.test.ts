@@ -477,17 +477,38 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
         { status: 200, headers: { "content-type": "application/json" } },
       ),
   };
+  // cf#919: `talking_doors` is projected through the INSTALLED motion.backend set, so the same
+  // reasoning as planEnhanceBinding applies one catalog over. Exactly ONE talking door is bound here,
+  // and it is one that TALKING_VOICE_HONOR carries (`cf-seedance`, honor "exact"). `cf-veo` and
+  // `infinitetalk` are in that table and are deliberately NOT bound, which is what lets the
+  // assertions below separate "projected" from "served raw": the raw table would carry all three.
+  const cfSeedanceBinding = {
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          name: "cf-seedance",
+          version: "0.1.0",
+          api: "vivijure-module/2",
+          hooks: ["motion.backend"],
+          ui: { order: 5, locality: "cloud" },
+          usage: { native_audio: true, voice: "cast_tts", scatter_native_audio: false, min_seconds: 4, max_seconds: 10, driving_audio: false },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  };
   const demoEnv = {
     AUTH_MODE: "demo",
     // Deliberately bound: demo must scrub a catalog that WOULD otherwise be populated. Without the
     // binding, models: [] would be trivially true and the scrub would be untested.
     MODULE_PLANENHANCE: planEnhanceBinding,
+    MODULE_CF_SEEDANCE: cfSeedanceBinding,
     ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
   } as unknown as Env;
   const tokenEnv = {
     AUTH_MODE: "token",
     STUDIO_API_TOKEN: SECRET,
     MODULE_PLANENHANCE: planEnhanceBinding,
+    MODULE_CF_SEEDANCE: cfSeedanceBinding,
     ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
   } as unknown as Env;
 
@@ -512,9 +533,13 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
   it("demo serves voices: [] -- same rule for the TTS voice catalog", async () => {
     const res = await worker.fetch(get("/api/voices"), demoEnv, ctx);
     expect(res.status).toBe(200);
-    const body = await res.json() as { voices: unknown; talking_doors?: unknown };
+    const body = await res.json() as { voices: unknown; talking_doors?: { name: string }[] };
     expect(body.voices).toEqual([]);
     expect(Array.isArray(body.talking_doors)).toBe(true);
+    // cf#919: talking_doors is NOT scrubbed by deploy mode (CONTRACT 2.4 -- served on every deploy);
+    // it is projected through the installed set. The one bound talking door survives, and a door in
+    // the table but not bound does not.
+    expect(body.talking_doors!.map((d) => d.name)).toEqual(["cf-seedance"]);
   });
 
   it("token mode still serves the full catalogs (no over-scrub outside demo)", async () => {
@@ -524,8 +549,13 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
     const voices = (await (await worker.fetch(get("/api/voices", auth), tokenEnv, ctx)).json()) as any;
     expect(voices.voices.length).toBeGreaterThan(0);
     expect(Array.isArray(voices.talking_doors)).toBe(true);
+    // POSITIVE: the bound talking door keeps its honor verdict through the projection.
     expect(voices.talking_doors.some((d: { name: string; honor: string }) => d.name === "cf-seedance" && d.honor === "exact")).toBe(true);
-    expect(voices.talking_doors.some((d: { name: string; honor: string }) => d.name === "cf-veo" && d.honor === "neighborhood")).toBe(true);
+    // NEGATIVE, and this is the one cf#919 turns on: `cf-veo` and `infinitetalk` are both rows in
+    // TALKING_VOICE_HONOR, and neither is bound in this env. Serving the raw table puts them in the
+    // response, which is exactly what told a hosted filmmaker to go pick InfiniteTalk.
+    expect(voices.talking_doors.some((d: { name: string }) => d.name === "cf-veo")).toBe(false);
+    expect(voices.talking_doors.some((d: { name: string }) => d.name === "infinitetalk")).toBe(false);
   });
 });
 

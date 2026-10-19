@@ -320,11 +320,60 @@ check(
     "of this repo",
     (live_rc != 0) == (bool(live_drift)),
 )
+# A version whose drift is DECLARED (column-0 marker) and ALLOWLISTED (listed in
+# scripts/changelog-corrections.txt) is permitted drift, and the guard says so in different words:
+# "is an allowlisted post-publication correction and says so; drift permitted". It still drifts, so
+# the independent scan above still finds it -- correctly.
+#
+# WHY THIS EXISTS (cf#820). The assertion below used to require the literal "has CHANGED" for EVERY
+# independently-found drifted version. That made the corrections mechanism and this self-consistency
+# check MUTUALLY EXCLUSIVE: the first legitimate use of the documented waiver turned this test red,
+# and this test is a real blocking bar while the live-repo guard is advisory. It went unnoticed
+# because changelog-corrections.txt was empty on purpose until v1.20.1 became the first entry, so
+# the waiver path had never once been exercised end to end.
+#
+# The invariant the check actually wants is unchanged and is restated here: the guard must ACCOUNT
+# for every drifted version, either by refusing it or by naming it as permitted. Silence about a
+# drifted section is the defect; permitting one out loud is the mechanism working.
+def permitted_versions(root):
+    """Versions the guard is entitled to permit: allowlisted AND declared. Both halves, because
+    either alone is refused -- listed-but-undeclared would make the record lie by omission, and
+    declared-but-unlisted is the cp#245 defect where content could waive itself."""
+    listed = set()
+    corrections = root / "scripts" / "changelog-corrections.txt"
+    if corrections.exists():
+        for line in corrections.read_text().split("\n"):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            listed.add(line.split()[0])
+    text = (root / "CHANGELOG.md").read_text()
+    declared = set()
+    current = None
+    for line in text.split("\n"):
+        m = re.match(r"^## (v\d+\.\d+\.\d+)\b", line)
+        if m:
+            current = m.group(1)
+        elif current and line.startswith("**CORRECTED AFTER PUBLICATION"):
+            declared.add(current)
+    return listed & declared
+
+
 if live_drift:
+    live_permitted = permitted_versions(repo_root)
+    print("  permitted (allowlisted AND declared): " + (", ".join(sorted(live_permitted)) or "(none)"))
     check(
-        "REAL DEFECT: every independently-found drifted version is named in the output of the "
-        "guard itself",
-        all(("the " + v + " section has CHANGED") in live_out for v in live_drift),
+        "REAL DEFECT: every independently-found drifted version is ACCOUNTED FOR by the guard, "
+        "either refused or named as a permitted correction",
+        all(
+            ("the " + v + " section has CHANGED") in live_out
+            or (v in live_permitted and v in live_out)
+            for v in live_drift
+        ),
+    )
+    check(
+        "CONTROL: a permitted version is NOT reported as a refusal, or the waiver does nothing",
+        all(("the " + v + " section has CHANGED") not in live_out for v in live_permitted),
     )
 
 print("")

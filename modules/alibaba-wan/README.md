@@ -19,7 +19,7 @@ flowchart LR
   clips["clips · motion.backend (i2v)<br/>THIS: Alibaba Wan 2.6"]
   dlg["dialogue"]
   sp["speech"]
-  fin["finish<br/>(lipsync -> rife -> upscale / overlay)"]
+  fin["finish<br/>(rife -> grade -> upscale / overlay)"]
   asm["assemble"]
   mux["mux"]
   done["done"]
@@ -50,7 +50,7 @@ different model means binding a different `motion.backend` module, not changing 
 schema):
 - `enable_prompt_expansion` (bool, default `false`) -- on, the provider rewrites/expands the prompt;
   off sends it as-is.
-- Output size is fixed at **720p** and per-shot `seconds` snaps **up** to the nearest of **{5, 10,
+- Output size is **720p** by default and selectable (`size`: `720p` / `1080p`, cf#922); per-shot `seconds` snaps **up** to the nearest of **{5, 10,
   15}** in code (not knobs).
 
 ## Contract

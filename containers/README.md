@@ -5,11 +5,13 @@ Five always-on CPU finishing services used by the studio Worker over Workers VPC
 
 | Service | Local compose image | Fleet GHCR package |
 | --- | --- | --- |
-| `video-finish` | `vivijure-cf-video-finish:local` | `ghcr.io/skyphusion-labs/vivijure-cf-video-finish` |
+| `video-finish` | `vivijure-cf-cpu:local` (`CPU_APP=video-finish`) | `ghcr.io/skyphusion-labs/vivijure-cf-video-finish` |
 | `image-prep` | `vivijure-cf-image-prep:local` | `ghcr.io/skyphusion-labs/vivijure-cf-image-prep` |
-| `audio-beat-sync` | `vivijure-cf-audio-beat-sync:local` | `ghcr.io/skyphusion-labs/vivijure-cf-audio-beat-sync` |
-| `audio-mix` | `vivijure-cf-audio-mix:local` | `ghcr.io/skyphusion-labs/vivijure-cf-audio-mix` |
-| `audio-master` | `vivijure-cf-audio-master:local` | `ghcr.io/skyphusion-labs/vivijure-cf-audio-master` |
+| `audio-beat-sync` | `vivijure-cf-cpu:local` (`CPU_APP=audio-beat-sync`) | `ghcr.io/skyphusion-labs/vivijure-cf-audio-beat-sync` |
+| `audio-mix` | `vivijure-cf-cpu:local` (`CPU_APP=audio-mix`) | `ghcr.io/skyphusion-labs/vivijure-cf-audio-mix` |
+| `audio-master` | `vivijure-cf-cpu:local` (`CPU_APP=audio-master`) | `ghcr.io/skyphusion-labs/vivijure-cf-audio-master` |
+
+Self-host compose builds one image, `containers/cpu`, for the four join services. That image contains ffmpeg and librosa. `CPU_APP` selects the process. image-prep stays its own image. The per-service Dockerfiles remain, and CI still publishes a GHCR package per directory, including `ghcr.io/skyphusion-labs/vivijure-cf-cpu`.
 
 ## Naming
 
@@ -42,4 +44,4 @@ in prod). Audit + cutover:
 docker compose -f containers/compose.yaml up -d --build
 ```
 
-Self-hosts build from source; they do not need the GHCR packages.
+Self-hosts build from source; they do not need the GHCR packages. The four join services come up from `vivijure-cf-cpu:local`.

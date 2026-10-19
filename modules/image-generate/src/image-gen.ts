@@ -5,6 +5,10 @@
 // rewrite would have relearned them the same expensive way. Pure functions plus one entry point, so
 // the whole thing is unit-testable without a Worker.
 
+// cf#223: three PURE label functions, no Env or binding, so the "unit-testable without a Worker"
+// property stated above still holds.
+import { untrustedLabel } from "../../_shared/log-scrub";
+
 export interface AiRun {
   run(model: string, params: unknown, opts?: unknown): Promise<unknown>;
 }
@@ -137,10 +141,17 @@ export async function generateOpenAIImage(
     }),
   });
   if (!resp.ok) {
+    // cf#223: the provider MESSAGE is not ours and is not content-free. A moderation refusal from
+    // this API quotes the prompt back ("Your request was rejected... your prompt may contain..."),
+    // so interpolating it verbatim put a USER PROMPT into an exception message -- which reaches the
+    // caller, the `error` string this module returns, any log sink, and the Exceptions channel.
+    // The machine-readable `code`/`type` say what happened and are drawn from the provider's own
+    // ENUMERATED set, so they cannot carry content; the prose is dropped.
     let detail = "";
     try {
-      const e = (await resp.json()) as { error?: { message?: string } };
-      detail = e?.error?.message ? `: ${e.error.message}` : "";
+      const e = (await resp.json()) as { error?: { code?: string; type?: string } };
+      const reason = e?.error?.code ?? e?.error?.type;
+      detail = reason ? ` (${reason})` : "";
     } catch { /* non-JSON error body; status alone is enough */ }
     throw new Error(`OpenAI image API ${resp.status}${detail}`);
   }
@@ -188,7 +199,11 @@ export async function generateImageBytes(
     const opts = env.GATEWAY_ID ? { gateway: { id: env.GATEWAY_ID } } : undefined;
     const result = await env.AI.run(model, params, opts);
     const failure = detectProviderFailure(result);
-    if (failure) throw new Error(`image generation failed: ${failure}`);
+    // cf#223: `failure` is free provider text lifted out of the AI.run result, and a moderation
+    // refusal quotes the prompt. There is no enumerated code on this path, so the label carries a
+    // stable id and the length instead -- enough to correlate two reports of the same refusal and
+    // to see that a body was present, with none of its content.
+    if (failure) throw new Error(`image generation failed (provider message ${untrustedLabel(failure)})`);
     const url = extractProxiedImageUrl(result);
     if (!url) throw new Error("image generation returned no image URL");
     const resp = await fetch(url);

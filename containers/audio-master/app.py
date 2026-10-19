@@ -24,6 +24,7 @@ import time
 from aiohttp import ClientSession, ClientTimeout, web
 
 from master_core import DEFAULT_TARGET_LUFS, FfmpegTimeout, master_bed
+from bearer import bearer_middleware, require_bearer_config
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -61,6 +62,46 @@ async def _download(session, url, path, cap):
         return True, total
     except ValueError as e:
         return False, f"blocked: {e}"
+
+
+class _PutFailed(Exception):
+    """A presigned PUT that did not return 2xx.
+
+    Carries the upstream status so the route reports exactly the error string it reported before
+    the upload was made streaming: `output put <status>`.
+    """
+
+    def __init__(self, status):
+        super().__init__(f"output put {status}")
+        self.status = status
+
+
+async def _put_file(session, url, path, content_type):
+    """Stream a produced artifact to a presigned PUT.
+
+    Deliberately NOT `data=f.read()`. That materialises the WHOLE mastered bed in memory before
+    the upload starts. This container is the worst case of the CPU set: the output `format`
+    defaults to `wav` and the source bed is bounded only by MAX_BED_BYTES (256 MB), so the buffer
+    is a full lossless film-length track. A Cloudflare Container has no swap, so exceeding memory
+    restarts the instance rather than paging; disk is ephemeral and resets to the image on wake,
+    so the work dir dies with it and the job fails as though it never ran (cf#802; #808 applied
+    this same fix to video-finish, cf#814 carries it to the siblings it was scoped out of).
+
+    Content-Length is set explicitly because a presigned PUT will not accept the chunked
+    transfer-encoding aiohttp would otherwise use for a file object with no length -- streaming
+    without it would trade an OOM for a 4xx.
+
+    Returns the byte count, so the response body and the log line keep reporting a real size
+    rather than the length of a buffer that no longer exists.
+    """
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        async with guarded_put(session, url, allow_redirects=False, data=f,
+                               headers={"content-type": content_type,
+                                        "content-length": str(size)}) as r:  # codeql[py/full-ssrf]
+            if r.status not in (200, 201, 204):
+                raise _PutFailed(r.status)
+    return size
 
 
 async def master(req):
@@ -131,26 +172,23 @@ async def master(req):
             log.exception("master failed")
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
         content_type = "audio/mpeg" if fmt == "mp3" else "audio/wav"
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": content_type}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
+            try:
+                out_size = await _put_file(s, output_url, out_path, content_type)
+            except _PutFailed as e:
+                return web.json_response({"ok": False, "error": str(e)}, status=502)
 
         # `upscaled` reports whether the music-upscale lift actually ran (master_core tags it in
         # `applied`), so the module composes an HONEST `applied` from the container's structured facts
         # rather than trusting the request flag.
         upscaled = any(a.startswith("music-upscale") for a in result["applied"])
         log.info("/master ok key=%s bytes=%d dur=%.3f lufs=%.2f upscaled=%s",  # codeql[py/log-injection]
-                 safe_log_value(output_key), len(out_bytes), result["durationSeconds"], result["lufs"], upscaled)
+                 safe_log_value(output_key), out_size, result["durationSeconds"], result["lufs"], upscaled)
         return web.json_response({
             "ok": True,
             "key": output_key,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "format": fmt,
             "durationSeconds": result["durationSeconds"],
             "lufs": result["lufs"],
@@ -162,10 +200,24 @@ async def master(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
-app = web.Application(client_max_size=1024 * 1024)  # JSON bodies are small (URLs only)
+# cf#893: image-prep and audio-master had NO bearer gate at all, only url_guard. Three
+# vendored copies of bearer.py drifted and nobody was counting the containers that lacked one.
+# tests/container-bearer-gate.test.py now derives the list from app.py rather than carrying it,
+# so the next container inherits this requirement instead of having to remember it.
+app = web.Application(
+    client_max_size=1024 * 1024,  # JSON bodies are small (URLs only)
+    middlewares=[bearer_middleware],
+)
 app.router.add_get("/health", health)
 app.router.add_post("/master", master)
 
 if __name__ == "__main__":
+    # cf#893: refuse to START without auth configured. At the real entry point rather than at module
+    # scope, and the difference is deliberate: `python app.py` is what the Dockerfile CMD runs, so
+    # this is the door opening, while an IMPORT is a test reading the module. Eleven container tests
+    # import app; gating import would have broken all of them for no security gain, because
+    # bearer_middleware independently answers 503 on every media route when no token is set.
+    # Two layers, each meaningful: this one refuses to bind, that one refuses to serve.
+    require_bearer_config()
     log.info("audio-master listening on 0.0.0.0:%d", PORT)
     web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)

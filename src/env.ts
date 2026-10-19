@@ -31,13 +31,30 @@ export interface Env {
   GATEWAY_ID: SecretsStoreSecret | string;
   // Planner LLM auth: authenticated AI Gateway token + xAI BYOK (secrets, optional).
   CF_AIG_TOKEN?: SecretsStoreSecret | string;
-  XAI_API_KEY?: string;
 
   // Storage. R2_RENDERS = the `vivijure` bucket (bundles, keyframes, clips, MP4s, project state).
   // R2 = the chat-side bucket; the render flow copies a staged audio bed across from it.
   R2: R2Bucket;
   R2_RENDERS: R2Bucket;
   DB: D1Database;
+  // Per-shot workflow (still, wav, clip). Optional so a deploy that has not
+  // applied the [[workflows]] binding still typechecks. The class is exported
+  // from the entrypoint as ShotWorkflow.
+  SHOT_WORKFLOW?: {
+    create(options?: { id?: string; params?: unknown }): Promise<{ id: string }>;
+    get(id: string): Promise<{ id: string; status(): Promise<{ status: string }> }>;
+  };
+
+  // The video-finish Cloudflare Container, fronted by its Durable Object (#797).
+  // Mirrors [[containers]] class_name "FinishContainer" plus the matching
+  // [[durable_objects.bindings]] in wrangler.toml, and the class exported from src/index.ts.
+  // ADDRESSING IS LOAD-BEARING: /async/finish submits and GET /async/status/{jobId} polls, and
+  // every container instance sits behind its OWN Durable Object, so a poll that lands on a
+  // different instance than the encode does not find the job at all. Derive the id from the JOB
+  // ID (idFromName(jobId)) and NEVER from getRandom(). That is not a substitute for externalised
+  // job state (#784): state surviving a restart and the poll reaching the right box are
+  // different problems, and both are required.
+  FINISH_CONTAINER: DurableObjectNamespace<import("./finish-container").FinishContainer>;
 
   // R2 S3-compatible creds for SigV4 presigning (r2-presign.ts): the CPU containers have no R2
   // binding, so the Worker presigns short-lived GET/PUT URLs. ACCESS/SECRET are secrets; ENDPOINT +
@@ -83,10 +100,8 @@ export interface Env {
   AUDIO_MASTER_URL?: string;
   /** Comma-separated HTTPS origins for on-iron finish doors. Empty = RunPod path. */
   FINISH_UPSCALE_DOORS?: string;
-  SPEECH_UPSCALE_DOORS?: string;
   FINISH_BLENDER_DOORS?: string;
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
-  RENDER_SHARD_MAX?: string;
   // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
   // VIDEO_FINISH_URL is empty. "unprovisionable" = provisioned before the tier existed, with no
   // operator action that can reach it (the cp#112 population). Absent -> the conservative default,

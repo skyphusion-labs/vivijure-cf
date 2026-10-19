@@ -38,10 +38,10 @@ export const MANIFEST: ModuleManifest = {
     // local#278: self-host CogVideoX may need registration; commercial product use is via
     // vivijure-cf / Cloudflare partner channels. No cloud API bill on this door.    // local#278: self-host/vivijure-local = hobby + non-commercial; commercial = vivijure-cf.
     cost: "Hardware; self-host non-commercial",
-    blurb: "Best look you can keep on your own GPU. Silent clips; add a Cast voice plus MuseTalk if they speak. Self-host only: hobby and non-commercial (vivijure-local). Commercial use is the hosted studio, not this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).",
+    blurb: "Best look you can keep on your own GPU. Silent clips; add a Cast voice if they speak (muxed, not mouth-synced). Self-host only: hobby and non-commercial (vivijure-local). Commercial use is the hosted studio, not this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).",
     limits: [
       "About 2-8 second silent clips (your door may pin a tighter grid)",
-      "Speaking is Cast voice plus MuseTalk",
+      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
       "Runs whichever local backend you point it at: LTX (12GB floor) or CogVideoX (16GB floor); bigger cards add headroom",
       "Keyframes (SDXL preview) and short motion clips share the same card serially",
       "One film, no scatter (look door)",

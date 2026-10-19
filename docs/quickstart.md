@@ -7,7 +7,7 @@ When you finish this page you will have the **standard install**: the studio cor
 render, and the **media stack** (the always-on CPU helpers that assemble your rendered clips into one
 finished film, add title cards, and polish the audio). The media stack is standard because the film
 assembly step runs inside it: without it, a render gives you a folder of separate clips, not a single
-movie. The only things NOT included are the three GPU "finish" satellites (sharper video, lip-sync);
+movie. The only things NOT included are the two GPU "finish" satellites (sharper video, cleaner speech);
 those cost extra GPU money and stay opt-in (see [opt-in-tiers.md](opt-in-tiers.md)).
 
 New here? The one-page picture of how the parts fit together is in
@@ -30,7 +30,7 @@ You need two accounts and one tool:
 > credits the planner spends, or $0 if you render on your own GPU). This is live-proven: a brand-new
 > free-plan account ran the full 27 MODULE_* service bindings from wrangler.toml.example and rendered finished 1080p films on all
 > three render paths (own GPU, cloud, and local GPU). The one thing that needs Cloudflare's **Workers
-> Paid** plan ($5/month) is the three GPU "finish" satellites (sharper video, lip-sync); everything on
+> Paid** plan ($5/month) is the two GPU "finish" satellites (sharper video, cleaner speech); everything on
 > this page runs free. One caveat: a plan change (free to paid, or back) only takes effect after you
 > redeploy the core, because a running Worker keeps the plan it was deployed under.
 
@@ -162,7 +162,7 @@ gateway's Credits page (DEPLOYMENT.md 2e).
 
 Title cards, on-screen text, beat-synced music, and audio mastering are already part of your standard
 install -- they run on the media stack you just started. When you want the GPU "finish" satellites --
-sharper video (upscale) or talking characters (lip-sync) -- those are the **opt-in add-ons**. Each one
+sharper video (upscale) or cleaner spoken lines (speech upscale) -- those are the **opt-in add-ons**. Each one
 is explained in plain words -- what it is, what it adds, and how to turn it on -- in
 [opt-in-tiers.md](opt-in-tiers.md). When you are ready, set `VIVIJURE_PROFILE=satellites` in
 `deploy.env` (after standing up the extra RunPod endpoints) and run `./deploy.sh` again.

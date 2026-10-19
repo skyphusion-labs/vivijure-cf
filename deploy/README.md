@@ -42,7 +42,7 @@ Always:
 - `GPU_TYPE_IDS` -- the endpoint GPU type id(s) (`GET /gputypes`).
 
 Optional (each defaults to that satellite's current released tag; override to pin another):
-- `BACKEND_IMAGE_TAG` / `UPSCALE_IMAGE_TAG` / `MUSETALK_IMAGE_TAG` / `AUDIO_UPSCALE_IMAGE_TAG` -- the
+- `BACKEND_IMAGE_TAG` / `UPSCALE_IMAGE_TAG` -- the
   per-endpoint GHCR image tags (BARE semver, never `latest`).
 
 There is **no `DATACENTER_ID`**: the installer no longer provisions a network volume (the baked images
@@ -96,12 +96,12 @@ The pieces are mutually dependent, so the order is load-bearing:
    image, or a stale auth aborts even a public pull), then a **serverless template per endpoint**
    (each pins that endpoint's OWN image) and the endpoints. **No network volume** -- the baked images
    ship the weights in-layer, so a volume would only pin the pool to one datacenter and bill for
-   nothing. Four endpoints: backend + upscale + musetalk + audio-upscale. Captures the endpoint ids
+   nothing. Two endpoints: backend + upscale. Captures the endpoint ids
    (seeded under the per-satellite secret names in step 3). Must precede step 3.
 3. **Seed the Cloudflare Secrets Store** -- the store keys are the UNION of every `secret_name` the
    deployed workers bind (asserted in `test_secret_map.py`). The installer resolves + seeds the
    auto-sourced ones: `RUNPOD_API_KEY` (yours); the per-endpoint RunPod ids under their OWN store names
-   (`BACKEND_` / `VIDEO_UPSCALE_` / `MUSETALK_` / `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`, step 2);
+   (`BACKEND_` / `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID`, step 2);
    `GATEWAY_ID` + the scoped `R2_S3_*` creds (step 1). Operator-supplied secrets (`CF_AIG_TOKEN`,
    `PLAN_ENHANCE_CF_AIG_TOKEN`, `LOCAL_BACKEND_URL`/`_TOKEN`) seed as MARKED placeholders so the module
    deploy resolves, then a post-install checklist tells you which to replace. **This MUST happen before
@@ -111,8 +111,10 @@ The pieces are mutually dependent, so the order is load-bearing:
 5. **Deploy** module workers, then the core (the core binds each module as a `[[services]]`
    dependency, so modules ship first).
 6. **(Phase 2, optional)** the five CPU helper containers on your own box (video-finish, image-prep,
-   audio-beat-sync, audio-mix, audio-master) + their CF VPC services.
-   Without them the studio still renders clips; it just cannot do the final concat / title cards.
+   audio-beat-sync, audio-mix, audio-master). video-finish, audio-beat-sync, audio-mix, and
+   audio-master are one image (`containers/cpu`) selected by `CPU_APP`. image-prep is its own image.
+   `docker compose -f containers/compose.yaml up -d --build` builds them.
+   A film whose join does not run fails. The clips stay in R2.
 
 ## State + idempotency
 

@@ -61,6 +61,83 @@ satellites). Jobs live IN-PROCESS: a container restart drops them, at which poin
 the R2 artifact if the encode had finished. The synchronous routes are UNCHANGED, so an old core / an
 old module keeps working.
 
+### Chunked assemble and the `partialUrls` pool (#784)
+
+`/finish` normalizes every clip through libx264 before the cheap `-c copy` join, and the single-pass
+path keeps the downloads, the normalized copies, the concat and the muxed film in ONE work dir until
+the job ends. Peak disk is therefore 3-4x total input.
+
+#### Sizing this route: bitrate x duration x count, NOT `MAX_CLIPS x MAX_CLIP_BYTES` (cf#813)
+
+This section used to quote `MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = **20.0 GB** as "the route's
+own contracted maximum". **That product is not a payload and never was.** `MAX_CLIP_BYTES` is a
+**reject ceiling** -- the argument to `_download(s, url, dst, MAX_CLIP_BYTES)`, the size at which a
+download is REFUSED -- so 20.0 GB is the largest input the route will not reject, not one it expects.
+
+At this container's settings a 256 MB clip is **3.2 to 15.6 minutes** of video. Clips are **4 to 8
+seconds**. Measured, a 32-clip film normalizes to roughly **70-350 MB** and a full 80-clip film to
+about **750 MB**, so the product sits **23x to 120x** above a real film and nothing approaches the
+20 GB ephemeral disk.
+
+**Why this is worth correcting rather than leaving:** a disk gate written against 20 GB could never
+fire, which is the "green that cannot go red" shape. Size instead by bitrate x duration x count:
+
+| target | measured normalized bitrate | realistic band |
+|---|---|---|
+| 1080p24 crf 18 medium | 0.40 - 11.16 Mbps | ~2.3 - 9.3 Mbps |
+| 720p24 crf 18 medium | 0.17 - 4.82 Mbps | ~0.9 - 4.8 Mbps |
+
+**Provenance, because these are proxies and not real output.** Measured on slow pans over a real
+photographic still at 8.0 s / 16 fps in four complexity brackets, encoded then normalized through
+this container's exact command; **zero real rendered clips were reachable to the seat that measured
+them.** Pan brackets UNDERESTIMATE (no subject deformation, no per-frame generative shimmer) and
+injected-noise brackets OVERESTIMATE, so real generated video most likely lands in the upper half of
+the band. **The verdict does not depend on that precision:** reaching 256 MB in 8 seconds needs about
+**256 Mbps** and the worst bracket reached **11 Mbps**, so the conclusion survives a 20x proxy error.
+
+Keep `MAX_CLIP_BYTES` as what it is: a per-clip reject ceiling.
+
+Supply **`partialUrls`** and `/finish` switches to a chunked assemble that bounds peak disk to a fixed
+working set:
+
+```json
+{
+  "clips": [{ "url": "https://...r2.../shot_01.mp4" }],
+  "outputUrl": "https://...r2.../film.mp4",
+  "partialUrls": [{ "put": "https://...r2.../partial_000.mp4?sig=...",
+                    "get": "https://...r2.../partial_000.mp4?sig=..." }]
+}
+```
+
+1. Clips are partitioned into batches bounded by SOURCE BYTES (`MAX_BATCH_BYTES`, default 1 GiB, env
+   tunable). A batch closes on reaching the bound, so it may overshoot by at most one clip.
+2. Each batch is downloaded, normalized, hard-concatenated to a partial, PUT to its pool URL, and its
+   work dir deleted before the next batch starts.
+3. The final pass concatenates the partials **straight from their presigned GET URLs**, so they never
+   return to disk. Peak disk at that stage is one film.
+
+Peak disk becomes `max(3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES), one film)`.
+
+**Why a pool and not R2 credentials.** The container is credentialless on purpose, so it can only write
+to a URL it was handed; the Worker mints at most `MAX_CLIPS` pairs and the container consumes only as
+many as its byte-batching needs. Unused presigns expire harmlessly. **Mint the GET URLs with a TTL that
+covers the WHOLE job**, not just the join: the final pass runs after every batch has encoded, so a TTL
+sized to the join alone will already have expired by the time it is used.
+
+**Behaviour worth knowing before you send a pool:**
+
+- **Omit `partialUrls` and nothing changes.** The single-pass path is untouched, so an older Worker is
+  unaffected.
+- **A film that fits in one batch uploads no partials at all** and finalizes from the local concat.
+- **Crossfade is refused with more than one batch** (`400`). A crossfade join spans two adjacent clips
+  and cannot cross a batch boundary; chunking anyway would silently drop the transition at every
+  boundary. Send `crossfade: 0` for a hard-cut film.
+- **A pool too small for the film is refused** (`400`) rather than silently truncating.
+- **The drop guard runs at BOTH levels** (see `concat_guard.py`), per batch and on the final join. A
+  lost PARTIAL is a film short by a whole batch, and the flat-ratio guard this replaced could not see
+  one once there were 7 or more parts.
+- The response carries `batches`, the number of partials the film was assembled from.
+
 ### `/finish` response + the duration honesty gate (#697/#698)
 
 `/finish` returns the assembled film`s key/bytes plus per-assemble instrumentation, and -- on the concat

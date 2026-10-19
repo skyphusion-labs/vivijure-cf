@@ -13,6 +13,7 @@ import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "./cast-public";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
+import { getServedArtifact } from "./shared";
 
 export const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
 export const CAST_MAX_BYTES = 16 * 1024 * 1024;
@@ -93,6 +94,29 @@ function wrap(fn: () => Promise<Response>): Promise<Response> {
   });
 }
 
+/** Answer with the written cast row, or 404 with a diagnostic when the write produced none.
+ *
+ *  Ported from vivijure-local#351 (cf#754). A row write that produced NOTHING failed; answering
+ *  `200 { cast: null }` renders the failure and the success as the same state, and no caller can
+ *  separate them from a field that is legitimately absent in neither case.
+ *
+ *  THE FAILURE BODY CARRIES NO `cast` FIELD AT ALL, and that is the load-bearing half. The panel
+ *  assigns `state.cast[idx] = data.cast` before it reads anything, so `{ cast: null }` lands null
+ *  in panel state at ANY status, 404 included; the next editor populate then throws a JavaScript
+ *  null-property error instead of reporting the write, and the list keeps rendering stale data.
+ *  With a bare `{ error }` the panel api() helper throws `Error(body.error)` and every existing
+ *  catch produces the right message with no panel change at all. */
+function castRowResponse(row: CastMember | null | undefined, op: string, id: number): Response {
+  if (!row) {
+    throw new HttpError(
+      404,
+      `${op}: the cast row write returned no row for cast ${id} ` +
+        `(cast missing, or the row write failed)`,
+    );
+  }
+  return json({ cast: toPublicCast(row) });
+}
+
 /** Copy a chat-side artifact into R2_RENDERS under destPrefix.<ext>.
  *
  *  Source is R2_RENDERS as of cf#140: chat artifacts are written to the served bucket now, so
@@ -104,7 +128,11 @@ export async function copyChatArtifactToRenders(
   srcKey: string,
   destPrefix: string,
 ): Promise<{ key: string; mime: string }> {
-  const obj = await env.R2_RENDERS.get(srcKey);
+  // Read through served artifact space: the source must be an object this deployment would SERVE.
+  // A key outside it (a held object, anything outside the artifact namespaces) reads as absent, so it
+  // cannot become the source of a new served key. The constraint is at the read, not here, so a copy
+  // path added later inherits it. Ref: GHSA-5fj8-6pc2-x9p5.
+  const obj = await getServedArtifact(env.R2_RENDERS, srcKey);
   if (!obj) throw new HttpError(404, `source artifact not found: ${srcKey}`);
   const bytes = new Uint8Array(await obj.arrayBuffer());
   if (bytes.length > CAST_MAX_BYTES) {
@@ -177,19 +205,20 @@ export async function handleCastPortraitUpload(
           `cast/${id}/portrait`,
         );
         const row = await setPortrait(env, id, key, mime);
-        // Guarded on `row` on purpose. This door still answers 200 { cast: null } when the row
-        // write produces nothing (the local#351 defect, not yet ported here and filed separately),
-        // and in that case `portrait_key` was never updated, so the old object must survive.
+        // Guarded on `row` on purpose, and KEPT now that cf#754 turns a null row into the 404 one
+        // line below. The guard is redundant against that throw; it stays because the ORDERING
+        // claim of #753 lives here, not in the throw: when the row write produces nothing
+        // `portrait_key` was never updated, so the superseded object must survive. Deleting it and
+        // relying on a later throw to make that invisible is exactly the dangling row #753 closed.
         if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
-        return json({ cast: row ? toPublicCast(row) : null });
+        return castRowResponse(row, "portrait upload (chat artifact copy)", id);
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await setPortrait(env, id, key, mime);
-      if (!row) throw new HttpError(404, "cast not found");
-      return json({ cast: row ? toPublicCast(row) : null });
+      return castRowResponse(row, "portrait upload (staged key)", id);
     }
 
     const buf = await request.arrayBuffer();
@@ -202,8 +231,9 @@ export async function handleCastPortraitUpload(
       httpMetadata: { contentType: mime },
     });
     const row = await setPortrait(env, id, key, mime);
+    // #753 guard kept for the reason spelled out on the copy path above.
     if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
-    return json({ cast: row ? toPublicCast(row) : null });
+    return castRowResponse(row, "portrait upload (raw bytes)", id);
   });
 }
 
@@ -233,15 +263,14 @@ export async function handleCastRefAdd(
           `cast/${id}/refs/${crypto.randomUUID()}`,
         );
         const row = await addRef(env, id, { key, mime });
-        return json({ cast: row ? toPublicCast(row) : null });
+        return castRowResponse(row, "ref add (chat artifact copy)", id);
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await addRef(env, id, { key, mime });
-      if (!row) throw new HttpError(404, "cast not found");
-      return json({ cast: row ? toPublicCast(row) : null });
+      return castRowResponse(row, "ref add (staged key)", id);
     }
 
     const buf = await request.arrayBuffer();
@@ -253,7 +282,7 @@ export async function handleCastRefAdd(
       httpMetadata: { contentType: mime },
     });
     const row = await addRef(env, id, { key, mime });
-    return json({ cast: row ? toPublicCast(row) : null });
+    return castRowResponse(row, "ref add (raw bytes)", id);
   });
 }
 
@@ -266,7 +295,9 @@ export async function handleCastRefRemove(
   if (!result.row) return json({ error: "cast not found" }, 404);
   if (!result.removedKey) return json({ error: "ref key not in this cast member's set" }, 404);
   try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
-  return json({ cast: result.row ? toPublicCast(result.row) : null });
+  // Dead ternary removed (cf#754): `result.row` is proven truthy by the 404 two lines above, so
+  // the null arm was unreachable -- but it is the exact shape this issue exists to delete.
+  return json({ cast: toPublicCast(result.row) });
 }
 
 export async function handleCastSourceAdd(
@@ -295,15 +326,14 @@ export async function handleCastSourceAdd(
           `cast/${id}/sources/${crypto.randomUUID()}`,
         );
         const row = await addSource(env, id, { key, mime });
-        return json({ cast: row ? toPublicCast(row) : null });
+        return castRowResponse(row, "source add (chat artifact copy)", id);
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await addSource(env, id, { key, mime });
-      if (!row) throw new HttpError(404, "cast not found");
-      return json({ cast: row ? toPublicCast(row) : null });
+      return castRowResponse(row, "source add (staged key)", id);
     }
 
     const buf = await request.arrayBuffer();
@@ -315,7 +345,7 @@ export async function handleCastSourceAdd(
       httpMetadata: { contentType: mime },
     });
     const row = await addSource(env, id, { key, mime });
-    return json({ cast: row ? toPublicCast(row) : null });
+    return castRowResponse(row, "source add (raw bytes)", id);
   });
 }
 
@@ -328,7 +358,8 @@ export async function handleCastSourceRemove(
   if (!result.row) return json({ error: "cast not found" }, 404);
   if (!result.removedKey) return json({ error: "source key not in this cast member's set" }, 404);
   try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
-  return json({ cast: result.row ? toPublicCast(result.row) : null });
+  // Dead ternary removed (cf#754), same as handleCastRefRemove above.
+  return json({ cast: toPublicCast(result.row) });
 }
 
 // Issue #298: deleting a cast member must reclaim ALL of its R2 artifacts, not just the D1 row.

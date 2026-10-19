@@ -75,7 +75,7 @@ To self-host (service `vivijure-module-local-gpu`, bound into the core as `MODUL
 - **R2 transport**: the backend reads/writes in the shared bucket itself; this worker holds no R2 creds.
 
 Preview and i2v share one consumer card **serially** (the door unloads the idle weights between
-stages). Finish-chain polish (RIFE / MuseTalk / upscale) remains a separate concern and may still
+stages). Finish-chain polish (RIFE / grade / upscale) remains a separate concern and may still
 use RunPod modules.
 
 ## License

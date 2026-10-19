@@ -16,9 +16,11 @@ import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-mo
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
 import { readIdempotencyKey } from "./film-idempotency";
+import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
+import { hearCastVoiceLine } from "./cast-voice-line";
 import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
@@ -44,9 +46,9 @@ import {
   handleCastSourceRemove,
   deleteCastArtifacts,
 } from "./cast-media";
-import { exportCastBundle, importCastBundle } from "./cast-bundle";
+import { CAST_BUNDLE_MAX_IMPORT_BYTES, exportCastBundle, importCastBundle } from "./cast-bundle";
 import {
-  TALKING_VOICE_HONOR,
+  talkingVoiceHonorFor,
   startCastVoiceSample,
   pollCastVoiceSample,
   keepCastVoiceSample,
@@ -69,16 +71,32 @@ import { runDemoChat, DEFAULT_DEMO_CHAT_CAPS, type DemoChatCaps, type DemoChatMo
 import { isSpendRoute, enforceSpendLimit } from "./rate-limit";
 import {
   checkStorageQuota,
-  isStorageSubmitRoute,
   reconcileStorageUsage,
   storageQuotaBytes,
   storageUsage,
 } from "@skyphusion-labs/vivijure-core/storage-quota";
+// fc#2250: core's list UNION this panel's own byte-writing routes. See src/storage-submit-routes.ts
+// for why the supplement is here and how it is kept self-retiring rather than permanent drift.
+import { isPanelStorageSubmitRoute } from "./storage-submit-routes";
 import { applyResponseSecurity } from "./asset-response";
 import { chatImageViaModule, type ChatImageArgs } from "./chat-image-module";
 import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
-import { handleAbuseReport, isQuarantineKey } from "./abuse-report";
+import { handleAbuseReport } from "./abuse-report";
+// ARTIFACT_PREFIXES lives in shared.ts so the abuse-report door can enforce the SAME allowlist
+// as the serve guard without importing this module (that would be an import cycle). Re-exported
+// here because it has always been part of this module's public surface.
+export { ARTIFACT_PREFIXES } from "./shared";
+
+// The Durable Object class backing the video-finish Cloudflare Container (#797). This export
+// is NOT optional and is not decoration: `wrangler deploy` rejects a durable_objects binding
+// whose class is not exported from the entrypoint, so removing this line arms a deploy failure
+// that only surfaces at the next `v*` tag and takes the whole studio release with it.
+export { FinishContainer } from "./finish-container";
+// wrangler [[workflows]] class_name "ShotWorkflow". The deploy rejects a workflow
+// whose class is not exported from the entrypoint.
+export { ShotWorkflow } from "./shot-workflow";
+import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
   resolveAgentFinishSelect,
@@ -97,10 +115,11 @@ import {
 import { stageBundleInjectedKeyframes } from "./bundle-keyframes";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
+import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
-import { generateAudioOn, spokenLinesPresent, doorCanSpeakLines } from "./motion-scatter";
+import { generateAudioOn, spokenLinesPresent, doorCanSpeakLines, spokenLinesRefusalMessage } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
@@ -274,9 +293,15 @@ const hSaveProjectStoryboard: Handler = async (req, env, _c, p) => {
 const hListCast: Handler = async (_req, env) => json({ cast: (await listCast(env)).map(toPublicCast) });
 // The dialogue voice catalog (aura-1 speakers). Static; the cast voice picker renders from it so the
 // list of voices has one source of truth (src/voices.ts), not a hardcoded copy in the frontend.
+// cf#919: `talking_doors` is PROJECTED through the installed motion.backend set, not served as the
+// raw table. The table carried `infinitetalk`, which no hosted tenant can install, so the cast voice
+// picker advertised a door that is not in the picker. Same 60s discovery cache as the other read
+// routes; an empty result is an honest answer and public/cast.js has an authored empty state for it.
 const hListVoices: Handler = async (_req, env) => json({
   voices: catalogForDeploy(env, VOICE_CATALOG),
-  talking_doors: TALKING_VOICE_HONOR,
+  talking_doors: talkingVoiceHonorFor(
+    await discoverModules(env as unknown as Record<string, unknown>, { cacheTtlMs: 60_000 }),
+  ),
 });
 const hCreateCast: Handler = async (req, env) => {
   const b = await readBody<{ name?: string; bible?: string | null }>(req);
@@ -426,6 +451,17 @@ const hPollCastRefs: Handler = async (_req, env, _c, p) => {
 // allocates a fresh local id.
 const hExportCast: Handler = async (_req, env, _c, p) => exportCastBundle(env, await resolveCastId(env, p.id));
 const hImportCast: Handler = async (req, env) => {
+  // CB-9: the 80MB cap in importCastBundle only fires after the whole body is buffered by
+  // arrayBuffer() below. A Content-Length precheck rejects an oversized upload before that
+  // buffering happens; it is a fast-path only (the header can be absent or wrong under chunked
+  // transfer), so the authoritative cap check in cast-bundle.ts stays as the backstop.
+  const declaredLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > CAST_BUNDLE_MAX_IMPORT_BYTES) {
+    throw new HttpError(
+      413,
+      `bundle too large (Content-Length ${declaredLength} bytes > ${CAST_BUNDLE_MAX_IMPORT_BYTES} cap)`,
+    );
+  }
   const buf = new Uint8Array(await req.arrayBuffer());
   return importCastBundle(env, buf);
 };
@@ -484,13 +520,6 @@ const hUpload: Handler = async (req, env) => {
   // `size`, matching the two sibling upload routes and CONTRACT 2.10 (was `bytes`; no consumer read it).
   return json({ key, mime, size: bytes.byteLength }, 201);
 };
-// F4: the known artifact namespaces. The serve route is scoped to these so it can only ever return a
-// real artifact, not an arbitrary R2 object. ADD a prefix here when a feature introduces a new one
-// (a served key outside this set is rejected).
-export const ARTIFACT_PREFIXES = [
-  "audio/", "bundles/", "cast/", "cast-clean/", "cast-gen/", "character-refs/",
-  "characters/", "clips/", "loras/", "out/", "renders/", "uploads/",
-];
 // F4: the fixed artifact response header set. cache-control is `private, max-age=300` (private = never
 // edge-cached, so an authenticated artifact never leaks into a shared cache); accept-ranges advertises
 // byte-range support; nosniff stops a stored content-type being MIME-sniffed into executable script in
@@ -539,7 +568,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // F4: the key is the untrusted URL tail. Reject an unsafe shape (traversal/absolute/scheme/control
   // bytes) and anything outside the known artifact namespaces -> 404 (not 400) so a probe learns
   // nothing. This bounds the serve to actual artifacts even if the edge Access gate ever fails.
-  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!isServedArtifactKey(key)) {
     throw notFound("artifact");
   }
   const isHead = req.method === "HEAD";
@@ -617,7 +646,7 @@ export function clampArtifactUrlTtl(raw: string | null): number {
 const hArtifactUrl: Handler = async (req, env, _c, p) => {
   if (!env.R2_RENDERS) throw notFound("the artifact store is not available on this deployment");
   const key = p.key;
-  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!isServedArtifactKey(key)) {
     throw notFound("artifact");
   }
   // Existence + real metadata from the bucket. Reported content_type is the STORED type, deliberately
@@ -657,7 +686,7 @@ const hRenderFrames: Handler = async (req, env) => {
   const asParam = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
   const key = String(body.key ?? "").trim();
   // Same guard as the serve route, so this can never read an object /api/artifact would refuse.
-  if (!key || !isSafeRelKey(key) || isQuarantineKey(key) || !ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre))) {
+  if (!isServedArtifactKey(key)) {
     throw notFound("artifact");
   }
   // head() first so a miss is an honest 404 here, rather than the container failing to download later.
@@ -791,7 +820,11 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
     projectId: row.project_id,
     parentId: row.id,
   });
-  return json({ ok: true, ...view }, 201);
+  // fc#2250: carry the retry degrade reason to the caller when there is one. A full retry is a
+  // RE-DERIVATION from the stored bundle and overrides, not a replay, because the renders row does
+  // not persist the submit-time inputs; answering a bare 201 claimed a film this path did not
+  // rebuild. Absent when the retry is faithful (the finalize branch), so the field means something.
+  return json(r.degraded ? { ok: true, ...view, degraded: r.degraded } : { ok: true, ...view }, 201);
 };
 
 const hFinalizePreview: Handler = async (req, env, _c, p) => {
@@ -855,41 +888,6 @@ const hAnimateHybrid: Handler = async (req, env, _c, p) => {
 };
 
 // --- render submission / lifecycle ---------------------------------------
-
-// #696: every config map on a render/film submit arrives as unknown JSON. A config map MUST be a plain
-// object -- a module config_schema projects into a { field: value } record, and the invoke-path clamp is
-// forgiving by design, so a string / array / number / null slips straight through and silently degrades
-// the render (a pre-#674 client sent film_finish_config as a JSON STRING; downstream value[subtitle] was
-// undefined, validateConfig clamped to defaults, and subtitle mode=both silently became burn on
-// film-941a4d3b, completing done with no error -- an honest-failures violation). Bounce LOUD at the door,
-// BEFORE any GPU spend, naming the offending field. Mirrors #577 motion_config preflight. An OMITTED
-// field (undefined) is fine; a present non-object (string/array/number/null) bounces. Used by hStartFilm
-// six config maps and hSubmitRender render_overrides bag.
-function assertConfigMapShape(label: string, value: unknown): void {
-  if (value === undefined) return;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    const actual = describeJsonType(value);
-    throw badRequest(label + " must be a JSON object (a { key: value } map), not " + (/^[aeiou]/.test(actual) ? "an " : "a ") + actual);
-  }
-}
-function describeJsonType(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
-}
-// #696 (deep): a per-module config map is object-of-objects -- module -> { field: value }. Check the top
-// level AND every per-module entry, so a nested garbage entry (film_finish_config = { subtitle: "x" })
-// bounces at the door instead of clamping silently downstream (the same defect class as the incident).
-// The flat knob maps (keyframe_config / motion_config) use assertConfigMapShape directly: their values
-// are legitimately scalars, so only the top level is shape-checked.
-function assertModuleConfigMap(label: string, value: unknown): void {
-  assertConfigMapShape(label, value);
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    for (const [name, cfg] of Object.entries(value as Record<string, unknown>)) {
-      assertConfigMapShape(`${label}.${name}`, cfg);
-    }
-  }
-}
 
 const hSubmitRender: Handler = async (req, env) => {
   const b = await readBody<{
@@ -968,25 +966,42 @@ const hSubmitRender: Handler = async (req, env) => {
   if (!b.keyframesOnly) {
     try {
       const bundleScenes = await readBundleScenes(env, bundleKey);
-      let lines = dialogueLinesFromBundleScenes(bundleScenes, {});
-      // Prefer cast voices when cast was resolved above
-      const voiceMap: Record<string, string> = {};
-      // cast voices live on resolveCastLoras; panelPre.cast may only expose pretrained/castIds.
-      // Empty voices still yield default voice ids via dialogueLinesFromBundleScenes.
+      // fc#2250: panelPre.cast.voices IS the resolved slot -> voice_id map (ResolvedCast, see
+      // src/render-door.ts). This was hardcoded `{}` behind a comment claiming the preflight may
+      // expose only pretrained/castIds, which was never true of this door: the preflight returns
+      // voices and voiceRefs, and voiceRefs is already read a few lines below for voice_ref_keys.
+      // So every panel render spoke in DEFAULT_VOICE_ID even when the cast member had a voice
+      // resolved -- the #582 shape, re-entered through the panel door.
+      const voiceMap = panelPre.cast.voices;
+      let lines = dialogueLinesFromBundleScenes(bundleScenes, voiceMap);
       if (lines.length) {
         lines = resolveExplicitLineVoices(lines, bundleScenes, voiceMap);
         panelDialogue = lines;
       }
-    } catch { /* best-effort */ }
+    } catch (e) {
+      // fc#2250: NOT best-effort. readBundleScenes returns [] for a missing bundle, so reaching
+      // this catch means the dialogue state is UNDETERMINED, not absent. Swallowing it left
+      // panelDialogue undefined, which reads as "silent storyboard", skipped the talking-door
+      // guard below, and returned 201 on a billed film that comes back silent. See
+      // src/dialogue-derivation.ts.
+      return json({ error: dialogueUndeterminedMessage(e) }, 503);
+    }
   }
   const panelMotionMod = modules.find((m) => m.name === motionBackend);
   if (!b.keyframesOnly && spokenLinesPresent(panelDialogue)) {
     if (!doorCanSpeakLines(panelMotionMod) || !generateAudioOn(mapped.motion_config)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        spokenLinesRefusalMessage(modules, panelMotionMod, generateAudioOn(mapped.motion_config)),
       );
     }
   }
+  const songKey = b.keyframesOnly ? undefined : b.audioKey;
+  const panelSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    songKey,
+    panelDialogue,
+  );
+  if (panelSongRefusal) throw badRequest(panelSongRefusal);
   const job = await startFilmJob(env, {
     project,
     bundle_key: bundleKey,
@@ -1004,7 +1019,7 @@ const hSubmitRender: Handler = async (req, env) => {
     film_finish_config: mapped.film_finish_config,
     master_config: mapped.master_config,
     keyframes_only: !!b.keyframesOnly,
-    audio_key: b.keyframesOnly ? undefined : b.audioKey,
+    audio_key: songKey,
     // Opening title + end-credit card TEXT (FilmTitleSpec / FilmCreditSpec); the film.finish chain
     // reads it off the job. Mirrors hStartFilm. Skipped on a keyframes-only preview (no assembled
     // film to card), exactly like audio_key above.
@@ -1079,7 +1094,14 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     return json({ error: "no motion.backend module installed" }, 503);
   }
 
-  const parsedScenes = await readBundleScenes(env, fromKfBundleKey);
+  // The read throws on a corrupt bundle. That is undetermined dialogue, not "no scenes".
+  // The cast try below stays about cast resolution only.
+  let parsedScenes;
+  try {
+    parsedScenes = await readBundleScenes(env, fromKfBundleKey);
+  } catch (e) {
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
+  }
   if (!parsedScenes.length) {
     return json({ error: "bundle has no storyboard scenes" }, 400);
   }
@@ -1133,16 +1155,27 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
       fromKfDialogue = lines;
     }
     fromKfVoiceRefs = resolved.voiceRefs;
-  } catch { /* best-effort */ }
+  } catch (e) {
+    // fc#2250, same reasoning as the panel door above: parsedScenes is already read OUTSIDE this
+    // try, so reaching here means the CAST resolution failed and the voices are undetermined.
+    // Proceeding would render this bundle in DEFAULT_VOICE_ID, or silent, and report 201.
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
+  }
 
   const fromKfMotionMod = modules.find((m) => m.name === motionBackend);
   if (spokenLinesPresent(fromKfDialogue)) {
     if (!doorCanSpeakLines(fromKfMotionMod) || !generateAudioOn(mapped.motion_config)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        spokenLinesRefusalMessage(modules, fromKfMotionMod, generateAudioOn(mapped.motion_config)),
       );
     }
   }
+  const fromKfSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    b.audioKey,
+    fromKfDialogue,
+  );
+  if (fromKfSongRefusal) throw badRequest(fromKfSongRefusal);
 
   const job = await startFilmFromKeyframes(env, {
     project,
@@ -1270,10 +1303,11 @@ const hPollRender: Handler = async (_req, env, ctx, p) => {
   }
   const r = await advanceFilmJob(env, p.jobId);
   if (!r) throw notFound("render job");
-  const kfDone = r.job.phase === "keyframe" && r.job.keyframe_job_id
-    ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
+  const job = jobAfterSkippedJoin(r.job);
+  const kfDone = job.phase === "keyframe" && job.keyframe_job_id
+    ? await readKeyframeDone(env, job.project, job.keyframe_job_id)
     : undefined; // #318: keyframe sub-progress from the GPU job's snapshot (best-effort)
-  const view = filmJobToPollView(r.job, r.clipJob, kfDone);
+  const view = filmJobToPollView(job, r.clipJob, kfDone);
   await updateRenderFromView(env, view, ctx);
   if (
     r.job.derive_mode === "cloud-finalized"
@@ -1308,6 +1342,8 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
 };
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
+const hHearCastVoice: Handler = async (req, env, _c, p) =>
+  hearCastVoiceLine(req, env, await resolveCastId(env, p.id));
 const hTrainCastWanLora: Handler = async (req, env, _c, p) =>
   handleCastTrainWanLora(req, env, await resolveCastId(env, p.id));
 const hCastLoraStatus: Handler = async (_req, env, _c, p) =>
@@ -1501,9 +1537,9 @@ const hPollClips: Handler = async (_req, env, _c, p) => {
 // Film orchestrator: the keyframe -> clip handoff. POST starts it (runs the keyframe module), GET
 // advances it across the keyframe -> clips phases. See film-orchestrator.ts.
 /** Attach a presigned download URL to a film summary once the film is assembled (phase "done").
- *  film_key lives in the private R2 render bucket; a presigned GET (24h) lets a caller without CF
- *  Access (e.g. the Slate Discord bot posting into a channel) fetch/share the mp4 directly, with no
- *  size limit and no extra API surface. Absent until the film is done. */
+ *  film_key lives in the private R2 render bucket; a presigned GET (6h, FILM_DOWNLOAD_TTL_SECONDS)
+ *  lets a caller without CF Access (e.g. the Slate Discord bot posting into a channel) fetch/share
+ *  the mp4 directly, with no size limit and no extra API surface. Absent until the film is done. */
 async function withFilmDownloadUrl(env: StudioEnv, summary: FilmSummary): Promise<FilmSummary & { download_url?: string; clip_urls?: { shot_id: string; download_url: string }[] }> {
   if (summary.phase === "done" && summary.film_key) {
     return { ...summary, download_url: await presignR2Get(env, summary.film_key, FILM_DOWNLOAD_TTL_SECONDS) };
@@ -1634,23 +1670,27 @@ const hStartFilm: Handler = async (req, env) => {
   const castIds = Object.keys(resolvedLoras.castIds).length ? resolvedLoras.castIds : undefined;
 
   let dialogue_lines = a.dialogue_lines;
-  if (!dialogue_lines || !dialogue_lines.length) {
-    const bundleScenes = await readBundleScenes(env, filmBundleKey);
-    if (bundleScenes.some((s) => s.dialogue)) {
-      dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+  try {
+    if (!dialogue_lines || !dialogue_lines.length) {
+      const bundleScenes = await readBundleScenes(env, filmBundleKey);
+      if (bundleScenes.some((s) => s.dialogue)) {
+        dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+      }
+    } else if (
+      // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
+      // to DEFAULT_VOICE_ID even when the shot's speaking slot is bound to a cast member WITH a voice
+      // (Wren spoke as angus, film-08dd5777). When any line lacks a voice and the caller's cast_loras
+      // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
+      // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
+      // resolve, the downstream default stands.
+      Object.keys(resolvedLoras.voices).length &&
+      dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
+    ) {
+      const bundleScenes = await readBundleScenes(env, filmBundleKey);
+      dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
     }
-  } else if (
-    // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
-    // to DEFAULT_VOICE_ID even when the shot's speaking slot is bound to a cast member WITH a voice
-    // (Wren spoke as angus, film-08dd5777). When any line lacks a voice and the caller's cast_loras
-    // resolved to at least one voice, resolve shot -> slot (bundle storyboard) -> cast voice. A line
-    // that CARRIES a voice_id is never touched (explicit always wins); no cast voices -> nothing to
-    // resolve, the downstream default stands.
-    Object.keys(resolvedLoras.voices).length &&
-    dialogue_lines.some((l) => !(typeof l.voice_id === "string" && l.voice_id.trim()))
-  ) {
-    const bundleScenes = await readBundleScenes(env, filmBundleKey);
-    dialogue_lines = resolveExplicitLineVoices(dialogue_lines, bundleScenes, resolvedLoras.voices);
+  } catch (e) {
+    return json({ error: dialogueUndeterminedMessage(e) }, 503);
   }
   // project is optional; derive it from the bundle key (mirrors hSubmitRender) so a caller that
   // only has a bundle (e.g. the Slate bot) lands in the same project namespace the monolith uses.
@@ -1673,10 +1713,20 @@ const hStartFilm: Handler = async (req, env) => {
   if (spokenLinesPresent(dialogue_lines)) {
     if (!doorCanSpeakLines(filmMotionMod) || !generateAudioOn(a.motion_config as Record<string, unknown> | undefined)) {
       throw badRequest(
-        "This storyboard has spoken lines. Pick a talking door (Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok) and leave talking audio on. Silent look doors cannot say the script.",
+        spokenLinesRefusalMessage(
+          filmModules,
+          filmMotionMod,
+          generateAudioOn(a.motion_config as Record<string, unknown> | undefined),
+        ),
       );
     }
   }
+  const filmSongRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    a.audio_key,
+    dialogue_lines,
+  );
+  if (filmSongRefusal) throw badRequest(filmSongRefusal);
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: a.motion_config,
@@ -1691,7 +1741,7 @@ const hStartFilm: Handler = async (req, env) => {
     finish_select: filmFinishSelect,
     speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
-    // TTS+lip-sync stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
+    // TTS + finish stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
     // which read job.dialogue_lines. cast_loras carries the speaking cast (slot -> cast id) so the
     // LoRA write-back + voice resolution have it.
     dialogue_lines, cast_loras: castIds,
@@ -1725,18 +1775,20 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   }
   const r = await advanceFilmJob(env, p.id);
   if (!r) throw notFound("film job");
+  // A missed join is a failed film even when the published package still marked the job done.
+  const job = jobAfterSkippedJoin(r.job);
   // Insert-if-missing (ON CONFLICT(job_id) DO NOTHING) so a film started before history
   // unification -- or via a path that did not insert -- still surfaces in history on its next
   // poll/sweep tick; then sync the live status/output exactly like hPollRender (#164).
-  await insertRender(env, filmRowFromJob(r.job));
+  await insertRender(env, filmRowFromJob(job));
   // #318: during the keyframe phase, fold the GPU job's live keyframe_done tally into the poll view so
   // the bar/ETA subdivide the keyframe band (instead of pinning scene_index=1). Best-effort.
-  const kfDone = r.job.phase === "keyframe" && r.job.keyframe_job_id
-    ? await readKeyframeDone(env, r.job.project, r.job.keyframe_job_id)
+  const kfDone = job.phase === "keyframe" && job.keyframe_job_id
+    ? await readKeyframeDone(env, job.project, job.keyframe_job_id)
     : undefined;
-  await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob, kfDone), ctx);
+  await updateRenderFromView(env, filmJobToPollView(job, r.clipJob, kfDone), ctx);
   // cf#392: host summarize relays wan_lora_projection from the job doc when present.
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(r.job, r.clipJob))) });
+  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
 };
 
 const hEnhance: Handler = async (req, env) => {
@@ -1833,6 +1885,14 @@ const hAudioAnalyze: Handler = async (req, env) => {
   if (!a.audioKey) throw badRequest("audioKey required");
   const result = await analyzeAudioBeats(env, a, a.module?.trim() || undefined);
   if (!result.ok) return json({ ok: false, error: result.error }, 502);
+  try {
+    await env.R2_RENDERS.put(
+      beatsMarkerKey(a.audioKey),
+      JSON.stringify({ audioKey: a.audioKey.trim(), beats_read: true }),
+    );
+  } catch {
+    return json({ ok: false, error: "beats were read but the marker was not stored" }, 502);
+  }
   return json({ ok: true, output: result.plan, module: result.module });
 };
 
@@ -2224,6 +2284,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/cast/:id/generate-refs",          scope: "consumer",    handler: hGenerateCastRefs },
   { method: "GET",    pattern: "/api/cast/:id/refs-job/:jobId",        scope: "consumer",    handler: hPollCastRefs },
   { method: "POST",   pattern: "/api/cast/:id/train-lora",             scope: "consumer",    handler: hTrainCastLora },
+  { method: "POST",   pattern: "/api/cast/:id/voice-line",             scope: "consumer",    handler: hHearCastVoice },
   { method: "POST",   pattern: "/api/cast/:id/train-wan-lora",         scope: "consumer",    handler: hTrainCastWanLora },
   { method: "GET",    pattern: "/api/cast/:id/lora-status",            scope: "consumer",    handler: hCastLoraStatus },
   { method: "POST",   pattern: "/api/cast/:id/voice-sample",           scope: "consumer",    handler: hStartCastVoiceSample },
@@ -2356,7 +2417,9 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // daily submission ceiling. Default posture fails CLOSED on a BROKEN check (unbound/throwing
     // limiter -> 503 deny); a healthy limiter is unaffected. SPEND_LIMIT_FAIL_CLOSED="false" opts
     // back to fail-open. An explicit over-limit/over-ceiling verdict is a 429 with Retry-After.
-    // See src/rate-limit.ts.
+    // GHSA-wmjq-7647-h45x: a SAFETY route (isSafetyRoute) is metered here too, but is never DENIED
+    // by a broken check and never sees the daily ceiling, so a missing binding cannot switch the
+    // abuse-report door off. See src/rate-limit.ts.
     if (isSpendRoute(request.method, url.pathname)) {
       const rl = await enforceSpendLimit(request, env);
       if (!rl.ok) {
@@ -2365,11 +2428,32 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         return new Response(JSON.stringify({ error: rl.message }), { status: rl.status, headers });
       }
     }
-    // core#52: the storage ceiling. Same posture as the spend gate above and deliberately AFTER it (a
-    // rate-limited request never reaches the DB). Enforced at SUBMIT, before the spend, so an over-quota
-    // studio is denied honestly with the real numbers instead of discovering it halfway through a film.
-    // Reads, deletes, the planner, and chat keep working, so the operator can go delete something.
-    if (isStorageSubmitRoute(request.method, url.pathname)) {
+    // core#52: the storage ceiling. Deliberately AFTER the spend gate (a rate-limited request never
+    // reaches the DB). Enforced at SUBMIT, so an over-quota studio is denied honestly with the real
+    // numbers instead of discovering it halfway through a film. Reads, deletes, the planner and chat
+    // keep working, so the operator can go delete something.
+    //
+    // ITS POSTURE IS NOT THE SPEND GATE'S, and this comment used to say it was (cf#804). They are
+    // analogous, not shared, and the difference is operationally load-bearing because they are driven
+    // by DIFFERENT KNOBS -- flipping SPEND_LIMIT_FAIL_CLOSED does nothing to this gate:
+    //
+    //   spend gate    SPEND_LIMIT_FAIL_CLOSED (default closed). A BROKEN check -> 503 deny.
+    //   this gate     core's R2_STORAGE_QUOTA_MODE, "deny" (default) or "meter". Unset, empty or any
+    //                 UNRECOGNISED value resolves to "deny" with a console warning, because guessing
+    //                 "meter" on a typo would silently turn a hard stop into unmetered spend.
+    //
+    // And "meter" does not merely soften the deny, it changes what a BROKEN check does: with no DB or
+    // a failed usage read, "deny" answers 503 fail-closed while "meter" lets the submit PROCEED and
+    // reports the period as an unbillable metering gap. So the two gates disagree about the broken
+    // case in the one direction that costs money. See core's storage-quota.ts (storageQuotaMode,
+    // checkStorageQuota); with no R2_STORAGE_QUOTA_BYTES set there is no ceiling at all and this
+    // returns ok before either knob is consulted.
+    // fc#2250: isPanelStorageSubmitRoute, not core's isStorageSubmitRoute. Core's
+    // STORAGE_SUBMIT_PATTERNS missed four byte-writing routes this panel serves -- /retry (a full
+    // startFilmJob), /cast/:id/voice-sample, /voice-sample/attach (32MB) and /render/frames -- so an
+    // over-quota studio was refused 507 here on /storyboard/render and could then re-render an
+    // entire film through /retry. The ceiling denied the front door and left the side door open.
+    if (isPanelStorageSubmitRoute(request.method, url.pathname)) {
       const q = await checkStorageQuota(env);
       if (!q.ok) {
         return new Response(JSON.stringify({ error: q.message }), {

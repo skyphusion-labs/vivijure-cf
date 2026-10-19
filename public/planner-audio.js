@@ -9,7 +9,7 @@
 //
 // Two paths to set planState.audioKey: generate via an installed score module
 // (POST /api/storyboard/score-bed; poll GET /api/job/:id?module=...), or upload
-// a BYO mp3/wav/aac/m4a/ogg via POST /api/storyboard/audio-upload (binary,
+// a song via POST /api/storyboard/audio-upload (binary,
 // returns the R2 key directly). Once set, BPM + beats-per-shot drive a pure-JS
 // snap that rounds each scene's target_seconds to a musical-phrase multiple.
 
@@ -601,7 +601,11 @@ function snapAllScenes() {
 // Expose pure helper for vitest. window assignment is a no-op in Node
 // (the unit test imports the mirror at the bottom of cast-db.test.ts),
 // but lets the browser console inspect the function.
-if (typeof window !== "undefined") window.__plannerHelpers = { snapToBeats };
+if (typeof window !== "undefined") {
+  window.__plannerHelpers = window.__plannerHelpers || {};
+  window.__plannerHelpers.snapToBeats = snapToBeats;
+  window.__plannerHelpers.applySpokenOrBeatSeconds = applySpokenOrBeatSeconds;
+}
 
 // ---------- Beat-sync (v0.106.0) ----------
 //
@@ -666,6 +670,39 @@ function renderBeatPlan(plan) {
   setBeatStatus(canApply ? "ready" : "ready (no per-scene cuts in this mode)", "success");
 }
 
+// Keep these two numbers equal to LINE_WORDS_PER_SECOND and LINE_WINDOW_MAX_SECONDS
+// in src/film-join-gate.ts. A spoken shot is as long as its line. A line that does
+// not fit the beat window is reported here and is not shortened below the line.
+const LINE_WORDS_PER_SECOND = 2.5;
+const LINE_WINDOW_MAX_SECONDS = 12;
+
+function lineSecondsEstimate(text) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 0;
+  return words.length / LINE_WORDS_PER_SECOND;
+}
+
+function applySpokenOrBeatSeconds(scene, beatSeconds) {
+  const text = scene && scene.dialogue && typeof scene.dialogue.text === "string" ? scene.dialogue.text : "";
+  const estimate = lineSecondsEstimate(text);
+  const beat = Number(beatSeconds);
+  const windowS = Math.min(Number.isFinite(beat) ? beat : 0, LINE_WINDOW_MAX_SECONDS);
+  if (!text.trim() || estimate <= 0) {
+    return { seconds: Number.isFinite(beat) ? Number(beat.toFixed(2)) : 0, report: null };
+  }
+  if (estimate > windowS) {
+    const words = text.trim().split(/\s+/).filter(Boolean).length;
+    const shot = (scene && scene.shot_id) || "a shot";
+    return {
+      seconds: Number(estimate.toFixed(2)),
+      report: shot + " line is about " + estimate.toFixed(1) + "s (" + words
+        + " words at " + LINE_WORDS_PER_SECOND + " words/second). That estimate does not fit one "
+        + windowS + "s beat window.",
+    };
+  }
+  return { seconds: Number(estimate.toFixed(2)), report: null };
+}
+
 function applyBeatPlan() {
   if (!lastBeatPlan || !Array.isArray(lastBeatPlan.timedScenes) || lastBeatPlan.timedScenes.length === 0) {
     setBeatStatus("no beat plan to apply.", "error");
@@ -682,8 +719,11 @@ function applyBeatPlan() {
   // is what lands the cuts on the beat.
   const timed = lastBeatPlan.timedScenes.slice(0, PLANNER_MAX_SCENES);
   const n = Math.min(scenes.length, timed.length);
+  const reports = [];
   for (let i = 0; i < n; i++) {
-    scenes[i].target_seconds = Number(timed[i].targetSeconds.toFixed(2));
+    const decided = applySpokenOrBeatSeconds(scenes[i], timed[i].targetSeconds);
+    scenes[i].target_seconds = decided.seconds;
+    if (decided.report) reports.push(decided.report);
   }
   renderSceneEditor(planState.storyboard);
   onSceneChanged();
@@ -700,6 +740,7 @@ function applyBeatPlan() {
   } else if (scenes.length > timed.length) {
     msg += " " + (scenes.length - timed.length) + " trailing scene(s) left unchanged (the track is shorter than the storyboard).";
   }
-  setBeatStatus(msg, "success");
+  if (reports.length) msg += " " + reports.join(" ");
+  setBeatStatus(msg, reports.length ? "error" : "success");
 }
 

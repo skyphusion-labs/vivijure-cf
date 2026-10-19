@@ -3,13 +3,15 @@
 // reference_video. Veo cannot honor it.
 
 import { getCastById, updateCast } from "@skyphusion-labs/vivijure-core/cast-db";
-import { discoverModules, invokeModule, pollModule, resolveFetcher } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, invokeModule, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { composeMotionPrompt } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 import { presignR2Get } from "@skyphusion-labs/vivijure-core/presign";
 import { voiceLockHint } from "@skyphusion-labs/vivijure-core/voices";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
 import type { Env } from "./env";
 import { studioEnv } from "./orchestrator-env";
+import { getServedArtifact } from "./shared";
 
 function fail(status: 400 | 404, msg: string): never {
   const e = new Error(msg) as Error & { sampleStatus: 400 | 404 };
@@ -70,6 +72,25 @@ export const TALKING_VOICE_HONOR = [
     label: "Mouth follows the storyboard line in the Cast voice.",
   },
 ];
+
+/** TALKING_VOICE_HONOR projected through the modules actually installed on this deploy (cf#919).
+ *
+ *  The table is hand-maintained advertising copy shipped to the cast voice picker, and nothing
+ *  branches on it -- so an entry for a door this deploy does not have is simply a false statement in
+ *  the product surface. It named `infinitetalk`, which no hosted tenant can install. `catalogForDeploy`
+ *  already refuses to advertise capability a demo deploy does not have; this is that same rule one
+ *  deploy mode over, except the authority here is the live registry rather than a mode flag.
+ *
+ *  A door installed WITHOUT a row here still gets no row: the honest gap is silence, not invented copy.
+ *  MEASURED 2026-09-27 against the 17 motion.backend modules in `modules/`, reading each manifest's
+ *  `usage` BLOCK (not a file-wide grep, which reports three silent doors as talking): the 9 rows here
+ *  are exactly the 9 doors `doorCanSpeakLines` accepts, so today there is no gap in either direction.
+ *  The table was never wrong about WHICH doors talk; it was wrong to ship all 9 to a deploy that
+ *  installs fewer. */
+export function talkingVoiceHonorFor(modules: RegisteredModule[]): typeof TALKING_VOICE_HONOR {
+  const installed = new Set(servingForHook(modules, "motion.backend").map((m) => m.name));
+  return TALKING_VOICE_HONOR.filter((d) => installed.has(d.name));
+}
 
 type SampleState = {
   poll: string;
@@ -283,7 +304,8 @@ export async function attachCastVoiceSampleFromKey(
   const cast = await getCastById(env, castId);
   if (!cast) fail(404, "cast member");
   if (!isSafeRelKey(srcKey)) fail(400, "unsafe key");
-  const obj = await env.R2_RENDERS.get(srcKey);
+  // Same served-space read as the image copy path, for the same reason (GHSA-5fj8-6pc2-x9p5).
+  const obj = await getServedArtifact(env.R2_RENDERS, srcKey);
   if (!obj) fail(404, "source clip not found");
   const bytes = new Uint8Array(await obj.arrayBuffer());
   return persistVoiceRef(env, castId, bytes, obj.httpMetadata?.contentType || "");

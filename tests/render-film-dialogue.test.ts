@@ -244,6 +244,12 @@ describe("POST /api/render/film resolves cast voices for explicit dialogue_lines
     expect(res.status).toBe(400);
     const body = await res.json() as { error?: string };
     expect(body.error).toMatch(/spoken lines/i);
+    // cf#919: the remedy must be projected from the modules bound in THIS env, not a literal. The
+    // only talking door bound above is `seedance`; infinitetalk and vidu-q3 are not bound at all,
+    // and infinitetalk cannot be installed on a hosted tenant. A hardcoded list fails these two.
+    expect(body.error).toMatch(/seedance/i);
+    expect(body.error).not.toMatch(/infinitetalk/i);
+    expect(body.error).not.toMatch(/vidu/i);
     expect(h.captured).toBeNull();
   });
 });

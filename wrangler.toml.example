@@ -39,10 +39,25 @@ workers_dev = false
 #     routes itself (STUDIO_PAGE_ASSETS, incl. "/" -> /modules.html). Dev-verified, no loop.
 assets = { directory = "./public", binding = "ASSETS", html_handling = "none", run_worker_first = true }
 
-# >>> SELFHOST-SKIP: tail-consumer -- core render logs -> Loki/Grafana via OUR vivijure-tail worker
+# >>> SELFHOST-SKIP: tail-consumer -- core render logs -> a Loki YOU run, via a vivijure-tail worker
 # Tail consumer -- ships core render logs + exceptions to vivijure-tail -> Loki -> Grafana.
-# DEPLOY-ORDERED: vivijure-tail must be live BEFORE this binding deploys (dangling-binding hazard).
-tail_consumers = [ { service = "vivijure-tail" } ]
+#
+# UNBOUND ON PURPOSE since cf#838, and the reason is not tidiness. The Loki this shipped to ran on a
+# host that no longer exists, so from the cut until 2026-09-27 the live studio kept a bound tail
+# consumer that delivered NOTHING and reported nothing: 549 vivijure-tail invocations in the six
+# hours before this change, every one a drop. A consumer that cannot reach its sink is worse than no
+# consumer, because it answers "are we shipping logs?" with yes. Same call the MuseTalk excision made
+# about its strip gate (ci.yml): a control with no subject comes off rather than staying on green.
+#
+# What a stock deploy has instead, which is enough to operate a single-user studio: Cloudflare
+# Workers Observability ([observability] below, invocation logs + console lines, retained by
+# Cloudflare) and the studio status routes. docs/observability.md has the map.
+#
+# TO TURN IT BACK ON (opt-in tier, docs/opt-in-tiers.md): stand up your own Loki, create a Workers
+# VPC service that reaches it, deploy your own tail worker with scripts/deploy-tail.sh, THEN uncomment
+# the line below. DEPLOY-ORDERED and it is not advisory: vivijure-tail must be live BEFORE this
+# binding deploys or `wrangler deploy` fails on a dangling tail consumer, and typecheck cannot see it.
+# tail_consumers = [ { service = "vivijure-tail" } ]
 # <<< SELFHOST-SKIP: tail-consumer
 
 # Auth for /api/* (#423, src/auth-gate.ts). AUTH_MODE picks the gate:
@@ -57,6 +72,21 @@ tail_consumers = [ { service = "vivijure-tail" } ]
 AUTH_MODE = "${AUTH_MODE}"
 ACCESS_TEAM_DOMAIN = "${ACCESS_TEAM_DOMAIN}"
 ACCESS_AUD = "${ACCESS_AUD}"
+# ALLOW_UNAUTHENTICATED (cf#839): live code reads it (src/access-auth.ts) and until now it appeared
+# in NO committed wrangler example, so the one security-relevant knob in this file was the one an
+# operator could not see here. It is documented in docs/SECURITY.md and docs/CONTRACT.md; this is the
+# surface you actually edit, so it belongs here too.
+#
+# It is NOT a vulnerability and never was: it applies ONLY when Access is unconfigured, it is
+# fail-closed when unset, it does not apply once AUTH_MODE is explicitly selected, and turning it on
+# logs loudly on every request. Leave it EMPTY unless you are developing locally and mean it.
+ALLOW_UNAUTHENTICATED = ""
+# VIDEO_FINISH_TIER_STATE (cf#839): READ here (src/video-finish-availability.ts), WRITTEN by nothing
+# in this repo -- the hosted control plane projects it onto a tenant studio so the panel can say
+# "unprovisionable" instead of "not installed". A self-hoster leaves it unset and loses nothing; it
+# is listed so an operator who finds it in a log or a diff knows whose it is, rather than concluding
+# the studio ignores a var it reads.
+VIDEO_FINISH_TIER_STATE = ""
 # R2 S3-API presign identifiers (src/r2-presign.ts). NOT secrets: R2_S3_ENDPOINT is the public
 # account-scoped R2 S3 host (https://<account-id>.r2.cloudflarestorage.com), R2_S3_BUCKET is the
 # same `vivijure` bucket bound as R2_RENDERS below. Both are deploy-injected (ci.yml / deploy.sh)
@@ -66,13 +96,38 @@ R2_S3_ENDPOINT = "${R2_S3_ENDPOINT}"
 R2_S3_BUCKET = "${R2_S3_BUCKET}"
 # Public HTTPS origins for CPU media + on-iron finish doors. Empty = that service is off.
 # Filled at deploy from operator config (deploy.env). Never a baked production hostname.
+# VIDEO_FINISH_URL is NOT a route, and an earlier version of this comment said it was
+# (cf#837). What cf#797 specified was a Worker route on vivijure-studio fronting the
+# container; cf#810 MEASURED that premise false and it cannot be revived: core is a
+# LIBRARY running INSIDE this Worker, so pointing the var at a route on this Worker makes
+# the Worker fetch itself, and Cloudflare documents that same-zone global fetch() between
+# Workers fails. src/video-finish-binding.ts:3-13 carries the full derivation. No
+# /async/finish route exists on this Worker and none is coming.
+#
+# What the var actually is, in the two deploys that matter:
+#   - WITH the FINISH_CONTAINER binding (the hosted shape): the door is the BINDING. This
+#     var NAME is the key core looks the door up under (MEDIA_DOOR_FETCHERS.VIDEO_FINISH_URL,
+#     synthesised in src/orchestrator-env.ts), so the VALUE is never fetched. It must still be
+#     non-empty, because src/video-finish-availability.ts reads a non-empty var as "the tier is
+#     installed"; an empty one degrades the assemble phase.
+#   - WITHOUT that binding (a self-host running its own video-finish container): the value IS
+#     the origin, fetched over HTTPS, exactly as before.
+# Either way this is a URL var, so typecheck cannot catch a dangling target and a deploy
+# succeeds against nothing. Repoint it only AFTER the thing behind it answers a real
+# /async/finish.
+#
+# MEASURED 2026-09-27 (cf#837): the hosted deploy injects
+# VIDEO_FINISH_URL=https://video-finish.skyphusion.org from a repo Actions variable, and that
+# hostname is NXDOMAIN. On the hosted core that is masked, because the binding wins before the
+# value is ever used; it is NOT masked for the two module workers that reach this door over
+# plain HTTPS (modules/film-titles, modules/subtitle). Tracked in cf#780 / cf#746; the variable
+# is live deploy state and is not changed from here.
 VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"
 IMAGE_PREP_URL = "${IMAGE_PREP_URL}"
 AUDIO_BEAT_SYNC_URL = "${AUDIO_BEAT_SYNC_URL}"
 AUDIO_MIX_URL = "${AUDIO_MIX_URL}"
 AUDIO_MASTER_URL = "${AUDIO_MASTER_URL}"
 FINISH_UPSCALE_DOORS = "${FINISH_UPSCALE_DOORS}"
-SPEECH_UPSCALE_DOORS = "${SPEECH_UPSCALE_DOORS}"
 FINISH_BLENDER_DOORS = "${FINISH_BLENDER_DOORS}"
 # S4/S9 spend-posture knobs (src/rate-limit.ts):
 #   SPEND_LIMIT_FAIL_CLOSED -- fail-CLOSED by DEFAULT (S9 F7): when the spend limiter is BROKEN
@@ -141,6 +196,14 @@ binding = "DB"
 database_name = "vivijure-studio"
 database_id = "${D1_DATABASE_ID}"
 
+# One workflow per shot. still, wav, and clip are separate steps, so a failed
+# step retries on its own. Vendor modules that already have a workflow are not
+# wrapped again. The class is exported from src/index.ts.
+[[workflows]]
+name = "shot"
+binding = "SHOT_WORKFLOW"
+class_name = "ShotWorkflow"
+
 # --- Off-GPU CPU work runs always-on on the fleet (issue #83), reached over public HTTPS / Traefik
 # --- origins (VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL above). The CF Container + its
 # --- Durable Object class were removed once the fleet path was validated end-to-end in prod
@@ -160,6 +223,78 @@ tag = "v2-drop-cpu-containers"
 # deleting them hard-fails the deploy (API code 10074). Prod created all three in its real history;
 # an outsider deploying from this example does not.
 deleted_classes = ["VideoFinishContainer"]
+
+# --- RESTORED to Cloudflare Containers 2026-09-26 (#797; decision fleet-chezmoi#2234). -------
+# v1 created VideoFinishContainer; v2 deleted it when the CPU stages moved to always-on fleet
+# iron. The fleet is gone (2026-09-24), so video-finish comes back to Containers -- under a
+# NEW class name.
+#
+# WHY A NEW NAME, deliberately, not an oversight: the current Durable Object docs state a
+# tombstone delete is PERMANENT with no trash, so re-declaring VideoFinishContainer may be
+# refused outright. Measured 2026-09-26 with the audit-read token: 8 DO namespaces on the
+# account, ZERO belonging to vivijure and ZERO Finish/Container classes, so nothing is being
+# reconnected here and this is a clean create either way. A fresh name cannot collide with a
+# tombstone, costs nothing (the class name is internal; nothing outside this config references
+# it), and avoids spending a real deploy to discover the answer. Do NOT "tidy" this back to
+# VideoFinishContainer.
+[[migrations]]
+tag = "v3-finish-container"
+new_sqlite_classes = ["FinishContainer"]
+
+# The Durable Object that fronts the container. class_name MUST equal the [[containers]]
+# class_name below or the deploy is rejected.
+#
+# ADDRESSING IS LOAD-BEARING (#797): /async/finish submits and GET /async/status/{jobId} polls,
+# and every Container instance sits behind its OWN Durable Object. A poll that lands on a
+# different instance than the one running the encode does not find the job at all. So the DO id
+# is derived from the JOB ID (idFromName(jobId)) and NEVER from getRandom(). This does not
+# replace externalised job state (#784): state surviving a restart and the poll reaching the
+# right box are different problems, and both are required.
+[[durable_objects.bindings]]
+name = "FINISH_CONTAINER"
+class_name = "FinishContainer"
+
+# The container itself.
+#
+# instance_type standard-4 is the LARGEST Cloudflare offers (4 vCPU / 12 GiB / 20 GB disk) and
+# it is chosen for MEMORY first, disk second. That is a CORRECTION to fleet-chezmoi#2234, which
+# concluded disk was the binding limit: streaming concat was then measured on real ffmpeg at
+# peak RSS 43 MB over 1.1 GB of input across 4 partials, LOWER than a local-disk join, so
+# partials never land on disk at the final join and memory is the real ceiling. Containers have
+# NO SWAP and an OOM restarts the instance, and 12 GiB is the top of the range, so there is
+# nothing bigger to escape to. Size against the memory line, not the 20 GB line.
+#
+# sleepAfter is NOT short for this stage, and the 30-60s that #2234 recommended for one-shot
+# stages would BREAK it. /async/finish returns immediately, so no request is in flight while the
+# encode runs and the idle timer runs against a WORKING container; disk is reset to the image on
+# wake, so a sleep mid-encode destroys the work dir and the subsequent poll finds nothing. The
+# real mechanism is renewActivityTimeout() from the job loop (#784), which is why sleepAfter only
+# has to exceed the gap between renewals rather than the whole job. It is set in the Container
+# class, not here. Deploying this container before that hook exists is the ordering error #797
+# calls out.
+#
+# image is a LOCAL Dockerfile path on purpose: wrangler builds it and pushes to the Cloudflare
+# managed registry, which is what we want. A ghcr.io reference would work but third-party
+# registry pulls are NOT cached, so it would pay a pull on every cold start.
+#
+# max_instances is deliberately low to start. The default is 20, and a request that would exceed
+# the cap ERRORS rather than queueing, so this is a spend and blast-radius knob before it is a
+# throughput one.
+#
+# THIS NUMBER IS LOAD-BEARING FOR THE WORKER (cf#810). src/video-finish-binding.ts addresses a
+# stateless pool of SYNC_POOL_SIZE instances plus ONE per in-flight finish job, so the invariant is
+#
+#     SYNC_POOL_SIZE + concurrent finish jobs <= max_instances
+#
+# and at 3 that is a pool of 1 leaving room for 2 concurrent films. Because an over-cap request
+# ERRORS rather than queueing, breaking the inequality does not slow the tier down, it refuses
+# encodes. RAISE THIS BEFORE widening the pool, never after.
+# tests/video-finish-pool-ceiling-cf810.test.ts asserts it against this file.
+[[containers]]
+class_name = "FinishContainer"
+image = "./containers/video-finish/Dockerfile"
+instance_type = "standard-4"
+max_instances = 3
 
 # --- Credential secrets via the Cloudflare Secrets Store (#238). Seeded ONCE by the operator
 # --- (npx wrangler secrets-store secret create <STORE_ID> --name <NAME> ...); values never touch
@@ -204,8 +339,20 @@ binding = "R2_S3_SECRET_ACCESS_KEY"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "R2_S3_SECRET_ACCESS_KEY"
 
-# Fleet media containers (video-finish / audio-mix / audio-beat-sync). Reuses the GPU door
-# store secret so we do not mint a second bearer. Unset is fail-open.
+# Media containers (video-finish / audio-mix / audio-beat-sync / image-prep / audio-master).
+# Reuses the GPU door store secret so we do not mint a second bearer.
+#
+# UNSET IS FAIL-CLOSED, and this comment used to say the opposite (cf#893). With a door URL set and
+# no token, `mediaDoorFetch` THROWS `MediaFinishAuthError` rather than calling the door
+# unauthenticated -- core's media-finish-auth.ts, and it has behaved that way the whole time.
+#
+# The old wording was wrong in the SAFE direction, which is still wrong: a reader trusting it
+# concludes the media path is reachable without a credential and reasons about the entire auth
+# posture from there. A comment that under-claims a control is how the control gets "simplified"
+# by someone who believes it is not load-bearing.
+#
+# CX-8/cf#881 independently found and fixed the same stale "fail-open" wording; superseded here by
+# cf#893 (cf#906/#910), which landed the real fix (and the fail-CLOSED code change to match) first.
 [[secrets_store_secrets]]
 binding = "MEDIA_FINISH_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
@@ -215,7 +362,10 @@ secret_name = "FINISH_DOOR_TOKEN"
 # ---   R2_S3_ENDPOINT + R2_S3_BUCKET : identifiers (URL + bucket name), now rendered into [vars]
 # ---     above from CLOUDFLARE_ACCOUNT_ID at deploy (#238 follow-up) -- NOT wrangler secrets.
 # ---   STUDIO_API_TOKEN : operator login, deploy-minted worker secret (openssl rand | wrangler secret put).
-# ---   XAI_API_KEY / OPENAI_API_KEY : optional BYOK; leave as `wrangler secret put` when used.
+# ---   OPENAI_API_KEY : optional BYOK, read by modules/image-generate for the transparent-PNG path.
+# ---   (XAI_API_KEY is GONE, cf#839: it was declared and documented with a `wrangler secret put`
+# ---   recipe and read by no code at all. xAI models are reached through the AI Gateway on Unified
+# ---   Billing, keyless -- see the grok entries in modules/image-generate's model enum.)
 
 # --- Render-complete notification = the `notify` hook + the notify-email module (MODULE_NOTIFY_EMAIL
 # --- below), NOT a core binding. Notification is multi-backend (email / webhook / ...), so it's a
@@ -241,10 +391,9 @@ service = "vivijure-module-own-gpu"
 binding = "MODULE_SEEDANCE"
 service = "vivijure-module-seedance"
 
-# Kling 2.1 stays in modules/kling but is NOT bound on hosted.
-# [[services]]
-# binding = "MODULE_KLING"
-# service = "vivijure-module-kling"
+# Kling 2.1 (modules/kling) was RETIRED 2026-09-27, cf#921: its RunPod slug
+# kling-v2-1-i2v-pro returns 404 and no live Kling endpoint does plain i2v.
+# MODULE_KLING_O1_R2V below is a DIFFERENT door (multi-reference r2v) and stays.
 
 [[services]]
 binding = "MODULE_KLING_O1_R2V"
@@ -268,7 +417,7 @@ service = "vivijure-module-finish-rife"
 
 
 # >>> SATELLITE: finish-blender -- Blender compositor on a SEPARATE RunPod endpoint
-# Optional finish-chain grade (headless Blender). After lipsync, before upscale.
+# Optional finish-chain grade (headless Blender). After rife, before upscale.
 # Needs store secret BLENDER_RUNPOD_ENDPOINT_ID + module worker vivijure-module-finish-blender.
 # Kept inside SATELLITE markers: only ships when VIVIJURE_PROFILE=satellites (or a hand-edit).
 #
@@ -354,27 +503,10 @@ binding = "MODULE_AUDIO_MASTER"
 service = "vivijure-module-audio-master"
 
 # Dialogue: per-shot spoken lines -> Deepgram Aura-1 (Workers AI) in the cast member's voice. The
-# `dialogue` phase runs after clips, before finish; its audio_key feeds the lip-sync finish module.
+# `dialogue` phase runs after clips, before finish; its audio_key becomes the shot's spoken track.
 [[services]]
 binding = "MODULE_DIALOGUE"
 service = "vivijure-module-dialogue-gen"
-
-# >>> SATELLITE: finish-lipsync -- MuseTalk lip-sync on a SEPARATE RunPod endpoint
-# HOMELAB / self-host only. Hosted flagship does not bind this door.
-# Native AV on our keyframes is the talking movie path.
-[[services]]
-binding = "MODULE_LIPSYNC"
-service = "vivijure-module-finish-lipsync"
-# <<< SATELLITE: finish-lipsync
-
-# >>> SATELLITE: speech-upscale -- speech cleanup on a SEPARATE RunPod endpoint
-# Speech upscale (the `speech` hook): aviation-grade speech cleanup / enhancement on the dialogue
-# audio_key before lip-sync consumes it. Its own per-module worker; the registry discovers it as a
-# MODULE_* binding.
-[[services]]
-binding = "MODULE_SPEECH_UPSCALE"
-service = "vivijure-module-speech-upscale"
-# <<< SATELLITE: speech-upscale
 
 # Cloud i2v motion.backend modules (RunPod-hosted), joining own-gpu / seedance / kling. Each is its
 # own per-module worker with a scoped RUNPOD_API_KEY; the registry discovers them as MODULE_* bindings.
@@ -484,4 +616,20 @@ service = "vivijure-module-subtitle"
 [[routes]]
 pattern = "vivijure.skyphusion.org"
 custom_domain = true
+
+# >>> SELFHOST-SKIP: flagship host app.studio.vivijure.com
+# Custom domain attaches the hostname to this worker. It does not beat the
+# control-plane workers route *.studio.vivijure.com/*, which is why the
+# exact zone route is also declared. `app` is a reserved slug, so signup
+# cannot mint it. The skyphusion.org name stays until this host is proven.
+# A self-host strips this block and keeps one route, which deploy.sh
+# retargets to DEPLOY_HOSTNAME.
+[[routes]]
+pattern = "app.studio.vivijure.com"
+custom_domain = true
+
+[[routes]]
+pattern = "app.studio.vivijure.com/*"
+zone_name = "vivijure.com"
+# <<< SELFHOST-SKIP: flagship host app.studio.vivijure.com
 

@@ -11,15 +11,33 @@ import { vfAsyncDoor } from "./install-vf-fetch.js";
 // the silent film honestly (#245 / #249 / #77). hasAudio:undefined (an older container that omits the
 // field) is unknown, not false, so the prior success behavior must hold.
 
-function muxEnv(job: object, containerBody: unknown) {
+function muxEnv(job: object, containerBody: unknown, opts: { containerWrote?: string[] } = {}) {
   const filmId = (job as { film_id: string }).film_id;
+  /** Keys the CONTAINER wrote directly to R2 via presigned PUT. Defaults to the mux output, which
+   *  is what a successful mux produces; pass [] to model the container reporting success without
+   *  the artifact landing, which is the state cf#833's gate exists to catch. */
+  const j = job as { mux_output_key?: string; silent_film_key?: string };
+  const writtenByContainer = new Set(
+    (opts.containerWrote ?? [j.mux_output_key, j.silent_film_key].filter(Boolean)) as string[],
+  );
   let stored = JSON.stringify(job);
   const jsonResp = (b: unknown) =>
     new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
   const env: Record<string, unknown> = {
     R2_RENDERS: {
       get: async (key: string) => (key === filmJobDocKey(filmId) ? { text: async () => stored } : null),
-      head: async () => null,
+      // cf#833 / core 1.25.0: the film is only `done` if the film is actually THERE, and core now
+      // heads R2 to check. This stub used to answer null for every key, which modelled an R2 where
+      // the mux output never landed -- and the old assertions read `done` only because nothing
+      // looked. The container PUTs the film straight to R2 through a presigned URL, so the Worker
+      // never sees that write and a Worker-side mock cannot observe it via `put`; modelling it here
+      // is what makes the fixture match the real flow rather than a world with no artifacts in it.
+      // Anything the flow did NOT write still answers null, so the gate can still fail.
+      // The size sits above the 2048-byte deliverability floor deliberately: cf#833 refuses a
+      // TRUNCATED film as well as an absent one, so a 1-byte stub would trip that arm while
+      // looking like a presence failure. Two different refusals need two different fixtures.
+      head: async (key: string) =>
+        (writtenByContainer.has(key) ? ({ size: 4_194_304 } as unknown) : null),
       put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
     },
     VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor(containerBody),

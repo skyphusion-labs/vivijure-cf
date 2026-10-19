@@ -7,6 +7,7 @@
 // enable_prompt_expansion defaults false so the prompt is sent as-is.
 
 import type { MotionBackendInput } from "./contract";
+import { mp4VideoTiming } from "../../_shared/mp4-timing";
 
 // Wan 2.6 accepts ONLY a discrete duration enum {5, 10, 15} seconds -- NOT a continuous range.
 // Submitting any other value (e.g. a 4s storyboard shot) 400s at the provider:
@@ -27,7 +28,24 @@ export function buildWanBody(input: MotionBackendInput, cfg: Record<string, unkn
     prompt: input.prompt,
     image: input.keyframe_url,
     negative_prompt: "",
-    resolution: "720p",
+    // cf#922: the key is `size`, and its VALUE SPACE IS NOT WHAT RUNPOD DOCUMENTS.
+    //
+    // This door hardcoded `resolution: "720p"`. Measured 2026-09-27 by direct submit: RunPod's worker
+    // validates with a pydantic model that IGNORES extra fields, so `resolution` was silently dropped
+    // and the vendor applied its own default. That is why the 1270x726 clip measured last sprint
+    // looked right: it was the vendor default, never a configured outcome.
+    //
+    // RunPod's docs page for wan-2-6-i2v says `size` takes `1280*720` / `1920*1080`. THAT IS WRONG,
+    // and following it would have broken every shot. The worker forwards our `size` value verbatim
+    // into the VENDOR's `resolution` field, and submitting `size: "9999*9999"` returns the vendor's
+    // own enum: `field "resolution" must be one of ["720p", "1080p"]`. So the accepted values are
+    // `720p` and `1080p` (job sync-7334e207-526d-4c70-8ca4-ffcb3284687b-u2).
+    //
+    // The knob below is EARNED rather than assumed, which is the cf#935 test: `size: "1080p"` was
+    // submitted and the DELIVERED artifact measured 1920x1080 at 30fps via ffprobe (job
+    // sync-7eb360c7-9111-43da-91f8-8b2c80f5c72b-u1, cost $0.75). A non-default delivery is the
+    // falsifiable positive, so unlike the infinitetalk knob this one demonstrably moves pixels.
+    size: cfg.size === "1080p" ? "1080p" : "720p",
     duration: clampDuration(input.seconds),
     shot_type: "single",
     seed: -1,
@@ -174,4 +192,22 @@ export function terminalErrorInOutput(output: unknown): string | null {
   if (typeof err === "string" && err.length > 0) return err;
   if (o.status === "error") return "backend reported status=error with no error detail";
   return null;
+}
+
+/** cf#923: the DELIVERED clip's rate and frame count, measured from the container.
+ *
+ *  Replaces `fps: OUT_FPS` plus a frames value computed from the request. A value computed from the
+ *  request is not a measurement no matter what the field is named: this door reported 24fps against a
+ *  delivered 25, and its sibling reported 24 against 30.
+ *
+ *  UNMEASURED IS REPORTED AS ZERO, never as a constant. Core's contract requires numeric fps/frames
+ *  (conformance checks `isNum`, not `> 0`) and core only records a delivery when
+ *  `output.fps > 0 && output.frames > 0` (render-orchestrator). So 0 is the contract's existing
+ *  not-available channel: it passes conformance, the clip is still delivered, and nothing downstream
+ *  records a rate nobody measured. */
+export function deliveredTiming(bytes: ArrayBuffer): { fps: number; frames: number } {
+  const t = mp4VideoTiming(new Uint8Array(bytes));
+  if (!t || !(t.frames > 0)) return { fps: 0, frames: 0 };
+  const fps = t.fps != null && t.fps > 0 ? Math.round(t.fps * 1000) / 1000 : 0;
+  return { fps, frames: t.frames };
 }

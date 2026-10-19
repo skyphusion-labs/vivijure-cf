@@ -160,11 +160,13 @@ describe("seedance (cost door) writes a runpod_job_log row on every terminal pat
 // the behavioural block proved reachable in seedance. Source shape is a WEAKER claim and is labelled
 // as one -- it catches a module nobody wired, not a call site that cannot be reached.
 // ---------------------------------------------------------------------------------------------
-const COST_DOOR = ["seedance", "kling", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen"];
+// cf#921: was eight; `kling` retired, so this is the SEVEN that remain. The count moved because a
+// door left the tree, not because the wiring rule changed.
+const COST_DOOR = ["seedance", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen"];
 const MODULES_DIR = join(import.meta.dirname, "..", "modules");
 const read = (mod: string, file: string) => readFileSync(join(MODULES_DIR, mod, file), "utf8");
 
-describe("all eight cost-door submitters are wired (cf#305)", () => {
+describe("all seven cost-door submitters are wired (cf#305, was eight before cf#921)", () => {
   it("the scan reads real files (positive control)", () => {
     const dirs = readdirSync(MODULES_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
     for (const m of COST_DOOR) expect(dirs, "cost-door module missing from the tree: " + m).toContain(m);

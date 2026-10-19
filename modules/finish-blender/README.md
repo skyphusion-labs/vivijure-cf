@@ -3,7 +3,7 @@
 A **`finish`**-chain module (vivijure-module/2). Grades shot clips with **headless Blender**
 compositor presets, dispatched to the dedicated **vivijure-blender** RunPod endpoint.
 
-`ui.order: 18` -- after lipsync (15), before upscale (20), so grading runs at native resolution.
+`ui.order: 18` -- after rife (10), before upscale (20), so grading runs at native resolution.
 
 ## Configuration
 

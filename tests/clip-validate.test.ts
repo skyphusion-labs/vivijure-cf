@@ -235,9 +235,11 @@ describe("validateDoneClips (the clip-job seam)", () => {
   it("leaves a shot untouched on skip (unreadable artifact)", async () => {
     const job = jobWith("k");
     const changed = await validateDoneClips(orch(fakeR2(null)), job);
-    expect(changed).toBe(false);
+    // cf#856, same shape as content validation: a skip now records `validated_unmeasured`, so the
+    // doc CHANGES. The shot is still left otherwise untouched, which is what this test is for.
+    expect(changed).toBe(true);
     expect(job.shots[0].status).toBe("done");
-    expect(job.shots[0].validated).toBe("skip");
+    expect(job.shots[0].validated_unmeasured).toBeTruthy();
   });
 });
 

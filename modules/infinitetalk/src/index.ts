@@ -1,7 +1,13 @@
-// infinitetalk: a motion.backend module worker (vivijure-module/2), Kuaishou Kling V2.1 I2V Pro on RunPod.
+// infinitetalk: an audio-driven motion.backend module worker (vivijure-module/2), MeiGen-AI
+// InfiniteTalk on the RunPod PUBLIC endpoint api.runpod.ai/v2/infinitetalk. Portrait plus Cast
+// audio: the mouth follows a line we synthesized, so this door needs a `dialogue` render to have
+// produced audio_url first (see kling.ts audioUrl). Two of the fifteen motion.backend doors
+// declare driving_audio and lip-sync: this one and alibaba-wan (which consumes audio_url in its
+// wan.ts). What is unique here is the PAIR of flags, not either half -- driving_audio true AND
+// native_audio false, so there is no invent-speech fallback and a shot with no line is refused
+// below rather than voiced by a stranger. alibaba-wan is native_audio true, so it voices it.
 // Async (same shape as seedance): GET /module.json, POST /invoke (submit -> poll token), POST /poll
-// (check GET /status, finalize to R2 on completion). The second motion.backend backend -> the UI's
-// pick_one hook now has a real choice. Failures are DATA.
+// (check GET /status, finalize to R2 on completion). Failures are DATA.
 
 import {
   MODULE_API,
@@ -13,7 +19,7 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, framesFromDelivered, RUNPOD_COLD_GRACE_MS } from "./kling";
+import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./kling";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
@@ -33,16 +39,17 @@ interface Env {
 }
 
 const ENDPOINT_ID = "infinitetalk";
-const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "infinitetalk",
-  version: "0.1.1",
+  version: "0.2.0",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (InfiniteTalk)" }],
+  // cf#935: the size knob is GONE, not defaulted. The provider ignores it -- 480p and 720p both
+  // deliver 832x464 -- so offering the choice charged the user a published $0.50 against $0.25 for
+  // byte-identical pixels. Removing a published config field is a breaking contract change: 0.1.1 -> 0.2.0.
   config_schema: {
-    size: { type: "enum", values: ["480p", "720p"], default: "480p", label: "resolution" },
     enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
@@ -54,6 +61,7 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet.",
       "Clip length follows that audio.",
+      "480p only (832x464). The provider ignores any other resolution request.",
       "One film, no scatter",
     ],
   },
@@ -219,7 +227,11 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: framesFromDelivered(bytes, st.seconds, OUT_FPS) } };
+  // cf#923: measured off the delivered container, not assumed. This door returns 25fps, not the 24
+  // it used to declare. 0/0 means the container could not be parsed; core skips recording a delivery
+  // rather than storing a rate nobody measured.
+  const timing = deliveredTiming(bytes);
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: timing.fps, frames: timing.frames } };
 }
 
 export default {

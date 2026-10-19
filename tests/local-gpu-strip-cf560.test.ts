@@ -79,6 +79,29 @@ const template = readFileSync(TEMPLATE, "utf8");
  * not the direction that happens: the direction that happens is a path being ADDED without the
  * strip, which is cf#560 itself.
  */
+/**
+ * Does this workflow TEXT actually render a hosted config?
+ *
+ * A MENTION IS NOT A RENDER, which is the same rule `invokesStrip` below already applies to the
+ * script side, and it was missing here. cf#837 found it by accident: adding an explanatory comment
+ * to build-media-images.yml (a workflow that builds container images and renders no config at all)
+ * named `wrangler.toml.example` in PROSE, which enrolled that workflow into the population and
+ * failed two assertions. A control that fires on a comment is a control that punishes documentation,
+ * and the next author's cheapest fix is to delete the sentence rather than to look.
+ *
+ * COMMENT LINES ARE DROPPED BEFORE MATCHING, in both directions, because a `#` line cannot render
+ * anything: not in YAML, and not inside a `run: |` shell block either. Nothing about the union below
+ * is weakened -- a real render path still cannot leave the population by changing which file it
+ * names, it has to stop having a command line that reads the template or writes a wrangler.toml.
+ */
+function rendersHostedConfig(text: string): boolean {
+  const acting = text.split("\n").filter((l) => !l.trim().startsWith("#"));
+  // UNION, NOT INTERSECTION -- see the note in the caller.
+  const namesTemplate = acting.some((l) => l.includes(TEMPLATE));
+  const writesWranglerToml = acting.some((l) => />\s*wrangler\.toml\b/.test(l));
+  return namesTemplate || writesWranglerToml;
+}
+
 function hostedRenderWorkflows(): { name: string; text: string }[] {
   const all = readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
   const hits: { name: string; text: string }[] = [];
@@ -92,9 +115,7 @@ function hostedRenderWorkflows(): { name: string; text: string }[] {
     // 12 and the run was green. An assertion that can vanish is worse than one that can be wrong.
     // Selecting on EITHER signal means a path cannot leave the population by changing which file
     // it names; it has to stop producing a wrangler config altogether.
-    const namesTemplate = text.includes(TEMPLATE);
-    const writesWranglerToml = />\s*wrangler\.toml\b/.test(text);
-    if (namesTemplate || writesWranglerToml) hits.push({ name, text });
+    if (rendersHostedConfig(text)) hits.push({ name, text });
   }
   return hits;
 }
@@ -258,6 +279,20 @@ describe("cf#560 -- the LOCAL-GPU strip, and the claim that every hosted render 
       });
     }
 
+    it("NEGATIVE CONTROL: the POPULATION matcher rejects a mere mention of the template (cf#837)", () => {
+      // The symmetric case to the one below, and it was absent until a comment mentioning
+      // `wrangler.toml.example` in build-media-images.yml enrolled a workflow that renders nothing.
+      // Both directions are asserted on the same matcher so neither can be the vacuous one.
+      expect(rendersHostedConfig(`          # the hosted render lives in ${TEMPLATE}, not here\n`)).toBe(false);
+      expect(rendersHostedConfig(`          #   envsubst < ${TEMPLATE} > wrangler.toml\n`)).toBe(false);
+      expect(rendersHostedConfig(`          envsubst < ${TEMPLATE} > wrangler.toml\n`)).toBe(true);
+      // the vanish-proof half: a path that stops naming the template but still writes the config
+      expect(rendersHostedConfig(`          envsubst < .intermediate.toml > wrangler.toml\n`)).toBe(true);
+      // and the real files, read from disk, so this is not only about synthetic strings
+      expect(rendersHostedConfig(readFileSync(join(WORKFLOW_DIR, "build-media-images.yml"), "utf8"))).toBe(false);
+      expect(rendersHostedConfig(readFileSync(join(WORKFLOW_DIR, "studio-release.yml"), "utf8"))).toBe(true);
+    });
+
     it("NEGATIVE CONTROL: the caller matcher rejects a mere mention of the script", () => {
       // The matcher that produced a false green must be shown refusing the input that fooled it,
       // or the fix rests on the author's belief about what they changed.
@@ -321,9 +356,18 @@ describe("cf#560 -- the strip OUTPUT is what gets rendered, not merely that the 
       calls++;
       const out = t.split(/\s+/)[3];
       if (!out) continue;
-      const feeds = lines
-        .slice(i + 1)
-        .some((l) => l.includes("< " + out) && />\s*wrangler\.toml\b/.test(l));
+      // SCOPED TO THIS STEP, not to end-of-file. cf#797 added a second hosted render path to
+      // ci.yml, and an unbounded forward scan let one job's invocation be "satisfied" by a
+      // DIFFERENT job's render line: breaking the bundle gate's own envsubst left this reporting
+      // consumed === calls, green, while that job rendered from the unstripped template. Measured,
+      // not theorised -- the break was made and this suite stayed green. With a single pair the
+      // weakness was unreachable, which is why it survived until a second path existed. The render
+      // must live in the SAME step as the strip that produced its input, so the scan stops at the
+      // next step boundary.
+      const rest = lines.slice(i + 1);
+      const boundary = rest.findIndex((l) => /^\s*- name:/.test(l));
+      const scope = boundary === -1 ? rest : rest.slice(0, boundary);
+      const feeds = scope.some((l) => l.includes("< " + out) && />\s*wrangler\.toml\b/.test(l));
       if (feeds) consumed++;
     }
     return { calls, consumed };
@@ -337,7 +381,13 @@ describe("cf#560 -- the strip OUTPUT is what gets rendered, not merely that the 
     expect(real.calls).toBeGreaterThan(0);
     expect(real.consumed).toBe(real.calls);
 
-    const reverted = ci.replace(
+    // replaceAll, NOT replace. cf#797 added a second hosted render path to ci.yml (the bundle
+    // gate), and `String.replace` with a string pattern mutates only the FIRST occurrence: the
+    // second render line survived, `consumed` came back 2 instead of 0, and this control could no
+    // longer reach the answer it exists to produce. The control's intent is to break the data path
+    // EVERYWHERE, so it has to mutate every occurrence or it silently weakens as render paths are
+    // added. Caught by this test failing on that change, which is the control doing its job.
+    const reverted = ci.replaceAll(
       "< .wrangler.hosted.toml > wrangler.toml",
       "< wrangler.toml.example > wrangler.toml",
     );

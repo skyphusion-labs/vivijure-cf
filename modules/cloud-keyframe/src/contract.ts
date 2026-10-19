@@ -42,12 +42,33 @@ export interface InvokeRequest<I = unknown> {
   context: InvokeContext;
 }
 
+/** VENDORED from core's `InvokeFailureReason` (vivijure-module/2, core#291). CLOSED set.
+ *
+ *  DO NOT HAND-EDIT. `tests/invoke-failure-reason-vendored.test.ts` derives this block from core's
+ *  `INVOKE_FAILURE_REASONS` and fails if any of the 34 vendored copies drifts from it. Copied rather
+ *  than imported because this file is deliberately import-free (a module must build without the core
+ *  package); the test is what makes 34 copies safe.
+ *
+ *  ABSENT means the module has not adopted the field. It is never defaulted to a class. */
+export type InvokeFailureReason =
+  | "bad-input"
+  | "unsupported"
+  | "not-configured"
+  | "unauthorized"
+  | "quota-exceeded"
+  | "rate-limited"
+  | "upstream-unavailable"
+  | "backend-error"
+  | "cancelled"
+  | "timeout"
+  | "internal";
+
 // A module may answer synchronously (output) or, for a long-running job, asynchronously: return
 // pending + a poll token, and the caller drives /poll until it is done.
 export type InvokeResponse<O = unknown> =
   | { ok: true; output: O }
   | { ok: true; pending: true; poll: string; jobId?: string } // jobId: optional/additive (#318) -- backend RunPod job id for the progress snapshot read; no MODULE_API bump
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: InvokeFailureReason };
 
 export interface PollRequest {
   poll: string;

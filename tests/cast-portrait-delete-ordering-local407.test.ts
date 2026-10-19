@@ -185,12 +185,16 @@ describe("local#407 parity: the superseded portrait is deleted only after the re
       throws: true,
     },
     {
-      name: "copy-register, the row write produces no row (this door still answers 200 cast:null)",
+      name: "copy-register, the row write produces no row (404 since cf#754; was 200 cast:null)",
       arrange: () => {
         setPortrait.mockResolvedValue(null);
       },
       req: () => copyReq(SRC_KEY),
-      status: 200,
+      // cf#754 changed this STATUS and nothing else about this case. The claim below -- that the
+      // superseded object survives a row write that produced nothing -- is the #753 claim and is
+      // unchanged; only the expected literal moved, because a failed write now answers 404
+      // instead of 200 { cast: null }. See tests/cast-row-write-404-754.test.ts.
+      status: 404,
     },
     {
       name: "raw-bytes, the R2 write of the replacement throws",
@@ -202,12 +206,13 @@ describe("local#407 parity: the superseded portrait is deleted only after the re
       throws: true,
     },
     {
-      name: "raw-bytes, the row write produces no row (this door still answers 200 cast:null)",
+      name: "raw-bytes, the row write produces no row (404 since cf#754; was 200 cast:null)",
       arrange: () => {
         setPortrait.mockResolvedValue(null);
       },
       req: () => bytesReq("image/png", PNG),
-      status: 200,
+      // Same as the copy-register case above: status literal only, claim untouched.
+      status: 404,
     },
   ];
 

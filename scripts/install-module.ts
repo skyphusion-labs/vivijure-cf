@@ -16,15 +16,18 @@
 //
 // Run:
 //   node scripts/install-module.ts \
-//     --script motion-foo --code ./dist/index.js --hook-name motion-foo \
+//     --script motion-foo --code ./dist/index.js --name motion-foo \
 //     --secrets ./motion-foo.env --core https://vivijure.skyphusion.org \
 //     --namespace vivijure-modules --compat-date 2024-11-01
 //
 // Auth (env, never flags -- no secret on argv):
 //   CLOUDFLARE_ACCOUNT_ID          the account that owns the namespace
 //   CLOUDFLARE_API_TOKEN           a WfP-scoped token (Workers Scripts:Edit) for the upload/delete
-//   CF_ACCESS_CLIENT_ID / _SECRET  the CF Access service token for the core admin route (if the core is
-//                                  Access-gated, which production is)
+//   CF_ACCESS_CLIENT_ID / _SECRET  the CF Access service token for the core admin route, if the
+//                                  core is Access-gated (AUTH_MODE=access)
+//   STUDIO_API_TOKEN               Bearer token for the core admin route, if the core is
+//                                  token-gated instead (AUTH_MODE=token); CX-4, the install route
+//                                  previously had no way to authenticate against that mode
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -128,6 +131,11 @@ async function coreInstall(args: Args): Promise<{ ok: boolean; body: unknown }> 
   const id = process.env.CF_ACCESS_CLIENT_ID;
   const secret = process.env.CF_ACCESS_CLIENT_SECRET;
   if (id && secret) { headers["CF-Access-Client-Id"] = id; headers["CF-Access-Client-Secret"] = secret; }
+  // CX-4: a token-mode core (AUTH_MODE=token) has no CF Access in front of it and instead checks
+  // Authorization: Bearer against STUDIO_API_TOKEN (src/auth-gate.ts). Both headers can be set at
+  // once without conflict; the core reads whichever transport its own AUTH_MODE expects.
+  const apiToken = process.env.STUDIO_API_TOKEN;
+  if (apiToken) headers.authorization = `Bearer ${apiToken}`;
   const res = await fetch(`${args.core}/api/modules/install`, {
     method: "POST",
     headers,

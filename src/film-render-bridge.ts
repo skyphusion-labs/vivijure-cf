@@ -30,6 +30,10 @@ import {
   type WanLoraProjectionSurface,
 } from "./wan-lora-projection";
 import { withFastestKeyframeDefault } from "./default-keyframe";
+import {
+  buildAppliedModuleConfig,
+  APPLIED_MODULE_CONFIG_FIELD,
+} from "./applied-module-config";
 
 export function mapRenderOverridesToModuleConfigs(
   ...args: Parameters<typeof coreMapRenderOverrides>
@@ -52,7 +56,9 @@ export function filmJobToPollView(
 ): RunpodJobView {
   const view = coreFilmJobToPollView(job, clipJob, keyframeDone);
   const proj = readWanLoraProjection(job as { [WAN_LORA_PROJECTION_FIELD]?: unknown });
-  if (!proj) return view;
+  // cf#924: what the modules were actually told. Same relay shape as the Wan projection below.
+  const applied = buildAppliedModuleConfig(job, clipJob);
+  if (!proj && !applied) return view;
   // Match core: only attach when an output bag already exists (IN_PROGRESS / COMPLETED). FAILED /
   // CANCELLED keep no output, so the field is not invented on a terminal-error shape.
   if (!view.output || typeof view.output !== "object") return view;
@@ -60,7 +66,8 @@ export function filmJobToPollView(
     ...view,
     output: {
       ...(view.output as Record<string, unknown>),
-      [WAN_LORA_PROJECTION_FIELD]: proj,
+      ...(proj ? { [WAN_LORA_PROJECTION_FIELD]: proj } : {}),
+      ...(applied ? { [APPLIED_MODULE_CONFIG_FIELD]: applied } : {}),
     },
   };
 }

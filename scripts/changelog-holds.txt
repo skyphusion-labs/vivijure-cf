@@ -1,0 +1,23 @@
+# Fragments in changelog.d/ that are DELIBERATELY not being consumed by the next release, because
+# the change they describe belongs to an earlier one. Read by scripts/changelog-fragments-consumed.py
+# (cf#901), which refuses a tag whose changelog.d holds anything it cannot account for.
+#
+# BOTH HALVES ARE REQUIRED and each catches what the other cannot, exactly as in
+# scripts/changelog-corrections.txt (cp#245):
+#   - the fragment listed HERE, which is the waiver, reviewable as its own line in a diff;
+#   - a FIRST-LINE `<!-- HELD: reason -->` marker in the fragment itself, which tells a reader of
+#     the fragment why it is sitting there rather than making them find this file.
+# Listed but unmarked is refused. Marked but unlisted is refused. Neither waives anything alone.
+#
+# The marker is pinned to line 1 on purpose. cp#245's own regression was a waiver that lived in the
+# content, so a section merely DOCUMENTING the mechanism disarmed itself. A fragment that discusses
+# holds in its prose cannot trip this one, and tests/changelog-fragments-consumed.test.py plants
+# exactly that case and requires a refusal.
+#
+# A hold is not a parking space. If a fragment sits here across more than one release, its change
+# either needs describing somewhere or the fragment needs deleting; say which in the reason.
+#
+# FORMAT: one fragment filename per line, free text reason after it, `#` starts a comment.
+#
+# STATE: none. 804-storage-posture-comment.md was the live example that motivated this mechanism
+# and it was folded into v1.34.1's corrected section in #899, so it is consumed and gone.

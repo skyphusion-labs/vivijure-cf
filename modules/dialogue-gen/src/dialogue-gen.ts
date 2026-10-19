@@ -2,7 +2,7 @@
 // state, and line validation. No I/O -- unit-tested without bindings or spend.
 //
 // Backed by Deepgram Aura-1 on Workers AI (@cf/deepgram/aura-1). We request 16-bit PCM WAV (not the
-// default MP3) so the lip-sync backend (MuseTalk) gets clean, lossless audio to drive the mouth from.
+// default MP3) so the spoken track stays clean and lossless all the way into the final mux.
 
 import type { DialogueInput, DialogueLine, DialogueOutput, DialogueShotAudio } from "./contract";
 
@@ -27,7 +27,7 @@ export function resolveVoice(voiceId: string | undefined): VoiceId {
 // bounded even if a caller skipped core validation.
 export const DIALOGUE_MAX_CHARS = 300;
 
-/** Build the Workers AI params for one Aura-1 line. WAV/PCM out for a clean lip-sync drive track. */
+/** Build the Workers AI params for one Aura-1 line. WAV/PCM out for a clean spoken track. */
 export function buildTtsParams(text: string, voice: VoiceId): Record<string, unknown> {
   return { text, speaker: voice, encoding: "linear16", container: "wav" };
 }

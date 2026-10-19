@@ -19,7 +19,6 @@ flowchart LR
   sp["speech<br/>(enhance)"]
   subgraph finish["finish chain"]
     rife["finish-rife · 10"]
-    ls["finish-lipsync · 15"]
     up["finish-upscale · 20"]
   end
   asm["assemble"]
@@ -27,7 +26,7 @@ flowchart LR
   done["done"]
 
   cast -. "refs / LoRA" .-> kf
-  kf --> clips --> dlg --> sp --> rife --> ls --> up --> asm --> mux --> done
+  kf --> clips --> dlg --> sp --> rife --> up --> asm --> mux --> done
 
   style kf fill:#dff,stroke:#0aa,stroke-width:2px
 ```
@@ -43,7 +42,7 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `quality_tier` | enum `draft` / `standard` / `final` | `final` | render quality tier |
-| `width` | int (512..1536) | `1344` | keyframe width (16:9 so the whole chain stays 16:9) |
+| `width` | int (512..1536) | `1344` | keyframe width. 1344x768 is 1.75 (7:4), NOT 16:9 (1.7778); i2v doors conform the clip to the keyframe, so the chain runs at 1.75. See cf#945. |
 | `height` | int (512..1536) | `768` | keyframe height |
 | `steps` | int (1..60) | `30` | diffusion steps |
 | `guidance_scale` | float (0..20) | `6.5` | prompt adherence |
