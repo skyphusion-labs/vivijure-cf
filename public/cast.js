@@ -34,10 +34,12 @@
 
   function artifactUrl(key) {
     if (!key) return "";
-    // #625/demo: a portrait_key (or ref/source key) can be an ABSOLUTE showcase URL -- the public demo
-    // studio seeds cast portraits from assets.skyphusion.net and binds NO R2. Return such a URL verbatim;
-    // a normal relative R2 key still flows through the studio /api/artifact/ presign route as before, so
-    // prod behavior is byte-identical. Same passthrough as planner-history-row.js artifactUrl.
+    // A portrait_key (or ref/source key) can be an ABSOLUTE URL rather than an R2 key, so return such
+    // a value verbatim; a normal relative key still flows through the studio /api/artifact/ presign
+    // route. Same passthrough as planner-history-row.js artifactUrl, and `isForeignRef`
+    // (src/record-reclaim.ts) is the server-side half: a value this accepts must never be handed to
+    // an R2 delete. The shape came from the public demo seed (#625), which was removed with that door
+    // in pr1019; the passthrough is kept because any writer can still store an absolute value.
     return /^https?:\/\//i.test(key) ? key : "/api/artifact/" + key;
   }
 
