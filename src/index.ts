@@ -48,6 +48,14 @@ import {
 } from "./cast-media";
 import { CAST_BUNDLE_MAX_IMPORT_BYTES, exportCastBundle, importCastBundle } from "./cast-bundle";
 import {
+  deleteRenderRows,
+  deleteShotRecords,
+  projectRenderRows,
+  reclaimRenderRows,
+  renderKeyRowsByIds,
+  type ReclaimReport,
+} from "./record-reclaim-io";
+import {
   talkingVoiceHonorFor,
   startCastVoiceSample,
   pollCastVoiceSample,
@@ -252,6 +260,21 @@ function match(routes: Route[], method: string, pathname: string) {
   return null;
 }
 
+// cf#779 (LG-2/LG-3). PRIVACY Section 7 promises a delete "frees their stored files". When the
+// reclaim could not finish, the record is KEPT so its keys stay findable and the answer says so,
+// rather than returning ok and leaving objects nothing can name. The retry converges: keys already
+// freed are simply absent from the next listing. 409 because the request is not malformed and is
+// not refused on authority; it is a state that a repeat of the same call resolves.
+function reclaimRefusal(r: ReclaimReport): Response {
+  return json({
+    error: "storage reclaim incomplete; the record was kept so its files stay reachable. Retry the delete.",
+    freed: r.deleted.length,
+    retained: r.retained.length,
+    failed: r.failed.length,
+    unreached: r.unreached,
+  }, 409);
+}
+
 // --- projects ------------------------------------------------------------
 // Responses are wrapped by resource name ({projects}/{project}) -- the frontend reads data.projects
 // / data.project. (Migration regression: these used to return bare rows, which crashed create.)
@@ -276,9 +299,37 @@ const hPatchProject: Handler = async (req, env, _c, p) => {
   return json({ project: toPublicProject(row) });
 };
 const hDeleteProject: Handler = async (req, env, _c, p) => {
-  const row = await deleteProject(env, await resolveProjectId(env, p.id));
+  const id = await resolveProjectId(env, p.id);
+  // The project row is confirmed BEFORE anything cascades. `renders.project_id` is a LOGICAL FK with
+  // no constraint behind it, so a previously-deleted project's id can still sit on render rows; a
+  // cascade keyed on an unverified id would delete those strays on a 404.
+  if (!(await getProjectById(env, id))) throw notFound("project");
+
+  // A project's bytes ARE its renders' artifacts: every object under `renders/<project>/` was
+  // produced by some render and is named by that render's row, its shot_records, or its job doc.
+  // So the project delete frees them by reclaiming its renders, as ONE operation -- the renders of
+  // one project legitimately share keys, and gating each against the others would retain a key whose
+  // every owner is going away. Sweeping the `renders/<project>/` PREFIX instead was rejected: the
+  // prefix is a cross-render namespace that `archiveExistingClipTakes` and `listProjectKeyframes`
+  // both read, and the project NAME in it is mutable and sanitized, so a prefix sweep can hit a
+  // renamed project's successor or a name-collided sibling.
+  const renders = await projectRenderRows(env, id);
+  const reclaim = await reclaimRenderRows(env, renders);
+  if (!reclaim.complete) return reclaimRefusal(reclaim);
+  if (renders.length) {
+    await deleteShotRecords(env, renders.map((r) => r.job_id));
+    await deleteRenderRows(env, renders.map((r) => r.id));
+  }
+
+  const row = await deleteProject(env, id);
   if (!row) throw notFound("project");
-  return json({ ok: true, deleted: row.public_id });
+  return json({
+    ok: true,
+    deleted: row.public_id,
+    renders_deleted: renders.length,
+    objects_freed: reclaim.deleted.length,
+    objects_retained: reclaim.retained.length,
+  });
 };
 const hSaveProjectStoryboard: Handler = async (req, env, _c, p) => {
   const b = await readBody<{ storyboard?: unknown }>(req);
@@ -747,8 +798,19 @@ const hPatchRender: Handler = async (req, env, _c, p) => {
   return json(updated ? toPublicRenderRow(updated) : null);
 };
 const hDeleteRender: Handler = async (_req, env, _c, p) => {
-  if (!(await deleteRenderRow(env, await resolveRenderId(env, p.id)))) throw notFound("render");
-  return json({ ok: true });
+  const id = await resolveRenderId(env, p.id);
+  // Read the key columns BEFORE the row goes: they are the only index of this render's objects.
+  const rows = await renderKeyRowsByIds(env, [id]);
+  if (rows.length === 0) throw notFound("render");
+  const reclaim = await reclaimRenderRows(env, rows);
+  if (!reclaim.complete) return reclaimRefusal(reclaim);
+  await deleteShotRecords(env, [rows[0].job_id]);
+  if (!(await deleteRenderRow(env, id))) throw notFound("render");
+  return json({
+    ok: true,
+    objects_freed: reclaim.deleted.length,
+    objects_retained: reclaim.retained.length,
+  });
 };
 const hAddRenderAudio: Handler = async (req, env, _c, p) => {
   const b = await readBody<{ audioKey?: string }>(req);
