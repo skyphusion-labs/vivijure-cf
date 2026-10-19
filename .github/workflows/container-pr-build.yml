@@ -116,7 +116,8 @@ jobs:
       - name: Build (no push)
         uses: docker/build-push-action@v7
         with:
-          context: containers/${{ matrix.svc }}
+          context: ${{ matrix.svc == 'cpu' && 'containers' || format('containers/{0}', matrix.svc) }}
+          file: ${{ matrix.svc == 'cpu' && 'containers/cpu/Dockerfile' || format('containers/{0}/Dockerfile', matrix.svc) }}
           push: false
           provenance: false
 

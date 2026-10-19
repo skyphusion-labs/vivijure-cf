@@ -27,6 +27,7 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
       "/api/cast/7/generate-refs",
       "/api/storyboard/score-bed",
       "/api/storyboard/music-generate",
+      "/api/audio/analyze",
     ];
     for (const p of spend) expect(isSpendRoute("POST", p)).toBe(true);
   });
@@ -34,6 +35,7 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
   it("does NOT match the same paths under GET (reads are free)", () => {
     expect(isSpendRoute("GET", "/api/render/film")).toBe(false);
     expect(isSpendRoute("GET", "/api/cast/7/train-lora")).toBe(false);
+    expect(isSpendRoute("GET", "/api/audio/analyze")).toBe(false);
   });
 
   it("does NOT match non-spend routes", () => {

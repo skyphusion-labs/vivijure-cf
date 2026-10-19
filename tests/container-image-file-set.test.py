@@ -147,6 +147,34 @@ def audit(directory):
     if entry is None:
         return None, 0, None, False
     sources, whole_context = copied_sources(text)
+    ctx_match = re.search(r"(?m)^#\s*build-context:\s*(\S+)\s*$", text)
+    if ctx_match:
+        # COPY sources are relative to the declared context, not the Dockerfile directory.
+        # The entry script still lives next to the Dockerfile. A copied directory covers
+        # every file under it, which is how one image carries the per-service trees.
+        ctx = os.path.normpath(os.path.join(directory, ctx_match.group(1)))
+        entry_base = os.path.basename(entry)
+        modules, edges = reachable_local_modules(directory, entry_base)
+        if whole_context:
+            return [], len(modules), entry_base, True
+
+        def covers(repo_file):
+            repo_file = os.path.normpath(repo_file)
+            for src in sources:
+                resolved = os.path.normpath(os.path.join(ctx, src))
+                if resolved == repo_file:
+                    return True
+                if os.path.isdir(resolved) and repo_file.startswith(resolved + os.sep):
+                    return True
+            return False
+
+        missing = []
+        if not covers(os.path.join(directory, entry_base)):
+            missing.append(("Dockerfile CMD", entry_base))
+        for imp, mod in edges:
+            if not covers(os.path.join(directory, mod)):
+                missing.append((imp, mod))
+        return sorted(set(missing)), len(modules), entry_base, False
     modules, edges = reachable_local_modules(directory, entry)
     if whole_context:
         return [], len(modules), entry, True
@@ -206,6 +234,35 @@ def control():
         else:
             print("  ok    control: a function-scope import two hops deep is still reported (mid.py -> leaf.py)")
 
+        parent = os.path.join(tmp, "parent")
+        cpu = os.path.join(parent, "cpu")
+        os.makedirs(cpu)
+        with open(os.path.join(cpu, "app.py"), "w") as fh:
+            fh.write("import os\n")
+        with open(os.path.join(cpu, "Dockerfile"), "w") as fh:
+            fh.write(
+                "FROM python:3.11-slim\n"
+                "# build-context: ..\n"
+                "COPY cpu/app.py /app/app.py\n"
+                'CMD ["python", "app.py"]\n'
+            )
+        missing, n, entry, _ = audit(cpu)
+        if missing != [] or n != 0 or entry != "app.py":
+            failures.append("CONTROL (build-context) FAILED: a parent-context dispatcher reported %r (n=%s entry=%s)" % (missing, n, entry))
+        else:
+            print("  ok    control: a parent-context dispatcher with its entry copied reports nothing missing")
+        with open(os.path.join(cpu, "Dockerfile"), "w") as fh:
+            fh.write(
+                "FROM python:3.11-slim\n"
+                "# build-context: ..\n"
+                'CMD ["python", "app.py"]\n'
+            )
+        missing, _, _, _ = audit(cpu)
+        if ("Dockerfile CMD", "app.py") not in missing:
+            failures.append("CONTROL (build-context positive) FAILED: omitted entry was not reported; got %r" % (missing,))
+        else:
+            print("  ok    control: a parent-context image that forgets its entry is reported")
+
 
 print("controls:")
 control()
@@ -225,6 +282,18 @@ if len(dirs) < 2:
 total_modules = 0
 for d in dirs:
     rel = os.path.relpath(d, REPO)
+    with open(os.path.join(d, "Dockerfile"), encoding="utf-8") as fh:
+        raw_text = fh.read()
+    ctx_m = re.search(r"(?m)^#\s*build-context:\s*(\S+)\s*$", raw_text)
+    if ctx_m:
+        ctx = os.path.normpath(os.path.join(d, ctx_m.group(1)))
+        sources, _whole = copied_sources(raw_text)
+        for src in sorted(sources):
+            if not os.path.exists(os.path.normpath(os.path.join(ctx, src))):
+                failures.append(
+                    "%s: COPY %s does not exist in build context %s"
+                    % (rel, src, os.path.relpath(ctx, REPO))
+                )
     missing, n, entry, whole = audit(d)
     total_modules += n
     if missing is None:
