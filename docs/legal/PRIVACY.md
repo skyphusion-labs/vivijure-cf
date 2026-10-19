@@ -104,9 +104,9 @@ recoverability. The same day, the 13 render objects were purged and their bucket
 demo Worker scripts were deleted, and the demo AI Gateway was deleted together with any request
 logs it held. The GPU render box behind the Phase B render door, a Vultr instance, had already been
 decommissioned on 2026-08-02 together with its tunnel and its storage credential; on 2026-10-19 that
-Vultr account was enumerated and no instance, snapshot or block volume on it holds demo render
-output. As of 2026-10-19 Skyphusion Labs holds no data from the demo, and this section names where
-it looked.
+Vultr account was enumerated and no instance, object-storage bucket, snapshot, automatic backup or
+block volume on it holds demo render output. As of 2026-10-19 Skyphusion Labs holds no data from the
+demo, and this section names where it looked.
 
 **Notice to affected visitors.** The only visitor identifier the demo kept was an IP address, so
 there is nothing to contact anyone by. This section is the notice. Questions go to Section 10.
