@@ -1314,7 +1314,7 @@ jobs:
               exit 1
             fi
           done
-          exit 1
+          exit 0
 
       # Opt-in, self-host safe edge-cache purge. The core worker is already LIVE by this step, so a
       # failure here NEVER rolls back the deploy -- it just means /welcome may serve stale from the
