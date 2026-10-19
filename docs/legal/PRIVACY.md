@@ -5,7 +5,7 @@
 > advice and reading it does not create an attorney-client relationship. If you are unsure how it
 > applies to you, or you run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-07-03
+**Effective date:** 2026-10-18
 
 ---
 
@@ -133,16 +133,18 @@ Keyframes, video clips, finished MP4s, generated audio beds and narration, and t
 written to the operator's R2 storage and kept so the operator can retrieve them.
 
 ### 3.4 Operational logs
-The Worker emits **render-state logs** (which job is in which phase, warnings, and errors) to a
-logging system (Grafana/Loki) that the operator runs on their own servers, NOT a third-party log
-vendor. These logs are designed to capture pipeline STATE, not creative payload: they record things
-like "film &lt;job-id&gt;: keyframe phase started", the request method/path/status, the job id, and
-exception messages. They are for debugging and reliability. The shipped Worker configuration also
-enables **Cloudflare Workers observability**, so Cloudflare retains the Worker's logs in the
-operator's own Cloudflare account under Cloudflare's log retention; a self-hosted instance deployed
-without the Grafana/Loki consumer has only these Cloudflare-retained logs. (**Note:** logs can incidentally contain
-a project slug or an error string that echoes input; the operator treats logs as operational data on
-their own infrastructure and does not use them for profiling.)
+A fresh deploy sends **render-state logs** (which job is in which phase, warnings, and errors) to
+**Cloudflare Workers Logs** in the operator's own Cloudflare account, and nowhere else. The shipped
+configuration enables **Cloudflare Workers observability** and does not bind a tail consumer. These
+logs are designed to capture pipeline STATE, not creative payload: they record things like "film
+&lt;job-id&gt;: keyframe phase started", the request method/path/status, the job id, and exception
+messages. They are for debugging and reliability.
+
+An operator who runs their own Loki can attach the tail consumer (`tail/`) and ship the same
+render-state lines there. That consumer is not part of a fresh deploy. The reference Loki and Grafana
+host this project used to run is deleted, and `grafana.skyphusion.org` does not resolve. (**Note:**
+logs can incidentally contain a project slug or an error string that echoes input; the operator treats
+logs as operational data on their own infrastructure and does not use them for profiling.)
 
 ### 3.5 Notifications (opt-in only)
 If render-completion email is enabled, the operator configures a single recipient address and the
@@ -208,13 +210,16 @@ providers, not ours. We list them so the path is transparent.
   of the image-to-video (i2v) modules, the RunPod backend also reaches out to external
   AI model providers as part of doing that work, so for those modules your content reaches those
   providers through the RunPod path (see the next entry).
-- **AI model providers (reached two ways: Cloudflare AI Gateway and RunPod)** -- for storyboard
-  planning, image generation, text-to-speech, and cloud motion, the studio (and opt-in modules) send
-  prompts/text to AI providers. Most are reached through **Cloudflare** (the **AI Gateway**, or
-  Cloudflare Workers AI directly, as for the cast module's character images); some, specifically the
-  providers behind several of the image-to-video (i2v) modules, are reached from the **RunPod** backend
-  during a render (see the RunPod entry above); and an optional image feature that needs a transparent
-  background calls OpenAI's own API directly with the operator's key. Depending on what is run, this
+- **AI model providers** -- for storyboard planning, image generation, text-to-speech, and cloud
+  motion, the studio (and opt-in modules) send prompts and text to AI providers. Most calls go through **Cloudflare** (the **AI Gateway**, or
+  Cloudflare Workers AI directly, as for the cast module's character images). Some calls, specifically
+  the providers behind several of the image-to-video (i2v) modules, go out from the **RunPod** backend
+  during a render (see the RunPod entry above). The **image-generate** module has one more path. When
+  the operator has configured an OpenAI API key and an OpenAI image model is selected, that module
+  sends the prompt text only to OpenAI's own image API, under the operator's own OpenAI account.
+  Reference images are not forwarded on that path. The Cloudflare AI Gateway is not in that path, so
+  the Gateway's logging, retention, spend controls, and Unified Billing do not apply to it. OpenAI's
+  API data terms apply to it. Depending on what is run, this
   can include providers such as Anthropic (the default storyboard-planning model, via the AI Gateway),
   Google (Veo image-to-video, via RunPod or the AI Gateway, and Google image models via the AI
   Gateway), Black Forest Labs (FLUX image and video models, via Workers AI or the AI Gateway), xAI,
@@ -222,8 +227,9 @@ providers, not ours. We list them so the path is transparent.
   Kling). Each provider receives only what that specific feature sends it (e.g. prompt
   text, or an image to animate). Each provider has its own terms and data practices, and the set of
   providers depends on which optional modules an instance installs.
-- **The operator's own fleet** -- some non-GPU finishing steps (assembly, audio mixing, image prep)
-  run on servers the operator operates directly.
+- **Finishing steps** -- some non-GPU finishing steps (assembly, audio mixing, image prep) run as
+  containers in the operator's own Cloudflare account, or the operator points those steps at containers
+  they run. The reference fleet that used to run those steps was retired on 2026-09-24.
 
 On a self-hosted instance, all of these relationships are between YOU and those providers; Skyphusion
 Labs is not in that path. None of these are advertising or data-broker relationships.
@@ -263,9 +269,9 @@ laws apply to them and their own users, and configuring their instance according
   is single-operator, the operator can also delete anything directly from the database and storage.
 - **Content is kept while it is useful** (so projects and render history persist) and no longer than
   that. A storage-cleanup process reclaims orphaned files left behind by failed jobs.
-- **On Conrad's private instance, operational logs and backups are retained for up to 90 days** on
-  Conrad's own logging and backup systems, then aged out. Each operator sets their own retention for
-  their own instance.
+- **On Conrad's private instance, operational logs are the Worker logs Cloudflare retains in that
+  Cloudflare account (Section 3.4).** The host that used to keep those logs for up to 90 days is
+  deleted. Each operator who runs their own log system sets that system's retention.
 - **There is no central backup that anyone sells, mirrors to third parties, or retains for
   analytics.** Each instance's data stays on that operator's infrastructure.
 

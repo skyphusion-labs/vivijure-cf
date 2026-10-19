@@ -13,10 +13,10 @@ posture).
 **Important framing:** Vivijure is **self-hosted AGPL software**, not a service Skyphusion Labs
 operates for the public. People run Vivijure themselves, on their own infrastructure (their own
 Cloudflare account, their own GPU/RunPod). Skyphusion Labs maintains the software and does not run a
-hosted, multi-tenant, sign-up service. Skyphusion Labs runs two instances: Conrad's own private,
+hosted, multi-tenant, sign-up service. Skyphusion Labs runs one instance: Conrad's own private,
 gated instance at `vivijure.skyphusion.org` (for Conrad and the crew, plus the Slate Discord bot via
-its own named API token), which is not a public offering anyone signs up for, and the public,
-read-only demo at `demo.vivijure.com`. These documents are
+its own named API token), which is not a public offering anyone signs up for. The public demo
+hostname `demo.vivijure.com` was removed on 2026-10-08. It is not a live site. These documents are
 written accordingly: use terms for the software and the project, an honest privacy baseline (you
 self-host, so we never see your data), and an acceptable-use policy for the project and Conrad's
 instance.
@@ -69,8 +69,10 @@ The Privacy policy was written after reading the actual data path:
   tenancy column, leaving no per-user profile model.
 - R2 usage and storage keys (`../../src/`).
 - The access gate and in-Worker JWT backstop (`../../src/access-auth.ts`, `../SECURITY.md`).
-- The tail/logging consumer (`../../tail/`) that ships render-state (not creative payloads) to the
-  operator's own self-hosted Loki.
+- The tail/logging consumer (`../../tail/`) is optional. A fresh deploy does not bind it, and console
+  lines go to Cloudflare Workers Logs. An operator who runs their own Loki can attach the consumer and
+  ship render-state (not creative payloads) there. The reference Loki and Grafana host is deleted
+  (`../observability.md`).
 - The RunPod render submission and the AI-provider processing path (`runpod-submit` in the
   `@skyphusion-labs/vivijure-core` package, `../../src/env.ts`, `../../src/models.ts`).
 - Frontend: cookieless Cloudflare Web Analytics on the marketing page only; local-storage UI
