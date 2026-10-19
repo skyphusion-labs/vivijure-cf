@@ -22,10 +22,11 @@ D1, and the same R2. `studio.vivijure.com` stays the control-plane door. `viviju
 stays the site. The old host redirects only after the new one is proven. Local-GPU is
 opt-in and on-box; the fleet named tunnel
 (`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). The public
-demo was REMOVED ENTIRELY on 2026-10-19 (Conrad's ruling), not deprecated: the
-`demo.vivijure.com` custom domain, the `vivijure-demo` Worker, its D1, its R2 bucket
-and its AI Gateway are all deleted, and `AUTH_MODE=demo` is no longer a mode this
-panel accepts. Do not re-add it.
+demo is REMOVED ENTIRELY (Conrad's ruling), not deprecated, and it went in TWO
+steps whose dates are distinct: the `demo.vivijure.com` custom domain was removed
+**2026-10-08**, and the DEPLOYMENT was deleted **2026-10-19** (the `vivijure-demo`
+and `vivijure-demo-local-gpu` Worker scripts, the D1, the R2 bucket and the AI
+Gateway). `AUTH_MODE=demo` is no longer a mode this panel accepts. Do not re-add it.
 
 ## TWO panels (honesty)
 

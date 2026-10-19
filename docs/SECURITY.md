@@ -596,7 +596,7 @@ lines, NOT a security hash: a short input is trivially recoverable from one.
 - #416 -- byte-range media serving on `/api/artifact` + worker-authoritative `Cache-Control` (section 8; the zone cache-bypass rule is optional hardening).
 - #423 -- built-in token auth mode (section 1b); Cloudflare Access becomes optional hardening, not a deploy prerequisite.
 - cf#520 -- per-route `operator` / `consumer` authorization; named tokens carry a scope (section 1b-i, migration 0020).
-- #625 / #631 -- the public demo auth mode and its capped render + assistant. REMOVED ENTIRELY 2026-10-19 (Conrad's ruling): the host, Worker, D1, R2 bucket and AI Gateway are deleted and `AUTH_MODE=demo` is no longer accepted. Kept here as the record of what the section-1d posture was.
+- #625 / #631 -- the public demo auth mode and its capped render + assistant. REMOVED ENTIRELY (Conrad's ruling), in two steps: the custom domain went 2026-10-08, the deployment went 2026-10-19 (both Worker scripts, D1, R2 bucket, AI Gateway). `AUTH_MODE=demo` is no longer accepted. Kept here as the record of what the section-1d posture was.
 - cp#270 -- `InvokeRequest.r2`: the R2 key pair handed to first-party `needs_tenant_r2` modules (sections 4, 7a).
 - #345 (F5b) -- runtime `hookOutputViolation` at the terminal consumption seams (section 7).
 - cf#223 / control-plane#130 -- content-free log labels; the abuse report contact (section 9).
