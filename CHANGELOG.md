@@ -5,6 +5,24 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.37.1 -- 2026-10-19
+
+### fix(ci): the post-deploy gate self-check exits 0 when every host passes
+
+The `deploy` job's `Post-deploy gate self-check` step ended with a bare `exit 1` after the `for HOST in $patterns` loop's `done`, so the step failed even when every host returned the 403 it asserts. It was unconditional: no input made that step succeed.
+
+At `v1.35.0` the step read ONE host and its success path was `exit 0`, so the trailing `exit 1` was a fall-through reachable only on failure. The change that generalised the check to every route pattern (`#977`) correctly replaced that `exit 0` with `break`, because with more than one host you cannot exit on the first pass, and correctly added a per-host `exit 1` inside the failure branch. The trailing `exit 1` was left behind, and `break` no longer leaves the step, so the loop now runs to completion on success and falls straight into it.
+
+`studio-release` carries `needs: deploy`, so the hosted `STUDIO_RELEASE` pin can never move ahead of the deploy it names. That dependency is correct, and it is what turned this from a red check into a release outage: `v1.36.0` and `v1.37.0` both deployed the core Worker at step 9 and then aborted at step 10, so neither published a studio release artifact, the hosted pin stayed at `v1.35.0` from 2026-09-27, the `vivijure-studio-mcp` Worker was not redeployed on either tag, and the `/welcome` edge-cache purge did not run.
+
+It failed in the safe direction, which is why it survived two releases. The cost was still real in two ways: it froze the hosted pin silently, and a gate that always fails cannot distinguish an open studio from a correctly gated one, so the fail-closed assertion this step exists to make was not being made.
+
+The fix is one line. Everything else in the step is correct and unchanged: the per-host loop, the 403 assertion, the retry window, the distinct error for a 200 (which means the API served an unauthenticated caller), and the real `exit 1` inside the failure branch.
+
+Verified by extracting the step's own text and driving it against a stubbed `curl` and a two-pattern `wrangler.toml`: with every host returning 403 it exits 0, the unfixed script exits 1 on that same input (reproducing the outage, so the harness is not vacuous), and a forced 200 or 522 still exits 1 naming the host. Green became reachable without red becoming unreachable.
+
+A sweep of all 47 `run:` blocks across the 9 workflow files found two other trailing base-indentation non-zero exits, both correct and both left alone: `ci.yml`'s "Prove an image was actually built" exits 0 on its success path first, so its trailing `exit 1` is a true fall-through, and `endpoint-liveness.yml`'s "Instrument unusable" step is gated by a step-level `if:` and failing loudly is its entire purpose.
+
 ## v1.37.0 -- 2026-10-19
 
 ### fix(delete): project and render delete now free their R2 objects (cf#1007, cf#779)
