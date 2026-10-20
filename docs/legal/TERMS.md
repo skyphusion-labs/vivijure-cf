@@ -5,7 +5,7 @@
 > it does not create an attorney-client relationship. If you are unsure how it applies to you, or you
 > run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-06-26
+**Effective date:** 2026-10-19
 
 ---
 
@@ -36,13 +36,10 @@ your own setup govern your instance; you become the operator, not a customer of 
   for Conrad and the crew, for internal use and testing. It is not a public service, there is no
   account anyone creates with us, and we do not host anyone else's content. Skyphusion Labs does not
   host or manage Vivijure instances for other people and will not get into that business.
-- **The public demo** (`demo.vivijure.com`) is Skyphusion Labs (Conrad) running the software as a
-  public, read-only showcase: anyone may browse a seeded catalog and pre-made films, but it renders
-  nothing, has no account or sign-in, and refuses every state-changing request. It is provided
-  AS-IS on the same terms as the software (Sections 7 and 8), the Acceptable Use Policy applies to it
-  (in particular Section 2.4: no attacking, scraping, evading rate limits on, or otherwise abusing an
-  instance), and the showcase films are illustrative in-house work. It is not a hosted service that
-  holds your content.
+- **The public demo** (`demo.vivijure.com`): the custom domain was removed on purpose on
+  2026-10-08. It is not a live site. The deployment was deleted on 2026-10-19 (both Worker scripts,
+  the D1 database, the R2 bucket, the AI Gateway) and no configuration change brings it back.
+  Sections 4 and 7 record the scope of the policy and the warranty while that host was served.
 
 If you deploy Vivijure yourself, you are an operator, not a customer of ours, and these Terms are not
 a service agreement between you and us. The AGPL applies to the code, including its requirement that
@@ -78,8 +75,10 @@ your access, and you will not attempt to bypass the gate or rate limits. Partici
 
 ## 4. Acceptable use
 
-Use of the software, the project, Conrad's instance, and the public demo (`demo.vivijure.com`) is subject to the **Acceptable Use Policy**
-(`ACCEPTABLE-USE.md`), which is incorporated by reference. Violating it, especially the CSAM red line,
+Use of the software, the project, and Conrad's instance is subject to the **Acceptable Use Policy**
+(`ACCEPTABLE-USE.md`), which is incorporated by reference. The public demo host
+(`demo.vivijure.com`) was removed on purpose on 2026-10-08 and is not a live site; while it was
+served, the same policy applied to it. Violating the policy, especially the CSAM red line,
 is a material breach and can end your access to Conrad's instance and your standing in the project
 immediately.
 
@@ -109,8 +108,13 @@ rights. That determination is between you, your facts, and your own legal advice
 ## 6. Third-party providers and pass-through terms
 
 Running Vivijure routes work through third-party infrastructure (the Privacy Policy lists them:
-Cloudflare, RunPod, and AI model providers reached via the Cloudflare AI Gateway or, for the i2v and cast
-modules, the RunPod backend). When you self-host,
+Cloudflare, RunPod, and AI model providers reached via Cloudflare (the AI Gateway or Workers AI) or
+via the RunPod backend for several of the i2v modules). The image-generate module is separate. When
+the operator has configured an OpenAI API key and an OpenAI image model is selected, that module
+sends the prompt text only to OpenAI's own image API, under the operator's own OpenAI account.
+Reference images are not forwarded. The Cloudflare AI Gateway is not in that path, so the Gateway's
+logging, retention, spend controls, and Unified Billing do not apply. OpenAI's API data terms apply.
+When you self-host,
 these are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
 acceptable-use policies. A provider's content rules may restrict what you can generate independently of
 this document. Skyphusion Labs is not responsible for those providers' acts, outages, or model
@@ -121,13 +125,14 @@ your instance calls.)
 
 ## 7. Software is provided AS-IS (warranty disclaimer)
 
-THE SOFTWARE (AND CONRAD'S INSTANCE FOR ANYONE HE ADMITS TO IT, AND THE PUBLIC DEMO AT `demo.vivijure.com`) IS PROVIDED "AS IS" AND "AS
+THE SOFTWARE (AND CONRAD'S INSTANCE FOR ANYONE HE ADMITS TO IT) IS PROVIDED "AS IS" AND "AS
 AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY
 IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
 We do not warrant that the software will be uninterrupted, error-free, secure, or that any output will
 be accurate, lawful to use, original, or fit for any purpose. You use it at your own risk. This is
 free, best-effort, labor-of-love software; it may change, break, or be discontinued at any time
-without notice.
+without notice. While it was served, the public demo at `demo.vivijure.com` was provided on those
+same terms. The custom domain was removed on purpose on 2026-10-08. It is not a live site.
 
 (This mirrors the "no warranty" stance of the AGPL itself.)
 

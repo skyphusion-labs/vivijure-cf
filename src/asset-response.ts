@@ -13,7 +13,6 @@
 // original body unchanged (#617 removed the only body-rewriting path, the /welcome Umami inject:
 // the marketing page moved to the vivijure.com storefront).
 
-import { isDemoMode } from "./auth-gate";
 import type { Env } from "./env";
 
 // --------------------------------------------------------------------------- CSP policies (literal)
@@ -23,24 +22,6 @@ export const STUDIO_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; " +
   "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; " +
   "frame-ancestors 'none'; form-action 'self'";
-
-/** The ONE external origin the public demo studio (#625) loads from: the S23 showcase films (media) AND
- *  the seeded cast portraits (images). Host-pinned (no wildcard) so the demo CSP admits exactly our asset
- *  host and nothing else. */
-export const DEMO_MEDIA_ORIGIN = "https://assets.skyphusion.net";
-
-/** Demo-studio page CSP: STUDIO_CSP with the showcase host admitted on TWO directives, and ONLY on a demo
- *  deploy (a prod/self-host deploy never serves this policy):
- *    - img-src: the seeded cast portraits are absolute assets.skyphusion.net URLs (the demo binds NO R2),
- *      so the portrait <img> would be blocked without this. img-src is the ONLY prod directive widened.
- *    - media-src: the showcase films. Media has no explicit directive in STUDIO_CSP (it falls back to
- *      default-src 'self'), so this ADDS media-src. It is APPENDED LAST on purpose -- the Phase-B
- *      dynamic artifact-origin append in applyResponseSecurity extends the media-src directive by
- *      concatenating onto the end of this string, so media-src MUST stay last. Every other directive
- *      (script/style/font/connect/object/base/frame/form) is byte-identical to prod. */
-export const STUDIO_DEMO_CSP =
-  STUDIO_CSP.replace("img-src 'self' data: blob:", "img-src 'self' data: blob: " + DEMO_MEDIA_ORIGIN) +
-  "; media-src 'self' " + DEMO_MEDIA_ORIGIN;
 
 /** Locked CSP for every NON-page response (api/json, assets, redirects, the 429, unknown HTML). A
  *  JSON/asset/redirect response is not a document, so it should load nothing; if such a response is
@@ -113,18 +94,7 @@ export function applyResponseSecurity(res: Response, request: Request, env?: Env
   const cls = ct.includes("text/html") ? pageClass(new URL(request.url).pathname) : null;
 
   if (cls === "studio") {
-    // Demo deploys (#625) get the one-directive-wider policy so the showcase films play; everyone
-    // else gets STUDIO_CSP byte-identical to before (env omitted -> never demo). #631: a demo render
-    // clip is served from the isolated demo artifact origin -- enumerate it on the SAME media-src
-    // directive (it is the last directive in STUDIO_DEMO_CSP), never a wildcard, and only when it is a
-    // distinct origin from the showcase host.
-    let csp = STUDIO_CSP;
-    if (env && isDemoMode(env)) {
-      csp = STUDIO_DEMO_CSP;
-      const artifact = env.DEMO_ARTIFACT_ORIGIN?.trim();
-      if (artifact && artifact !== DEMO_MEDIA_ORIGIN) csp = STUDIO_DEMO_CSP + " " + artifact;
-    }
-    return rebuild(res, pageHeaders(new Headers(res.headers), csp), res.body);
+    return rebuild(res, pageHeaders(new Headers(res.headers), STUDIO_CSP), res.body);
   }
   // Non-page: api/json, non-HTML assets, redirects (incl. the /welcome 301), the 429, or any HTML
   // that is NOT a known studio page route (locked down -- never the permissive page CSP).

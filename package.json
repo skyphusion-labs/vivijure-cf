@@ -1,6 +1,6 @@
 {
   "name": "vivijure-cf",
-  "version": "1.36.0",
+  "version": "1.37.1",
   "description": "Vivijure Studio Cloudflare control panel: Workers host on @skyphusion-labs/vivijure-core. Pair with vivijure-local for self-hosted.",
   "license": "AGPL-3.0-only",
   "homepage": "https://vivijure.com",
@@ -19,7 +19,7 @@
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
     "@skyphusion-labs/vivijure-core": "^1.25.0",
-    "@skyphusion-labs/vivijure-mcp": "^1.3.0"
+    "@skyphusion-labs/vivijure-mcp": "^2.0.0"
   },
   "scripts": {
     "dev": "wrangler dev",
@@ -36,16 +36,16 @@
     "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261011.1",
+    "@cloudflare/workers-types": "^5.20261016.1",
     "@types/node": "^26.6.5",
-    "@vitest/coverage-v8": "^5.0.3",
+    "@vitest/coverage-v8": "^5.0.5",
     "blake3-wasm": "2.1.5",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
-    "wrangler": "^4.149.0"
+    "wrangler": "^4.151.1"
   },
   "overrides": {
-    "sharp": "0.35.4",
-    "undici": "7.29.0"
+    "sharp": "0.35.5",
+    "undici": "7.29.1"
   }
 }

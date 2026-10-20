@@ -7,10 +7,12 @@
 
 
 // artifactUrl: an artifact reference is normally an R2 key served through the studio /api/artifact/
-// presign route. The public demo studio (#625) has no R2 binding and seeds render rows whose
-// output_key is an ABSOLUTE showcase URL; return such a URL verbatim so the film plays straight from
-// assets.skyphusion.net. For a normal relative key this is byte-identical to before, so prod behavior
-// is unchanged (a projection that also accepts an absolute artifact URL).
+// presign route. An output_key can instead be an ABSOLUTE URL, and such a value is returned verbatim
+// so the film plays straight from its own origin. For a normal relative key this is unchanged (a
+// projection that also accepts an absolute artifact URL). `isForeignRef` (src/record-reclaim.ts) is
+// the server-side half: a value this accepts must never be handed to an R2 delete. The shape came
+// from the public demo seed (#625), removed with that door in pr1019; the passthrough is kept
+// because any writer can still store an absolute value.
 function artifactUrl(key) {
   return /^https?:\/\//i.test(key) ? key : "/api/artifact/" + key;
 }

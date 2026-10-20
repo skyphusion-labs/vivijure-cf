@@ -85,8 +85,7 @@ import type { Env } from "./env";
  * binding+channel 0, channel-only 0, neither 1, and that one is the `rollins-e2e` testbed, whose
  * bindings were refreshed and whose studio bytes move separately. The estate becomes honest through
  * that refresh and that bytes move, NOT through this constant. This swap ships as correctness for
- * future tenants and for after the bytes move; and since nothing sets `VIDEO_FINISH_TIER_STATE`
- * yet, the state is not reachable in production at all until the plane decides who writes it.
+ * future tenants and for after the bytes move.
  *
  * A FOURTH COMBINATION, which that census did not enumerate and which cp#112 creates (Strummer,
  * evidence on control-plane#112). Binding and channel do NOT travel together: a bindings refresh
@@ -173,8 +172,7 @@ export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
 /**
  * Optional operator/plane signal naming which absent-state this studio is in. Absent -> the
  * conservative default `provisionable`, which is also what lane A (the cp#112 re-upload path) makes
- * true for every studio. NOTHING sets this var today: the plane-side half (who sets it, and when) is
- * a control-plane decision, not a panel one.
+ * true for every studio. The plane writes it; see the writer note above.
  */
 type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> &
   Partial<VideoFinishDoorHost>;

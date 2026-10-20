@@ -254,8 +254,8 @@ describe("#416 /api/artifact byte-range serving", () => {
   });
 });
 
-// --- #646: no render bucket bound (the zero-spend public demo) -> clean 404, never a 500 ------------
-// A demo deploy binds no R2 (spend-impossible by construction) and its seeded rows carry absolute
+// --- #646: no render bucket bound -> clean 404, never a 500 -----------------------------------
+// A deploy can bind no R2 (spend-impossible by construction) and carry rows whose keys are absolute
 // showcase URLs, so the frontend never hits this route. A manually-poked key still must get the honest
 // answer -- there is no store, so there is no such artifact -- as a clean 404, not a thrown 500.
 function makeEnvNoR2() {

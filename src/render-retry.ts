@@ -2,7 +2,6 @@
 // Failed row stays for the audit trail; a new row is inserted for the retry job.
 
 import {
-  defaultGpuDoorModule,
   discoverModules,
   servingForHook,
 } from "@skyphusion-labs/vivijure-core/modules/registry";
@@ -18,6 +17,8 @@ import {
 } from "@skyphusion-labs/vivijure-core/dialogue-lines";
 import { filmJobToPollView } from "@skyphusion-labs/vivijure-core/film-render-bridge";
 import { mapRenderOverridesToModuleConfigs } from "./film-render-bridge";
+import { parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
+import { hostedMotionFallback, prepareSpokenClip, spokenLinesPresent, withMotionBackend } from "./motion-scatter";
 import { coerceQualityTier } from "@skyphusion-labs/vivijure-core/runpod-types";
 import { getRenderByIdForUser, type RenderRow } from "@skyphusion-labs/vivijure-core/renders-db";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
@@ -94,7 +95,8 @@ export async function retryFailedRender(
   const tier = coerceQualityTier(row.quality_tier) ?? "final";
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
   const overrides = row.render_overrides ?? undefined;
-  const mapped = mapRenderOverridesToModuleConfigs(overrides, tier, modules);
+  const rawMotion = parseModuleRenderOverrides(overrides).motion_backend;
+  let mapped = mapRenderOverridesToModuleConfigs(overrides, tier, modules);
 
   // finalized / cloud-finalized: reuse animateFromPreview.
   //
@@ -133,10 +135,9 @@ export async function retryFailedRender(
     const r = await animateFromPreview(env, {
       parent,
       deriveMode: row.mode,
-      motionBackend:
-        row.mode === "finalized"
-          ? (mapped.motion_backend ?? defaultGpuDoorModule(modules)?.name)
-          : mapped.motion_backend,
+      // The stored bag's own motion_backend, not the pipeline default. An omitted
+      // name lets animateFromPreview pick the hosted spoken or silent door.
+      motionBackend: rawMotion,
       idempotency_key,
     });
     if (!r.ok) return { ok: false, error: r.error, status: r.status ?? 400 };
@@ -162,15 +163,28 @@ export async function retryFailedRender(
     seconds: s.seconds,
   }));
   const dialogue_lines = await dialogueFromBundle(parsed);
-  const motionBackend = keyframesOnly
-    ? undefined
-    : (mapped.motion_backend ?? defaultGpuDoorModule(modules)?.name);
-  if (!keyframesOnly && !motionBackend) {
-    return {
-      ok: false,
-      error: 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed',
-      status: 400,
-    };
+  const spoken = spokenLinesPresent(dialogue_lines);
+  let motionBackend: string | undefined;
+  let motionConfig = mapped.motion_config;
+  if (!keyframesOnly) {
+    const picked = hostedMotionFallback(modules, rawMotion, spoken);
+    if (!("name" in picked)) {
+      return { ok: false, error: picked.error, status: 400 };
+    }
+    if (!rawMotion) {
+      mapped = mapRenderOverridesToModuleConfigs(withMotionBackend(overrides, picked.name), tier, modules);
+    }
+    motionBackend = mapped.motion_backend ?? picked.name;
+    motionConfig = mapped.motion_config;
+    const clip = prepareSpokenClip(
+      modules,
+      modules.find((m) => m.name === motionBackend),
+      mapped.motion_config,
+      undefined,
+      spoken,
+    );
+    if (!clip.ok) return { ok: false, error: clip.error, status: 400 };
+    motionConfig = clip.config ?? mapped.motion_config;
   }
 
   const job = await startFilmJob(
@@ -182,7 +196,7 @@ export async function retryFailedRender(
       motion_backend: motionBackend,
       keyframe_backend: mapped.keyframe_backend,
       keyframe_config: mapped.keyframe_config,
-      motion_config: mapped.motion_config,
+      motion_config: motionConfig,
       finish_config: mapped.finish_config,
       finish_select: mapped.finish_select,
       speech_config: mapped.speech_config,

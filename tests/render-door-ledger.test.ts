@@ -76,6 +76,7 @@ vi.mock("../src/bundle-keyframes", async (orig) => {
 });
 
 import worker, { API_ROUTES } from "../src/index";
+import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
@@ -108,7 +109,13 @@ const TALKING_USAGE = {
   native_audio: true, voice: "prompt_lock" as const,
   scatter_native_audio: false, min_seconds: 4, max_seconds: 12,
 };
-const moduleBinding = (name: string, hooks: string[], locality: string, usage?: typeof TALKING_USAGE) => ({
+// InfiniteTalk shape: the hosted default for a board that has a line. native_audio stays false
+// so this door cannot invent speech. Seedance above stays the native-audio door the panel names.
+const DRIVING_USAGE = {
+  native_audio: false, driving_audio: true, voice: "prompt_lock" as const,
+  scatter_native_audio: false, min_seconds: 4, max_seconds: 12,
+};
+const moduleBinding = (name: string, hooks: string[], locality: string, usage?: typeof TALKING_USAGE | typeof DRIVING_USAGE) => ({
   fetch: async () =>
     new Response(JSON.stringify({
       name, version: "0.1.0", api: MODULE_API, hooks, ui: { order: 10, locality },
@@ -133,6 +140,8 @@ const env = {
   // A cloud motion door, so animate-cloud / animate-hybrid are DRIVEABLE. Without it those two are
   // untestable here, and an untestable door quietly becomes an undeclared one.
   MODULE_CLOUD_I2V: moduleBinding("cloud-i2v", ["motion.backend"], "cloud", TALKING_USAGE),
+  // Driving-only cloud door. An omitted backend on a spoken board resolves here, not to own-gpu.
+  MODULE_INFINITETALK: moduleBinding("infinitetalk", ["motion.backend"], "cloud", DRIVING_USAGE),
   MODULE_OWN_GPU: moduleBinding("own-gpu", ["motion.backend"], "byo"),
 } as unknown as Env;
 
@@ -282,8 +291,6 @@ const NOT_DOORS = new Set<string>([
   "/api/cast/:id/voice-sample/attach",
   "/api/cast/import",
   "/api/chat",
-  "/api/demo/chat",
-  "/api/demo/render",
   "/api/modules/install",
   "/api/render/clips",
   "/api/render/frames",
@@ -396,23 +403,43 @@ describe("cf#334 render door ledger", () => {
     // Without this row `checkLocalGpuPairing: false` is a declaration nothing defends: the mutation
     // sweep showed that forcing the gate ON for every door left the suite green. Same defect as the
     // n/a cells, one layer down.
-    // The byo door is REMOVED, not just joined: defaultGpuDoorModule prefers byo, so leaving it in
-    // means the door resolves to it and the pairing rule never sees a local backend at all. The probe
-    // would then pass while measuring nothing about the exemption.
+    // The spoken default is now a driving-only cloud door, so an omitted backend on this voiced
+    // bundle never lands on local-gpu. Name local-gpu on the parent row, and read a silent board,
+    // so the resolved door IS the local one. A spoken refusal, or a driving-only default, would
+    // 400 or 201 without the pairing rule ever seeing a local backend, and the exemption would
+    // pass while measuring nothing. The byo and other cloud doors are removed for the same reason:
+    // a leftover name-sort default must not steal the resolution.
+    const rest = { ...(env as unknown as Record<string, unknown>) };
+    delete rest.MODULE_ALIBABA_WAN;
+    delete rest.MODULE_CLOUD_I2V;
+    delete rest.MODULE_INFINITETALK;
+    delete rest.MODULE_OWN_GPU;
     const envLocalOnly = {
-      ...(env as unknown as Record<string, unknown>),
-      MODULE_ALIBABA_WAN: undefined,
-      MODULE_CLOUD_I2V: undefined,
+      ...rest,
       MODULE_LOCAL_GPU: moduleBinding("local-gpu", ["motion.backend"], "local"),
     } as unknown as Env;
-    const res = await worker.fetch(
-      post(`/api/storyboard/renders/${PUB}/finalize`, { audioKey: "audio/bed.mp3" }),
-      envLocalOnly,
-      ctx,
-    );
-    const text = await res.text();
-    expect(res.status, `finalize must not inherit the keyframe pairing rule: ${text}`).toBe(201);
+    const silent = BUNDLE_SCENES.map((s) => ({ shot_id: s.shot_id, prompt: s.prompt, seconds: s.seconds }));
+    const read = vi.mocked(readBundleScenes);
+    read.mockImplementation(async () => silent);
+    PARENT_ROW.render_overrides = { motion_backend: "local-gpu" };
+    h.fromKeyframes = [];
+    let text = "";
+    let status = 0;
+    try {
+      const res = await worker.fetch(
+        post(`/api/storyboard/renders/${PUB}/finalize`, { audioKey: "audio/bed.mp3" }),
+        envLocalOnly,
+        ctx,
+      );
+      text = await res.text();
+      status = res.status;
+    } finally {
+      read.mockImplementation(async () => BUNDLE_SCENES);
+      PARENT_ROW.render_overrides = null;
+    }
+    expect(status, `finalize must not inherit the keyframe pairing rule: ${text}`).toBe(201);
     expect(text).not.toContain("Refusing to silently route keyframes");
+    expect(h.fromKeyframes[0]?.motion_backend, "the exemption was not on the local door").toBe("local-gpu");
   });
 
   it("FIXED-ANSWER ROW: an unsafe bundle key is refused by every door that takes one", async () => {
@@ -490,7 +517,7 @@ describe("cf#334 render door ledger", () => {
       // the cloud door, the rest a byo door), and a bogus key filed under the wrong name is invisible
       // to that door. Encoding each door's resolution rule here is how a probe silently stops
       // reaching its subject, which reads as "no guard" rather than "no measurement".
-      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "seedance": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
+      const BOGUS = { "alibaba-wan": { bogus_key: 1 }, "seedance": { bogus_key: 1 }, "cloud-i2v": { bogus_key: 1 }, "infinitetalk": { bogus_key: 1 }, "own-gpu": { bogus_key: 1 }, "keyframe-sdxl": { bogus_key: 1 } };
       const bad = { ...d.body } as Record<string, unknown>;
       if (d.seam === "fromKeyframes" && !("bundleKey" in bad)) {
         PARENT_ROW.render_overrides = { config: BOGUS };

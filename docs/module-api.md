@@ -911,7 +911,7 @@ GET /api/modules
   (quality tiers, see CONTRACT.md 2.3.1).
 - `host` (optional, the host describing itself): `dispatch` (this deploy binds the WfP namespace),
   and when relevant `hooks_unavailable` (hook -> reason the UI prints verbatim, cf#98),
-  `abuse_report_url` (only when the operator set one), and on demo deploys `readonly: true`,
+  and `abuse_report_url` (only when the operator set one),
   `render.available`, `assistant`.
 - `studio_release` (cf#287) is the studio build identity: `env.STUDIO_RELEASE` when bound, else the
   baked `package.json` version. Optional `git_sha` appears only when `env.STUDIO_GIT_SHA` is set.
