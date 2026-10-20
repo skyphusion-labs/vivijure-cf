@@ -180,7 +180,9 @@ describe("modulesResponse", () => {
   it("omits host when not passed, carries it verbatim when passed (additive, #625)", () => {
     expect(modulesResponse([], render)).not.toHaveProperty("host");
     expect(modulesResponse([], render, { dispatch: true }).host).toEqual({ dispatch: true });
-    // the demo studio projection: readonly rides the same optional host object
+    // `readonly` is a CORE host-capability field (vivijure-core modules/types). This panel no
+    // longer emits it: it was the public demo door, removed pr1019. Asserted here because the
+    // contract under test is that host is carried VERBATIM, whatever keys core defines.
     expect(modulesResponse([], render, { dispatch: false, readonly: true }).host).toEqual({
       dispatch: false,
       readonly: true,

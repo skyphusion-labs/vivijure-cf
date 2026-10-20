@@ -113,9 +113,7 @@ describe("cf#580 the POPULATION: exactly one script under public/ fetches the pr
     const REWIRED = [
       "abuse-link.js",
       "app.js",
-      "demo-steer.js",
       "hook-availability.js",
-      "readonly-gate.js",
       "settings.js",
     ];
     for (const f of REWIRED) {
@@ -123,7 +121,9 @@ describe("cf#580 the POPULATION: exactly one script under public/ fetches the pr
       expect(isFetcher(code), f + " still fetches /api/modules directly").toBe(false);
       expect(code, f + " does not read the shared memo").toContain("moduleRegistry.load()");
     }
-    expect(REWIRED.length).toBe(6);
+    // Was SIX. demo-steer.js and readonly-gate.js were the public demo door and were
+    // removed with it (pr1019); the memo they read is unchanged for the four that remain.
+    expect(REWIRED.length).toBe(4);
   });
 
   it("planner-registry.js DELEGATES rather than keeping a second memo on the same page", () => {
@@ -164,16 +164,16 @@ describe("cf#580 the PER-PAGE claim, made against what a page actually loads", (
     }
   });
 
-  it("loads module-registry.js AFTER auth-token.js and BEFORE readonly-gate.js on every page", () => {
+  it("loads module-registry.js AFTER auth-token.js on every page", () => {
     // Not cosmetic ordering. module-registry.js binds window.fetch at eval, so this window is what
-    // decides that the bound transport carries the auth header and is NOT the read-only wrapper.
+    // decides that the bound transport carries the auth header. The upper bound used to be
+    // readonly-gate.js, which was removed with the public demo door (pr1019); auth-token.js is the
+    // only remaining fetch wrapper, so the LOWER bound is now the whole contract.
     for (const page of HTML_FILES) {
       const scripts = scriptsOf(page);
       const at = (name: string) => scripts.indexOf(name);
       expect(at("auth-token.js"), page + " does not load auth-token.js").toBeGreaterThan(-1);
-      expect(at("readonly-gate.js"), page + " does not load readonly-gate.js").toBeGreaterThan(-1);
       expect(at("module-registry.js"), page).toBeGreaterThan(at("auth-token.js"));
-      expect(at("module-registry.js"), page).toBeLessThan(at("readonly-gate.js"));
     }
   });
 });

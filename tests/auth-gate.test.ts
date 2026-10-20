@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { gateApi, verifyTokenRequest, constantTimeEqual, sha256Hex, isDemoMode, catalogForDeploy, TOKEN_COOKIE } from "../src/auth-gate";
+import { gateApi, verifyTokenRequest, constantTimeEqual, sha256Hex, TOKEN_COOKIE } from "../src/auth-gate";
 import worker from "../src/index";
 import type { Env } from "../src/env";
 import { __resetJwksCacheForTest, type CertsFetcher } from "../src/access-auth";
@@ -110,54 +110,6 @@ describe("gateApi -- AUTH_MODE dispatch, fail closed", () => {
     const env = { AUTH_MODE: "token", ALLOW_UNAUTHENTICATED: "true" } as any; // note: no secret either
     const d = await gateApi(req(), env);
     expect(d).toMatchObject({ ok: false, status: 403 });
-  });
-});
-
-// ---- demo mode (#625: the public demo studio) --------------------------------------------------
-
-function demoReq(method: string, headers: Record<string, string> = {}): Request {
-  return new Request("https://studio/api/cast", { method, headers });
-}
-
-describe("AUTH_MODE=demo -- reads open to everyone, writes closed to everyone", () => {
-  const env = { AUTH_MODE: "demo" } as any;
-
-  it("GET and HEAD are allowed unauthenticated", async () => {
-    for (const method of ["GET", "HEAD"]) {
-      const d = await gateApi(demoReq(method), env);
-      expect(d).toMatchObject({ ok: true, sub: "demo-visitor" });
-    }
-  });
-
-  it("every mutating method denies 403", async () => {
-    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-      const d = await gateApi(demoReq(method), env);
-      expect(d).toMatchObject({ ok: false, status: 403, reason: expect.stringMatching(/read-only/) });
-    }
-  });
-
-  it("a valid bearer token does NOT unlock mutations (no operator path into a demo deploy)", async () => {
-    const withSecret = { AUTH_MODE: "demo", STUDIO_API_TOKEN: SECRET } as any;
-    const d = await gateApi(demoReq("POST", { authorization: `Bearer ${SECRET}` }), withSecret);
-    expect(d).toMatchObject({ ok: false, status: 403 });
-  });
-
-  it("ALLOW_UNAUTHENTICATED does not unlock mutations either (hatch stays scoped to the legacy path)", async () => {
-    const hatch = { AUTH_MODE: "demo", ALLOW_UNAUTHENTICATED: "true" } as any;
-    const d = await gateApi(demoReq("DELETE"), hatch);
-    expect(d).toMatchObject({ ok: false, status: 403 });
-  });
-
-  it("OPTIONS is not a read: it denies (only GET/HEAD are open)", async () => {
-    const d = await gateApi(demoReq("OPTIONS"), env);
-    expect(d).toMatchObject({ ok: false, status: 403 });
-  });
-
-  it("isDemoMode normalizes exactly like the gate (trim; anything else is not demo)", () => {
-    expect(isDemoMode({ AUTH_MODE: " demo " } as any)).toBe(true);
-    expect(isDemoMode({ AUTH_MODE: "demo" } as any)).toBe(true);
-    expect(isDemoMode({ AUTH_MODE: "token" } as any)).toBe(false);
-    expect(isDemoMode({} as any)).toBe(false);
   });
 });
 
@@ -409,53 +361,21 @@ describe("verifyTokenRequest -- named per-consumer tokens (#445)", () => {
   });
 });
 
-// ---- demo mode Phase B (#631): the two-route write allowlist ----------------------------------
-describe("AUTH_MODE=demo Phase B -- exactly two demo write routes are allowed", () => {
-  const env = { AUTH_MODE: "demo" } as any;
-  const at = (method: string, path: string) => gateApi(new Request("https://studio" + path, { method }), env);
+// ---- capability catalogs: the projection a token-mode deploy serves --------------------------
 
-  it("POST /api/demo/render and /api/demo/chat are allowed (demo-visitor)", async () => {
-    for (const path of ["/api/demo/render", "/api/demo/chat"]) {
-      const d = await at("POST", path);
-      expect(d).toMatchObject({ ok: true, sub: "demo-visitor" });
-    }
-  });
-
-  it("the demo poll (GET /api/demo/render/:id) is allowed like any read", async () => {
-    const d = await at("GET", "/api/demo/render/job-123");
-    expect(d).toMatchObject({ ok: true, sub: "demo-visitor" });
-  });
-
-  it("every OTHER write stays denied -- the prod render/plan/chat routes included", async () => {
-    for (const path of ["/api/render/film", "/api/storyboard/plan", "/api/chat", "/api/demo/render/anything-else", "/api/cast"]) {
-      const d = await at("POST", path);
-      expect(d).toMatchObject({ ok: false, status: 403, reason: expect.stringMatching(/read-only/) });
-    }
-  });
-
-  it("a non-POST method on an allowlisted demo write route is NOT unlocked (POST-only)", async () => {
-    for (const method of ["PUT", "PATCH", "DELETE"]) {
-      const d = await at(method, "/api/demo/render");
-      expect(d).toMatchObject({ ok: false, status: 403 });
-    }
-  });
-});
-
-// ---- demo mode serves EMPTY capability catalogs (honesty: no advertised backend it cannot run) ----
-
-describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/voices", () => {
+describe("capability catalogs -- /api/storyboard/models + /api/voices", () => {
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
   // The projected planning catalog goes through the core's per-isolate discovery cache, which is a
-  // module-level singleton NOT keyed by env. Within one test file the demo request would otherwise
-  // seed the cache that the token-mode request reads back, so the two envs must not share it.
+  // module-level singleton NOT keyed by env. Reset it so one test file cannot seed the cache that
+  // another request reads back.
   beforeEach(() => {
     _resetModuleDiscoveryCache();
   });
   // The planning catalog is projected from installed plan.enhance modules (cf#62), so a token-mode
-  // env with NO planning module bound legitimately serves []. Bind one here, or the "no over-scrub
-  // outside demo" assertion below passes/fails for the wrong reason: an empty catalog would no
-  // longer distinguish "demo scrubbed it" from "nothing was installed".
+  // env with NO planning module bound legitimately serves []. Bind one here, or the assertion below
+  // passes for the wrong reason: an empty catalog would not distinguish a real projection from
+  // "nothing was installed".
   const planEnhanceBinding = {
     fetch: async () =>
       new Response(
@@ -496,14 +416,6 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
         { status: 200, headers: { "content-type": "application/json" } },
       ),
   };
-  const demoEnv = {
-    AUTH_MODE: "demo",
-    // Deliberately bound: demo must scrub a catalog that WOULD otherwise be populated. Without the
-    // binding, models: [] would be trivially true and the scrub would be untested.
-    MODULE_PLANENHANCE: planEnhanceBinding,
-    MODULE_CF_SEEDANCE: cfSeedanceBinding,
-    ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
-  } as unknown as Env;
   const tokenEnv = {
     AUTH_MODE: "token",
     STUDIO_API_TOKEN: SECRET,
@@ -513,36 +425,10 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
   } as unknown as Env;
 
   function get(path: string, headers: Record<string, string> = {}): Request {
-    return new Request("https://demo.vivijure.com" + path, { headers });
+    return new Request("https://studio.example" + path, { headers });
   }
 
-  it("catalogForDeploy scrubs only demo mode", () => {
-    const cat = [{ id: "x" }];
-    expect(catalogForDeploy({ AUTH_MODE: "demo" } as any, cat)).toEqual([]);
-    expect(catalogForDeploy({ AUTH_MODE: " demo " } as any, cat)).toEqual([]);
-    expect(catalogForDeploy({ AUTH_MODE: "token" } as any, cat)).toBe(cat);
-    expect(catalogForDeploy({} as any, cat)).toBe(cat);
-  });
-
-  it("demo serves models: [] -- the picker must not list frontier models the deploy cannot invoke", async () => {
-    const res = await worker.fetch(get("/api/storyboard/models"), demoEnv, ctx);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ models: [] });
-  });
-
-  it("demo serves voices: [] -- same rule for the TTS voice catalog", async () => {
-    const res = await worker.fetch(get("/api/voices"), demoEnv, ctx);
-    expect(res.status).toBe(200);
-    const body = await res.json() as { voices: unknown; talking_doors?: { name: string }[] };
-    expect(body.voices).toEqual([]);
-    expect(Array.isArray(body.talking_doors)).toBe(true);
-    // cf#919: talking_doors is NOT scrubbed by deploy mode (CONTRACT 2.4 -- served on every deploy);
-    // it is projected through the installed set. The one bound talking door survives, and a door in
-    // the table but not bound does not.
-    expect(body.talking_doors!.map((d) => d.name)).toEqual(["cf-seedance"]);
-  });
-
-  it("token mode still serves the full catalogs (no over-scrub outside demo)", async () => {
+  it("token mode serves the full catalogs, projected through the installed set", async () => {
     const auth = { authorization: `Bearer ${SECRET}` };
     const models = (await (await worker.fetch(get("/api/storyboard/models", auth), tokenEnv, ctx)).json()) as any;
     expect(models.models.length).toBeGreaterThan(0);
@@ -559,7 +445,7 @@ describe("capability catalogs on a demo deploy -- /api/storyboard/models + /api/
   });
 });
 
-describe("worker.fetch root routing -- demo lands on the planner (S30 item g)", () => {
+describe("worker.fetch root routing -- the root is the module host", () => {
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
   // ASSETS stub that records which asset path the worker asked for.
@@ -578,25 +464,6 @@ describe("worker.fetch root routing -- demo lands on the planner (S30 item g)", 
   }
 
   const get = (path: string) => new Request("https://studio.example" + path);
-
-  it("demo mode: GET / serves the planner asset (not the module host)", async () => {
-    const { env, asked } = makeEnv({ AUTH_MODE: "demo" });
-    const res = await worker.fetch(get("/"), env, ctx);
-    expect(res.status).toBe(200);
-    expect(asked()).toBe("/planner.html");
-  });
-
-  it("demo mode: GET /index.html also remaps to the planner", async () => {
-    const { env, asked } = makeEnv({ AUTH_MODE: "demo" });
-    await worker.fetch(get("/index.html"), env, ctx);
-    expect(asked()).toBe("/planner.html");
-  });
-
-  it("demo mode: the module host stays reachable at /modules (nav unchanged)", async () => {
-    const { env, asked } = makeEnv({ AUTH_MODE: "demo" });
-    await worker.fetch(get("/modules"), env, ctx);
-    expect(asked()).toBe("/modules.html");
-  });
 
   it("token mode: GET / serves the module host unchanged (byte-identical)", async () => {
     const { env, asked } = makeEnv({ AUTH_MODE: "token", STUDIO_API_TOKEN: SECRET });

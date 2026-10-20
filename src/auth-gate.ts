@@ -10,11 +10,6 @@
 //               (scripts/studio-consumer-token.sh mints/revokes), so a bot or satellite gets its
 //               own independently revocable credential instead of reusing the operator login.
 //   "access" -> the existing fail-closed Access JWT path (src/access-auth.ts), byte-for-byte.
-//   "demo"   -> the public demo studio (#625): GET/HEAD allowed for EVERYONE, unauthenticated;
-//               every mutating method (POST/PUT/PATCH/DELETE/anything else) denies 403 for
-//               everyone -- a bearer token does not unlock writes, because a demo deploy has no
-//               writes to unlock. Zero-spend is primarily enforced by ABSENT bindings in the demo
-//               deploy; this mode is the independent second barrier at the gate.
 //   unset/"" -> legacy resolution, unchanged: ACCESS_TEAM_DOMAIN + ACCESS_AUD set -> verify the
 //               JWT; else ALLOW_UNAUTHENTICATED==="true" -> conscious dev-only opt-out; else DENY.
 //               An existing deploy that predates AUTH_MODE keeps working with zero config change.
@@ -170,63 +165,16 @@ export async function verifyTokenRequest(request: Request, env: Env): Promise<Ac
   return { ok: false, status: 403, reason: "bad API token" };
 }
 
-// True when this deployment is the public demo studio (#625). Exported so the /api/modules route
-// can project `host.readonly` from the SAME normalization the gate dispatches on -- one definition
-// of "demo mode", two consumers. CANONICAL: src/modules/registry.ts carries a structural twin
-// (isDemoEnv) because the registry stays import-free of Env by rule; change both together.
-export function isDemoMode(env: Env): boolean {
-  return (env.AUTH_MODE || "").trim() === "demo";
-}
-
-// Capability catalogs (planning models, TTS voices) name backends a DEMO deploy cannot invoke: no
-// gateway/provider credential is bound, and the routes that would use them are denied at the gate.
-// Serving the full list there advertises capability the deployment does not have (a picker of
-// frontier models that can never run), so a demo serves the EMPTY list; both pickers have an
-// authored empty state. Every other mode serves the catalog untouched.
-export function catalogForDeploy<T>(env: Env, catalog: readonly T[]): readonly T[] {
-  return isDemoMode(env) ? [] : catalog;
-}
-
-// Demo-mode gate (#625): reads open to everyone, writes closed to everyone. Deliberately ignores
-// any presented credential -- there is no operator path into a demo deploy through the API, so a
-// leaked/guessed token is worth nothing here. The deny reason names the demo so a visitor poking
-// the API understands what they hit.
-// #631 Phase B: the ONLY write routes a demo deploy allows -- the seeded-menu render + the capped OSS
-// assistant. Every OTHER mutation (incl. the prod render/plan/chat routes) stays denied. One allowlist,
-// auditable in one place; the demo's entire write surface is these two routes.
-export const DEMO_WRITE_ROUTES: ReadonlySet<string> = new Set(["/api/demo/render", "/api/demo/chat"]);
-
-export function verifyDemoRequest(request: Request): AccessDecision {
-  const method = request.method.toUpperCase();
-  // cf#520: a demo visitor is a CONSUMER. There is no operator path into a demo deploy through the
-  // API by design, so granting anything else would be inventing an authority the mode does not have.
-  // MEASURED CONSEQUENCE, not a prediction: on 2026-08-14 `GET /api/modules/installed` answered 200
-  // to an anonymous caller on demo.vivijure.com; under this grant it answers 403. Nothing under
-  // public/ calls that route (measured: zero hits), so no demo affordance depends on it.
-  if (method === "GET" || method === "HEAD") {
-    return { ok: true, sub: "demo-visitor", email: null, scope: "consumer" };
-  }
-  if (method === "POST" && DEMO_WRITE_ROUTES.has(new URL(request.url).pathname)) {
-    return { ok: true, sub: "demo-visitor", email: null, scope: "consumer" };
-  }
-  return {
-    ok: false,
-    status: 403,
-    reason: "demo studio is read-only: mutations are disabled on this deployment. Run your own studio to render.",
-  };
-}
-
 // The single auth chokepoint routeRequest calls for every /api/* request.
 export async function gateApi(request: Request, env: Env, opts: VerifyOpts = {}): Promise<AccessDecision> {
   const mode = (env.AUTH_MODE || "").trim();
   if (mode === "token") return verifyTokenRequest(request, env);
-  if (mode === "demo") return verifyDemoRequest(request);
   // "access" and unset both take the existing path unchanged: explicit access mode IS that path,
   // and unset preserves the pre-#423 behavior for deploys that never heard of AUTH_MODE.
   if (mode === "access" || mode === "") return gateApiRequest(request, env, opts);
   return {
     ok: false,
     status: 403,
-    reason: `unknown AUTH_MODE ${JSON.stringify(mode)} (expected "access", "token", or "demo") -- denying (fail closed)`,
+    reason: `unknown AUTH_MODE ${JSON.stringify(mode)} (expected "access" or "token") -- denying (fail closed)`,
   };
 }

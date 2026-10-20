@@ -271,44 +271,6 @@ describe("cf#520 the other auth modes", () => {
     expect(await errorOf(res)).not.toBe(AUTHZ_DENY_REASON);
   });
 
-  it("DEMO grants CONSUMER: an operator route that was anonymously readable is now refused", async () => {
-    // MEASURED DELTA, not a prediction. On 2026-08-14 `GET /api/modules/installed` returned 200 to
-    // an anonymous caller on demo.vivijure.com (control: /api/voices 200, a nonexistent route 404,
-    // so the probe discriminated). No file under public/ calls that route -- measured, 0 hits -- so
-    // nothing in the demo panel depends on it. This closes it.
-    const env = {
-      AUTH_MODE: "demo",
-      ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
-    } as unknown as Env;
-    const res = await worker.fetch(get(OPERATOR_ROUTE), env, ctx);
-    expect(res.status).toBe(403);
-    const body = await bodyOf(res);
-    expect(body?.error).toBe(AUTHZ_DENY_REASON);
-    expect(body?.code).toBe(AUTHZ_DENY_CODE);
-  });
-
-  it("DEMO still serves its own consumer routes (the read surface is untouched)", async () => {
-    const env = {
-      AUTH_MODE: "demo",
-      ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
-    } as unknown as Env;
-    const res = await worker.fetch(get("/api/voices"), env, ctx);
-    expect(await errorOf(res)).not.toBe(AUTHZ_DENY_REASON);
-  });
-
-  it("DEMO mutation refusal still comes from the DEMO gate, not from authorization", async () => {
-    const env = {
-      AUTH_MODE: "demo",
-      ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
-    } as unknown as Env;
-    const res = await worker.fetch(
-      new Request("https://demo.example/api/cast", { method: "POST" }),
-      env,
-      ctx,
-    );
-    expect(res.status).toBe(403);
-    expect(await errorOf(res)).toMatch(/read-only/i);
-  });
 });
 
 // ---- the 86th route, moved into the table (cf#520 part 1) -------------------------------------
@@ -328,22 +290,6 @@ describe("cf#520 GET /api/modules is a table route now, and behaves identically"
     expect(Array.isArray(body.modules)).toBe(true);
   });
 
-  it("it still serves anonymously in demo mode (the panel's module list)", async () => {
-    const env = {
-      AUTH_MODE: "demo",
-      ASSETS: { fetch: async () => new Response("ASSET", { status: 200 }) },
-    } as unknown as Env;
-    const res = await worker.fetch(get("/api/modules"), env, ctx);
-    expect(res.status).toBe(200);
-    // `readonly` is projected under `host`, not at the top level (src/auth-gate.ts says so in
-    // terms: "the /api/modules route can project host.readonly"). The first draft of this line
-    // asserted `body.readonly` and failed IDENTICALLY before and after the move, so it was never
-    // discriminating -- it is here to prove the demo projection survived the move, and it can only
-    // do that if it reads the field the projection actually writes.
-    const body = (await res.json()) as { modules?: unknown[]; host?: { readonly?: boolean } };
-    expect(Array.isArray(body.modules)).toBe(true);
-    expect(body.host?.readonly).toBe(true);
-  });
 });
 
 // Type-level: the two exports this file leans on are the same vocabulary, not two that agree today.

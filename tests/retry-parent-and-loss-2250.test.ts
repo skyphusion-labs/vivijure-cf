@@ -106,11 +106,17 @@ const env = {
   MODULE_WAN: moduleBinding("alibaba-wan", ["motion.backend"], "byo", {
     native_audio: true, voice: "prompt_lock", scatter_native_audio: true, min_seconds: 1, max_seconds: 10,
   }),
-  // A CLOUD motion door as well: the cloud-finalized mode resolves one specifically, and a byo door
-  // does not satisfy it. defaultGpuDoorModule still picks the byo door for the full path, so the
-  // two cases below stay distinct rather than collapsing onto one module.
+  // Cloud doors the hosted fallback can actually pick. cf-seedance speaks natively, so a silent
+  // board must not land on it. cf-hailuo is the silent catalog door. infinitetalk is the spoken
+  // default. The byo Wan door stays installed and must not become either default.
   MODULE_CLOUD_SEEDANCE: moduleBinding("cf-seedance", ["motion.backend"], "cloud", {
     native_audio: true, voice: "prompt_lock", scatter_native_audio: true, min_seconds: 1, max_seconds: 10,
+  }),
+  MODULE_HAILUO: moduleBinding("cf-hailuo", ["motion.backend"], "cloud", {
+    native_audio: false, voice: "cast_tts", scatter_native_audio: true, min_seconds: 6, max_seconds: 10,
+  }),
+  MODULE_INFINITETALK: moduleBinding("infinitetalk", ["motion.backend"], "cloud", {
+    native_audio: false, driving_audio: true, voice: "cast_tts", scatter_native_audio: false, min_seconds: 2, max_seconds: 15,
   }),
 } as unknown as OrchestratorEnv;
 
@@ -153,6 +159,7 @@ describe("fc#2250 item 6 half one -- finalize retry reaches its real parent prev
     ).toBe(true);
     // And it must have gone through the from-keyframes submit, not the full startFilmJob path.
     expect(h.fromKeyframes, "animateFromPreview must reach startFilmFromKeyframes").toHaveLength(1);
+    expect(h.fromKeyframes[0].motion_backend).toBe("cf-hailuo");
     expect(h.film, "a finalize retry must not start a full film job").toHaveLength(0);
   });
 
@@ -204,6 +211,7 @@ describe("fc#2250 item 6 half two -- a full retry declares what the stored row c
     const r = await retryFailedRender(env, failed);
     expect(r.ok, r.ok ? "" : (r as { error: string }).error).toBe(true);
     expect(h.film).toHaveLength(1);
+    expect(h.film[0].motion_backend).toBe("cf-hailuo");
   });
 
   it("THE LOSS IS DECLARED, not hidden behind a bare success", async () => {
@@ -241,5 +249,7 @@ describe("fc#2250 item 6 half two -- a full retry declares what the stored row c
     const lines = h.film[0].dialogue_lines as Array<Record<string, unknown>> | undefined;
     expect(lines, "the bundle storyboard carries a spoken line; retry must not drop it").toHaveLength(1);
     expect(lines![0].text).toBe("We move now.");
+    expect(h.film[0].motion_backend).toBe("infinitetalk");
+    expect(h.film[0].voice_ref_keys).toBeUndefined();
   });
 });

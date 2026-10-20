@@ -15,7 +15,7 @@
 
   // Resolved at CALL time, and THROWS when the shared registry is absent rather than falling back to
   // an own fetch. A silent fallback would rebuild the second memo and read as working, which is
-  // exactly the failure mode this change is about. Same discipline as pollPolicy() in demo-steer.js.
+  // exactly the failure mode this change is about. Same discipline as the shared pollPolicy().
   // The lookup order covers a browser page, a new Function() harness that passes a window scope, and
   // a plain-Node eval.
   function registry() {
