@@ -244,8 +244,8 @@ function setMeta(api, count) {
 async function boot() {
   const status = document.getElementById("status");
   try {
-    // cf#580: reads the SHARED per-page memo. This page also loads readonly-gate.js, abuse-link.js,
-    // demo-steer.js and hook-availability.js, each of which fetched the same projection separately;
+    // cf#580: reads the SHARED per-page memo. This page also loads abuse-link.js and
+    // hook-availability.js, each of which fetched the same projection separately;
     // modules.html made five GET /api/modules per load and now makes one.
     //
     // load() never rejects, so the throw that drives the offline copy below has to come from the
