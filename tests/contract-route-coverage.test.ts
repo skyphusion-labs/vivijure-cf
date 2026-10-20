@@ -108,9 +108,10 @@ describe("cf#317 the matcher, before any claim built on it", () => {
     const doc = [{ method: "GET", pattern: "/api/foo" }];
     const head = { method: "HEAD", pattern: "/api/foo" };
     expect(covers(doc, head)).toBe(false);
-    // The old matcher was a substring check of the flattened document. /api/demo sits inside a
-    // longer documented path, so that check would still have passed.
-    expect(DOC.replace(/\s+/g, " ").includes("/api/demo")).toBe(true);
+    // The old matcher was a substring check of the flattened document. /api/storage is not itself
+    // a documented route but sits inside two that are, so that check would still have passed.
+    expect(DOC.replace(/\s+/g, " ").includes("/api/storage")).toBe(true);
+    expect(DOC_ROUTES.some((r) => r.pattern === "/api/storage")).toBe(false);
   });
 
   it("a documented path does not cover an implemented path that merely contains it (cf#882)", () => {
@@ -118,7 +119,8 @@ describe("cf#317 the matcher, before any claim built on it", () => {
     const impl = { method: "POST", pattern: "/api/render/film/:id" };
     expect(covers(doc, impl)).toBe(false);
     // Same measured old-matcher fact as the HEAD case above.
-    expect(DOC.replace(/\s+/g, " ").includes("/api/demo")).toBe(true);
+    expect(DOC.replace(/\s+/g, " ").includes("/api/storage")).toBe(true);
+    expect(DOC_ROUTES.some((r) => r.pattern === "/api/storage")).toBe(false);
   });
 
   it("the route parse returns a plausible table, not an empty one", () => {

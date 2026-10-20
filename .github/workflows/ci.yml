@@ -99,6 +99,20 @@ jobs:
         with:
           python-version: "3.12"
 
+      # fleet-chezmoi#2291. The container class contract (class_name matches the
+      # DO binding, every container class declared by a migration) has to parse
+      # wrangler.toml.example. On Python 3.9 that import was discarded and the
+      # check reported nothing wrong. scripts/check-container-bindings.py exits
+      # non-zero when tomllib is missing or the interpreter is older than 3.11,
+      # and names both versions. It does not skip. The test beside it renames a
+      # class and removes the declaring migration, so a green run has been shown
+      # able to fail. setup-python above pins 3.12; the script still refuses
+      # whatever older python a login shell would have handed it.
+      - name: Container binding contract (fleet-chezmoi#2291)
+        run: |
+          python3 scripts/check-container-bindings.py
+          python3 tests/check-container-bindings.test.py
+
       - name: Deploy unit tests
         run: |
           python -m pip install --upgrade pip
@@ -1300,7 +1314,7 @@ jobs:
               exit 1
             fi
           done
-          exit 1
+          exit 0
 
       # Opt-in, self-host safe edge-cache purge. The core worker is already LIVE by this step, so a
       # failure here NEVER rolls back the deploy -- it just means /welcome may serve stale from the

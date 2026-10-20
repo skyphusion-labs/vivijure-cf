@@ -250,9 +250,8 @@ the workflow half automatically and refuses if a member does not call the shared
 | `deploy/vivijure_deploy.py` (`render_core_toml`) | SELF-HOST installer (python) | allowed | no marker handling at all; see the note below |
 | `.dev-modbound/dev-modbound.sh` | LOCAL dev only | n/a | `wrangler dev --local`, never deploys |
 
-Two configs are NOT renders of this template and must not be reasoned about as though they were:
-`wrangler.demo.toml.example` builds the separate `vivijure-demo` Worker, and `tail/wrangler.toml.example`
-builds `vivijure-tail`.
+One config is NOT a render of this template and must not be reasoned about as though it were:
+`tail/wrangler.toml.example`, which builds `vivijure-tail`.
 
 **The self-host paths are a considered exclusion, not an omission.** The door's own manifest says
 self-host is where it belongs, so an unconditional hosted strip bolted onto `deploy.sh` would remove
@@ -332,27 +331,16 @@ point of writing it down is that six of them had never been counted at all:
 | `ci.yml` MCP render (`wrangler.mcp.toml.example`) | structural: that template carries **0** `MODULE_` lines, so the strip would refuse it at its own floor |
 | `scripts/advance-studio-pin.sh` | renders no config; advances a pin |
 | `scripts/install-module.ts` | renders no config; installs into a live studio over the dispatch namespace |
-| `wrangler.demo.toml.example` + `modules/local-gpu/wrangler.demo.toml.example` | **a named carve-out, see below** |
 
 Until this revision, only the first two were asserted anywhere. The third and fifth now are
 (`tests/local-gpu-strip-cf560.test.ts`), including that the deployer actually READS `EXCLUDE` rather
 than the caller merely setting it.
 
-**The demo studio is a deliberate carve-out, not a violation, and it is OUT OF SCOPE by ruling.**
-`vivijure-demo` is a studio we operate and its template does describe a `MODULE_LOCAL_GPU` binding.
-It is the #631 Phase B click-to-render design: in the committed template the binding is COMMENTED OUT
-and `DEMO_RENDER_ENABLED = "false"`. It is invisible to every cf#560 control by construction (different
-template, no workflow renders it, hand-deployed). Conrad ruled 2026-08-15 that the demo surface is not
-a priority and will be rebuilt, so **do not strip it and do not probe it**. It is recorded here so the
-next reader finds a decision rather than a hole. What is genuinely undetermined is whether the LIVE
-`vivijure-demo` Worker binds it today; `wrangler.demo.toml` is gitignored, so that needs a live
-binding read, not a repo read, and nobody should take one on this ruling.
-
 **Two limits of the automated derivation, stated because a named limit is cheaper than a rediscovery:**
 `tests/local-gpu-strip-cf560.test.ts` reads only `.github/workflows/*.yml`, non-recursively, so a
 hosted render moved into a shell script or a composite action leaves its population; and it selects on
-`wrangler.toml.example`, so a second template (the MCP and demo ones) is structurally unreachable to
-it. Both classes are live in this repo today. The rule above, not that matcher, is the contract.
+`wrangler.toml.example`, so a second template (the MCP one) is structurally unreachable to it. Both
+classes are live in this repo today. The rule above, not that matcher, is the contract.
 
 ### 3e. The deploy gate
 The `deploy` job only runs for a pushed version tag:

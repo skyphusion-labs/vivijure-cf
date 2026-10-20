@@ -248,7 +248,7 @@ either way. An `authorizeRoute` refusal carries `{ error: AUTHZ_DENY_REASON, cod
 and header `X-Vivijure-Authz: scope_denied`. A missing or bad token 403 has a different `error`
 string (it mentions API token) and no `code`. Re-pasting cannot help a scope denial; re-issue the
 token with operator scope. The panel banner keys on `body.code === "scope_denied"` and does not
-pop paste-once. AUTH_MODE=demo does not store a token, so that banner does not fire there.
+pop paste-once. A deploy that stores no token never fires that banner.
 
 **The deploy goes GREEN throughout.** No check fails, no alert fires, and the first symptom is a
 person reporting that the settings page stopped working. That is the entire reason this section

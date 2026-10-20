@@ -18,7 +18,7 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 93;
+export const PINNED_ROUTE_COUNT = 89;
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
 export const PINNED_OPERATOR_COUNT = 8;
@@ -72,10 +72,6 @@ export function diffRouteScopes(
 export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/storage/usage", scope: "operator" },
   { method: "POST", pattern: "/api/storage/reconcile", scope: "operator" },
-  { method: "GET", pattern: "/api/demo/menu", scope: "consumer" },
-  { method: "POST", pattern: "/api/demo/render", scope: "consumer" },
-  { method: "GET", pattern: "/api/demo/render/:id", scope: "consumer" },
-  { method: "POST", pattern: "/api/demo/chat", scope: "consumer" },
   { method: "GET", pattern: "/api/storyboard/projects", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/projects", scope: "consumer" },
   { method: "GET", pattern: "/api/storyboard/projects/:id", scope: "consumer" },

@@ -204,8 +204,9 @@ function main(): void {
   // artifact, and closes the versioning caveat studio-migrations.ts documented against itself.
   //
   // TOP-LEVEL ONLY, matching the live-verified provision chain exactly: migrations/manual/ is
-  // operator-run and migrations/demo/ is demo seed data; neither belongs in a tenant D1. `sort()` is
-  // the apply order and the filename is the tracking key, so both must stay stable.
+  // operator-run and does not belong in a tenant D1. (migrations/demo/ was the public demo seed and
+  // went with that door, pr1019.) `sort()` is the apply order and the filename is the tracking key,
+  // so both must stay stable.
   const migrations = readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
