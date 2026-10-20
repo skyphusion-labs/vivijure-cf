@@ -10,7 +10,7 @@
 > and the CI "Render core wrangler.toml" step in `.github/workflows/ci.yml` uncomments it only when the
 > repo variable `vars.ENABLE_WFP_DISPATCH == "1"` (the namespace having been created out of band; see
 > `docs/deploy-runbook.md`). `src/env.ts` declares `MODULE_DISPATCH?: DispatchNamespace`. On a deploy
-> without the binding the whole dispatch layer is a no-op (outside demo mode, section 3.4): the studio
+> without the binding the whole dispatch layer is a no-op: the studio
 > runs exactly as before on service bindings.
 >
 > This is an **infrastructure + onboarding** spec layered UNDER the existing module contract
@@ -292,11 +292,14 @@ The `MODULE_*` service-binding scan is joined by `discoverDispatchModules(env)`
 manifest_json, api FROM installed_modules WHERE enabled = 1` on `env.DB`, re-validates each stored
 `manifest_json` with `validateManifest` (a row with invalid JSON or a manifest that no longer validates
 is logged and skipped), and reconstructs each `RegisteredModule` with `binding: "dispatch:<script_name>"`.
-It returns `[]` without touching D1 when `MODULE_DISPATCH` is unbound, with ONE exception: in demo mode
-(`AUTH_MODE=demo`, #625) it reads the table anyway, because the demo binds no namespace but seeds
-`installed_modules` with captured manifests so `/api/modules` projects the real catalog (display-only:
-the demo gate denies mutations and the seeded refs are never invocable). A D1 error is logged and
+It returns `[]` without touching D1 when `MODULE_DISPATCH` is unbound. A D1 error is logged and
 yields `[]`.
+
+> **One dead branch, named so the next reader does not take it for a live path.**
+> `@skyphusion-labs/vivijure-core modules/registry` still carries `isDemoEnv`, which made the public
+> demo door read `installed_modules` with no namespace bound. That door was removed entirely from
+> this panel in pr1019 and nothing here sets `AUTH_MODE=demo` any more, so the branch is
+> unreachable from this host. Removing it from core is tracked separately.
 
 `discoverModules(env)` returns the merge of both halves via `mergeRegistries(service, dispatch)`:
 service entries first, then dispatch-only entries. On a NAME collision (a module both service-bound and
@@ -435,8 +438,8 @@ no-dashboard onboarding the doctrine asks for.
 **The routes (as shipped).** All four are in `API_ROUTES` (`src/index.ts`) with `scope: "operator"`:
 the caller must pass the `/api/*` auth gate AND hold operator scope (an Access identity in access
 mode, or the `STUDIO_API_TOKEN` secret / a named API token whose row grants `operator` in token mode;
-a consumer-scoped credential gets `403`). The demo studio (`AUTH_MODE=demo`) grants only consumer
-scope, so all four answer `403` there. JSON bodies; errors are `{ "error": "<message>" }` unless noted.
+a consumer-scoped credential gets `403`). JSON bodies; errors are `{ "error": "<message>" }` unless
+noted.
 
 | Route | Body | Success | Failures |
 |---|---|---|---|

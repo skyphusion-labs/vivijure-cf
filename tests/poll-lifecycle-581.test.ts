@@ -99,7 +99,7 @@ describe("cf#581: the poll lifecycle pauses AND resumes", () => {
   it("PROBE WITH A NON-DEFAULT VALUE: the loop honours baseMs rather than substituting the default", () => {
     // On the DEFAULT base, honoured and substituted are byte-identical, so a
     // test written against POLL_BASE_MS cannot tell the two apart. Every base in
-    // the tree is non-default (4000 regen, 5000 LoRA and music, 8000 demo), so
+    // the tree is non-default (4000 regen, 5000 LoRA and music), so
     // this probes with the regen base and asserts the produced band could not
     // have come from the default.
     const NON_DEFAULT = 4000;
@@ -327,10 +327,10 @@ function codeOnly(src: string): string {
 }
 
 describe("cf#581: every self-rescheduling poll loop has a visibility pause with a resume", () => {
-  it("the four loops that had NO hidden guard now own one through the shared primitive", () => {
+  it("the loops that had NO hidden guard now own one through the shared primitive", () => {
+    // Was FOUR. demo-steer.js was the public demo door and was removed with it (pr1019).
     const MIGRATED = [
       "cast.js",
-      "demo-steer.js",
       "planner-audio.js",
       "planner-history-row.js",
     ];
@@ -347,9 +347,9 @@ describe("cf#581: every self-rescheduling poll loop has a visibility pause with 
   });
 
   it("none of the migrated loops re-arms itself with a bare timer any more", () => {
-    for (const f of ["cast.js", "demo-steer.js", "planner-audio.js", "planner-history-row.js"]) {
+    for (const f of ["cast.js", "planner-audio.js", "planner-history-row.js"]) {
       const code = codeOnly(read(f));
-      // The shapes each of these four used before the change.
+      // The shapes each of these used before the change.
       expect(code).not.toMatch(/setTimeout\(\s*\(\)\s*=>\s*poll/);
       expect(code).not.toMatch(/setTimeout\(\s*poll[A-Za-z]*\s*,/);
       expect(code).not.toMatch(/=\s*setTimeout\(function/);
@@ -377,7 +377,7 @@ describe("cf#581: every self-rescheduling poll loop has a visibility pause with 
     expect(init).toContain("resumeRenderPoll()");
   });
 
-  it("the LoRA and demo loops are on pages with no visibilitychange handler of their own", () => {
+  it("the LoRA loop is on a page with no visibilitychange handler of its own", () => {
     // This is why the listener had to live in the primitive. cast.html and
     // modules.html do not load planner-init.js, which was the ONLY file in the
     // tree carrying a visibilitychange listener, so a pause wired the planner

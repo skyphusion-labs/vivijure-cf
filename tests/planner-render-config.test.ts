@@ -206,7 +206,7 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
     expect(radios.some((r) => r.checked === true)).toBe(false);
   });
 
-  it("defaults to cf-seedance when a Cast sample is kept", () => {
+  it("defaults to InfiniteTalk on a spoken board even when a Cast sample is kept", () => {
     const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
     win.planState = {
       castBindings: { A: "c1" },
@@ -220,11 +220,11 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
       talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
       talkingDoor("cf-seedance", { native_audio: true, voice_ref: true, voice: "seed_and_prompt" }),
     ];
-    expect(mod.defaultSpeedDoor(mods)?.name).toBe("cf-seedance");
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("infinitetalk");
     mod.renderBackendSelector(mods, wrap);
     const doc = (globalThis as Record<string, unknown>).document as ReturnType<typeof makeDocument>;
     const sel = doc.getElementById("planner-motion-backend") as SelectEl;
-    expect(sel.value).toBe("cf-seedance");
+    expect(sel.value).toBe("infinitetalk");
     win.planState = {};
   });
 
@@ -245,14 +245,26 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
     win.planState = {};
   });
 
-  it("defaults to Wan when no sample and no spoken line", () => {
+  it("a silent board picks a silent catalog door, not Wan and not InfiniteTalk", () => {
+    const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
+    win.planState = { castBindings: {}, castCatalog: [], storyboard: { scenes: [] } };
+    const mods = [
+      talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
+      talkingDoor("cf-hailuo", { native_audio: false, voice: "cast_tts" }),
+    ];
+    expect(mod.defaultSpeedDoor(mods)?.name).toBe("cf-hailuo");
+    win.planState = {};
+  });
+
+  it("a silent board with only talking doors does not default to Wan", () => {
     const win = (globalThis as Record<string, unknown>).window as Record<string, unknown>;
     win.planState = { castBindings: {}, castCatalog: [], storyboard: { scenes: [] } };
     const mods = [
       talkingDoor("infinitetalk", { native_audio: false, driving_audio: true, voice: "cast_tts" }),
       talkingDoor("alibaba-wan", { native_audio: true, driving_audio: true, voice: "cast_tts" }),
     ];
-    expect(mod.defaultSpeedDoor(mods)?.name).toBe("alibaba-wan");
+    expect(mod.defaultSpeedDoor(mods)).toBeNull();
     win.planState = {};
   });
 

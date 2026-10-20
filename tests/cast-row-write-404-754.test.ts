@@ -67,7 +67,9 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0
 
 /** R2 stand-in that logs every access. The op log is what separates the three entry paths of one
  *  handler from each other: the copy path READS the source first, the raw-bytes path only PUTS,
- *  and the staged-key path touches R2 not at all. */
+ *  and a staged key is not written here. A successful staged portrait replacement's only op is
+ *  deleting the previous portrait (local#446). Ref and source staged paths still touch R2 not
+ *  at all. */
 function makeR2() {
   const store = new Map<string, { bytes: Uint8Array; contentType: string }>();
   const ops: string[] = [];
@@ -202,6 +204,12 @@ describe("cf#754 POSITIVE CONTROL: every one of the nine sites reaches handler c
           /^put:/,
         );
         expect(r2.ops.filter((o) => o.startsWith("get:")), evidence).toEqual([]);
+      } else if (door === "portrait") {
+        // local#446: no put, but a row that came back collects the previous portrait.
+        expect(
+          r2.ops,
+          `${evidence}: a staged portrait replacement collects only the previous portrait`,
+        ).toEqual([`delete:${OLD_PORTRAIT}`]);
       } else {
         expect(r2.ops, `${evidence}: the staged-key path must touch R2 not at all`).toEqual([]);
       }

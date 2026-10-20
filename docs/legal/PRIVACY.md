@@ -5,7 +5,7 @@
 > advice and reading it does not create an attorney-client relationship. If you are unsure how it
 > applies to you, or you run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-07-03
+**Effective date:** 2026-10-19
 
 ---
 
@@ -13,8 +13,9 @@
 
 We do not want your data. With Vivijure that is not a slogan, it is a literal fact: **there is no
 Vivijure service that we operate to hold your content, so there is almost nothing for us to
-collect (the one public thing we run, the read-only demo, is built to collect nothing about you --
-Section 1a).**
+collect.** The public demo host was removed on purpose on 2026-10-08. It is not a live site.
+The deployment was deleted on 2026-10-19 (both Worker scripts, the D1 database, the R2 bucket,
+the AI Gateway) and no configuration change brings it back (Section 1a).
 
 - **Vivijure is free software (AGPL-3.0-only) that you run yourself.** You deploy it on your own
   infrastructure (your own Cloudflare account, your own GPU/RunPod), and your storyboards, prompts,
@@ -23,14 +24,13 @@ Section 1a).**
 - **Skyphusion Labs does not run a hosted, multi-tenant, sign-up service.** There is no Vivijure
   account you create with us, no platform we host your content on, and no pool of user data we hold.
   We maintain the software; we do not operate it for the public.
-- **Skyphusion Labs runs exactly two Vivijure instances, and only two.** (1) Conrad's own private
-  instance at `vivijure.skyphusion.org`: gated, used by Conrad and the crew (plus the Slate Discord
-  bot via its own named API token), not a service anyone signs up for; it processes Conrad's own
-  creative content, not data collected from outside users. (2) A public, read-only **demo** at
-  `demo.vivijure.com`: open to anonymous visitors to browse a seeded catalog and pre-made showcase
-  films, it renders nothing, has no account or sign-in, and collects no visitor data beyond the
-  standard edge request logs any website receives. Neither is a hosted, multi-tenant service that
-  holds your content. See Section 1a for exactly what the demo does and does not process.
+- **Skyphusion Labs runs one Vivijure instance.** Conrad's own private instance at
+  `vivijure.skyphusion.org`: gated, used by Conrad and the crew (plus the Slate Discord bot via its
+  own named API token), not a service anyone signs up for; it processes Conrad's own creative
+  content, not data collected from outside users. The public demo host `demo.vivijure.com` was
+  removed on purpose on 2026-10-08. It is not a live site. The deployment was deleted on 2026-10-19
+  (both Worker scripts, the D1 database, the R2 bucket, the AI Gateway) and no configuration change
+  brings it back. Section 1a records the retirement.
 
 If you want a privacy policy for your Vivijure instance, you write it, because you are the operator
 and the only person who can see that data. This document explains why the software collects so
@@ -50,7 +50,7 @@ is always "whoever runs that instance," never Skyphusion Labs as some central op
 |---|---|---|
 | **You self-host** | You (or whoever deployed that instance) | Yours, on your infrastructure. Skyphusion Labs never receives it. |
 | **Conrad's private instance (`vivijure.skyphusion.org`)** | Skyphusion Labs (Conrad), for Conrad and the crew only | Conrad's own creative content on Conrad's infrastructure. Not data collected from outside users; there are no outside users. |
-| **The public demo (`demo.vivijure.com`)** | Skyphusion Labs (Conrad), for anyone to browse | No visitor data. It is read-only, renders nothing, has no account, and collects nothing a visitor submits. Only standard edge request logs (Section 1a). |
+| **The public demo (`demo.vivijure.com`), retired 2026-10-08** | Was Skyphusion Labs (Conrad). The custom domain was removed on purpose. Not a live site. The deployment was deleted on 2026-10-19 and no configuration change brings it back. | Not stated here. Section 1a records the retirement only. |
 
 We still do not host instances that hold OTHER people's content, and will not get into hosting or
 managing them for anyone. If you reach a Vivijure instance, whoever deployed it is the operator; the AGPL
@@ -64,24 +64,9 @@ what Conrad's own private instance does, as a worked, honest example.
 
 ## 1a. The public demo studio (`demo.vivijure.com`)
 
-Separate from Conrad's private instance, Skyphusion Labs runs a public, read-only **demo** so anyone
-can see what the studio is without deploying it. It is built to collect nothing about you:
-
-- **No account, no sign-in, no token.** You browse anonymously. There is nothing to register and no
-  profile to create.
-- **It renders nothing and stores nothing you submit.** Every state-changing request (anything that
-  would create, edit, or render) is refused. The money/compute integrations (AI, GPU/RunPod, file
-  storage) are simply not connected to the demo, so there is no pipeline for your input to enter. The
-  projects, cast, and finished films you see are a fixed, in-house seeded catalog; the films stream
-  from Skyphusion's own asset host (`assets.skyphusion.net`).
-- **No identity cookie and no tracking.** The demo sets no cookie that identifies you (the studio's
-  functional token cookie is never populated because no token is ever entered), and the demo ships no
-  analytics beacon, tracker, or advertising pixel.
-- **What is processed:** only the ordinary server request logs that Cloudflare (and the asset host)
-  keep for any website -- your IP address, user agent, and the paths you request -- used for
-  security, abuse prevention, and rate limiting, on Skyphusion's own infrastructure, never sold or
-  used to profile you. To render your own work with your own data, you self-host (the rest of this
-  policy explains why that keeps the data yours).
+Retired 2026-10-08. The custom domain was removed on purpose. It is not a live site. The deployment
+was deleted on 2026-10-19 (both Worker scripts, the D1 database, the R2 bucket, the AI Gateway) and
+no configuration change brings it back.
 
 ## 2. How the system is built (why there is so little data)
 
@@ -133,13 +118,18 @@ Keyframes, video clips, finished MP4s, generated audio beds and narration, and t
 written to the operator's R2 storage and kept so the operator can retrieve them.
 
 ### 3.4 Operational logs
-The Worker emits **render-state logs** (which job is in which phase, warnings, and errors) to a
-logging system (Grafana/Loki) that the operator runs on their own servers, NOT a third-party log
-vendor. These logs are designed to capture pipeline STATE, not creative payload: they record things
-like "film &lt;job-id&gt;: keyframe phase started", the request method/path/status, the job id, and
-exception messages. They are for debugging and reliability. (**Note:** logs can incidentally contain
-a project slug or an error string that echoes input; the operator treats logs as operational data on
-their own infrastructure and does not use them for profiling.)
+A fresh deploy sends **render-state logs** (which job is in which phase, warnings, and errors) to
+**Cloudflare Workers Logs** in the operator's own Cloudflare account, and nowhere else. The shipped
+configuration enables **Cloudflare Workers observability** and does not bind a tail consumer. These
+logs are designed to capture pipeline STATE, not creative payload: they record things like "film
+&lt;job-id&gt;: keyframe phase started", the request method/path/status, the job id, and exception
+messages. They are for debugging and reliability.
+
+An operator who runs their own Loki can attach the tail consumer (`tail/`) and ship the same
+render-state lines there. That consumer is not part of a fresh deploy. The reference Loki and Grafana
+host this project used to run is deleted, and `grafana.skyphusion.org` does not resolve. (**Note:**
+logs can incidentally contain a project slug or an error string that echoes input; the operator treats
+logs as operational data on their own infrastructure and does not use them for profiling.)
 
 ### 3.5 Notifications (opt-in only)
 If render-completion email is enabled, the operator configures a single recipient address and the
@@ -167,7 +157,8 @@ identities:
 - **Named per-consumer tokens** (for example, one for the Slate Discord bot, one per render
   satellite), each a random token issued and revoked independently so a single credential can be
   rotated without touching the others. Only a **name and a SHA-256 hash** of each token live in the
-  operator's D1 database (table `api_tokens`); the plaintext token is never stored. A request is
+  operator's D1 database (table `api_tokens`), together with the token's access scope and its
+  creation and revocation timestamps; the plaintext token is never stored. A request is
   authenticated by hashing the presented token and matching that hash.
 
 That is the entire identity surface on the main API: a token name and a token hash. **No third-party
@@ -200,21 +191,30 @@ providers, not ours. We list them so the path is transparent.
 - **RunPod** -- the serverless GPU render backend. To render, the studio hands RunPod a job and
   RunPod pulls the render bundle (storyboard, prompts, cast images, models) from R2, does the GPU
   work (keyframes, image-to-video, model training), and writes the results back to R2. Creative
-  content passes through RunPod's GPUs during a render. For some optional modules, notably the
-  image-to-video (i2v) modules and the cast module, the RunPod backend also reaches out to external
+  content passes through RunPod's GPUs during a render. For some optional modules, notably several
+  of the image-to-video (i2v) modules, the RunPod backend also reaches out to external
   AI model providers as part of doing that work, so for those modules your content reaches those
   providers through the RunPod path (see the next entry).
-- **AI model providers (reached two ways: Cloudflare AI Gateway and RunPod)** -- for storyboard
-  planning, image generation, text-to-speech, and cloud motion, the studio (and opt-in modules) send
-  prompts/text to AI providers. Most are reached through the **Cloudflare AI Gateway**; some,
-  specifically the providers behind the image-to-video (i2v) modules and the cast module, are reached
-  from the **RunPod** backend during a render (see the RunPod entry above). Depending on what is run,
-  this can include providers such as xAI, OpenAI, Deepgram, MiniMax, and cloud image-to-video services
-  (e.g. Seedance, Kling). Each provider receives only what that specific feature sends it (e.g. prompt
+- **AI model providers** -- for storyboard planning, image generation, text-to-speech, and cloud
+  motion, the studio (and opt-in modules) send prompts and text to AI providers. Most calls go through **Cloudflare** (the **AI Gateway**, or
+  Cloudflare Workers AI directly, as for the cast module's character images). Some calls, specifically
+  the providers behind several of the image-to-video (i2v) modules, go out from the **RunPod** backend
+  during a render (see the RunPod entry above). The **image-generate** module has one more path. When
+  the operator has configured an OpenAI API key and an OpenAI image model is selected, that module
+  sends the prompt text only to OpenAI's own image API, under the operator's own OpenAI account.
+  Reference images are not forwarded on that path. The Cloudflare AI Gateway is not in that path, so
+  the Gateway's logging, retention, spend controls, and Unified Billing do not apply to it. OpenAI's
+  API data terms apply to it. Depending on what is run, this
+  can include providers such as Anthropic (the default storyboard-planning model, via the AI Gateway),
+  Google (Veo image-to-video, via RunPod or the AI Gateway, and Google image models via the AI
+  Gateway), Black Forest Labs (FLUX image and video models, via Workers AI or the AI Gateway), xAI,
+  OpenAI, Deepgram, MiniMax, and cloud image-to-video services (e.g. Alibaba Wan, Vidu, Seedance,
+  Kling). Each provider receives only what that specific feature sends it (e.g. prompt
   text, or an image to animate). Each provider has its own terms and data practices, and the set of
   providers depends on which optional modules an instance installs.
-- **The operator's own fleet** -- some non-GPU finishing steps (assembly, audio mixing, image prep)
-  run on servers the operator operates directly.
+- **Finishing steps** -- some non-GPU finishing steps (assembly, audio mixing, image prep) run as
+  containers in the operator's own Cloudflare account, or the operator points those steps at containers
+  they run. The reference fleet that used to run those steps was retired on 2026-09-24.
 
 On a self-hosted instance, all of these relationships are between YOU and those providers; Skyphusion
 Labs is not in that path. None of these are advertising or data-broker relationships.
@@ -236,6 +236,9 @@ Labs is not in that path. None of these are advertising or data-broker relations
   counts only -- a different origin that collects no personal data and is neither advertising nor sold.
 - **The browser's local storage** holds small UI conveniences (e.g. which character was last viewed,
   a remembered training style). This stays in the browser and is not transmitted as tracking.
+- **The API token you enter is also kept in the browser's local storage** on the gated app, so the
+  studio can send it as the `Authorization` bearer header and re-mirror it into the `vivijure_token`
+  cookie on each page load. It stays in that browser until it is cleared.
 
 For Conrad's own private instance, the operator (Conrad) has determined that it does not fall under
 the GDPR; it is run from the United States for Conrad and the crew, not offered to the public. Any
@@ -247,13 +250,43 @@ laws apply to them and their own users, and configuring their instance according
 ## 7. Retention and deletion
 
 - **The operator can delete content.** The studio has delete actions for cast members, projects, and
-  renders, which remove the corresponding records and free their stored files. Because the instance
-  is single-operator, the operator can also delete anything directly from the database and storage.
-- **Content is kept while it is useful** (so projects and render history persist) and no longer than
-  that. A storage-cleanup process reclaims orphaned files left behind by failed jobs.
-- **On Conrad's private instance, operational logs and backups are retained for up to 90 days** on
-  Conrad's own logging and backup systems, then aged out. Each operator sets their own retention for
-  their own instance.
+  renders. Each removes the record and frees the stored files that record names. What each one frees,
+  as of 2026-10-19:
+  - **Cast member delete** frees the member's portrait, reference and source images, and trained
+    models (the LoRA and both Wan LoRA files), plus the member's voice reference when it is the
+    member's own file.
+  - **Render delete** frees that render's own files (keyframes, clips, finished video, narration,
+    bundles). Before 2026-10-19 it removed the record only and left the files in storage.
+  - **Project delete cascades.** Deleting a project deletes every render under it and frees their
+    files. Before 2026-10-19 those renders survived a project delete. If you want to keep a film,
+    download it before you delete its project.
+
+  Files to free are chosen from the records, never by sweeping a storage path, and a file that a
+  surviving record still names is kept. If storage cannot be fully reclaimed, the delete does not
+  half-happen: the record is kept, the request answers with an error (HTTP 409), and repeating the
+  delete finishes the job. Because the instance is single-operator, the operator can also delete
+  anything directly from the database and storage.
+- **What a delete does not free**, stated so no one is surprised. One of these is by design and the
+  other three are a known defect and a backlog (tracked in the repository as issues #1008 and #1009):
+  - **By design: a music bed you uploaded.** An uploaded audio bed is your asset, not the render's;
+    any render can select it, so deleting a render leaves it in place. The studio has no delete
+    action for an uploaded bed; it stays in storage until the operator removes it directly from
+    storage, which the single-operator design allows.
+  - a voice reference generated by the voice-sample feature, because it is one file shared by every
+    cast member, so freeing it with one member would destroy another member's (#1008);
+  - a cast member's recorded voice line (`cast/<id>/voice-line.wav`), which no record names (#1008);
+  - files orphaned by project or render deletes made before 2026-10-19, which no record points to
+    and which the delete path therefore cannot see (#1009).
+- **Content is kept while it is useful** (so projects and render history persist) and is not retained
+  for any other purpose. That is the commitment. Its one known exception is the orphan backlog above:
+  files stranded by deletes made before 2026-10-19 are still in storage until a broader sweep
+  reclaims them (issue #1009). Removal otherwise is by the delete actions above, or by the operator
+  directly. A separate storage-reclaim script exists for cast files only (the cast, generated-cast
+  and LoRA storage areas); an operator runs it by hand, it reports before it deletes, it is not
+  scheduled, and it does not sweep render files.
+- **On Conrad's private instance, operational logs are the Worker logs Cloudflare retains in that
+  Cloudflare account (Section 3.4).** The host that used to keep those logs for up to 90 days is
+  deleted. Each operator who runs their own log system sets that system's retention.
 - **There is no central backup that anyone sells, mirrors to third parties, or retains for
   analytics.** Each instance's data stays on that operator's infrastructure.
 
