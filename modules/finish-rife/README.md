@@ -37,6 +37,7 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
+| `style` | enum `photoreal` / `anime` | `photoreal` | still look. Anime keeps GFPGAN off unless you name a restorer. |
 | `interpolate` | bool | `true` | smooth motion (RIFE) |
 | `interpolation_factor` | int (1/2/4/8) | `2` | smoothness (`1` = off, else 2x/4x/8x) |
 | `face_restore` | enum `none` / `gfpgan` / `codeformer` | `none` | face restore model |
@@ -55,7 +56,7 @@ To self-host (service `vivijure-module-finish-rife`, bound into the core as `MOD
 
 ## Contract
 
-- **Hook**: `finish` (cardinality `chain`). `ui { section: "finish", icon: "wand", order: 10 }`.
+- **Hook**: `finish` (cardinality `chain`). `participation: opt_in`. `ui { section: "finish", icon: "wand", order: 10 }`.
 - **Input** (`FinishInput`): `shot_id`, `clip_key`, `src_fps`, `frames`, `width`, `height` (the
   optional `audio_key` is for an audio-consuming finish module; rife ignores it).
 - **Output** (`FinishOutput`): `shot_id`, `clip_key` (the finished clip), `out_fps`, `frames`,
