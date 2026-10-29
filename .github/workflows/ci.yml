@@ -284,6 +284,7 @@ jobs:
           scripts="
           containers/audio-beat-sync/test_url_guard.py
           containers/audio-mix/test_url_guard.py
+          containers/audio-mix/test_selftest.py
           containers/image-prep/test_url_guard.py
           containers/image-prep/test_decode_bound.py
           containers/image-prep/test_selftest.py

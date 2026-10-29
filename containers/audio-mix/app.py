@@ -203,11 +203,67 @@ async def mix(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _selftest():
+    """Local mix. No R2. Isolated CF Container proof (cf#1044)."""
+    work = tempfile.mkdtemp(prefix="amix-selftest-")
+    try:
+        dia = os.path.join(work, "dia.wav")
+        mus = os.path.join(work, "mus.wav")
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", dia,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2",
+                "-af", "volume=0.5",
+                "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", mus,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        tracks = [
+            {"path": dia, "role": "dialogue", "gainDb": 0.0},
+            {"path": mus, "role": "music", "gainDb": 0.0},
+        ]
+        out_path, result = mix_tracks(work, tracks, DEFAULT_TARGET_LUFS, "mp3")
+        size = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+        if size < 100:
+            raise RuntimeError("selftest output missing")
+        return {
+            "ok": True,
+            "applied": ["selftest:mix:duck"],
+            "bytes": size,
+            "durationSeconds": result["durationSeconds"],
+            "lufs": result["lufs"],
+            "ducked": result["ducked"],
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+async def selftest(_req):
+    """POST /selftest -- local mix. No R2. Isolated CF proof (cf#1044)."""
+    t0 = time.monotonic()
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(None, _selftest)
+    except Exception as e:  # noqa: BLE001 - surface processing failure as 500
+        log.exception("selftest failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    result["elapsedMs"] = _elapsed_ms(t0)
+    return web.json_response(result)
+
+
 app = web.Application(
     client_max_size=1024 * 1024,  # JSON bodies are small (URLs only)
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/mix", mix)
 # The single-bed "master the bed" pass (formerly POST /music-upscale here) was lifted out into its own
 # first-class module under the `master` hook (modules/audio-master + containers/audio-master). This
