@@ -1309,6 +1309,60 @@ def _burn_subtitles(src, dst, vf_filter, crf=18, preset="medium"):
     _run(cmd)
 
 
+def _selftest():
+    """Local subtitle burn. No R2. Isolated CF Container proof (cf#1040)."""
+    work = tempfile.mkdtemp(prefix="vf-selftest-")
+    try:
+        src = os.path.join(work, "src.mp4")
+        srt = os.path.join(work, "cue.srt")
+        out = os.path.join(work, "out.mp4")
+        try:
+            _run([
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1:r=8",
+                "-frames:v", "8",
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                src,
+            ], timeout=60)
+        except FfmpegTimeout as e:
+            raise _JobError(500, str(e)) from e
+        except subprocess.CalledProcessError as e:
+            raise _JobError(500, "selftest source encode failed") from e
+        with open(srt, "w", encoding="utf-8") as fh:
+            fh.write("1\n00:00:00,000 --> 00:00:00,800\nvivijure\n")
+        vf = _subtitle_filter(srt, {"font": "DejaVu Sans", "fontSize": 18})
+        try:
+            _run([
+                "ffmpeg", "-y", "-i", src,
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                out,
+            ], timeout=60)
+        except FfmpegTimeout as e:
+            raise _JobError(500, str(e)) from e
+        except subprocess.CalledProcessError as e:
+            raise _JobError(500, "selftest subtitle burn failed") from e
+        size = os.path.getsize(out) if os.path.isfile(out) else 0
+        if size < 100:
+            raise _JobError(500, "selftest output missing")
+        return {
+            "ok": True,
+            "applied": ["selftest:subtitle:burn"],
+            "frames": 8,
+            "bytes": size,
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+async def selftest(_req):
+    """POST /selftest -- local subtitle burn. No R2. Isolated CF proof (cf#1040)."""
+    try:
+        return web.json_response(await asyncio.to_thread(_selftest))
+    except _JobError as e:
+        return web.json_response({"ok": False, "error": e.message}, status=e.status)
+
+
 async def _subtitle_work(body):
     """The /subtitle work: burn a time-synced SRT onto the film and/or write a
     soft .srt sidecar. Shared by the synchronous route and the async job runner.
@@ -1702,6 +1756,7 @@ app = web.Application(
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/finish", finish)
 app.router.add_post("/overlay", overlay)
 app.router.add_post("/film-titles", film_titles)
