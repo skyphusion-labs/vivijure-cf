@@ -286,6 +286,7 @@ jobs:
           containers/audio-mix/test_url_guard.py
           containers/image-prep/test_url_guard.py
           containers/image-prep/test_decode_bound.py
+          containers/image-prep/test_selftest.py
           containers/video-finish/test_bearer.py
           containers/audio-mix/test_bearer.py
           containers/video-finish/test_url_guard.py
