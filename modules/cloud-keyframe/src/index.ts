@@ -51,6 +51,7 @@ import {
   clampRefsPerSlot,
   composePrompt,
   composeEditPrompt,
+  clampStyle,
   keyframeKey,
   stageRefKey,
   plateKey,
@@ -100,7 +101,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.8",
+  version: "0.1.9",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -124,6 +125,12 @@ export const MANIFEST: ModuleManifest = {
     // static enum cannot carry it. Grammar: none | first_keyframe | cast:<slot>. After plate-first,
     // shot 1 is the scene lock, so the default is first_keyframe (not a portrait borrow).
     film_ref: { type: "string", default: "first_keyframe", label: "film-wide reference lock (none | first_keyframe | cast:<slot>)" },
+    style: {
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+      label: "still look",
+    },
   },
   ui: { section: "keyframe", order: 5 },
 };
@@ -252,6 +259,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   const width = clampDim(req.config.width, 1344);
   const height = clampDim(req.config.height, 768);
   const refsPerSlot = clampRefsPerSlot(req.config.refs_per_slot);
+  const style = clampStyle(req.config.style);
 
   let tar: Uint8Array | null;
   try {
@@ -332,8 +340,8 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
 
   const shots: ShotPlan[] = selected.map((s) => ({
     shot_id: s.shot_id,
-    prompt: composePrompt(stylePrefix, s.prompt, s.slots, registry),
-    plate_prompt: composePrompt(stylePrefix, s.prompt, [], registry),
+    prompt: composePrompt(stylePrefix, s.prompt, s.slots, registry, style),
+    plate_prompt: composePrompt(stylePrefix, s.prompt, [], registry, style),
     slots: s.slots,
   }));
 
@@ -348,6 +356,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     done: [],
     total: shots.length,
     film_ref: filmPlan,
+    style,
   };
   try {
     await env.R2_RENDERS.put(stateKey(input.project, job_id), JSON.stringify(state), {
@@ -445,7 +454,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
         editRefs.push(b);
       }
       const editRes = await generateImageWithFlagRetry(
-        env, gatewayId, state.model, composeEditPrompt(shot.prompt), editRefs, state.width, state.height, shot.shot_id,
+        env, gatewayId, state.model, composeEditPrompt(shot.prompt, state.style), editRefs, state.width, state.height, shot.shot_id,
       );
       if (!editRes.ok) return editRes.retryable ? holdForRate(shot, editRes.error) : editRes;
       gen = editRes.gen;

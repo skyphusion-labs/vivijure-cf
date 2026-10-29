@@ -24,9 +24,17 @@ export function passthroughOutput(
   return out;
 }
 
+export const FINISH_STYLES = ["photoreal", "anime"] as const;
+export type FinishStyle = (typeof FINISH_STYLES)[number];
+
+export function clampStyle(v: unknown): FinishStyle {
+  return v === "anime" ? "anime" : "photoreal";
+}
+
 export interface UpscaleConfig {
   scale: number;   // final factor: 2 | 4
   model: string;   // RealESRGAN_x4plus (photoreal/general) | realesr-animevideov3 (anime/fast)
+  style: FinishStyle;
   /** Did the CALLER actually set `scale`, or is this the module default?
    *
    *  Load-bearing, and it is the third instance in this change of one rule: an absence must never
@@ -39,31 +47,47 @@ export interface UpscaleConfig {
    *  identical to sending nothing and billed a user for a job they did not choose. `scale` has a UI
    *  control, so setting it is a request actually made. */
   scaleExplicit: boolean;
+  /** Same rule as scale. An explicit model always wins. Style only fills a gap. */
+  modelExplicit: boolean;
 }
 
 const MODELS = ["realesr-animevideov3", "RealESRGAN_x4plus"] as const;
 
-// Default REVERTED to animevideov3: the #585 flip to RealESRGAN_x4plus CUDA-OOM'd every real
+// Default stays animevideov3: the #585 flip to RealESRGAN_x4plus CUDA-OOM'd every real
 // finish job ("tried to allocate 45.7 GiB" -- the natively-4x RRDB model on a 48fps rife'd 720p
 // clip; film-01bfda9c, all 5 shots). x4plus stays an explicit opt-in until the vivijure-upscale
 // handler gains tiled inference for it (upscale v0.2.9 work); re-flip only after that proves out
-// on a real render. The photoreal-texture rationale of #585 still stands -- the default follows
-// the handler's proven memory envelope, not the wish.
+// on a real render. Style only picks the default when the caller sent no model. Anime never
+// falls through to x4plus.
 export function defaultConfig(): UpscaleConfig {
-  return { scale: 2, model: "realesr-animevideov3", scaleExplicit: false };
+  return {
+    scale: 2,
+    model: "realesr-animevideov3",
+    style: "photoreal",
+    scaleExplicit: false,
+    modelExplicit: false,
+  };
+}
+
+export function styleDefaultModel(style: FinishStyle): string {
+  return style === "anime" ? "realesr-animevideov3" : "realesr-animevideov3";
 }
 
 export function coerceConfig(cfg: Record<string, unknown>): UpscaleConfig {
   const base = defaultConfig();
+  const style = clampStyle(cfg?.style);
   const raw = Number(cfg?.scale);
   // A usable number is a PREFERENCE. Garbage is not a choice: treating a typo as explicit would pin
   // the user to a factor they never expressed and suppress derivation on the strength of it.
   const scaleExplicit = Number.isFinite(raw) && raw > 0;
   const scale = scaleExplicit ? raw : base.scale;
+  const modelExplicit = (MODELS as readonly string[]).includes(String(cfg?.model));
   return {
     scale: scale >= 4 ? 4 : 2,   // integer factors; the handler clamps to 2/4 as well
-    model: (MODELS as readonly string[]).includes(String(cfg.model)) ? String(cfg.model) : base.model,
+    model: modelExplicit ? String(cfg.model) : styleDefaultModel(style),
+    style,
     scaleExplicit,
+    modelExplicit,
   };
 }
 

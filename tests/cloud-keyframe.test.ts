@@ -10,6 +10,7 @@ import {
   clampRefsPerSlot,
   composePrompt,
   composeEditPrompt,
+  clampStyle,
   keyframeKey,
   stageRefKey,
   plateKey,
@@ -132,6 +133,24 @@ describe("cloud-keyframe pure logic", () => {
   it("composePrompt handles a character-less shot (no style) cleanly", () => {
     const p = composePrompt("", "empty landscape, no one", [], {});
     expect(p).toBe("empty landscape, no one");
+  });
+
+  it("clampStyle keeps photoreal unless the value is anime", () => {
+    expect(clampStyle(undefined)).toBe("photoreal");
+    expect(clampStyle("anime")).toBe("anime");
+  });
+
+  it("composePrompt prepends an anime lead only on the anime path", () => {
+    const photo = composePrompt("", "empty landscape, no one", [], {}, "photoreal");
+    expect(photo).toBe("empty landscape, no one");
+    const anime = composePrompt("", "empty landscape, no one", [], {}, "anime");
+    expect(anime).toBe("anime illustration, cel-shaded, clean linework. empty landscape, no one");
+  });
+
+  it("composeEditPrompt names an anime still on the anime path", () => {
+    const p = composeEditPrompt("Wren runs down a wet alley", "anime");
+    expect(p).toMatch(/Create a new anime illustration still/);
+    expect(p).toMatch(/Wren runs down a wet alley/);
   });
 
   it("R2 key conventions match the contract (renders/<project>/keyframes/<shot>.png)", () => {
@@ -326,6 +345,11 @@ describe("cloud-keyframe conformance (the contract is the law)", () => {
     expect(MANIFEST.name).toBe("cloud-keyframe");
     expect(MANIFEST.api).toBe("vivijure-module/2");
     expect(MANIFEST.config_schema?.film_ref).toMatchObject({ type: "string", default: "first_keyframe" });
+    expect(MANIFEST.config_schema?.style).toMatchObject({
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+    });
   });
 
   it("a well-formed KeyframeOutput passes checkHookOutput('keyframe')", () => {
