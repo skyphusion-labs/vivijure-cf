@@ -8,9 +8,21 @@ import { resolveProjectForBundle } from "../../_shared/bundle-project";
 const TIERS = ["draft", "standard", "final"] as const;
 type Tier = (typeof TIERS)[number];
 
+export const KEYFRAME_STYLES = ["photoreal", "anime"] as const;
+export type KeyframeStyle = (typeof KEYFRAME_STYLES)[number];
+export const KEYFRAME_BASES: Record<KeyframeStyle, string> = {
+  photoreal: "SG161222/RealVisXL_V5.0",
+  anime: "cagliostrolab/animagine-xl-4.0",
+};
+
 /** Clamp a quality tier to one the backend accepts (default "final"). */
 export function clampTier(v: unknown): Tier {
   return (TIERS as readonly string[]).includes(v as string) ? (v as Tier) : "final";
+}
+
+/** Clamp still look. Unknown values keep the photoreal default. */
+export function clampStyle(v: unknown): KeyframeStyle {
+  return v === "anime" ? "anime" : "photoreal";
 }
 
 /** The render_overrides.keyframe block, built from the module config -- only fields the user set,
@@ -34,6 +46,8 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   // wire. Old backend images ignore these; new ones default scene_lock true / 0.70.
   if (typeof cfg.scene_lock === "boolean") o.scene_lock = cfg.scene_lock;
   num("canny_scale", "canny_scale");
+  // Anime stills swap the SDXL checkpoint. Photoreal keeps the backend default.
+  if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_BASES.anime;
   return o;
 }
 
@@ -51,7 +65,12 @@ export function buildPreviewBody(input: KeyframeInput, cfg: Record<string, unkno
   const kf = keyframeOverrides(cfg);
   if (Object.keys(kf).length) body.render_overrides = { keyframe: kf };
   if (input.shot_ids && input.shot_ids.length) body.process_shot_ids = input.shot_ids;
-  if (input.pretrained_loras && Object.keys(input.pretrained_loras).length) {
+  // A photoreal UNet adapter on Animagine is a silent degrade. Drop reused LoRAs on anime.
+  if (
+    clampStyle(cfg.style) !== "anime"
+    && input.pretrained_loras
+    && Object.keys(input.pretrained_loras).length
+  ) {
     body.pretrained_loras = { ...input.pretrained_loras };
   }
   return { input: body };
