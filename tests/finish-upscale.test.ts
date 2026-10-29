@@ -40,6 +40,13 @@ describe("finish-upscale: coerceConfig", () => {
     expect(coerceConfig({ model: "RealESRGAN_x4plus" }).model).toBe("RealESRGAN_x4plus");
     expect(coerceConfig({ model: "realesr-animevideov3" }).model).toBe("realesr-animevideov3");
   });
+
+  it("style fills the model only when the caller sent none (cf#1038)", () => {
+    expect(coerceConfig({ style: "anime" }).model).toBe("realesr-animevideov3");
+    expect(coerceConfig({ style: "photoreal" }).model).toBe("realesr-animevideov3");
+    expect(coerceConfig({ style: "anime", model: "RealESRGAN_x4plus" }).model).toBe("RealESRGAN_x4plus");
+    expect(coerceConfig({ style: "nope" }).style).toBe("photoreal");
+  });
 });
 
 describe("finish-upscale: upscaledKey", () => {
@@ -136,6 +143,16 @@ describe("finish-upscale: manifest conformance", () => {
   it("passes the conformance manifest checker", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
+  });
+
+  it("is opt_in and exposes a style knob (cf#1038)", () => {
+    expect(MANIFEST.participation).toBe("opt_in");
+    expect(MANIFEST.version).toBe("0.2.2");
+    expect(MANIFEST.config_schema?.style).toMatchObject({
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+    });
   });
   it("invoke success / error / degraded responses all pass the response checker", () => {
     expect(checkInvokeResponse({ ok: true, output: { shot_id: "s", clip_key: "k_up.mp4", out_fps: 16, frames: 80, applied: ["upscale:2x"] } }).pass).toBe(true);

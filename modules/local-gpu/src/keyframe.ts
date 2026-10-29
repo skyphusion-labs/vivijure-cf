@@ -8,8 +8,14 @@ function clampTier(v: unknown): Tier {
   return (TIERS as readonly string[]).includes(v as string) ? (v as Tier) : "final";
 }
 
-function keyframeOverrides(cfg: Record<string, unknown>): Record<string, number> {
-  const o: Record<string, number> = {};
+const KEYFRAME_ANIME_BASE = "cagliostrolab/animagine-xl-4.0";
+
+function clampStyle(v: unknown): "photoreal" | "anime" {
+  return v === "anime" ? "anime" : "photoreal";
+}
+
+function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
   const num = (k: string, src: string) => {
     if (typeof cfg[src] === "number" && Number.isFinite(cfg[src] as number)) o[k] = cfg[src] as number;
   };
@@ -18,6 +24,7 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, number>
   num("steps", "steps");
   num("guidance_scale", "guidance_scale");
   if (typeof cfg.seed === "number" && cfg.seed >= 0) o.seed = cfg.seed;
+  if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_ANIME_BASE;
   return o;
 }
 
@@ -34,7 +41,11 @@ export function buildPreviewBody(input: KeyframeInput, cfg: Record<string, unkno
   const kf = keyframeOverrides(cfg);
   if (Object.keys(kf).length) body.render_overrides = { keyframe: kf };
   if (input.shot_ids?.length) body.process_shot_ids = input.shot_ids;
-  if (input.pretrained_loras && Object.keys(input.pretrained_loras).length) {
+  if (
+    clampStyle(cfg.style) !== "anime"
+    && input.pretrained_loras
+    && Object.keys(input.pretrained_loras).length
+  ) {
     body.pretrained_loras = { ...input.pretrained_loras };
   }
   return { input: body };
