@@ -217,12 +217,53 @@ def _process(data, background):
     return buf.getvalue(), img.size[0], img.size[1]
 
 
+def _selftest_png():
+    """A small subject on a flat field. Enough for rembg. Not a studio portrait."""
+    from PIL import ImageDraw
+
+    img = Image.new("RGB", (256, 256), (0, 180, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse((48, 48, 208, 208), fill=(240, 240, 240))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _selftest():
+    """Local rembg run. No R2. Isolated CF Container proof (cf#1042)."""
+    data = _selftest_png()
+    _guard_decode_size(data)
+    out_bytes, width, height = _process(data, "alpha")
+    if len(out_bytes) < 100:
+        raise RuntimeError("selftest output missing")
+    return {
+        "ok": True,
+        "applied": ["selftest:portrait:rembg"],
+        "width": width,
+        "height": height,
+        "bytes": len(out_bytes),
+    }
+
+
+async def selftest(_req):
+    """POST /selftest -- local rembg run. No R2. Isolated CF proof (cf#1042)."""
+    t0 = time.monotonic()
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(None, _selftest)
+    except Exception as e:  # noqa: BLE001 - surface processing failure as 500
+        log.exception("selftest failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    result["elapsedMs"] = _elapsed_ms(t0)
+    return web.json_response(result)
+
+
 # cf#893: image-prep and audio-master had NO bearer gate at all, only url_guard. Three
 # vendored copies of bearer.py drifted and nobody was counting the containers that lacked one.
 # tests/container-bearer-gate.test.py now derives the list from app.py rather than carrying it,
 # so the next container inherits this requirement instead of having to remember it.
 app = web.Application(middlewares=[bearer_middleware])
 app.router.add_get("/health", health)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/portrait/prep", prep)
 
 if __name__ == "__main__":

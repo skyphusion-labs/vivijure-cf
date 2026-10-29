@@ -1,0 +1,28 @@
+# Isolated image-prep Cloudflare Container door. Not the studio Worker.
+# Deploy from an amd64 host (the Vultr proof box). This Mac is arm64.
+
+name = "vivijure-image-prep"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+# Door bearer. Value is a wrangler secret, never a [vars] entry.
+[secrets]
+required = ["LOCAL_FINISH_TOKEN"]
+
+[[containers]]
+class_name = "ImagePrepDoor"
+image = "../Dockerfile"
+image_build_context = ".."
+instance_type = "standard-1"
+max_instances = 2
+
+[[durable_objects.bindings]]
+name = "PREP"
+class_name = "ImagePrepDoor"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ImagePrepDoor"]
