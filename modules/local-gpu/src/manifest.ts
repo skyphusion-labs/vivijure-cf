@@ -12,7 +12,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // the Wan datacenter backend maps the tiers to its steps.
 export const MANIFEST: ModuleManifest = {
   name: "local-gpu",
-  version: "0.2.0",
+  version: "0.2.1",
   api: MODULE_API,
   hooks: ["motion.backend", "keyframe"],
   provides: [
@@ -30,6 +30,12 @@ export const MANIFEST: ModuleManifest = {
     steps: { type: "int", default: 30, min: 1, max: 60, label: "keyframe diffusion steps" },
     guidance_scale: { type: "float", default: 6.5, min: 0, max: 20, label: "keyframe guidance scale" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
+    style: {
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+      label: "keyframe still look",
+    },
   },
   ui: {
     section: "motion",
