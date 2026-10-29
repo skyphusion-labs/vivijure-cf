@@ -1,4 +1,4 @@
-rembg==2.0.85
+rembg==2.0.86
 onnxruntime==1.31.0
 Pillow==12.3.0
 aiohttp==3.14.5
