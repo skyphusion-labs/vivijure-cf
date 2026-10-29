@@ -29,6 +29,7 @@ describe("finish-rife: coerceConfig", () => {
     expect(c.face_restore).toBe("none");
     expect(c.face_fidelity).toBe(0.7);
     expect(c.only_faces).toBe(true);
+    expect(c.style).toBe("photoreal");
   });
 
   it("snaps interpolation_factor DOWN to the next lower power-of-two (floor)", () => {
@@ -52,6 +53,13 @@ describe("finish-rife: coerceConfig", () => {
     expect(coerceConfig({ face_restore: "unknown" }).face_restore).toBe("none");
     expect(coerceConfig({ face_restore: "gfpgan" }).face_restore).toBe("gfpgan");
     expect(coerceConfig({ face_restore: "codeformer" }).face_restore).toBe("codeformer");
+  });
+
+  it("anime style keeps GFPGAN off unless the caller names a restorer (cf#1038)", () => {
+    expect(coerceConfig({ style: "anime" }).face_restore).toBe("none");
+    expect(coerceConfig({ style: "anime", face_restore: "gfpgan" }).face_restore).toBe("gfpgan");
+    expect(coerceConfig({ style: "photoreal" }).face_restore).toBe("none");
+    expect(coerceConfig({ style: "nope" }).style).toBe("photoreal");
   });
 });
 
@@ -181,6 +189,16 @@ describe("finish-rife: manifest conformance", () => {
   it("passes the conformance manifest checker", () => {
     const checks = checkManifest(MANIFEST);
     expect(allPass(checks), JSON.stringify(failures(checks))).toBe(true);
+  });
+
+  it("is opt_in and exposes a style knob (cf#1038)", () => {
+    expect(MANIFEST.participation).toBe("opt_in");
+    expect(MANIFEST.version).toBe("0.1.3");
+    expect(MANIFEST.config_schema?.style).toMatchObject({
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+    });
   });
 
   it("invoke passthrough response passes the conformance response checker", () => {

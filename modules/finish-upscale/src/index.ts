@@ -66,7 +66,7 @@ interface Env {
 // against a transcribed copy in the test file. finish-lipsync already exported its own.
 export const MANIFEST: ModuleManifest = {
   name: "finish-upscale",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["finish"],
   // max_invocation_seconds: the ceiling THIS module declares to the core (core#182 / core#223).
@@ -96,12 +96,14 @@ export const MANIFEST: ModuleManifest = {
     { id: "upscale", label: "Upscale resolution (Real-ESRGAN)" },
   ],
   config_schema: {
+    style: { type: "enum", values: ["photoreal", "anime"], default: "photoreal", label: "still look" },
     scale: { type: "int",  default: 2, min: 2, max: 4, label: "upscale factor (explicit; omit to send delivery height)", enum_labels: { "2": "2x", "4": "4x" } },
     model: { type: "enum", values: ["realesr-animevideov3", "RealESRGAN_x4plus"], default: "realesr-animevideov3", label: "model" },
   },
   ui: { section: "finish", icon: "expand", order: 20 },
-  // cf#537: EXPLICIT, behaviour unchanged. See finish-rife for why silence is not an option here.
-  participation: "default",
+  // cf#1038: the owned upscale endpoint is gone. MuseTalk is gone. Default-on now degrades
+  // every film. opt_in means the chain skips this module unless a caller names it.
+  participation: "opt_in",
   // Declared artifact conventions (S6): the Real-ESRGAN container appends _up to the input clip key.
   finish_artifacts: {
     output_key: { kind: "append_suffix", suffix: "_up" },

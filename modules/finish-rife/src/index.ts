@@ -52,20 +52,14 @@ interface Env {
 // against a transcribed copy in the test file. finish-lipsync already exported its own.
 export const MANIFEST: ModuleManifest = {
   name: "finish-rife",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["finish"],
   // max_invocation_seconds: the ceiling THIS module declares to the core (core#182 / core#223).
   //
-  // BASIS (cf#762): UNIFORM BY DECLARATION, and deliberately so -- there is no worker limit to
-  // derive from. This module dispatches to the vivijure-backend endpoint (t9wcvlxh8rc5la, live), and
-  // that endpoint's per-request execution timeout reads timeout: 0 (RunPod v2 get-endpoint,
-  // 2026-09-27): no endpoint-level execution timeout is configured. vivijure-backend deploy.sh omits
-  // executionTimeoutMs entirely when EXECUTION_TIMEOUT_MS is empty, which is what its
-  // deploy.env.example ships, and this Worker sends no per-request policy.executionTimeout either.
-  // So nothing on the RunPod side terminates a long invocation, and a number claimed as "measured"
-  // here would be invented. 900 is held as a conservative declaration that matches finish-blender's
-  // configured door and stays under the crossover below.
+  // BASIS (cf#762 / cf#1038): UNIFORM BY DECLARATION. There is no worker to measure. The
+  // vivijure-backend endpoint this module dispatched to was deleted 2026-10-29. 900 stays a
+  // conservative declaration that matches finish-blender and stays under the crossover below.
   //
   // RAISING THIS IS A GLOBAL DECISION, NOT A LOCAL ONE. The core derives its phase stall ceiling
   // from the largest declared ceiling in the chain (vivijure-core phaseCeiling, src/film-model.ts):
@@ -84,6 +78,7 @@ export const MANIFEST: ModuleManifest = {
     { id: "face_restore", label: "Relock faces (GFPGAN)" },
   ],
   config_schema: {
+    style:                { type: "enum",  values: ["photoreal", "anime"], default: "photoreal", label: "still look" },
     interpolate:          { type: "bool",  default: true,   label: "smooth motion" },
     interpolation_factor: { type: "int",   default: 2, min: 1, max: 8, label: "smoothness", enum_labels: { "1": "off", "2": "2x", "4": "4x", "8": "8x" } },
     face_restore:         { type: "enum",  values: ["none", "gfpgan", "codeformer"], default: "none", label: "face restore" },
@@ -91,13 +86,9 @@ export const MANIFEST: ModuleManifest = {
     only_faces:           { type: "bool",  default: true,   label: "faces only (leave background untouched)" },
   },
   ui: { section: "finish", icon: "wand", order: 10 },
-  // cf#537: EXPLICIT rather than absent. Absent is treated as "default" by the core, so this line
-  // changes no behaviour -- interpolation keeps running for every caller that sends no selection.
-  // It is stated because the manifest default is PERMISSIVE, which makes silence at this layer a
-  // signal: a module that ought to be opt-in and says nothing keeps running unasked and nothing
-  // reports it. Conformance therefore requires an explicit value from any module serving a
-  // selectable hook, so the reader can tell "considered, runs by default" from "nobody thought".
-  participation: "default",
+  // cf#1038: the owned backend endpoint is gone. Default-on now degrades every film.
+  // opt_in means the chain skips this module unless a caller names it.
+  participation: "opt_in",
   // Declared artifact conventions (S6): the container names its output off the shot id, and its
   // applied marker depends on the interpolate knob. The core's R2 recovery reads THIS, not our name.
   finish_artifacts: {
