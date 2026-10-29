@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.2",
+  version: "0.3.3",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -54,6 +54,14 @@ export const MANIFEST: ModuleManifest = {
       min: 0,
       max: 1,
       label: "scene lock strength",
+    },
+    // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
+    // That checkpoint is not in the default bake. A worker without it fails honest.
+    style: {
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+      label: "still look",
     },
   },
   ui: { section: "keyframe", order: 10 },

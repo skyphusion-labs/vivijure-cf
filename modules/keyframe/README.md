@@ -47,6 +47,7 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | `steps` | int (1..60) | `30` | diffusion steps |
 | `guidance_scale` | float (0..20) | `6.5` | prompt adherence |
 | `seed` | int (>= -1) | `-1` | seed (`-1` = random) |
+| `style` | enum `photoreal` / `anime` | `photoreal` | still look. Photoreal uses RealVisXL. Anime uses Animagine XL 4.0. |
 
 To self-host (service `vivijure-module-keyframe`, bound into the core as `MODULE_KEYFRAME`):
 

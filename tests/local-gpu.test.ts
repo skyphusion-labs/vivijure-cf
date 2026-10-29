@@ -340,6 +340,17 @@ describe("local-gpu manifest conformance", () => {
     ]);
   });
 
+  it("builds anime preview with the Animagine base and drops photoreal LoRAs", () => {
+    const body = buildPreviewBody(
+      { project: "film", bundle_key: "bundles/film.tar.gz", pretrained_loras: { A: "loras/a.safetensors" } },
+      { style: "anime" },
+    );
+    expect(body.input.render_overrides).toEqual({
+      keyframe: { base_model: "cagliostrolab/animagine-xl-4.0" },
+    });
+    expect(body.input.pretrained_loras).toBeUndefined();
+  });
+
   it("declares honest two-door ui framing: local locality + cost + blurb + real limits (#379)", () => {
     expect(MANIFEST.ui?.locality).toBe("local"); // load-bearing: drives the door tag + classification
     expect(typeof MANIFEST.ui?.cost).toBe("string");
