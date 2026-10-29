@@ -24,8 +24,8 @@ import { fileURLToPath } from "node:url";
 
 const MANIFESTS = [
   { name: "finish-blender", m: BLENDER, expect: "opt_in" as const },
-  { name: "finish-rife", m: RIFE, expect: "default" as const },
-  { name: "finish-upscale", m: UPSCALE, expect: "default" as const },
+  { name: "finish-rife", m: RIFE, expect: "opt_in" as const },
+  { name: "finish-upscale", m: UPSCALE, expect: "opt_in" as const },
 ];
 
 describe("cf#537: the SHIPPED finish manifests declare their participation", () => {
@@ -45,9 +45,13 @@ describe("cf#537: the SHIPPED finish manifests declare their participation", () 
     expect(declared.length, `${declared.length} of ${MANIFESTS.length} finish manifests declare participation`).toBe(3);
   });
 
-  it("blender is opt_in; rife and upscale stay default", () => {
+  it("all three finish modules are opt_in (cf#1038: owned GPU doors are gone)", () => {
     const optIn = MANIFESTS.filter((x) => x.m.participation === "opt_in").map((x) => x.name);
-    expect(optIn, `1 of ${MANIFESTS.length} is opt_in`).toEqual(["finish-blender"]);
+    expect(optIn, `${MANIFESTS.length} of ${MANIFESTS.length} are opt_in`).toEqual([
+      "finish-blender",
+      "finish-rife",
+      "finish-upscale",
+    ]);
     for (const { name, m, expect: want } of MANIFESTS) {
       expect(m.participation, `${name}`).toBe(want);
     }
@@ -98,10 +102,10 @@ const SERVING = [
 const names = (ms: { name: string }[]) => ms.map((m) => m.name);
 
 describe("cf#537: the shipped manifests produce the ruled behaviour end to end", () => {
-  it("THE TICKET: with no selection, default finish is rife+upscale (blender opt_in)", () => {
+  it("THE TICKET: with no selection, default finish is empty (all three opt_in, cf#1038)", () => {
     const got = selectForChain(SERVING, "finish", undefined);
-    expect(names(got.modules)).toEqual(["finish-rife", "finish-upscale"]);
-    expect(got.modules.length, `2 of ${SERVING.length} shipped finish modules run by default`).toBe(2);
+    expect(names(got.modules)).toEqual([]);
+    expect(got.modules.length, `0 of ${SERVING.length} shipped finish modules run by default`).toBe(0);
   });
 
   it("naming blender runs it -- opt_in is 'not unless asked', never 'not ever'", () => {
@@ -156,8 +160,9 @@ describe("cf#537 DOOR 2 (agent / MCP / Slate): the body's finish_select is VALID
   });
 
   it("REFUSES malformed shapes rather than inventing a mode", () => {
-    // Every one of these resolves to ABSENT, which is the default-participation set -- still without
-    // blender. The safe direction: a garbage payload must never re-enable an opt_in module.
+    // Every one of these resolves to ABSENT, which is the default-participation set.
+    // After cf#1038 that set is empty. The safe direction: a garbage payload must
+    // never re-enable an opt_in module.
     for (const bad of [undefined, null, "finish-blender", ["finish-blender"], 7,
                        { modules: ["finish-blender"] }, { mode: "sideways" }, { mode: "named" }]) {
       expect(door(bad), `payload ${JSON.stringify(bad)} must not parse`).toBeUndefined();
