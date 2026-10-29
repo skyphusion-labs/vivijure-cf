@@ -283,6 +283,7 @@ jobs:
           set -eu
           scripts="
           containers/audio-beat-sync/test_url_guard.py
+          containers/audio-beat-sync/test_selftest.py
           containers/audio-mix/test_url_guard.py
           containers/audio-mix/test_selftest.py
           containers/image-prep/test_url_guard.py
