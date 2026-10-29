@@ -33,6 +33,16 @@ export function clampRefsPerSlot(v: unknown): number {
   return Math.max(1, Math.min(4, n));
 }
 
+export const KEYFRAME_STYLES = ["photoreal", "anime"] as const;
+export type KeyframeStyle = (typeof KEYFRAME_STYLES)[number];
+
+/** Clamp still look. Unknown values keep the photoreal default. */
+export function clampStyle(v: unknown): KeyframeStyle {
+  return v === "anime" ? "anime" : "photoreal";
+}
+
+const ANIME_LEAD = "anime illustration, cel-shaded, clean linework. ";
+
 /** Compose one shot's gen prompt: the project style_prefix (when set) + the scene prompt + the
  *  identity text of each character in the shot (name + bible, capped). The reference PORTRAIT carries
  *  identity; this text reinforces it, the way cast-image folds the character bible into its prompts. */
@@ -41,7 +51,9 @@ export function composePrompt(
   scenePrompt: string,
   shotSlots: string[],
   registry: Record<string, RegistryCharacter>,
+  style?: unknown,
 ): string {
+  const lookLead = clampStyle(style) === "anime" ? ANIME_LEAD : "";
   const lead = stylePrefix.trim() ? `${stylePrefix.trim()}. ` : "";
   const ids: string[] = [];
   for (const slot of shotSlots) {
@@ -54,15 +66,18 @@ export function composePrompt(
     if (piece) ids.push(piece);
   }
   const idText = ids.length ? ` Featuring ${ids.join("; ")}.` : "";
-  return `${lead}${scenePrompt.trim()}${idText}`;
+  return `${lookLead}${lead}${scenePrompt.trim()}${idText}`;
 }
 
 /** Edit pass for Workers AI nano-banana-2: the first image is the scene plate, later
  *  images are faces. Do not retouch a portrait into a new still. */
-export function composeEditPrompt(scenePrompt: string): string {
+export function composeEditPrompt(scenePrompt: string, style?: unknown): string {
   const scene = scenePrompt.trim();
+  const kind = clampStyle(style) === "anime"
+    ? "anime illustration still"
+    : "cinematic film still";
   return (
-    "Create a new cinematic film still from this description. "
+    `Create a new ${kind} from this description. `
     + "This is a new film still. The people stand in the location in the first image. "
     + "Keep their faces, hair, skin, and wardrobe. "
     + "Do not move them onto a studio backdrop or grey paper. "
@@ -186,6 +201,8 @@ export interface CloudKeyframeState {
   total: number;          // how many were requested (for progress)
   /** cp#32: the film-wide reference plan; absent on pre-cp#32 state docs -> treated as {mode:none}. */
   film_ref?: FilmRefPlan;
+  /** Still look. Absent on older state docs; treat as photoreal. */
+  style?: KeyframeStyle;
 }
 
 /** Select the scenes to render: the requested subset (`shot_ids`) or every scene in the bundle. */

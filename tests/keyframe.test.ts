@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampTier, buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS } from "../modules/keyframe/src/keyframe";
+import { clampTier, clampStyle, KEYFRAME_BASES, buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS } from "../modules/keyframe/src/keyframe";
 import { MANIFEST } from "../modules/keyframe/src/manifest";
 
 describe("keyframe pure logic", () => {
@@ -102,6 +102,33 @@ describe("keyframe pure logic", () => {
     expect(input.pretrained_loras).toEqual({ A: "loras/a.safetensors" });
   });
 
+  it("clampStyle keeps photoreal unless the value is anime", () => {
+    expect(clampStyle(undefined)).toBe("photoreal");
+    expect(clampStyle("photoreal")).toBe("photoreal");
+    expect(clampStyle("oil")).toBe("photoreal");
+    expect(clampStyle("anime")).toBe("anime");
+  });
+
+  it("buildPreviewBody maps anime style to the Animagine base and drops photoreal LoRAs", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b", pretrained_loras: { A: "loras/a.safetensors" } },
+      { style: "anime" },
+    );
+    expect(input.render_overrides).toEqual({
+      keyframe: { base_model: KEYFRAME_BASES.anime },
+    });
+    expect(input.pretrained_loras).toBeUndefined();
+  });
+
+  it("buildPreviewBody leaves photoreal on the backend default and keeps reused LoRAs", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b", pretrained_loras: { A: "loras/a.safetensors" } },
+      { style: "photoreal" },
+    );
+    expect(input.render_overrides).toBeUndefined();
+    expect(input.pretrained_loras).toEqual({ A: "loras/a.safetensors" });
+  });
+
   it("parseKeyframes reads the backend result shape (keyframes[].key) into KeyframeShot", () => {
     const result = {
       project: "neon_film",
@@ -188,7 +215,12 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.2");
+    expect(MANIFEST.version).toBe("0.3.3");
+    expect(MANIFEST.config_schema?.style).toMatchObject({
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+    });
     expect(MANIFEST.config_schema?.scene_lock).toMatchObject({
       type: "bool",
       default: true,

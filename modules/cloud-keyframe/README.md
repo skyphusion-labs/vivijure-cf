@@ -70,6 +70,7 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | `width` | int (512..1536) | `1344` | keyframe width. 1344x768 is 1.75 (7:4), NOT 16:9 (1.7778); i2v doors conform the clip to the keyframe, so the chain runs at 1.75. See cf#945. |
 | `height` | int (512..1536) | `768` | keyframe height |
 | `refs_per_slot` | int (1..4) | `1` | reference portraits per character (more = stronger identity, larger payload) |
+| `style` | enum `photoreal` / `anime` | `photoreal` | still look. Anime adds an illustration lead to each prompt. |
 
 To self-host (service `vivijure-module-cloud-keyframe`, bound into the core as `MODULE_CLOUD_KEYFRAME`):
 
