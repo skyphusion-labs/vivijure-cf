@@ -200,6 +200,47 @@ async def master(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _selftest():
+    """Local master. No R2. Isolated CF Container proof (cf#1046)."""
+    work = tempfile.mkdtemp(prefix="amaster-selftest-")
+    try:
+        src = os.path.join(work, "lo.wav")
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", "sine=frequency=330:duration=2:sample_rate=22050",
+                "-af", "volume=-26dB", "-ac", "1", src,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        out_path, result = master_bed(work, src, DEFAULT_TARGET_LUFS, True, "wav")
+        size = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+        if size < 100:
+            raise RuntimeError("selftest output missing")
+        return {
+            "ok": True,
+            "applied": ["selftest:master:loudnorm"] + list(result.get("applied") or []),
+            "bytes": size,
+            "durationSeconds": result["durationSeconds"],
+            "lufs": result["lufs"],
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+async def selftest(_req):
+    """POST /selftest -- local master. No R2. Isolated CF proof (cf#1046)."""
+    t0 = time.monotonic()
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(None, _selftest)
+    except Exception as e:  # noqa: BLE001 - surface processing failure as 500
+        log.exception("selftest failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    result["elapsedMs"] = _elapsed_ms(t0)
+    return web.json_response(result)
+
+
 # cf#893: image-prep and audio-master had NO bearer gate at all, only url_guard. Three
 # vendored copies of bearer.py drifted and nobody was counting the containers that lacked one.
 # tests/container-bearer-gate.test.py now derives the list from app.py rather than carrying it,
@@ -209,6 +250,7 @@ app = web.Application(
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/master", master)
 
 if __name__ == "__main__":
