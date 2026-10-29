@@ -321,8 +321,11 @@ jobs:
           # exits 0 and looks identical to a green run. This is that floor for a script runner --
           # assert the count actually executed, not just that the loop returned without an error.
           echo "ran ${ran} container test scripts"
-          if [ "$ran" -ne 21 ]; then
-            echo "::error::expected exactly 21 container test scripts to run, ran ${ran}"
+          # A fixed total cannot survive two isolation PRs that each add one script.
+          # A missing listed file already fails above. This only refuses a loop that
+          # ran nothing, which exits 0 and looks the same as a green run.
+          if [ "$ran" -lt 1 ]; then
+            echo "::error::container test runner executed no scripts"
             exit 1
           fi
 
