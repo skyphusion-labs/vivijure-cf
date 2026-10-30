@@ -6,7 +6,7 @@
 // wan.ts). What is unique here is the PAIR of flags, not either half -- driving_audio true AND
 // native_audio false, so there is no invent-speech fallback and a shot with no line is refused
 // below rather than voiced by a stranger. alibaba-wan is native_audio true, so it voices it.
-// Async (same shape as seedance): GET /module.json, POST /invoke (submit -> poll token), POST /poll
+// Async (same shape as alibaba-wan): GET /module.json, POST /invoke (submit -> poll token), POST /poll
 // (check GET /status, finalize to R2 on completion). Failures are DATA.
 
 import {
