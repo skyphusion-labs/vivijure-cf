@@ -122,9 +122,9 @@ export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
 # the studio hardcodes no image model names, so GET /api/models projects its image rows from this
 # module's manifest. Omit it and the studio deploys with an honestly EMPTY image catalog and an image
 # picker that offers nothing -- which is what this list did until the omission was caught.
-STANDARD_MODULES="own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
-image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo vidu-q3 \
-alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video film-titles subtitle beat-sync audio-master"
+STANDARD_MODULES="own-gpu kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
+image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo \
+alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video cf-vidu-q3-turbo film-titles subtitle beat-sync audio-master"
 # alibaba-wan-lora is DELISTED for v1.0 (#771): custom-LoRA path unverified; source kept, re-add when fixed.
 # SATELLITES = the 1 opt-in GPU finish module, on its own separate RunPod endpoint.
 # finish-lipsync was the third; MuseTalk is ruled out permanently (cf#783) and its endpoint

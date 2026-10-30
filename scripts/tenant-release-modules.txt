@@ -10,13 +10,10 @@ dialogue-gen
 film-titles
 finish-rife
 finish-upscale
-google-veo
 image-generate
 keyframe
 minimax-hailuo
 narration-gen
 own-gpu
 plan-enhance
-seedance
 subtitle
-vidu-q3

@@ -43,3 +43,8 @@ cf-kling-v4 adding cf#1073
 
 # cf-minimax-h3 is on disk in this repo. The hub row is not on vivijure main yet.
 cf-minimax-h3 adding cf#1074
+
+cf-vidu-q3-turbo adding cf#1075
+google-veo retiring cf#1075
+seedance retiring cf#1075
+vidu-q3 retiring cf#1075

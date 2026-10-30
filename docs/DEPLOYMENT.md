@@ -459,9 +459,9 @@ npx wrangler d1 execute vivijure-studio --remote \
 #     a binding to a not-yet-deployed module makes the core deploy fail).
 # The standard modules (this list mirrors STANDARD_MODULES in deploy.sh as of v1.33.9; the last four
 # are the media-stack finish modules, reached over the media *_URL vars):
-for m in own-gpu seedance kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
-         image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo google-veo \
-         vidu-q3 alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video \
+for m in own-gpu kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
+         image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo \
+         alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video cf-vidu-q3-turbo \
          film-titles subtitle beat-sync audio-master; do
   sh scripts/fill-module-placeholders.sh modules/$m/wrangler.toml
   npx wrangler deploy -c modules/$m/wrangler.toml

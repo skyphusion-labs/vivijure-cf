@@ -14,11 +14,9 @@ import { describe, it, expect } from "vitest";
 
 import alibabaWanWorker from "../modules/alibaba-wan/src/index";
 import alibabaWanLoraWorker from "../modules/alibaba-wan-lora/src/index";
-import googleVeoWorker from "../modules/google-veo/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
-import seedanceWorker from "../modules/seedance/src/index";
-import viduQ3Worker from "../modules/vidu-q3/src/index";
+import cfViduQ3TurboWorker from "../modules/cf-vidu-q3-turbo/src/index";
 import dialogueGenWorker from "../modules/dialogue-gen/src/index";
 import musicGenWorker from "../modules/music-gen/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
@@ -56,14 +54,9 @@ const get = async (worker: Worker, env: Record<string, unknown>, path = "/ready"
 const RUNPOD_ONLY: { name: string; worker: Worker }[] = [
   { name: "alibaba-wan", worker: alibabaWanWorker as unknown as Worker },
   { name: "alibaba-wan-lora", worker: alibabaWanLoraWorker as unknown as Worker },
-  { name: "google-veo", worker: googleVeoWorker as unknown as Worker },
-  // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
-  // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
-  // directory came back; it did not just get re-enabled.
+  // cf#921: `kling` is RETIRED. cf#1075 retired seedance, google-veo, and vidu-q3.
   { name: "minimax-hailuo", worker: minimaxHailuoWorker as unknown as Worker },
   { name: "narration-gen", worker: narrationGenWorker as unknown as Worker },
-  { name: "seedance", worker: seedanceWorker as unknown as Worker },
-  { name: "vidu-q3", worker: viduQ3Worker as unknown as Worker },
 ];
 
 describe.each(RUNPOD_ONLY)("$name: GET /ready (RunPod key, hard-required)", ({ name, worker }) => {
@@ -116,6 +109,7 @@ const GATEWAY_REQUIRED: { name: string; worker: Worker }[] = [
   { name: "cf-seedance", worker: cfSeedanceWorker as unknown as Worker },
   { name: "cf-grok-video", worker: cfGrokVideoWorker as unknown as Worker },
   { name: "cf-flux-3-video", worker: cfFlux3VideoWorker as unknown as Worker },
+  { name: "cf-vidu-q3-turbo", worker: cfViduQ3TurboWorker as unknown as Worker },
 ];
 
 describe.each(GATEWAY_REQUIRED)("$name: GET /ready (GATEWAY_ID, hard-required)", ({ name, worker }) => {
@@ -263,6 +257,6 @@ describe("cf#295: none of the newly-covered modules 404 on GET /ready", () => {
     expect(status).toBe(200);
   });
   it("the roster itself is the expected 23 (positive control on this file's own coverage)", () => {
-    expect(ALL.length).toBe(23);
+    expect(ALL.length).toBe(21);
   });
 });
