@@ -440,7 +440,81 @@
       : n + " shots finished with limits (the polish step passed those clips through).";
   }
 
+  // core#377: the finish steps that did not run, or null. A `done` film with any of these is NOT a clean
+  // finish, so this is read before any other signal and no other signal can clear it.
+  function incompleteFrom(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+    var list = output.finish_incomplete;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (!e || typeof e !== "object") continue;
+      out.push({
+        stage: typeof e.stage === "string" ? e.stage : "finish",
+        step: typeof e.step === "string" && e.step ? e.step : "a finish step",
+        kept: typeof e.kept === "string" && e.kept ? e.kept : "",
+        detail: typeof e.detail === "string" ? e.detail : "",
+        shot_id: typeof e.shot_id === "string" ? e.shot_id : "",
+      });
+    }
+    // A list that is present but unreadable still says something is missing. Never read it as clean.
+    return out.length ? out : [{ stage: "finish", step: "a finish step", kept: "", detail: "", shot_id: "" }];
+  }
+
+  // One sentence for the warning, naming each step and what is kept.
+  function incompleteSummary(list) {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    var seen = {};
+    var parts = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      var key = e.step + "|" + e.kept;
+      if (seen[key]) continue;
+      seen[key] = true;
+      parts.push(e.step + (e.kept ? " did not run; you have " + e.kept : " did not run"));
+    }
+    return parts.join(". ") + ". Retry runs these steps again without re-rendering any clip.";
+  }
+
+  // The last retry did not finish, so the film stands as it was. Null when there was none.
+  function retryFailedNote(output) {
+    var f = output && output.finish_retry_failed;
+    if (!f || typeof f !== "object") return null;
+    return "The last retry did not finish, so your film is unchanged" + (typeof f.reason === "string" && f.reason ? ": " + f.reason : "") + ".";
+  }
+
+  // The status line for a COMPLETED render. The one decision point, so a test can hold it.
+  function completedStatus(output, limited) {
+    if (incompleteFrom(output)) return { text: "completed, steps missing", tone: "warn", retry: true };
+    return limited
+      ? { text: "completed with limits", tone: "warn", retry: false }
+      : { text: "completed", tone: "success", retry: false };
+  }
+
+  // The retry route takes a film-* id and refuses anything else, so a leftover scatter row names its
+  // missing steps and offers no button it would refuse.
+  function canRetryFinish(jobId) {
+    return typeof jobId === "string" && jobId.indexOf("film-") === 0;
+  }
+
+  // "waiting, position 3 of 5" for a film in the finish queue, or null.
+  function waitingLabel(output) {
+    var w = output && output.finish_waiting;
+    if (!w || typeof w !== "object") return null;
+    if (typeof w.position === "number") {
+      return "waiting for a finish slot, position " + w.position + (typeof w.depth === "number" ? " of " + w.depth : "");
+    }
+    return "waiting" + (typeof w.step === "string" && w.step ? " on " + w.step : " for the finish tier") + ", will retry";
+  }
+
   return {
+    incompleteFrom: incompleteFrom,
+    canRetryFinish: canRetryFinish,
+    retryFailedNote: retryFailedNote,
+    incompleteSummary: incompleteSummary,
+    completedStatus: completedStatus,
+    waitingLabel: waitingLabel,
     NO_REASON: NO_REASON,
     DEGRADE_BANDS: {
       UNMEASURED: BAND_UNMEASURED,

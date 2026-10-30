@@ -56,6 +56,13 @@ export interface Env {
   // different problems, and both are required.
   FINISH_CONTAINER: DurableObjectNamespace<import("./finish-container").FinishContainer>;
 
+  // FIFO admission to the finish tier (core src/finish-queue.ts). Both optional plain vars.
+  // FINISH_QUEUE_SLOTS: jobs the door can run at once, default RESERVED_JOB_INSTANCES.
+  // FINISH_QUEUE_PER_KEY_CAP: most slots one project may hold, so a batch or a heavy project cannot
+  // take them all while others wait. Unset means no cap, which is plain FIFO.
+  FINISH_QUEUE_SLOTS?: string;
+  FINISH_QUEUE_PER_KEY_CAP?: string;
+
   // R2 S3-compatible creds for SigV4 presigning (r2-presign.ts): the CPU containers have no R2
   // binding, so the Worker presigns short-lived GET/PUT URLs. ACCESS/SECRET are secrets; ENDPOINT +
   // BUCKET are vars. Optional so a presign-free deploy still typechecks.

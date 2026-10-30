@@ -79,5 +79,6 @@ export interface MasterInput {
 export interface MasterOutput {
   audio_key: string;   // R2 key of the MASTERED bed (may equal the input if it passed through)
   applied: string[];   // ["music-upscale:soxr48k", "loudnorm:-14LUFS"] on success; ["passthrough:<reason>"] otherwise
+  failure?: { kind: "transient" | "permanent"; code: string; detail?: string }; // core#377: why the step did not run
   degraded?: string;   // reason, set ONLY on a real passthrough degrade (never on success); see #77
 }

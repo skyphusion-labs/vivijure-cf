@@ -43,6 +43,7 @@ function vfCall(env: Env) {
     return fetch(vfBase(env) + path, init);
   };
 }
+import { FAILURE_BAD_RESPONSE, FAILURE_NOT_CONFIGURED, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import { finishAffinity, withAffinity } from "../../_shared/finish-affinity";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
@@ -92,7 +93,7 @@ async function submitAsync(
   env: Env,
   spec: Record<string, unknown>,
   corr: VpcCorr = {},
-): Promise<string | null> {
+): Promise<string | "capacity" | null> {
   const timed = await timedVpcFetch(
     vfCall(env),
     { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
@@ -108,6 +109,9 @@ async function submitAsync(
     },
   );
   if (timed.err || !timed.resp) return null;
+  // No slot: tell the core, so the film waits. The sync route is the same container and would only
+  // queue a second encode behind a refusal.
+  if (timed.resp.status === 429) return "capacity";
   if (timed.resp.status !== 202) return null;
   try {
     const body = (await timed.resp.json()) as { ok?: boolean; jobId?: string };
@@ -137,16 +141,16 @@ async function invokeSync(
       contextJobId: corr.contextJobId,
     },
   );
-  if (timed.err || !timed.resp) return passthrough(input, "passthrough:container-unreachable", true);
+  if (timed.err || !timed.resp) return withFailure(passthrough(input, "passthrough:container-unreachable", true), FAILURE_UNREACHABLE);
   const resp = timed.resp;
-  if (!resp.ok) return passthrough(input, "passthrough:container-failed", true);
+  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), failureFromStatus(resp.status));
   let body: { ok?: boolean; key?: string; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
-    return passthrough(input, "passthrough:container-bad-response", true);
+    return withFailure(passthrough(input, "passthrough:container-bad-response", true), FAILURE_BAD_RESPONSE);
   }
-  if (!body.ok) return passthrough(input, "passthrough:container-failed", true);
+  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), FAILURE_REFUSED);
   // Report prepend_seconds only when an opening TITLE card was actually rendered (it shifts the final
   // film`s timeline); credits are appended at the end and never shift cues (#663). titleSeconds is 0 when
   // there is no title card, so this passes through as no prepend.
@@ -169,7 +173,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
     return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key" };
   }
   if (!hasCards(input)) return passthrough(input, "noop:no-cards");
-  if (!vfBase(env)) return passthrough(input, "passthrough:no-video-finish-url", true);
+  if (!vfBase(env)) return withFailure(passthrough(input, "passthrough:no-video-finish-url", true), FAILURE_NOT_CONFIGURED);
 
   const cfg = coerceConfig(req.config);
   const spec = buildContainerSpec(input, cfg);
@@ -183,6 +187,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   // container (back-compat). A sync fallback that itself fails soft-degrades (#190), never drops the film.
   const titleSeconds = hasTitleCard(input) ? cfg.title_seconds : 0; // #663: shifts the final timeline
   const jobId = await submitAsync(env, spec, corr);
+  if (jobId === "capacity") return withFailure(passthrough(input, "passthrough:container-capacity", true), failureFromStatus(429));
   if (jobId) {
     return { ok: true, pending: true, poll: encodePoll({ jobId, affinity: finishAffinity(corr), filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0, titleSeconds }) };
   }

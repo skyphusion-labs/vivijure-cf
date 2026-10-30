@@ -41,6 +41,8 @@ import { isStorageSubmitRoute } from "@skyphusion-labs/vivijure-core/storage-quo
  * pins that so an unanchored regex cannot quietly widen this.
  */
 export const PANEL_STORAGE_SUBMIT_PATTERNS: RegExp[] = [
+  // A finish retry writes a whole new film beside the old one, and only deletes the old one if it finishes.
+  /^\/api\/render\/film\/[^/]+\/finish-retry$/,
   // Re-submits a stored row through startFilmJob: a full film of keyframes and clips, which is the
   // single largest write the studio performs. This is also the route cf#423 added to SPEND_PATTERNS
   // late, so it has now been missed by both meters.
