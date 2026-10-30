@@ -161,6 +161,6 @@ Substance answered: both slugs resolve (401 on free `/health`) and have publishe
 ## A published schema can disagree with the live validator
 
 `kling-video-o1-r2v` answers 401 and is listed live. RunPod's model page lists `input.video` as
-optional. A job we submitted without it failed with `Kling_Video_O1_R2VInput`, `video`, `Field required`
-(cf#1057). The `/openapi.json` under an endpoint is generic: it also answers 200 for a slug that does
+optional. Two real jobs without it, film-c732d4e6 and film-39bfc68a, failed with
+`Kling_Video_O1_R2VInput`, `video`, `Field required` (cf#1057). The live validator is the contract. The `/openapi.json` under an endpoint is generic: it also answers 200 for a slug that does
 not exist, so it says nothing about one model's inputs.
