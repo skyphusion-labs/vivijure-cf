@@ -1,4 +1,4 @@
-// cf#1074. Silent clips. Start still, optional end still. Not a default.
+// cf#1074. Clips with the model's sound. Start still, optional end still. Not a default.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
@@ -112,6 +112,15 @@ describe("cf-minimax-h3 params (cf#1074)", () => {
       task: { status: "failed", content: { url: "https://cdn.example/a.mp4" } },
     })).toBeNull();
     expect(parseVideoUrl({ result: { video: "https://cdn.example/b.mp4" } })).toBeNull();
+    // The shape the AI Gateway logged for a real completed run, 2026-10-30.
+    expect(parseVideoUrl({
+      state: "Completed",
+      result: { task: { id: "458073170706797", model: "MiniMax-H3", status: "succeeded", content: { url: "https://cdn.example/c.mp4" }, resolution: "768P", duration: 5 } },
+    })).toBe("https://cdn.example/c.mp4");
+    expect(parseVideoUrl({
+      state: "Completed",
+      result: { task: { status: "failed", content: { url: "https://cdn.example/c.mp4" } } },
+    })).toBeNull();
   });
 
   it("measures clip timing from the file", () => {
@@ -124,11 +133,11 @@ describe("cf-minimax-h3 params (cf#1074)", () => {
 });
 
 describe("cf-minimax-h3 is installable and is not a default", () => {
-  it("declares a silent first-and-last envelope", async () => {
+  it("declares the model's soundtrack and a first-and-last envelope", async () => {
     const m = await manifest();
     expect(m.name).toBe("cf-minimax-h3");
     expect(m.hooks).toContain("motion.backend");
-    expect(m.usage.native_audio).toBe(false);
+    expect(m.usage.native_audio).toBe(true);
     expect(m.usage.driving_audio).toBeUndefined();
     expect(m.usage.scatter_native_audio).toBe(false);
     expect(m.usage.first_last).toBe(true);
@@ -141,7 +150,8 @@ describe("cf-minimax-h3 is installable and is not a default", () => {
     expect(m.config_schema.resolution.values).toEqual(["768P", "2K"]);
     expect(m.config_schema.ratio.default).toBe("adaptive");
     expect(m.config_schema.ratio.values).toContain("9:16");
-    expect(m.ui.limits.join(" ")).toMatch(/No spoken lines/);
+    expect(m.ui.limits.join(" ")).toMatch(/returns its own soundtrack/);
+    expect(m.ui.limits.join(" ")).toMatch(/not measured/);
     expect(m.ui.limits.join(" ")).toMatch(/reference roles/);
     expect(m.ui.cost).toMatch(/0\.08/);
     expect(m.ui.cost).toMatch(/0\.13/);

@@ -131,7 +131,7 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     name: "cf-minimax-h3",
     worker: cfMinimaxH3Worker as unknown as Worker,
     usage: {
-      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
       min_seconds: 4, max_seconds: 15, first_last: true,
     },
   },

@@ -75,10 +75,10 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-minimax-h3",
-  version: "0.1.0",
+  version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Silent clips (start and end stills)" }],
+  provides: [{ id: "i2v-cloud", label: "Clips with the model's sound (start and end stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["768P", "2K"], default: "768P", label: "resolution" },
     ratio: {
@@ -93,24 +93,23 @@ const MANIFEST: ModuleManifest = {
     order: 96,
     locality: "cloud",
     cost: "$0.08/s at 768P, $0.13/s at 2K",
-    blurb: "Silent clips from your stills, 4 to 15 seconds. The next still can be the end frame.",
+    blurb: "Clips with the model's own sound from your stills, 4 to 15 seconds. The next still can be the end frame.",
     limits: [
       "4 to 15 second clips. Whole seconds.",
-      "Silent motion",
-      "No spoken lines. A board with a line needs a talking door",
+      "The model returns its own soundtrack. No field turns it off, and we keep it",
+      "Whether it speaks a storyboard line is not measured. Use a talking door for dialogue",
       "Start still, and the next shot's start still when we have one",
       "768P or 2K. 768P is what we send when you do not choose. The provider page lists no default.",
       "9:16 is a choice. Image examples on the page use adaptive.",
       "The model has image, video, and audio reference roles. This door does not send them",
       "Video-input price is not listed. This door does not send a video.",
-      "Native audio output is not stated. Treated as silent.",
       "Prompt up to 7000 characters.",
       "One film, no scatter",
     ],
   },
   usage: {
-    native_audio: false,
-    voice: "cast_tts",
+    native_audio: true,
+    voice: "prompt_lock",
     scatter_native_audio: false,
     min_seconds: 4,
     max_seconds: 15,
@@ -267,6 +266,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
         clip_key: state.clip_key,
         fps: state.fps,
         frames: state.frames,
+        has_audio: true,
       },
     };
   }
