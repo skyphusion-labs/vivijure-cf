@@ -455,7 +455,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 89, // studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
+  routes: 90, // studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
   // cf#894: vivijure-mcp 1.3.0 took the catalog from 42 to 109. The growth is NOT what the issue
   // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
   // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
@@ -474,13 +474,13 @@ const PUBLISHED = {
   // purpose until vivijure-mcp 2.0.0 dropped them. `curatedCovered` is UNCHANGED across that
   // release, and it should be, because a tool covering no route never counted toward it.
   curatedCovered: 66, // route entries reached by a CURATED tool
-  panelReachable: 63, // cast page dropped the voice-sample calls and added hear-one-line; the 4 demo routes are gone
+  panelReachable: 64, // finish-retry added (core#377); cast page dropped the voice-sample calls and added hear-one-line; the 4 demo routes are gone
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
-  panelUncurated: 11, // voice-sample panel calls left; hear-one-line is uncurated
-  panelUncuratedPathOnly: 15, // method-aware 11 + the 4 uncurated path-only false positives
-  hatchReachable: 86, // reachable via studio_request = routes minus the raw-body class
+  panelUncurated: 12, // voice-sample panel calls left; hear-one-line is uncurated; finish-retry until retry_film_finish ships in vivijure-mcp
+  panelUncuratedPathOnly: 16, // method-aware 12 + the 4 uncurated path-only false positives
+  hatchReachable: 87, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously

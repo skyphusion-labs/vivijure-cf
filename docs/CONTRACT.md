@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**89 route entries** (distinct `method` + `pattern`) over **71 distinct path patterns**. Those two
+**90 route entries** (distinct `method` + `pattern`) over **72 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -363,6 +363,7 @@ unchanged.
 | 44 | GET | `/api/render/clips/:id` | 2.19 |
 | 45 | POST | `/api/render/film` | 2.20 |
 | 46 | GET | `/api/render/film/:id` | 2.21 |
+| 46a | POST | `/api/render/film/:id/finish-retry` | 2.21 |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1353,6 +1354,8 @@ inserted so the film shows in history.
 
 `FilmScene`: `{ shot_id: string, prompt: string, seconds: number }`.
 
+**`POST /api/render/film/:id/finish-retry`** runs again the finish steps the film names in `finish_incomplete` (core#377). No clip is re-rendered, and the film rejoins the finish queue at the back. **Response 200:** the poll view plus `retried`, the steps that will run. **409:** nothing to retry, or the film is still running. **404:** no such film. See `docs/finish-capacity.md`.
+
 ### 2.21 GET /api/render/film/:id -- poll a film job
 
 Advances the job one tick and returns its summary; keeps the history row in sync.
@@ -1372,7 +1375,8 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `film_key` | string \| undefined | R2 key of the assembled film, present once `phase === "done"`. |
 | `film_finish` | object \| undefined | Outcome of the `film.finish` chain (title/credit cards): `degraded` marks a film that reached `done` WITHOUT cards (the container was unreachable; fail-safe by design), `sidecar_key` (#663/#669) carries the re-timed soft `.srt` subtitle sidecar's R2 key when one was produced. Absent until `film.finish` runs. |
 | `finish_unavailable` | `{ at, reason, delivered?, retained?, clips? }` \| undefined | The video-finish tier did not run a step. `retained` means the film FAILED and names what is kept: `clips` at assemble, or `silent_film` at mux for a film with a song. `delivered: "silent_film"` means a film with no song completed on its silent cut. Job docs written by core below 1.26.0 can also say `delivered: "clips"`. Absent on a normal render. |
-| `finish_waiting` | `{ since, attempts, next_at, detail }` \| undefined | The film is waiting for a free video-finish instance. Its phase stays `assemble` or `mux`, nothing has failed, and the sweep retries with backoff. `since` and `next_at` are epoch ms. `detail` is the door's text. Absent otherwise. |
+| `finish_waiting` | `{ since, attempts, next_at, detail, queued?, position?, depth?, step? }` \| undefined | The film is waiting and nothing has failed. With a queue, `position` is its place (1 is next) and `depth` is how many films wait. `step` names what is waiting. `since` and `next_at` are epoch ms. Also on the poll view's `output`. Absent otherwise. See `docs/finish-capacity.md`. |
+| `finish_incomplete` | `{ stage, step, code, detail?, kept, shot_id?, step_index?, at }[]` \| undefined | Finish steps that did not run. A film with this set is NOT a clean finish, even at `phase: "done"` and status `COMPLETED`: each entry names the step and what is kept, and `POST /api/render/film/:id/finish-retry` runs them again with no clip re-rendered. **Absent means clean.** Also on the poll view's `output` and in the render row's `output_json`, including on a failed film. |
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
 | `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |

@@ -47,6 +47,7 @@ function vfCall(env: Env) {
     return fetch(vfBase(env) + path, init);
   };
 }
+import { FAILURE_BAD_RESPONSE, FAILURE_NOT_CONFIGURED, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
@@ -99,7 +100,7 @@ async function submitAsync(
   env: Env,
   spec: Record<string, unknown>,
   corr: VpcCorr = {},
-): Promise<string | null> {
+): Promise<string | "capacity" | null> {
   const timed = await timedVpcFetch(
     vfCall(env),
     { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
@@ -115,6 +116,9 @@ async function submitAsync(
     },
   );
   if (timed.err || !timed.resp) return null;
+  // No slot: tell the core, so the film waits. The sync route is the same container and would only
+  // queue a second encode behind a refusal.
+  if (timed.resp.status === 429) return "capacity";
   if (timed.resp.status !== 202) return null;
   try {
     const body = (await timed.resp.json()) as { ok?: boolean; jobId?: string };
@@ -143,16 +147,16 @@ async function invokeSync(
       contextJobId: corr.contextJobId,
     },
   );
-  if (timed.err || !timed.resp) return passthrough(input, "passthrough:container-unreachable", true);
+  if (timed.err || !timed.resp) return withFailure(passthrough(input, "passthrough:container-unreachable", true), FAILURE_UNREACHABLE);
   const resp = timed.resp;
-  if (!resp.ok) return passthrough(input, "passthrough:container-failed", true);
+  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), failureFromStatus(resp.status));
   let body: { ok?: boolean; key?: string; burned?: boolean; sidecar?: boolean; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
-    return passthrough(input, "passthrough:container-bad-response", true);
+    return withFailure(passthrough(input, "passthrough:container-bad-response", true), FAILURE_BAD_RESPONSE);
   }
-  if (!body.ok) return passthrough(input, "passthrough:container-failed", true);
+  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), FAILURE_REFUSED);
   // Compose an honest `applied`: "subtitle" only when captions were actually burned (film_key then
   // points at the burned film); "subtitle:sidecar" when a .srt was written. A sidecar-only run burns
   // nothing, so film_key stays the original (no fake burn tag).
@@ -181,13 +185,13 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   const cfg = coerceConfig(req.config);
   if (!cfg.enabled) return passthrough(input, "noop:disabled");
   if (!hasCaptions(input)) return passthrough(input, "noop:no-dialogue");
-  if (!vfBase(env)) return passthrough(input, "passthrough:no-video-finish-url", true);
+  if (!vfBase(env)) return withFailure(passthrough(input, "passthrough:no-video-finish-url", true), FAILURE_NOT_CONFIGURED);
 
   const wantSidecar = cfg.mode === "sidecar" || cfg.mode === "both";
   const haveSidecarUrl = wantSidecar && typeof input.sidecar_url === "string" && input.sidecar_url.length > 0;
   // Sidecar-only with no presigned sidecar URL: there is nothing this module can honestly do (it must
   // not burn in sidecar-only mode). Pass the film through and degrade -- never silently swallow it.
-  if (cfg.mode === "sidecar" && !haveSidecarUrl) return passthrough(input, "passthrough:sidecar-no-url", true);
+  if (cfg.mode === "sidecar" && !haveSidecarUrl) return withFailure(passthrough(input, "passthrough:sidecar-no-url", true), FAILURE_REFUSED);
 
   const srt = buildSrt(input.captions);
   const spec = buildContainerSpec(input, cfg, srt);
@@ -200,6 +204,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   // Prefer async so a long burn survives across request budgets; fall back to sync for a pre-#602
   // container (back-compat). A sync fallback that itself fails soft-degrades (#190), never drops the film.
   const jobId = await submitAsync(env, spec, corr);
+  if (jobId === "capacity") return withFailure(passthrough(input, "passthrough:container-capacity", true), failureFromStatus(429));
   if (jobId) {
     return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0 }) };
   }

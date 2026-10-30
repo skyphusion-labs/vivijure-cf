@@ -7,6 +7,8 @@ import {
 import { meteredR2Bucket } from "@skyphusion-labs/vivijure-core/storage-quota";
 import { cfPlatformFromEnv } from "./platform/cf-platform.js";
 import { videoFinishDoor, type VideoFinishDoorHost } from "./video-finish-binding.js";
+import { RESERVED_JOB_INSTANCES } from "./video-finish-binding";
+import { finishQueueSlots, sqlFinishQueue, type FinishQueue } from "@skyphusion-labs/vivijure-core/finish-queue";
 import type { Env } from "./env.js";
 
 /** Platform ICD env for orchestration (PRESIGNER + wrapped R2). */
@@ -47,7 +49,24 @@ function meterStudioWrites(raw: Env): void {
 export function studioEnv(raw: Env): StudioEnv {
   if (raw.R2_RENDERS && raw.DB) meterStudioWrites(raw);
   const { PRESIGNER } = orchestratorEnv(raw);
-  return Object.assign(raw, { PRESIGNER, ...mediaDoorFetchersField(raw) }) as StudioEnv;
+  return Object.assign(raw, { PRESIGNER, ...mediaDoorFetchersField(raw), ...finishQueueField(raw) }) as StudioEnv;
+}
+
+/** FIFO admission to the finish tier. Every deploy has a database, so every deploy gets the queue, and
+ *  a database that has not had the migration fails each call, which core reads as "no queue": it logs
+ *  `finish_queue.unavailable` and uses retry with backoff. Reused like the door, since studioEnv runs
+ *  on every request against the same env object. */
+function finishQueueField(raw: Env): { FINISH_QUEUE?: FinishQueue } {
+  const existing = (raw as Env & { FINISH_QUEUE?: FinishQueue }).FINISH_QUEUE;
+  if (existing) return { FINISH_QUEUE: existing };
+  if (!raw.DB) return {};
+  const cap = Number(raw.FINISH_QUEUE_PER_KEY_CAP);
+  return {
+    FINISH_QUEUE: sqlFinishQueue(raw.DB as unknown as CoreDatabase, {
+      slots: raw.FINISH_QUEUE_SLOTS ? finishQueueSlots(raw.FINISH_QUEUE_SLOTS) : RESERVED_JOB_INSTANCES,
+      ...(Number.isInteger(cap) && cap > 0 ? { perKeyCap: cap } : {}),
+    }),
+  };
 }
 
 /** The bound media doors, when this deploy has the container bound (cf#810).

@@ -119,5 +119,6 @@ export interface FinishOutput {
   out_fps: number;
   frames: number;
   applied: string[];   // ["interpolate:2x", ...] on success; ["passthrough:<reason>"] / ["noop:nothing-enabled"] otherwise
+  failure?: { kind: "transient" | "permanent"; code: string; detail?: string }; // core#377: why the step did not run
   degraded?: string;   // reason, set ONLY on a real passthrough degrade (never on success or the no-op); see #77
 }

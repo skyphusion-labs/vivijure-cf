@@ -327,6 +327,16 @@ describe("finish-step transient retry (the silent-render trigger: a lip-sync inv
   it("fails LOUD after the cap on a persistent transient (no infinite spin)", async () => {
     const { env, read } = retryEnv(lipsyncFilm(), [503]); // 503 forever
     for (let i = 0; i < FINISH_STEP_MAX_ATTEMPTS; i++) await advanceFilmJob(orch(env), "film-finish-retry");
+    // core#377: past the retry cap it holds, for the transport bound, and then fails by name.
+    expect(read().finish_shots![0].status).toBe("pending");
+    expect(read().finish_shots![0].wait).toBeTruthy();
+    const later = Date.now() + 16 * 60 * 1000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      for (let i = 0; i < FINISH_STEP_MAX_ATTEMPTS; i++) await advanceFilmJob(orch(env), "film-finish-retry");
+    } finally {
+      clock.mockRestore();
+    }
     expect(read().finish_shots![0].status).toBe("failed");
   });
 
@@ -1885,9 +1895,20 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
   it("records a chain error (no film_finish drop) when the module invoke fails", async () => {
     const failed = { ok: false, error: "module /invoke -> 500" };
     const { env } = filmFinishEnv(muxJob(), failed);
-    const r = await advanceFilmJob(orch(env), "film-finish-obs");
+    // core#377: "-> 500" is transient, so the film holds for the transport bound before it moves on.
+    const held = await advanceFilmJob(orch(env), "film-finish-obs");
+    expect(held?.job.phase).toBe("mux");
+    expect(held?.job.film_finish?.errors ?? []).toEqual([]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60 * 1000);
+    let r: Awaited<ReturnType<typeof advanceFilmJob>>;
+    try {
+      r = await advanceFilmJob(orch(env), "film-finish-obs");
+    } finally {
+      clock.mockRestore();
+    }
     expect(r?.job.phase).toBe("done");
     expect(r?.job.film_finish?.errors?.some((e) => e.includes("film-titles"))).toBe(true);
+    expect(r?.job.finish_incomplete?.[0]).toMatchObject({ stage: "film.finish", step: "film-titles" });
     expect(r?.job.film_key).toBe("renders/film-finish-obs/film-audio.mp4"); // film survives
   });
 

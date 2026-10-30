@@ -556,3 +556,12 @@ applies -- run it under `pywrangler dev` and a Python module passes
 `MODULE_URL=http://localhost:8787 npm run conformance` exactly like a TS one. This on-ramp was proven end-to-end by the now-retired `plan-enhance-py`
 proof module (the deterministic Python sibling of the TS `plan-enhance`); see it in the git
 history if you need a full worked example.
+
+## Saying why a step did not run
+
+A finish, speech, master or film.finish module that passes its input through because it could not run
+sets `degraded` and `failure` (`{ kind, code, detail? }`, additive). `transient` holds the film and retries
+the step. `permanent` names the step in `finish_incomplete` and the film moves on. Use
+`modules/_shared/finish-failure.ts`, and use code `capacity` only for a door with no free slot, since it is
+the one code held for hours. A passthrough with no `failure` counts as permanent. A CSAM refusal is never
+expressed this way: it stays a hard failure. See `docs/finish-capacity.md`.

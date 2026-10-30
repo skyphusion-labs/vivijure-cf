@@ -10,6 +10,7 @@
 // (pass the input clip through unchanged) is preferred over a hard ok:false unless the job
 // cannot be submitted at all.
 
+import { FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -248,7 +249,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(resolved, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(resolved, "runpod-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) return withFailure(passthrough(resolved, "runpod-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(resolved, "no-jobid");
     // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
@@ -262,7 +263,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
       jobId,  // cf#289/#296: RunPod cannot enumerate jobs, so a caller that is not handed the id at submit can never reach it.
     };
   } catch (e) {
-    return passthrough(resolved, "exception", { detail: (e as Error).message });
+    return withFailure(passthrough(resolved, "exception", { detail: (e as Error).message }), FAILURE_UNREACHABLE);
   }
 }
 

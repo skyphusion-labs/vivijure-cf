@@ -7,7 +7,7 @@ import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledMo
 import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
@@ -1409,6 +1409,18 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
   await updateRenderFromView(env, view);
   return json(view);
 };
+/** core#377: run again the finish steps a film names in `finish_incomplete`. No clip is re-rendered. */
+const hRetryFinish: Handler = async (_req, env, _c, p) => {
+  if (!isFilmJobId(p.id)) {
+    return json({ error: "unknown or legacy render job id (film-* only)", jobId: p.id }, 404);
+  }
+  const r = await retryFilmFinish(env, p.id);
+  if (!r) throw notFound("render job");
+  if (r.retried.length === 0) {
+    return json({ error: "this film has no finish step to retry", jobId: p.id, phase: r.job.phase }, 409);
+  }
+  return json({ ...filmJobToPollView(r.job, null), retried: r.retried });
+};
 const hTrainCastLora: Handler = async (req, env, _c, p) =>
   handleCastTrainLora(req, env, await resolveCastId(env, p.id));
 const hHearCastVoice: Handler = async (req, env, _c, p) =>
@@ -2229,6 +2241,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
   { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
+  { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
   { method: "GET",    pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hPollRender },

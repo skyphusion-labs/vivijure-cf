@@ -73,6 +73,9 @@ function buildHistoryRow(r, childrenByParent) {
     ? window.stageDegradeView.reportedStages(r.output, window.finishDegrade)
     : [];
 
+  // core#377: stamped on every row with an answer, so a count of incomplete films needs no parsing.
+  const finishIncomplete = window.finishDegrade ? window.finishDegrade.incompleteFrom(r.output) : null;
+  if (finishIncomplete) li.dataset.finishIncomplete = "true";
   li.dataset.finishDegrade = finishBand;
   li.dataset.clipFinish = clipFinishBand;
   // With the helper absent these stay unset rather than reading "none-reported": an absent

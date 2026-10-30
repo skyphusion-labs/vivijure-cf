@@ -307,6 +307,7 @@ const NOT_DOORS = new Set<string>([
   "/api/storyboard/projects/:id/storyboard",
   "/api/storyboard/refine",
   "/api/storyboard/render-plan",
+  "/api/render/film/:id/finish-retry", // runs a named step of an existing film again, starts no new render
   "/api/storyboard/renders/adopt",
   "/api/storyboard/renders/:id/add-audio",
   "/api/storyboard/renders/:id/add-narration",
