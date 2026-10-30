@@ -78,7 +78,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Clips with the model's sound (start and end stills)" }],
+  provides: [{ id: "i2v-cloud", label: "Clips with the model's own sound, no speech (start and end stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["768P", "2K"], default: "768P", label: "resolution" },
     ratio: {
@@ -93,11 +93,12 @@ const MANIFEST: ModuleManifest = {
     order: 96,
     locality: "cloud",
     cost: "$0.08/s at 768P, $0.13/s at 2K",
-    blurb: "Clips with the model's own sound from your stills, 4 to 15 seconds. The next still can be the end frame.",
+    blurb: "Clips with the model's own sound, no speech, from your stills, 4 to 15 seconds. The next still can be the end frame.",
     limits: [
       "4 to 15 second clips. Whole seconds.",
-      "The model returns its own soundtrack. No field turns it off, and we keep it",
-      "Whether it speaks a storyboard line is not measured. Use a talking door for dialogue",
+      "The model adds its own sound. It cannot be turned off, and it is not speech",
+      "A score replaces that sound in the finished film",
+      "No spoken lines. A board with a line needs a talking door",
       "Start still, and the next shot's start still when we have one",
       "768P or 2K. 768P is what we send when you do not choose. The provider page lists no default.",
       "9:16 is a choice. Image examples on the page use adaptive.",
@@ -108,8 +109,8 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
-    native_audio: true,
-    voice: "prompt_lock",
+    native_audio: false,
+    voice: "cast_tts",
     scatter_native_audio: false,
     min_seconds: 4,
     max_seconds: 15,

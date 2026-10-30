@@ -133,11 +133,11 @@ describe("cf-minimax-h3 params (cf#1074)", () => {
 });
 
 describe("cf-minimax-h3 is installable and is not a default", () => {
-  it("declares the model's soundtrack and a first-and-last envelope", async () => {
+  it("declares a no-speech first-and-last envelope, and the sound in its copy", async () => {
     const m = await manifest();
     expect(m.name).toBe("cf-minimax-h3");
     expect(m.hooks).toContain("motion.backend");
-    expect(m.usage.native_audio).toBe(true);
+    expect(m.usage.native_audio).toBe(false);
     expect(m.usage.driving_audio).toBeUndefined();
     expect(m.usage.scatter_native_audio).toBe(false);
     expect(m.usage.first_last).toBe(true);
@@ -150,8 +150,8 @@ describe("cf-minimax-h3 is installable and is not a default", () => {
     expect(m.config_schema.resolution.values).toEqual(["768P", "2K"]);
     expect(m.config_schema.ratio.default).toBe("adaptive");
     expect(m.config_schema.ratio.values).toContain("9:16");
-    expect(m.ui.limits.join(" ")).toMatch(/returns its own soundtrack/);
-    expect(m.ui.limits.join(" ")).toMatch(/not measured/);
+    expect(m.ui.limits.join(" ")).toMatch(/adds its own sound/);
+    expect(m.ui.limits.join(" ")).toMatch(/No spoken lines/);
     expect(m.ui.limits.join(" ")).toMatch(/reference roles/);
     expect(m.ui.cost).toMatch(/0\.08/);
     expect(m.ui.cost).toMatch(/0\.13/);
@@ -237,5 +237,14 @@ describe("cf-minimax-h3 is installable and is not a default", () => {
     expect(longBody.ok).toBe(false);
     expect(longBody.jobId).toBeUndefined();
     expect(longBody.error).toMatch(/7000/);
+  });
+});
+
+describe("cf-minimax-h3 reports the sound in the file", () => {
+  it("says has_audio on poll, and a board with a line is still refused", async () => {
+    const m = await manifest();
+    expect(m.usage.native_audio).toBe(false);
+    const src = readFileSync("modules/cf-minimax-h3/src/index.ts", "utf8");
+    expect(src).toMatch(/frames: state\.frames,\n\s*has_audio: true,/);
   });
 });

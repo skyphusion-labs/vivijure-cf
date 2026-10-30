@@ -1,7 +1,7 @@
 # cf-minimax-h3
 
 A **`motion.backend`** module (vivijure-module/2): MiniMax H3 via Cloudflare AI
-Gateway (`minimax/h3`). Clips with the model's own sound, from a start still, with the next shot's
+Gateway (`minimax/h3`). Clips with the model's own sound, no speech, from a start still, with the next shot's
 start still as the end frame when we have one. No RunPod.
 
 The provider page lists 4 to 15 seconds. 768P is $0.08/s and 2K is $0.13/s.
