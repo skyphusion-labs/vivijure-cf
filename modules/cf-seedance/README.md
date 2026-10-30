@@ -1,7 +1,9 @@
 # cf-seedance
 
-A **`motion.backend`** module (vivijure-module/2): **Seedance 2.0 (CF AI)** via Cloudflare AI Gateway /
-Unified Billing (`bytedance/seedance-2.0`). Turns one shot's start keyframe into a clip with **no RunPod**.
+A **`motion.backend`** module (vivijure-module/2): **Seedance (CF AI)** via Cloudflare AI Gateway /
+Unified Billing. The default model is `bytedance/seedance-2.5`. The same door also calls
+`bytedance/seedance-2.0`, `bytedance/seedance-2.0-fast`, and `bytedance/seedance-2.0-mini`.
+Each model has its own input schema (vendored under `schemas/`). Turns one shot's start keyframe into a clip with **no RunPod**.
 
 ## Why Workflow, not RunPod /run
 
@@ -35,6 +37,15 @@ Account live rates: [seedance-2.0](https://dash.cloudflare.com/?to=/:account/ai/
 Source: [BytePlus ModelArk Pricing](https://docs.byteplus.com/docs/ModelArk/1099320) (Dreamina Seedance 2.0 series price examples). Billing is token-based under the hood; these are the published estimated per-second rates for typical i2v.
 
 **Worked example (720p, 5s i2v, list):** Mini ≈ **$0.38**; Fast ≈ **$0.60**; full 2.0 ≈ **$0.76**.
+
+That table is the 2.0 series from BytePlus. It is not a 2.5 rate. This README does not copy a 2.5 price.
+
+Per-model send rules (resolution, ratio, duration, voice field) are in `docs/motion-door-limits.md`. The published input documents:
+
+- [seedance-2.5](https://developers.cloudflare.com/ai/models/bytedance/seedance-2.5/schema-input.json)
+- [seedance-2.0](https://developers.cloudflare.com/ai/models/bytedance/seedance-2.0/schema-input.json)
+- [seedance-2.0-fast](https://developers.cloudflare.com/ai/models/bytedance/seedance-2.0-fast/schema-input.json)
+- [seedance-2.0-mini](https://developers.cloudflare.com/ai/models/bytedance/seedance-2.0-mini/schema-input.json)
 
 ## License
 
