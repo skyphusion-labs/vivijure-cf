@@ -56,7 +56,7 @@ describe("cf#1076 image model enums", () => {
     );
     expect(seen).toEqual(["openai/gpt-image-2"]);
     const calls = fetchSpy.mock.calls as unknown as unknown[][];
-    expect(calls.some((c) => String(c[0]).includes("api.openai.com"))).toBe(false);
+    expect(calls.some((c) => new URL(String(c[0])).hostname === "api.openai.com")).toBe(false);
     vi.unstubAllGlobals();
   });
 
