@@ -88,6 +88,31 @@ not consulted about its own reliability. Reach for this shape whenever an instru
 the only evidence available: find a fact the output must have if the mechanism you believe in is true,
 and check that instead.
 
+## The cap, its cost, and what it buys
+
+The measurements above were taken at `max_instances = 3`. The committed value is now **20**. It takes
+effect only on a `v*` tag deploy, so read the live application before you assume either number.
+
+**Why 20.** `SYNC_POOL_SIZE + concurrent finish jobs <= max_instances` gives 1 + 19 <= 20.
+Cloudflare's published account limits are 1,500 concurrent vCPU, 6 TiB memory and 30 TB disk. Twenty
+`standard-4` instances use 80 vCPU, 240 GiB and 400 GB, so the account limits do not bind. No published
+limit on instances per application was found, and the platform default for `max_instances` is 20.
+
+**Cost basis**, from the Cloudflare Containers pricing page, above the monthly included amounts: USD
+0.000020 per vCPU-second on active use, USD 0.0000025 per GiB-second and USD 0.00000007 per GB-second
+on provisioned size. `standard-4` is 4 vCPU, 12 GiB, 20 GB.
+
+| Case | Per instance per hour | 3 instances | 20 instances |
+|---|---|---|---|
+| Not running | 0 | 0 | 0 |
+| Awake and idle | 0.113 | 0.34 | 2.26 |
+| Full CPU | 0.401 | 1.20 | 8.02 |
+
+The cap is a ceiling. A film costs the same whether the cap is 3 or 20; the cap decides if it runs now.
+
+**What the cap does not fix.** A finished job still holds its instance for the `sleepAfter` idle tail,
+about USD 0.019 per wake (cf#1064). At 20 that is about 19 films per 10 minutes.
+
 ## Why there is no gate enforcing any of this
 
 No source file, script, workflow or doc in this repo reads `containers/applications` or an instances
