@@ -35,6 +35,7 @@ import {
   parseJobDocKeys,
   planReclaim,
   renderDocPrefix,
+  renderClipPrefix,
   renderLogKeyFor,
   renderRowKeys,
   shotRowKeys,
@@ -283,6 +284,14 @@ export async function reclaimRenderRows(
     const ownTree = await listAllKeys(env, renderDocPrefix(row.job_id), budget);
     candidates.push(...ownTree.keys);
     if (ownTree.exhausted) partialRead = true;
+
+    // The doc's project is the one the keys were built from. A row's project can be renamed later.
+    const clipPrefix = renderClipPrefix((filmDoc as { project?: unknown } | null)?.project ?? row.project, row.job_id);
+    if (clipPrefix) {
+      const clipFolder = await listAllKeys(env, clipPrefix, budget);
+      candidates.push(...clipFolder.keys);
+      if (clipFolder.exhausted) partialRead = true;
+    }
   }
 
   // 2. THE GATE: keys the survivors still reference.
@@ -294,6 +303,13 @@ export async function reclaimRenderRows(
     shotRows: survivorShots.rows,
     extraKeys: await outputKeyGate(env, rows, budget),
   });
+
+  // A retained artifact keeps its sidecars. A folder sweep lists them as candidates in their own right,
+  // and a clip whose `.hash` went would no longer pass the #583 gate, so it would re-run for nothing.
+  for (const key of candidates) {
+    const artifact = key.replace(/\.(hash|prov)$/, "");
+    if (artifact !== key && live.has(artifact)) live.add(key);
+  }
 
   // A stored absolute URL is not a key in this bucket; see isForeignRef for the shape and why. Drop it
   // before planning so it is never counted as a freed object.
