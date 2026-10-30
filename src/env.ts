@@ -179,7 +179,7 @@ export interface Env {
   STUDIO_RELEASE?: string;
   STUDIO_GIT_SHA?: string;
 
-  // BYOK OpenAI image gen (transparent PNG for gpt-image-1.5). Optional.
+  // BYOK OpenAI image gen. Transparent PNG is the legacy gpt-image-1.5 path. Optional.
   OPENAI_API_KEY?: string;
 
   // Opt-in module workers: `MODULE_<NAME>` service bindings (Fetcher), discovered by the registry.
