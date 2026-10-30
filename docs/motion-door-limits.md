@@ -48,19 +48,21 @@ Stylized talking clips from your stills. Faces drift.
 
 ## cf-seedance (Seedance talking)
 
-Fast talking clips. Uses the sample you kept.
+Fast talking clips. Uses the sample you kept. The default model is Seedance 2.5.
+The same door also calls 2.0, 2.0 Fast, and 2.0 Mini. Those four models do not
+share one input document.
 
 | | |
 |---|---|
-| Duration | 4-12 seconds |
+| Duration | 4-30 seconds on 2.5. 4-12 seconds on 2.0, 2.0 Fast, and 2.0 Mini. A longer ask is clamped to that model's max. |
 | Talks? | Yes. |
-| Voice lock | The sample you kept. Same voice on every shot. |
-| First+last? | Yes. The next shot's start still is the end frame when we have one. |
-| Cannot | Invent a different speaker. Hosted does not add mouths in finish. |
+| Voice lock | The sample you kept. 2.5 sends that clip as one item in `reference_videos`. The 2.0 family sends `reference_video`. 2.5 also publishes `reference_audios`, and Mini publishes `reference_audio`. The sample is a video, so those audio fields are not set. Whether 2.5 keeps the voice from `reference_videos` is unproven until a real render. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. On 2.5, first and last frames always use aspect ratio `adaptive` (a supplied ratio is overridden), so the ratio knob does not make a vertical clip. The keyframe has to be 9:16. On 2.0, Fast, and Mini, Cloudflare says aspect ratio is ignored when an image is used. |
+| Cannot | 1080p or 4k except on Seedance 2.0. 2.5, Fast, and Mini allow 480p and 720p. An ask outside that set is sent as 720p, the published default. 9:21 is not on 2.5. That ask is sent as `adaptive`. Invent a different speaker. Finish does not add mouths on this door. |
 
 ## seedance (Seedance talking, hosted speed default)
 
-Same idea as `cf-seedance`. This is the hosted speed default. 4-12 seconds.
+Same voice lock idea as `cf-seedance`. This door is 4-12 seconds.
 
 | | |
 |---|---|
@@ -183,6 +185,19 @@ this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).
 | First+last? | No. |
 | Cannot | Native talking audio. Commercial self-host. Cloud API-free is the point, not datacenter parity. |
 
+## cf-p-video-avatar
+
+Portrait plus Cast audio, at 720p or 1080p. The speaker is ours. Higher
+resolution than infinitetalk. Not a default door.
+
+| | |
+|---|---|
+| Duration | 1 to 15 seconds. 15 is our door cap, not the provider's, until a real long-line test (#931). |
+| Talks? | Mouth follows our file. Not invented speech. |
+| Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line is refused. |
+| First+last? | No. The page has a portrait and no end frame. |
+| Cannot | Invent speech. Lock the sample you kept. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. Trim trailing silence. |
+
 ## infinitetalk
 
 Portrait plus Cast audio. The speaker is ours, not invented.
@@ -194,6 +209,18 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet. |
 | First+last? | No. |
 | Cannot | Invent speech. Lock the sample you kept. |
+
+## cf-kling-v4
+
+Silent long clips from your stills. 3 to 30 seconds. Not a default door.
+
+| | |
+|---|---|
+| Duration | 3 to 30 seconds. Whole seconds. |
+| Talks? | No. |
+| Voice lock | None. No spoken lines on this door. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. The model allows up to 9 middle frames. This door does not send them. |
+| Cannot | Spoken lines. Scatter. Send middle frames. Say whether 9:16 survives once a still is attached (the provider page says aspect is ignored when keyframes are given). Check a still before send. Assume a frame rate. |
 
 ## cf-minimax-h3
 

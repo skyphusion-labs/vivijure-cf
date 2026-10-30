@@ -1,12 +1,39 @@
-// Pure helpers for cf-seedance: ByteDance Seedance 2.0 family via CF AI Gateway.
+// Pure helpers for cf-seedance: ByteDance Seedance via CF AI Gateway.
 // Distinct from modules/seedance (RunPod Seedance V1.5 Pro).
-// Models: bytedance/seedance-2.0 | seedance-2.0-fast | seedance-2.0-mini
-// i2v field: image; duration 4-12; resolution 480p/720p/1080p/4k (mini caps may apply provider-side).
+// Four published input schemas, vendored under ../schemas/ from
+// https://developers.cloudflare.com/ai/models/bytedance/<id>/schema-input.json
+// The manifest enum is the union. The body is the selected model's schema.
 // use_virtual_avatar: ByteDance blocks faces as "real person" (7003 PrivacyInformation)
 // unless this flag routes the still through their virtual-avatar library. Our keyframes
 // are always synthetic.
 
 import type { MotionBackendInput } from "./contract";
+import schema25 from "../schemas/seedance-2.5.schema-input.json";
+import schema20 from "../schemas/seedance-2.0.schema-input.json";
+import schemaFast from "../schemas/seedance-2.0-fast.schema-input.json";
+import schemaMini from "../schemas/seedance-2.0-mini.schema-input.json";
+
+type SchemaBranch = {
+  type?: string;
+  const?: number | string;
+  minimum?: number;
+  maximum?: number;
+  enum?: string[];
+};
+
+type SchemaProp = SchemaBranch & {
+  description?: string;
+  default?: string | number | boolean;
+  maxLength?: number;
+  maxItems?: number;
+  anyOf?: SchemaBranch[];
+};
+
+export type InputSchema = {
+  properties: Record<string, SchemaProp>;
+  required?: string[];
+  additionalProperties?: boolean;
+};
 
 export const MODELS = [
   "bytedance/seedance-2.5",
@@ -18,16 +45,57 @@ export const DEFAULT_MODEL = "bytedance/seedance-2.5";
 /** MODEL is the default; runtime uses config.model. Kept for tag parity with other modules. */
 export const MODEL = DEFAULT_MODEL;
 export const OUT_FPS = 24;
-export const MIN_DURATION = 4;
-export const MAX_DURATION = 12;
-export const MAX_DURATION_25 = 30;
+
+type ModelId = (typeof MODELS)[number];
+
+const SCHEMAS: Record<ModelId, InputSchema> = {
+  "bytedance/seedance-2.5": schema25 as InputSchema,
+  "bytedance/seedance-2.0": schema20 as InputSchema,
+  "bytedance/seedance-2.0-fast": schemaFast as InputSchema,
+  "bytedance/seedance-2.0-mini": schemaMini as InputSchema,
+};
+
+export function inputSchema(model: string): InputSchema {
+  if ((MODELS as readonly string[]).includes(model)) return SCHEMAS[model as ModelId];
+  throw new Error("cf-seedance: no published schema for model " + model);
+}
+
+function durationBounds(schema: InputSchema): { min: number; max: number } {
+  const d = schema.properties.duration;
+  if (!d) throw new Error("cf-seedance schema has no duration");
+  if (typeof d.minimum === "number" && typeof d.maximum === "number") {
+    return { min: d.minimum, max: d.maximum };
+  }
+  const ranged = (d.anyOf ?? []).filter((b) => typeof b.minimum === "number" && typeof b.maximum === "number");
+  if (ranged.length !== 1) throw new Error("cf-seedance duration bounds are not a single published range");
+  return { min: ranged[0].minimum as number, max: ranged[0].maximum as number };
+}
+
+/** Tightest published band. An id we do not know must not inherit 2.5's 30s. */
+function tightestDuration(): { min: number; max: number } {
+  const all = MODELS.map((m) => durationBounds(SCHEMAS[m]));
+  return {
+    min: Math.max(...all.map((b) => b.min)),
+    max: Math.min(...all.map((b) => b.max)),
+  };
+}
+
+export const MIN_DURATION = durationBounds(SCHEMAS[DEFAULT_MODEL]).min;
+/** 2.0 family cap. Fast and Mini publish the same maximum. */
+export const MAX_DURATION = durationBounds(SCHEMAS["bytedance/seedance-2.0"]).max;
+export const MAX_DURATION_25 = durationBounds(SCHEMAS["bytedance/seedance-2.5"]).max;
+
+// UI union. 1080p, 4k, and 9:21 are legal on some models and rejected on others.
+// buildParams narrows to the selected schema. cf#932: one enum cannot depend on another field.
 export const RESOLUTIONS = ["480p", "720p", "1080p", "4k"] as const;
 export const DEFAULT_RESOLUTION = "720p";
 export const ASPECT_RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"] as const;
 export const DEFAULT_ASPECT = "16:9";
 
+const VOICE_LOCK_LINE = "Same speaking voice as the reference video. Do not invent a new speaker.";
+
 export type ModuleConfig = {
-  model: (typeof MODELS)[number];
+  model: ModelId;
   resolution: (typeof RESOLUTIONS)[number];
   aspect_ratio: (typeof ASPECT_RATIOS)[number];
   camera_fixed: boolean;
@@ -42,10 +110,12 @@ export type RunState =
 
 export interface PollToken { job_id: string; }
 
-export function clampDuration(seconds: number, model?: string): number {
+export function clampDuration(seconds: number, model: string = DEFAULT_MODEL): number {
   const n = Math.round(Number(seconds) || 5);
-  const max = model === "bytedance/seedance-2.5" ? MAX_DURATION_25 : MAX_DURATION;
-  return Math.max(MIN_DURATION, Math.min(max, n));
+  const bounds = (MODELS as readonly string[]).includes(model)
+    ? durationBounds(inputSchema(model))
+    : tightestDuration();
+  return Math.max(bounds.min, Math.min(bounds.max, n));
 }
 
 export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
@@ -62,34 +132,78 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
   };
 }
 
+function stringEnum(schema: InputSchema, field: string): readonly string[] {
+  const values = schema.properties[field]?.enum;
+  if (!values || values.length === 0) throw new Error("cf-seedance schema " + field + " has no enum");
+  return values;
+}
+
+/** Requested value, else the schema's own default, else the first published value. */
+function pickEnum(schema: InputSchema, field: string, requested: string): string {
+  const allowed = stringEnum(schema, field);
+  if (allowed.includes(requested)) return requested;
+  const published = schema.properties[field]?.default;
+  if (typeof published === "string" && allowed.includes(published)) return published;
+  return allowed[0];
+}
+
+function firstLastForcesAdaptive(schema: InputSchema): boolean {
+  const prop = schema.properties.aspect_ratio;
+  const desc = prop?.description ?? "";
+  return (prop?.enum ?? []).includes("adaptive")
+    && desc.includes("First/last-frame")
+    && desc.includes('"adaptive"');
+}
+
+function composePrompt(base: string, voice: boolean, maxLength: number | undefined): string {
+  const extra = voice ? " " + VOICE_LOCK_LINE : "";
+  const cap = typeof maxLength === "number" ? maxLength : base.length + extra.length;
+  const room = Math.max(0, cap - extra.length);
+  const head = base.length > room ? base.slice(0, room).trimEnd() : base;
+  const out = (head + extra).trim();
+  return out.length > cap ? out.slice(0, cap) : out;
+}
+
 export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
-  const params: Record<string, unknown> = {
-    image: input.keyframe_url,
-    prompt: input.prompt,
-    aspect_ratio: config.aspect_ratio,
-    duration: clampDuration(input.seconds, config.model),
-    resolution: config.resolution,
-    fps: OUT_FPS,
-    camera_fixed: config.camera_fixed,
-    watermark: false,
-    generate_audio: config.generate_audio,
-    seed: config.seed,
-    use_virtual_avatar: true,
-  };
-  // Visual continuity: next shot's start still becomes this clip's last frame.
-  if (input.last_keyframe_url) params.last_frame_image = input.last_keyframe_url;
-  // Voice lock: the Cast preview clip. CF Seedance 2.x takes reference_video
-  // (not a voice_id). Prompt already carries the spoken line.
+  const schema = inputSchema(config.model);
+  const props = schema.properties;
+  const params: Record<string, unknown> = {};
+  const voice = Boolean(input.voice_ref_url);
+  const hasLast = Boolean(input.last_keyframe_url);
+
+  if (props.prompt) params.prompt = composePrompt(input.prompt, voice, props.prompt.maxLength);
+  if (props.image) params.image = input.keyframe_url;
+  if (hasLast && props.last_frame_image) params.last_frame_image = input.last_keyframe_url;
+
+  if (props.aspect_ratio) {
+    params.aspect_ratio = hasLast && firstLastForcesAdaptive(schema)
+      ? "adaptive"
+      : pickEnum(schema, "aspect_ratio", config.aspect_ratio);
+  }
+  if (props.duration) params.duration = clampDuration(input.seconds, config.model);
+  if (props.resolution) params.resolution = pickEnum(schema, "resolution", config.resolution);
+  if (props.fps) params.fps = typeof props.fps.const === "number" ? props.fps.const : OUT_FPS;
+  if (props.camera_fixed) params.camera_fixed = config.camera_fixed;
+  if (props.watermark) params.watermark = false;
+  if (props.generate_audio) params.generate_audio = config.generate_audio;
+  if (props.seed) params.seed = Number.isInteger(config.seed) ? config.seed : Math.trunc(config.seed);
+  if (props.use_virtual_avatar) params.use_virtual_avatar = true;
+  // 2.5 requires output_format. The 2.0 family schemas do not declare it
+  // (additionalProperties: false), so it is omitted there. Send the published default.
+  if (props.output_format && typeof props.output_format.default === "string") {
+    params.output_format = props.output_format.default;
+  }
+
+  // Voice lock is a video clip. 2.5 publishes reference_videos[] (and reference_audios[],
+  // which we do not use: the sample is not an audio URI). The 2.0 family publishes
+  // reference_video. Mini's reference_audio is background music, not this sample.
   if (input.voice_ref_url) {
-    params.reference_video = input.voice_ref_url;
-    const prompt = typeof params.prompt === "string" ? params.prompt : "";
-    params.prompt = (prompt + " Same speaking voice as the reference video. Do not invent a new speaker.").trim();
+    if (props.reference_videos?.type === "array") params.reference_videos = [input.voice_ref_url];
+    else if (props.reference_video?.type === "string") params.reference_video = input.voice_ref_url;
   }
   return params;
 }
 
-// Override MODEL at call site: index uses config.model via buildParams only; AI.run needs the model id.
-// Export helper so index can pass the selected model.
 export function selectedModel(config: ModuleConfig): string {
   return config.model;
 }

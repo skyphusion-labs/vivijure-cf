@@ -12,12 +12,12 @@ the modules, that test fails.
 
 | # | Population | Size | Where it is defined |
 |---|---|---|---|
-| 1 | Modules in this repo | **33** | `modules/*/src/index.ts` (excluding `_shared`) |
+| 1 | Modules in this repo | **35** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **13** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **22** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **16** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **16 of 33**.
+Population 4 is the one an operator actually sees, and it is **16 of 35**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -77,7 +77,9 @@ The seven in the gap are published-not-catalogued **for four different reasons, 
 | cf-flux-3-video | yes | no | no | **yes** | **yes** |
 | cf-grok-video | yes | no | no | **yes** | **yes** |
 | cf-hailuo | yes | no | no | no | no |
+| cf-p-video-avatar | yes | no | no | no | no |
 | cf-hh1-r2v | yes | no | no | **yes** | **yes** |
+| cf-kling-v4 | yes | no | no | no | no |
 | cf-minimax-h3 | yes | no | no | no | no |
 | cf-seedance | yes | no | no | **yes** | **yes** |
 | cf-veo | yes | no | no | no | no |
@@ -124,14 +126,14 @@ result, not a fault.** It is excluded from `records_unproven` because its catalo
 ## What cf#295 found, and what changed
 
 cf#295 measured 6 of 26 modules implementing `/ready`, so a sweep could not tell "not ready" from
-"no endpoint exists". **That is fixed: all 33 now implement it** (the invariant is every
+"no endpoint exists". **That is fixed: all 35 now implement it** (the invariant is every
 module, not a frozen count; the tree grew with the four CF AI i2v modules on top of main's own
 cf#470 growth), and `tests/module-ready-coverage-291.test.ts`
 holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, 16 of 33. A route
+`module-readiness` looks complete while speaking for population 4, 16 of 35. A route
 that reports a subset without saying so is the same defect one layer up, which is why the
 denominator is published here rather than left to be re-derived.
 
@@ -143,12 +145,12 @@ maintained by hand here.
 
 ## What a green `module-readiness` does NOT tell you
 
-- **Anything about the other 17 modules** (33 minus the 16 in population 4). They are not
+- **Anything about the other 19 modules** (35 minus the 16 in population 4). They are not
   provisioned to tenants, so a tenant provision does not reach them. **This does not include the
   GPUless cost door**: every cost-door module catalogued by cp#317 is still there and a tenant
-  reaches them through the plane-side proxy. The 17
+  reaches them through the plane-side proxy. The 19
   are `audio-master`, `beat-sync`, `cast-image`,
-  `cf-hailuo`, `cf-minimax-h3`, `cf-veo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
+  `cf-hailuo`, `cf-p-video-avatar`, `cf-kling-v4`, `cf-minimax-h3`, `cf-veo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
   `finish-blender`, `image-generate`, `infinitetalk`, `local-gpu`,
   `music-gen`, `notify-email`, `subtitle`.
 > The door that used to sit in this list and no longer does is the retired Kling 2.1 i2v module
