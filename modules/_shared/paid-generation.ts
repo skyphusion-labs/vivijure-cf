@@ -22,6 +22,7 @@ export interface PaidStepRunner {
 
 export const NOT_STORED_ERROR = "the provider finished, but the clip was not stored, and it will not be bought again";
 export const NO_VIDEO_URL_ERROR = "model completed but returned no video URL";
+export const NOT_STORED_AUDIO_ERROR = "the provider finished, but the audio was not stored, and it will not be bought again";
 
 /** Download and R2 write can blip. This covers them, and it never reaches the provider. */
 const STORE_STEP_CONFIG = {
@@ -29,35 +30,43 @@ const STORE_STEP_CONFIG = {
   timeout: "10 minutes",
 };
 
-export interface PaidGeneration<P> {
+export interface PaidGeneration<P, R = void> {
   /** The provider call, and nothing after it. A throw here means no success was returned, so it retries. */
   generate: () => Promise<unknown>;
   /** Runs once. A throw is a failed render, and the provider is not called again. */
   parse: (raw: unknown) => P;
-  /** Download and write. Retries on its own step. */
-  store: (parsed: P) => Promise<void>;
+  /** Download and write. Retries on its own step. Its result is returned, so it must be plain JSON. */
+  store: (parsed: P) => Promise<R>;
 }
 
-export async function runPaidGeneration<P>(
+/** Only for a door that runs more than one generation in a workflow, or that does not store a clip. */
+export interface PaidGenerationOptions {
+  /** Step names. A workflow keys its checkpoint on the name, so each line of a batch needs its own. */
+  generateStep?: string;
+  storeStep?: string;
+  /** Must read as deterministic to core's classifier. tests hold each one. */
+  notStoredError?: string;
+}
+
+export async function runPaidGeneration<P, R = void>(
   step: unknown,
   generateConfig: unknown,
-  run: PaidGeneration<P>,
-): Promise<void> {
+  run: PaidGeneration<P, R>,
+  options: PaidGenerationOptions = {},
+): Promise<R> {
   const steps = step as PaidStepRunner;
   // Round-tripped so the step returns plain JSON, which is what a workflow can checkpoint. A value that
   // does not survive this fails the parse below, with no second provider call.
-  const raw = await steps.do("generate", generateConfig as never, async () => {
+  const raw = await steps.do(options.generateStep ?? "generate", generateConfig as never, async () => {
     const result = await run.generate();
     return result === undefined ? null : (JSON.parse(JSON.stringify(result)) as unknown);
   });
   const parsed = run.parse(raw);
   try {
-    await steps.do("store", STORE_STEP_CONFIG as never, async () => {
-      await run.store(parsed);
-    });
+    return await steps.do(options.storeStep ?? "store", STORE_STEP_CONFIG as never, async () => await run.store(parsed));
   } catch (e) {
     console.error(JSON.stringify({ ev: "clip.store_failed", detail: e instanceof Error ? e.message : String(e) }));
-    throw new Error(NOT_STORED_ERROR);
+    throw new Error(options.notStoredError ?? NOT_STORED_ERROR);
   }
 }
 

@@ -41,6 +41,7 @@ import {
   type NormalizedLine,
 } from "./chatterbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
+import { NOT_STORED_AUDIO_ERROR, runPaidGeneration } from "../../_shared/paid-generation";
 import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, planeRefusalReason, planeRefusalError } from "../../_shared/runpod-route";
 
 interface R2Bucket {
@@ -121,10 +122,9 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Synthesize ONE line: blocking env.AI.run -> WAV bytes -> R2. Returns the shot's audio descriptor.
- *  THROWS on failure so the step retries; Aura-1 returns the audio as a binary stream (not a URL like
- *  the music model), so we read the body to bytes directly. */
-async function synthLine(env: Env, project: string, line: NormalizedLine): Promise<DialogueShotAudio> {
+/** Synthesize ONE line and return where the audio is. THROWS when no audio came back, including a runsync
+ *  still in progress, so the step retries. A returned URL is checkpointed, so it is never bought twice. */
+async function synthLine(env: Env, line: NormalizedLine): Promise<string> {
   const route = await runpodRoute(env);
   if (!route.credential) throw new Error(runpodCredentialName(route) + " not configured");
   const r = await fetch(runpodEndpointUrl(route, MODEL) + "/runsync", {
@@ -138,6 +138,11 @@ async function synthLine(env: Env, project: string, line: NormalizedLine): Promi
   const body = (await r.json()) as { output?: { audio_url?: string }; status?: string; error?: unknown };
   const url = body.output?.audio_url;
   if (!url) throw new Error("chatterbox returned no audio_url");
+  return url;
+}
+
+/** Download the bought line and write it. Never reaches the provider (cf#1107). */
+async function storeLine(env: Env, project: string, line: NormalizedLine, url: string): Promise<DialogueShotAudio> {
   const audio = await fetch(url);
   if (!audio.ok) throw new Error("fetch chatterbox audio -> " + audio.status);
   const bytes = await audio.arrayBuffer();
@@ -162,9 +167,11 @@ export class ChatterboxWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
       for (const line of lines) {
         // One step per shot: each is independently retried + checkpointed, so a recycle or a single
         // shot's transient failure never re-bills the lines already synthesized.
-        const shot = await step.do(`synth:${line.shot_id}`, SYNTH_STEP_CONFIG, async () => {
-          return await synthLine(this.env, project, line);
-        });
+        const shot = await runPaidGeneration(step, SYNTH_STEP_CONFIG, {
+          generate: () => synthLine(this.env, line),
+          parse: (raw) => raw as string,
+          store: (url) => storeLine(this.env, project, line, url),
+        }, { generateStep: `synth:${line.shot_id}`, storeStep: `store:${line.shot_id}`, notStoredError: NOT_STORED_AUDIO_ERROR });
         audio.push(shot);
       }
       await writeState(this.env, job_id, { status: "done", project, audio, applied: appliedTags(audio) });
