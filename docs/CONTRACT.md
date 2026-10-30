@@ -1631,7 +1631,7 @@ Project-level pass: trains/reuses cast LoRAs once and emits every shot's start k
 | Field | Type | Req | Meaning |
 |-------|------|-----|---------|
 | `project` | string | yes | Echo of the project. |
-| `keyframes` | `{ shot_id, keyframe_key }[]` | yes | Each generated start keyframe (PNG R2 key). |
+| `keyframes` | `{ shot_id, keyframe_key }[]` | yes | Each generated start keyframe (PNG R2 key). A module SHOULD write `renders/<project>/keyframes/<job>/<shot>.png`, with `<job>` the `jobId` it returned, so concurrent renders cannot overwrite it and the core can recover it after a lost poll. See 3.3.2. |
 | `trained_loras?` | `{ [slot]: string }` | no | slot -> R2 key of the LoRA this render trained or reused; the core banks it onto the cast member (`lora_status` -> ready). |
 
 ### 3.2 motion.backend (pick_one)
@@ -1825,9 +1825,11 @@ re-pays keyframes + motion).
 
 #### 3.3.2 Raw-clip + keyframe provenance sidecars, and cross-render adoption (#767)
 
-The RAW motion clip (`renders/<project>/clips/<shot>_<backend>.mp4`) and the SDXL keyframe
-(`renders/<project>/keyframes/<shot>.png`) are ALSO project-scoped and carry no render-job id, so every
-render of the same project shares the namespace. The R2-presence reclaim (`reclaimClipsFromR2`,
+The RAW motion clip (`renders/<project>/clips/<shot>_<backend>.mp4`) is ALSO project-scoped and carries no
+render-job id, so every render of the same project shares the namespace. A keyframe is **job-scoped**,
+`renders/<project>/keyframes/<job>/<shot>.png` (cf#1059, backend#534), because a flat key let a concurrent
+render replace a still after a film had recorded it. Older artifacts stay at the flat
+`renders/<project>/keyframes/<shot>.png`, and the reclaim still reads them. The R2-presence reclaim (`reclaimClipsFromR2`,
 `listProjectKeyframes`) recovers a clip / keyframe whose module poll was lost (GC'd / frozen job, #141 /
 #143 / #619). Matching by shot-id boundary with only the #661 upload-time floor as a guard let a SECOND
 render of the same project with a **different motion backend / config** adopt the FIRST render's artifact
@@ -1842,11 +1844,11 @@ written by the CORE at the reclaim seam it already owns -- no producer or contra
 - **Clip** (`<clip_key>.prov`): a 64-char hex hash over the identity-determining inputs `{motion_backend,
   config, keyframe_etag, prompt, seconds}` (`clipProvenanceHash`). Stamped the moment the core ACCEPTS a
   clip (a motion.backend poll / synchronous output; the reclaim also heals a legacy / lost-poll clip).
-- **Keyframe** (`<keyframe_key>.prov`): a hash over `{keyframe_config}` only (`keyframeProvenanceHash`).
-  The motion backend is DELIBERATELY excluded -- keyframes are backend-agnostic (SDXL), so two renders that
-  differ only in motion backend legitimately SHARE keyframes; only a changed keyframe config regenerates.
-  (The project namespace is already the content-addressed bundle stem, #759, so same-project keyframes can
-  differ only by the keyframe config.)
+- **Keyframe** (`<keyframe_key>.prov`): a hash over `{keyframe_config, bundle_key}` (`keyframeProvenanceHash`,
+  cf#388). The motion backend is DELIBERATELY excluded -- keyframes are backend-agnostic, so a flat legacy
+  still may be shared by two renders that differ only in motion backend. A job-scoped still is adopted only
+  by the film whose keyframe job wrote it. The GPU door reuses across jobs through its own pointer
+  (`renders/<project>/keyframes/<shot>.latest.json`) and copies the still to the new job's key.
 
 **Adoption gate.** The reclaim adopts a candidate ONLY when its sidecar PROVES identical-config:
 
@@ -1858,6 +1860,12 @@ written by the CORE at the reclaim seam it already owns -- no producer or contra
   to the existing #661 freshness-floored behavior, and HEAL it by stamping this render fingerprint. A clip
   reclaim lists ALL same-shot candidates (not first-match-wins) and refuses an ambiguous multi-candidate
   unstamped set (rival lost-poll renders) -- re-render, never guess.
+
+**Settle window, core 1.26.1 and later (core#363).** A lone unstamped clip is adopted only after
+`UNSTAMPED_SETTLE_MS` (5 minutes) since upload, because a fresh one can be a live sibling's, written and
+not yet stamped. A shot that fails terminally inside the window fails the film. Failing loud is the intent:
+the alternative is another door's clip marked done. A matching sidecar adopts at once. An archived take
+(`<clip>_take<ms>.<ext>`) is never a candidate.
 
 Because the core writes the sidecar itself, the gate is safe to ship in one deploy: pre-#767 artifacts are
 simply unstamped and take the freshness fallback (no behavior change) until the first accept stamps them.

@@ -177,10 +177,9 @@ export function clipJobIdOf(doc: unknown): string | null {
  * archive pass (timestamped, and the archiver skips anything already matching `_take<digits>`), so
  * exactly one doc names each one.
  *
- * A JOB-SCOPED still (cf#1059) IS harvested, but only when its job segment is this film's own
- * `keyframe_job_id`. A full film row carries no keyframes_json, so nothing else names that still, and
- * a delete would strand it. A from-keyframes child names its parent's still and has no
- * `keyframe_job_id`, so it can never delete a still another render wrote.
+ * A JOB-SCOPED still (cf#1059) IS harvested from a film that drew or copied its own. A full film row
+ * carries no keyframes_json, so nothing else names that still, and a delete would strand it. A
+ * from-keyframes child (`derive_mode` set) names its parent's still, so it harvests none.
  */
 export function parseJobDocKeys(doc: unknown): string[] {
   const out: string[] = [];
@@ -188,13 +187,11 @@ export function parseJobDocKeys(doc: unknown): string[] {
   const d = doc as { film_key?: unknown; silent_film_key?: unknown; film_finish?: unknown; shots?: unknown };
   pushKey(out, d.film_key);
   pushKey(out, d.silent_film_key);
-  const stillJob = (doc as { keyframe_job_id?: unknown }).keyframe_job_id;
-  const stills = (doc as { keyframes?: unknown }).keyframes;
-  if (typeof stillJob === "string" && stillJob && Array.isArray(stills)) {
-    const own = `/keyframes/${stillJob}/`;
-    for (const k of stills) {
+  const film = doc as { derive_mode?: unknown; keyframes?: unknown };
+  if (!film.derive_mode && Array.isArray(film.keyframes)) {
+    for (const k of film.keyframes) {
       const key = k && typeof k === "object" ? (k as { keyframe_key?: unknown }).keyframe_key : undefined;
-      if (typeof key === "string" && key.includes(own)) pushKey(out, key);
+      if (typeof key === "string" && /\/keyframes\/[^/]+\/[^/]+$/.test(key)) pushKey(out, key);
     }
   }
   if (d.film_finish && typeof d.film_finish === "object") {
