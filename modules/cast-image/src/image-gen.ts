@@ -99,6 +99,12 @@ export function extractProxiedImageUrl(result: unknown): string | null {
  *  shape faithful + provider-keyed so the other proxied models drop in cleanly. imageInputs are
  *  base64 data URIs (the form the image-edit models accept). */
 export function proxiedParams(model: string, prompt: string, imageInputs: string[] = []): Record<string, unknown> {
+  // schema-input.json 2026-10-30: prompt required, images maxItems 10, additionalProperties false.
+  if (model === "black-forest-labs/flux-3-image-klein") {
+    const p: Record<string, unknown> = { prompt };
+    if (imageInputs.length) p.images = imageInputs.slice(0, 10);
+    return p;
+  }
   if (model.startsWith("google/")) {
     const p: Record<string, unknown> = { prompt, output_format: "png" };
     if (imageInputs.length) p.image_input = imageInputs.slice(0, PROXIED_MAX_REFS);
@@ -180,7 +186,9 @@ export async function generateImage(
     return { bytes, mime: sniffImageMime(bytes).mime };
   }
   // proxied (e.g. the nano-banana fallback): reference-condition via image_input[], through the gateway.
-  const cap = model.startsWith("openai/") ? 16 : PROXIED_MAX_REFS;
+  const cap = model === "black-forest-labs/flux-3-image-klein" ? 10
+    : model.startsWith("openai/") ? 16
+    : PROXIED_MAX_REFS;
   const imageInputs: string[] = [];
   for (const url of refUrls) {
     if (imageInputs.length >= cap) break;

@@ -818,7 +818,7 @@ config; everything else in the Studio is single-user and needs no email.
 installs need it: storyboard planning bills through the AI Gateway on Unified Billing (section 2d),
 and image work runs on the AI binding. Set it only if you want that specific provider path:
 
-- `OPENAI_API_KEY` -- BYOK OpenAI image generation (transparent-PNG output via gpt-image-1.5). Unset
+- `OPENAI_API_KEY` -- BYOK OpenAI image generation. Transparent PNG is the legacy gpt-image-1.5 path. The catalog id is gpt-image-2. Unset
   by default; the studio renders keyframes/images on its normal path without it. Read by
   `modules/image-generate`, which is the only consumer.
 

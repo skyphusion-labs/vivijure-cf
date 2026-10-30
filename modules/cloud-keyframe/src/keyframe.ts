@@ -9,15 +9,18 @@ import type { KeyframeShot } from "./contract";
 // are GPU keyframe (own-gpu); this door is the optional CF stills path.
 export const MODELS = [
   "google/nano-banana-2",
+  "google/nano-banana-2.1",
+  "pruna/p-image-edit",
 ] as const;
 export type Model = (typeof MODELS)[number];
 
 export const MIN_DIM = 512;
 export const MAX_DIM = 1536;
 
-/** Clamp a model id to one this module drives (Cloudflare Nano Banana 2). */
-export function clampModel(_v: unknown): Model {
-  return MODELS[0];
+/** Clamp a model id to one this module drives. Unknown ids stay on the default, MODELS[0]. */
+export function clampModel(v: unknown): Model {
+  const id = typeof v === "string" ? v : "";
+  return (MODELS as readonly string[]).includes(id) ? (id as Model) : MODELS[0];
 }
 
 /** Clamp a keyframe dimension to the model-safe range, default `fallback`. */
