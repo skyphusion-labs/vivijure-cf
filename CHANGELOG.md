@@ -5,6 +5,20 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.42.0 -- 2026-10-30
+
+### fix(finish): title cards and captions are sized for a vertical frame (#1111)
+
+On a vertical film the title ran off both sides of the card, and one line of dialogue wrapped to six lines across the speaker. Cards now scale by the frame's short side, and captions by its aspect against 16:9. At 720x1280 a title is 53px, and that line of dialogue is two lines. A frame at least as wide as it is tall keeps its sizes. A title too long for the card wraps to at most three lines and shrinks, on any frame, so a landscape title that ran off the edge now stays on.
+
+**Fix: deleting a render frees its film-scoped finish clips (vivijure-core#379).**
+
+Deleting a render now frees its folder at `renders/<project>/clips/<film_id>/`, including intermediate clips that no record names.
+
+### fix(finish-upscale): the default is the delivery height, not a factor (vivijure-core#389)
+
+The schema default of `scale: 2` was filled into every config, so every upscale counted as an explicit 2x and the delivery-height route never ran. The default is now `0`, shown as "to delivery height". An explicit 2x or 4x still wins. A clip already at the target calls no door. The module declares `finish_scales_frame`, so a core from 1.28.2 prices the film at that frame before it spends.
+
 ## v1.41.0 -- 2026-10-30
 
 **Fix: a cancelled film can stop a running GPU finish step (#1109).**
