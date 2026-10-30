@@ -106,7 +106,6 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   it("the scan read the tree (positive control)", () => {
     // Every assertion below is shaped so that a scan reading NOTHING would produce empty sets and
     // pass. Pin real data with named members so a path or parse regression is loud.
-    // cf#1073: 33 -> 34.
     expect(ENTRIES.length).toBeGreaterThan(20);
     expect(READY).toContain("keyframe");
     expect(WRITES_JOB_LOG).toContain("finish-rife");
@@ -246,12 +245,10 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       "image-generate",
       "subtitle",
     ]);
-    // cf#1075: these three are retired in this tree and unpublished. The plane catalog
-    // still names them, so the mirror still names them. A release cannot upload a bundle
-    // that is not in the tree. The names stay until the plane drops the rows.
+    // cf#1075 and cp#569: these three are retired, unpublished and out of the catalog.
     for (const m of ["seedance", "vidu-q3", "google-veo"]) {
       expect(publishedToTenants(), m).not.toContain(m);
-      expect(CATALOG, m).toContain(m);
+      expect(CATALOG, m).not.toContain(m);
       expect(ENTRIES.map((e) => e.name), m).not.toContain(m);
     }
   });
