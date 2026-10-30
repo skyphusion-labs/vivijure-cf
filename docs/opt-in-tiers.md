@@ -109,9 +109,8 @@ shared note just below), then put its endpoint id into the account Secrets Store
 - **What to use instead:** `infinitetalk`, a `motion.backend` door that drives motion FROM the
   Cast audio, so the mouth is right at animation time rather than patched afterwards. It fails
   closed without Cast audio rather than degrading to a dub.
-- **On a silent motion door** (kling, minimax-hailuo, local-gpu, ...) a spoken line is now the
-  Cast voice MUXED onto a silent clip: correct audio, un-synced mouth. Pick the InfiniteTalk
-  door when the mouth matters.
+- **On a silent motion door** (minimax-hailuo, local-gpu, ...) a spoken line is refused at
+  submit. Pick a talking door. Pick the InfiniteTalk door when the mouth matters.
 
 ### finish-blender (color grade)
 - **What it is:** a headless Blender compositor grade (fixed presets: filmic warm, cool, high contrast, …).
@@ -132,7 +131,7 @@ shared note just below), then put its endpoint id into the account Secrets Store
   cannot host.
 - **What replaced it: nothing, deliberately.** Lip-sync is produced at motion time by
   `infinitetalk`, which takes the Cast audio directly, so there is no downstream step that
-  needed the speech cleaned first. The Cast voice is muxed as recorded.
+  needed the speech cleaned first. Nothing replaced it.
 - The `speech` HOOK still exists in `vivijure-core` and is unchanged. Nothing in this repo
   implements it today, so a future speech module inherits a checked contract rather than a
   rewritten one.
