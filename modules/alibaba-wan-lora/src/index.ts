@@ -85,7 +85,7 @@ const MANIFEST: ModuleManifest = {
       "5 or 8 second clips",
       "Silent, with your trained face",
       "One film, no scatter (face lock)",
-      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
+      "No spoken lines. A board with a line needs a talking door",
     ],
   },
   usage: {
