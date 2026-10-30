@@ -485,6 +485,12 @@
       : { text: "completed", tone: "success", retry: false };
   }
 
+  // The retry route takes a film-* id and refuses anything else, so a leftover scatter row names its
+  // missing steps and offers no button it would refuse.
+  function canRetryFinish(jobId) {
+    return typeof jobId === "string" && jobId.indexOf("film-") === 0;
+  }
+
   // "waiting, position 3 of 5" for a film in the finish queue, or null.
   function waitingLabel(output) {
     var w = output && output.finish_waiting;
@@ -497,6 +503,7 @@
 
   return {
     incompleteFrom: incompleteFrom,
+    canRetryFinish: canRetryFinish,
     incompleteSummary: incompleteSummary,
     completedStatus: completedStatus,
     waitingLabel: waitingLabel,

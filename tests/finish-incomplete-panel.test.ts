@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { completedStatus, incompleteFrom, incompleteSummary, waitingLabel } from "../public/finish-degrade.js";
+import { canRetryFinish, completedStatus, incompleteFrom, incompleteSummary, waitingLabel } from "../public/finish-degrade.js";
 import {
   FAILURE_NOT_CONFIGURED,
   FAILURE_REFUSED,
@@ -48,6 +48,19 @@ describe("a film with finish_incomplete", () => {
     expect(render).toContain("setRenderStatus(verdict.text + elapsed, verdict.tone)");
     expect(render).toContain("/finish-retry");
     expect(render).not.toContain('(limited ? "completed with limits" : "completed") + elapsed');
+  });
+});
+
+describe("the retry button", () => {
+  it("is offered only for a job the route accepts", () => {
+    expect(canRetryFinish("film-abc")).toBe(true);
+    for (const id of ["scatter-abc", "", null, undefined]) expect(canRetryFinish(id)).toBe(false);
+    expect(render).toContain("fd.canRetryFinish(jobId)");
+  });
+  it("no route in this studio starts a scatter film, so a new film can always retry", () => {
+    const index = readFileSync(join(__dirname, "../src/index.ts"), "utf8");
+    expect(index).not.toContain("startScatterRender");
+    expect(index).toContain("startFilmJob(env");
   });
 });
 

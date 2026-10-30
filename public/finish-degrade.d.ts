@@ -172,4 +172,5 @@ export function completedStatus(
   output: RenderOutput | null | undefined,
   limited: boolean,
 ): { text: string; tone: "warn" | "success"; retry: boolean };
+export function canRetryFinish(jobId: unknown): boolean;
 export function waitingLabel(output: RenderOutput | null | undefined): string | null;

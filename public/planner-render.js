@@ -923,6 +923,11 @@ function paintFinishIncomplete(out) {
   }
   box.textContent = fd.incompleteSummary(list) + " ";
   const jobId = renderState.jobId;
+  box.hidden = false;
+  if (!fd.canRetryFinish(jobId)) {
+    box.textContent = box.textContent.replace(" Retry runs these steps again without re-rendering any clip.", "");
+    return;
+  }
   const retry = document.createElement("button");
   retry.type = "button";
   retry.textContent = "Retry missing steps";
