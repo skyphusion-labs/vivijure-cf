@@ -195,6 +195,18 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 | First+last? | No. |
 | Cannot | Invent speech. Lock the sample you kept. |
 
+## cf-minimax-h3
+
+Silent clips from your stills. 4 to 15 seconds. Not a default door.
+
+| | |
+|---|---|
+| Duration | 4 to 15 seconds. Whole seconds. |
+| Talks? | No. Native audio output is not stated. |
+| Voice lock | None. No spoken lines on this door. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. |
+| Cannot | Spoken lines. Scatter. Send an image, video, or audio reference. Name a video-input price (the page does not list one). Say the provider default resolution (the schema lists none; we send 768P, the default per-second price). Assume a frame rate. |
+
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 
 | | |

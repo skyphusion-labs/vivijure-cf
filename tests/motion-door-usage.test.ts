@@ -8,6 +8,7 @@ import alibabaWanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
+import cfMinimaxH3Worker from "../modules/cf-minimax-h3/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
 import googleVeoWorker from "../modules/google-veo/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
@@ -124,6 +125,14 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     usage: {
       native_audio: false, voice: "cast_tts", scatter_native_audio: false,
       min_seconds: 5, max_seconds: 8, duration_steps: [5, 8], seed: true,
+    },
+  },
+  {
+    name: "cf-minimax-h3",
+    worker: cfMinimaxH3Worker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      min_seconds: 4, max_seconds: 15, first_last: true,
     },
   },
   {

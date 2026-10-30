@@ -35,3 +35,6 @@
 #   hub-first: (1) hub edit         (2) cf edit + line deleted in the same PR   -- two PRs
 # Neither order is wrong and both stay green throughout; hub-first is simply one PR shorter.
 
+# cf-minimax-h3 is on disk in this repo. The hub row is not on vivijure main yet.
+cf-minimax-h3 adding cf#1074
+
