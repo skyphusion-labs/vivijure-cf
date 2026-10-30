@@ -45,12 +45,11 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Read the keyframe and return it as the model's image_input.
+ * Read the keyframe and return it as the model's image_input: bare base64, with no data: prefix.
  *
- * The model's schema says image_input is a "Base64-encoded reference image for i2v". This door used to
- * send the presigned URL, and every render failed in seconds with `AiGatewayError: 2002: Error`, on all
- * three workflow attempts. A data URI carries the mime type, and it is the form cloud-keyframe already
- * sends to the Google models behind the same image_input field.
+ * Measured from the AI Gateway logs, 2026-10-30. A presigned URL failed with 2002. A data URI failed
+ * with the provider's own words, "Invalid base64 encoded bytes", because the provider decodes the whole
+ * string. Failed attempts cost 0.
  */
 export async function keyframeImageInput(
   url: string,
@@ -59,9 +58,7 @@ export async function keyframeImageInput(
   const resp = await fetcher(url);
   // The URL is presigned, so the message carries the status and never the URL.
   if (!resp.ok) throw new Error("keyframe fetch " + resp.status);
-  const mime = (resp.headers.get("content-type") || "").split(";")[0].trim();
-  const type = mime.startsWith("image/") ? mime : "image/png";
-  return "data:" + type + ";base64," + bytesToBase64(new Uint8Array(await resp.arrayBuffer()));
+  return bytesToBase64(new Uint8Array(await resp.arrayBuffer()));
 }
 
 export function buildParams(

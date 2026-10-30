@@ -75,7 +75,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-veo",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Veo 3.1)" }],
