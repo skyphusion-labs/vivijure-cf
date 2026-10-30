@@ -47,6 +47,7 @@ function vfCall(env: Env) {
     return fetch(vfBase(env) + path, init);
   };
 }
+import { finishAffinity, withAffinity } from "../../_shared/finish-affinity";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
@@ -102,7 +103,7 @@ async function submitAsync(
 ): Promise<string | null> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -131,7 +132,7 @@ async function invokeSync(
 ): Promise<InvokeResponse<FilmFinishOutput>> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -201,7 +202,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   // container (back-compat). A sync fallback that itself fails soft-degrades (#190), never drops the film.
   const jobId = await submitAsync(env, spec, corr);
   if (jobId) {
-    return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0 }) };
+    return { ok: true, pending: true, poll: encodePoll({ jobId, affinity: finishAffinity(corr), filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0 }) };
   }
   return invokeSync(env, input, spec, corr);
 }
@@ -215,7 +216,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
   // Intermediate pending polls stay silent; only terminal outcomes emit vpc.call with job wall-clock.
   const timed = await timedVpcFetch(
     vfCall(env),
-    { headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN) },
+    { headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), st.affinity) },
     {
       module: MANIFEST.name,
       service: "video-finish",

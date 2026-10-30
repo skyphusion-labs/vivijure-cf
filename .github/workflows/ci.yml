@@ -871,6 +871,31 @@ jobs:
       - name: Every changelog fragment is consumed or deliberately held (cf#901)
         run: python3 scripts/changelog-fragments-consumed.py .
 
+  # The standalone video-finish door that film-titles and subtitle reach over VIDEO_FINISH_URL. A job
+  # here and not a workflow of its own, because cf#562 allows no second way to publish: same tag, same
+  # gates as the studio. The runner ships Docker, which `wrangler deploy` needs to build the image for
+  # linux/amd64. An unchanged image rolls nothing out. LOCAL_FINISH_TOKEN is not set here: a wrangler
+  # secret persists across deploys.
+  deploy-video-finish-door:
+    needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install
+        working-directory: containers/video-finish/cf-container
+        run: npm ci --no-audit --no-fund
+      - name: Deploy
+        working-directory: containers/video-finish/cf-container
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+
   deploy:
     # DEPLOY GATE: this job runs ONLY for a pushed version tag (refs/tags/v*), after ci passes.
     # A push/merge to main runs `ci` above but never reaches here, so no merge can redeploy prod
