@@ -70,8 +70,8 @@ describe("cf twins", () => {
   });
   it("veo uses 4/6/8s and talking audio", () => {
     expect(clampVeo(5)).toBe(4);
-    const p = veo(shot, { generate_audio: true, aspect_ratio: "16:9", resolution: "720p" });
-    expect(p.image_input).toBe("https://r2/x.png");
+    const p = veo(shot, { generate_audio: true, aspect_ratio: "16:9", resolution: "720p" }, "data:image/png;base64,AQID");
+    expect(p.image_input).toBe("data:image/png;base64,AQID");
     expect(p.duration).toBe("6s");
     expect(p.generate_audio).toBe(true);
   });
