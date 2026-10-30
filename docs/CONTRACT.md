@@ -1100,7 +1100,7 @@ the planner's existing poll loop understands a module render identically to a ra
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
 | `bundleKey` | string | yes | -- | R2 key of the render bundle (storyboard + cast refs/LoRAs). |
-| `project` | string | no | derived from `bundleKey` | Project namespace. |
+| `project` | string | no | derived from `bundleKey` | Project namespace. A caller value that does not match the bundle key is remapped to the bundle slug, as in section 2.20, so it does not separate two renders of one bundle. |
 | `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Injected into keyframe + motion configs. |
 | `renderOverrides` | object | no | -- | Per-module config overrides; see 2.18.1. |
 | `keyframesOnly` | bool | no | false | Stop after keyframes (preview), no i2v/assemble. |

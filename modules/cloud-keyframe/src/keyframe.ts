@@ -154,9 +154,14 @@ export function planShotRefs(
 
 // --- R2 key conventions ------------------------------------------------------------------------
 
-/** The R2 key a generated keyframe lands under (the contract: renders/<project>/keyframes/<shot>.png). */
-export function keyframeKey(project: string, shotId: string): string {
-  return `renders/${project}/keyframes/${shotId}.png`;
+/** The R2 key a generated keyframe lands under: renders/<project>/keyframes/<job>/<shot>.png.
+ *
+ *  The job segment is load-bearing (cf#1059). Every film off one bundle has the same project, so a flat
+ *  key let a concurrent render replace this film's still after the film had recorded the key. The door and
+ *  the content gate then read a frame from another render. This door generates on every job and never
+ *  reuses a prior still, so the shared key bought nothing here. */
+export function keyframeKey(project: string, jobId: string, shotId: string): string {
+  return `renders/${project}/keyframes/${jobId}/${shotId}.png`;
 }
 
 /** A staged (downscaled) reference portrait for one slot of one job. */
