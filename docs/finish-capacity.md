@@ -38,7 +38,7 @@ A module says why a step did not run, in `failure` on its output (`docs/module-a
 | A 4xx, including 401, or the step ran and refused | Named at once. |
 | A hold that ran out | Named, with code `wait_exhausted`. |
 | A passthrough with no `failure` (an older module) | Named, with code `unclassified`. |
-| A CSAM refusal | Terminal. Never held, never listed, never retried. |
+| A CSAM refusal | Terminal. Never held, never listed, never retried. A film with a refused shot does not reopen on a retry, so the retry calls no door for it (vivijure-core#384). |
 
 A named step lands in `finish_incomplete` with what is kept. The film finishes as `done` when it still has
 a film to give, and `failed` when assemble or mux did not run. The panel shows "completed, steps missing"
