@@ -505,3 +505,26 @@ describe("reclaimRenderRows: a listing that says there is more", () => {
     expect([...store].sort()).toEqual(before);
   });
 });
+
+describe("parseJobDocKeys and job-scoped stills (cf#1059)", () => {
+  const own = "renders/p/keyframes/kf-1/shot_01.png";
+  const flat = "renders/p/keyframes/shot_01.png";
+  const parents = "renders/p/keyframes/kf-parent/shot_01.png";
+
+  it("names a still this film's own keyframe job wrote, because no row names it", () => {
+    expect(parseJobDocKeys({ keyframe_job_id: "kf-1", keyframes: [{ shot_id: "shot_01", keyframe_key: own }] })).toContain(own);
+  });
+
+  it("does not name a flat shared still, or a still another job wrote", () => {
+    const keys = parseJobDocKeys({
+      keyframe_job_id: "kf-1",
+      keyframes: [{ shot_id: "shot_01", keyframe_key: flat }, { shot_id: "shot_02", keyframe_key: parents }],
+    });
+    expect(keys).not.toContain(flat);
+    expect(keys).not.toContain(parents);
+  });
+
+  it("a from-keyframes child with no keyframe job names none of its parent's stills", () => {
+    expect(parseJobDocKeys({ keyframes: [{ shot_id: "shot_01", keyframe_key: parents }] })).toEqual([]);
+  });
+});
