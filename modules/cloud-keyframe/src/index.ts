@@ -101,7 +101,7 @@ interface Env {
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.9",
+  version: "0.1.10",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -110,7 +110,7 @@ export const MANIFEST: ModuleManifest = {
       type: "enum",
       values: [...MODELS],
       default: MODELS[0],
-      label: "image model (Cloudflare Nano Banana 2)",
+      label: "image model",
     },
     // Default to a LANDSCAPE keyframe (1344x768), matching the GPU keyframe module. MIND THE RATIO:
     // 1344/768 is 1.75 (7:4), NOT 16:9 (1.7778). Image-to-video backends conform the clip to the
@@ -253,7 +253,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   }
   const model = clampModel(req.config.model);
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (model.startsWith("google/") && !gatewayId) {
+  if ((model.startsWith("google/") || model.startsWith("pruna/")) && !gatewayId) {
     return { ok: false, error: "cloud-keyframe: GATEWAY_ID not configured (required for the proxied model)" };
   }
   const width = clampDim(req.config.width, 1344);
@@ -400,7 +400,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     const shot = state.shots[0];
     const characterShot = shot.slots.length > 0;
     // New jobs always set plate_prompt. Pre-plate-then-edit state docs omit it and stay one-pass.
-    const twoPass = characterShot && shot.plate_prompt !== undefined;
+    // p-image-edit schema requires 1-5 images, so it has no text-only plate.
+    const twoPass = characterShot && shot.plate_prompt !== undefined && state.model !== "pruna/p-image-edit";
     const cap = maxRefsForModel(state.model);
 
     // Gather this shot own character refs first, then the film-wide reference into the leftover
@@ -425,6 +426,12 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       if (r) filmBlobs.push(await r.blob());
     }
     // Empty refBlobs stays empty. Do not steal a staged portrait onto an empty-slot shot.
+    if (state.model === "pruna/p-image-edit" && charBlobs.length + filmBlobs.length < 1) {
+      return {
+        ok: false,
+        error: "cloud-keyframe: shot " + shot.shot_id + " needs 1 to 5 reference images for p-image-edit",
+      };
+    }
 
     let gen: { bytes: ArrayBuffer; mime: string };
     let plateBytes: ArrayBuffer | undefined;

@@ -29,6 +29,7 @@ export function isFlux2(model: string): boolean {
  *  reference against a shot own character refs without duplicating the per-model numbers. */
 export function maxRefsForModel(model: string): number {
   if (isFlux2(model)) return FLUX2_MAX_REFS;
+  if (model === "pruna/p-image-edit") return 5;
   if (model.startsWith("openai/")) return 16;
   return PROXIED_MAX_REFS;
 }
@@ -122,6 +123,18 @@ export function proxiedParams(
   width: number,
   height: number,
 ): Record<string, unknown> {
+  // schema-input.json 2026-10-30. required: prompt, images (1-5), turbo, aspect_ratio,
+  // disable_safety_checker. additionalProperties is an empty schema (extras are not forbidden
+  // by that flag); we still send only the documented keys. Safety checker stays on.
+  if (model === "pruna/p-image-edit") {
+    return {
+      prompt,
+      images: imageInputs.slice(0, 5),
+      turbo: true,
+      aspect_ratio: "match_input_image",
+      disable_safety_checker: false,
+    };
+  }
   if (model.startsWith("google/")) {
     const p: Record<string, unknown> = { prompt, output_format: "png", aspect_ratio: nearestAspectRatio(width, height) };
     // Text-only plate: omit image_input entirely. An empty array is not the same as absent.
@@ -241,7 +254,7 @@ export async function generateImage(
     return { bytes, mime: sniffImageMime(bytes).mime };
   }
   // proxied (e.g. nano-banana-pro): reference-condition via image_input[], through the gateway.
-  const cap = model.startsWith("openai/") ? 16 : PROXIED_MAX_REFS;
+  const cap = maxRefsForModel(model);
   const imageInputs: string[] = [];
   for (const blob of refBlobs) {
     if (imageInputs.length >= cap) break;
