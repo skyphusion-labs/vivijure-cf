@@ -48,6 +48,9 @@ export interface ModuleManifest {
    *  attaches the tenant's per-job R2 credential to its invoke envelope. OPTIONAL/additive, mirrors
    *  the core module contract. */
   needs_tenant_r2?: boolean;
+  /** A job trains any slot with no adapter, so the core keeps that film to one job (core#370). */
+  trains_loras?: boolean;
+
 }
 
 export interface InvokeContext {
