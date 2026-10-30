@@ -82,7 +82,7 @@ const BARE_ARM = "  | { ok: false; error: string };";
 
 describe("cf#846: the vendored InvokeFailureReason block is byte-identical in all 33 contracts", () => {
   it("there are 33 module contracts (denominator, so a shrinking sweep cannot pass)", () => {
-    expect(contractPaths().length).toBe(33);
+    expect(contractPaths().length).toBe(34);
   });
 
   it("every contract carries the canonical block EXACTLY, derived from core", () => {
@@ -178,8 +178,8 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
         (l) => l.startsWith("export type CancelResponse") && l.includes("ok: false; error: string"),
       ).length;
     }
-    expect(standalone).toBe(29);
+    expect(standalone).toBe(30);
     expect(inlineCancel).toBe(1);
-    expect(standalone + inlineCancel).toBe(30); // == PollResponse 28 + CancelResponse 2
+    expect(standalone + inlineCancel).toBe(31); // == PollResponse 29 + CancelResponse 2
   });
 });

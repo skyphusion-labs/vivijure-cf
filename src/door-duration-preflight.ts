@@ -16,7 +16,13 @@ import type { PreflightIssue } from "@skyphusion-labs/vivijure-core/preflight";
 interface DoorDurationShape {
   name: string;
   duration_grid?: unknown;
-  usage?: { min_seconds?: number; max_seconds?: number; duration_steps?: number[] };
+  usage?: {
+    min_seconds?: number;
+    max_seconds?: number;
+    duration_steps?: number[];
+    /** Provider page lists no duration. Do not publish min/max as a cap. */
+    duration_unspecified?: boolean;
+  };
 }
 
 interface BoardShape {
@@ -27,6 +33,10 @@ interface BoardShape {
 export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationShape): PreflightIssue[] {
   const usage = door.usage;
   if (!usage || door.duration_grid) return [];
+  // A positive min/max pair is required for the usage block to survive
+  // parseMotionUsage. When the provider page lists no duration, that pair
+  // is not a cap, and reporting it as one would invent a limit.
+  if (usage.duration_unspecified === true) return [];
   const steps = Array.isArray(usage.duration_steps) && usage.duration_steps.length
     ? [...usage.duration_steps].sort((a, b) => a - b)
     : null;
