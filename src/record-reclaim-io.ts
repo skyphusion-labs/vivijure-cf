@@ -304,6 +304,13 @@ export async function reclaimRenderRows(
     extraKeys: await outputKeyGate(env, rows, budget),
   });
 
+  // A retained artifact keeps its sidecars. A folder sweep lists them as candidates in their own right,
+  // and a clip whose `.hash` went would no longer pass the #583 gate, so it would re-run for nothing.
+  for (const key of candidates) {
+    const artifact = key.replace(/\.(hash|prov)$/, "");
+    if (artifact !== key && live.has(artifact)) live.add(key);
+  }
+
   // A stored absolute URL is not a key in this bucket; see isForeignRef for the shape and why. Drop it
   // before planning so it is never counted as a freed object.
   const plan = planReclaim(candidates.filter((k) => !isForeignRef(k)), live);

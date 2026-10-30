@@ -367,6 +367,20 @@ describe("reclaimRenderRows: the leak direction and the over-delete direction", 
       return { r2, doomed, survivor };
     };
 
+    it("a retained clip keeps its sidecars, and an unretained one in the same folder does not", async () => {
+      const { r2, doomed, survivor } = world();
+      const gone = "renders/heist/clips/film-aaa/s2_finished.mp4";
+      for (const k of [`${REUSED}.hash`, `${REUSED}.prov`, gone, `${gone}.hash`, `${gone}.prov`]) r2.store.add(k);
+      const { db } = makeDB({ renders: [doomed, survivor], shots: [...shots(), { film_id: "film-bbb", still_key: null, wav_key: null, clip_key: REUSED }] });
+      const report = await reclaim({ DB: db, R2_RENDERS: r2.binding } as unknown as never, [doomed]);
+      const left = [...r2.store];
+      expect(left).toEqual(expect.arrayContaining([REUSED, `${REUSED}.hash`, `${REUSED}.prov`]));
+      expect(left).not.toEqual(expect.arrayContaining([gone]));
+      expect(left).not.toContain(`${gone}.hash`);
+      expect(left).not.toContain(`${gone}.prov`);
+      expect(report.retained.map((r) => r.key)).toContain(`${REUSED}.hash`);
+    });
+
     it("survives when the reusing film has a shot record naming it", async () => {
       const { r2, doomed, survivor } = world();
       const { db } = makeDB({ renders: [doomed, survivor], shots: [...shots(), { film_id: "film-bbb", still_key: null, wav_key: null, clip_key: REUSED }] });
