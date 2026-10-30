@@ -68,7 +68,7 @@ export function buildRunPodBody(
       project,
       shot_id: input.shot_id,
       clip_key: input.clip_key,
-      output_key: blenderKey(input.clip_key),
+      output_key: input.output_key ?? blenderKey(input.clip_key), // vivijure-core#379: the film's own key
       job_type: cfg.job_type,
       preset: cfg.preset,
       strength: cfg.strength,

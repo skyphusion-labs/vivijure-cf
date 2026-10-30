@@ -329,6 +329,23 @@ describe("reclaimRenderRows: the leak direction and the over-delete direction", 
     clip_key: "renders/heist/clips/s1_wan.mp4",
   }];
 
+  it("sweeps this render's clip folder, including what no record names, and no other render's (vivijure-core#379)", async () => {
+    const r2 = scene();
+    for (const k of [
+      "renders/heist/clips/film-aaa/s1_finished.mp4",
+      "renders/heist/clips/film-aaa/s1_finished.mp4.hash",
+      "renders/heist/clips/film-aaa/r1/s1_finished_up.mp4",
+      "renders/heist/clips/film-bbb/s1_finished.mp4",
+    ]) r2.store.add(k);
+    const row = renderFixture();
+    const { db } = makeDB({ renders: [row], shots: shots() });
+    const report = await reclaim({ DB: db, R2_RENDERS: r2.binding } as unknown as never, [row]);
+    expect(report.complete).toBe(true);
+    const left = [...r2.store];
+    expect(left.filter((k) => k.includes("/clips/film-aaa/"))).toEqual([]);
+    expect(left).toContain("renders/heist/clips/film-bbb/s1_finished.mp4");
+  });
+
   it("CONTROL: a SOLE render's artifacts are all freed, including the four nothing in D1 names", async () => {
     const r2 = scene();
     const row = renderFixture();

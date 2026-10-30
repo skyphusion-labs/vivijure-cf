@@ -30,7 +30,8 @@
 //   project collide on one key ON PURPOSE. `assertProjectKey` (key-safety.js) ENFORCES that every
 //   module-returned artifact is project-keyed, so this is the rule and not an edge case:
 //     renders/<project>/clips/<shot>_<module>.mp4   render-orchestrator.js:18
-//     renders/<project>/clips/<shot>_finished.mp4   film-model.js:520
+//     renders/<project>/clips/<shot>_finished.mp4   written by a backend or module without core#379.
+//       With it, a film's finish clips are under renders/<project>/clips/<film_id>/: see renderClipPrefix.
 //     renders/<project>/dialogue/<shot>.wav         film-orchestrator.js:202
 //     renders/<project>/keyframes/<shot>.png        film-orchestrator.js:2866
 //     renders/<project>/bundle-kf/<shot>.png        src/bundle-keyframes.ts:44
@@ -89,6 +90,13 @@ export interface ReclaimPlan {
 /** The R2 prefix one render's job documents and assembled outputs live under. film_id === job_id. */
 export function renderDocPrefix(jobId: string): string {
   return `renders/${jobId}/`;
+}
+
+/** The folder a render's finish clips live under (vivijure-core#379). Unlike the per-project keys above,
+ *  nothing else writes here, so a render's own folder is safe to sweep. Its intermediate clips are named
+ *  by no record, so a sweep is the only way they are freed. Null if the project is not known. */
+export function renderClipPrefix(project: unknown, jobId: string): string | null {
+  return typeof project === "string" && project.length > 0 ? `renders/${project}/clips/${jobId}/` : null;
 }
 
 /** The render log. Keyed off job_id but NOT under `renders/<job_id>/`, so a prefix sweep of the

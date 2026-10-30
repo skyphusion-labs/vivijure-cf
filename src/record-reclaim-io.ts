@@ -35,6 +35,7 @@ import {
   parseJobDocKeys,
   planReclaim,
   renderDocPrefix,
+  renderClipPrefix,
   renderLogKeyFor,
   renderRowKeys,
   shotRowKeys,
@@ -283,6 +284,14 @@ export async function reclaimRenderRows(
     const ownTree = await listAllKeys(env, renderDocPrefix(row.job_id), budget);
     candidates.push(...ownTree.keys);
     if (ownTree.exhausted) partialRead = true;
+
+    // The doc's project is the one the keys were built from. A row's project can be renamed later.
+    const clipPrefix = renderClipPrefix((filmDoc as { project?: unknown } | null)?.project ?? row.project, row.job_id);
+    if (clipPrefix) {
+      const clipFolder = await listAllKeys(env, clipPrefix, budget);
+      candidates.push(...clipFolder.keys);
+      if (clipFolder.exhausted) partialRead = true;
+    }
   }
 
   // 2. THE GATE: keys the survivors still reference.
