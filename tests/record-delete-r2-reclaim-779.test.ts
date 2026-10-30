@@ -346,6 +346,54 @@ describe("reclaimRenderRows: the leak direction and the over-delete direction", 
     expect(left).toContain("renders/heist/clips/film-bbb/s1_finished.mp4");
   });
 
+  describe("a clip another film reused through the pointer (vivijure-core#379)", () => {
+    const REUSED = "renders/heist/clips/film-aaa/s1_finished.mp4";
+    const world = () => {
+      const r2 = scene();
+      r2.store.add(REUSED);
+      r2.putDoc("renders/film-bbb/film-job.json", {
+        film_id: "film-bbb",
+        project: "heist",
+        finish_shots: [{ shot_id: "s1", clip_key: REUSED, status: "done" }],
+      });
+      const doomed = renderFixture({ id: 1, job_id: "film-aaa" });
+      const survivor = renderFixture({
+        id: 2,
+        public_id: "22222222-2222-4222-8222-222222222222",
+        job_id: "film-bbb",
+        output_key: "renders/film-bbb/film.mp4",
+        output_json: JSON.stringify({ output_key: "renders/film-bbb/film.mp4" }),
+      });
+      return { r2, doomed, survivor };
+    };
+
+    it("survives when the reusing film has a shot record naming it", async () => {
+      const { r2, doomed, survivor } = world();
+      const { db } = makeDB({ renders: [doomed, survivor], shots: [...shots(), { film_id: "film-bbb", still_key: null, wav_key: null, clip_key: REUSED }] });
+      await reclaim({ DB: db, R2_RENDERS: r2.binding } as unknown as never, [doomed]);
+      expect([...r2.store]).toContain(REUSED);
+    });
+
+    // THE GUARD ON WHY CORE COPIES. A finish step records its clip only in the job doc, and this gate does
+    // not read a survivor's job doc, so a film must never name a clip in another film's folder. If this
+    // starts passing the other way, the gate learned to read docs and core's copy can be reconsidered.
+    it("is freed when only the reusing film's job doc names it, which is why core copies on reuse", async () => {
+      const { r2, doomed, survivor } = world();
+      const { db } = makeDB({ renders: [doomed, survivor], shots: shots() });
+      await reclaim({ DB: db, R2_RENDERS: r2.binding } as unknown as never, [doomed]);
+      expect([...r2.store]).not.toContain(REUSED);
+    });
+
+    it("a copy in the reusing film's own folder survives, which is what core records", async () => {
+      const { r2, doomed, survivor } = world();
+      const own = "renders/heist/clips/film-bbb/s1_finished.mp4";
+      r2.store.add(own);
+      const { db } = makeDB({ renders: [doomed, survivor], shots: shots() });
+      await reclaim({ DB: db, R2_RENDERS: r2.binding } as unknown as never, [doomed]);
+      expect([...r2.store]).toContain(own);
+    });
+  });
+
   it("CONTROL: a SOLE render's artifacts are all freed, including the four nothing in D1 names", async () => {
     const r2 = scene();
     const row = renderFixture();
