@@ -474,10 +474,10 @@
           <summary class="planner-overrides-summary">expert: raw JSON</summary>
           <div class="planner-overrides-expert-block">
             <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
-            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"seedance","config":{"cloud-keyframe":{"width":1344},"seedance":{"resolution":"720p"}}}' spellcheck="false"></textarea>
+            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"cf-seedance","config":{"cloud-keyframe":{"width":1344},"cf-seedance":{"resolution":"720p"}}}' spellcheck="false"></textarea>
             <p class="planner-overrides-hint">
               optional JSON in the module wire shape:
-              <code>{ "motion_backend": "seedance", "config": { "cloud-keyframe": {…}, "seedance": {…} } }</code>.
+              <code>{ "motion_backend": "cf-seedance", "config": { "cloud-keyframe": {…}, "cf-seedance": {…} } }</code>.
               wins over the structured fields above on conflict.
             </p>
           </div>

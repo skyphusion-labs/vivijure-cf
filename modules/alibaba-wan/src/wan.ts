@@ -1,7 +1,7 @@
 // Pure Wan 2.6 mapping/parsing: build the RunPod request body, parse the result video URL, and
 // encode/decode the async poll token. No I/O here, so it unit-tests without the runtime or spend.
 // The video-URL parse, poll token, and RunPod-GC helpers are shared, vendored per-module so the
-// module stays independent (matches the seedance/hailuo reference).
+// module stays independent (matches the minimax-hailuo door).
 //
 // RunPod public endpoint wan-2-6-i2v: image + prompt + optional audio URL.
 // enable_prompt_expansion defaults false so the prompt is sent as-is.

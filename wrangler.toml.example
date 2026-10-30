@@ -504,7 +504,7 @@ service = "vivijure-module-audio-master"
 binding = "MODULE_DIALOGUE"
 service = "vivijure-module-dialogue-gen"
 
-# Cloud i2v motion.backend modules (RunPod-hosted), joining own-gpu / seedance / kling. Each is its
+# Cloud i2v motion.backend modules (RunPod-hosted), joining own-gpu. Each is its
 # own per-module worker with a scoped RUNPOD_API_KEY; the registry discovers them as MODULE_* bindings.
 # These deploy ahead of the core (see ci.yml), so the bindings never dangle.
 [[services]]
@@ -549,7 +549,7 @@ service = "vivijure-module-cloud-keyframe"
 
 
 # Cloudflare AI Gateway i2v motion.backend modules (Unified Billing; Workflow-async, #155).
-# Distinct from RunPod seedance/hailuo/veo/wan: no RUNPOD_API_KEY; need GATEWAY_ID + AI binding.
+# Distinct from RunPod hailuo/wan: no RUNPOD_API_KEY; need GATEWAY_ID + AI binding.
 [[services]]
 binding = "MODULE_CF_HH1_R2V"
 service = "vivijure-module-cf-hh1-r2v"

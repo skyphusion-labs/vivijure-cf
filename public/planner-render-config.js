@@ -327,7 +327,7 @@
     return typeof loc === "string" ? loc.trim().toLowerCase() : "";
   }
 
-  // own-gpu is the silent look door (studio GPU). RunPod cloud i2v (seedance, kling, ...)
+  // own-gpu is the silent look door (studio GPU). RunPod cloud i2v (minimax-hailuo, alibaba-wan, ...)
   // is the talking/speed door. CF Workers AI modules are cf-*. Anyone can pick any door.
   function isQualityDoor(mod) {
     const name = moduleName(mod);

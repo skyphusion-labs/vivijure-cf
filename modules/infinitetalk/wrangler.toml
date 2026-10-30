@@ -4,7 +4,7 @@
 # plus Cast audio and moves the mouth to it. Two of the fifteen motion.backend doors do that
 # (this one and alibaba-wan); what is unique here is the PAIR driving_audio true AND native_audio
 # false, so there is no invent-speech fallback and a shot with no line is refused rather than voiced
-# by a stranger. Same async pattern as seedance; bound into the core as MODULE_INFINITETALK.
+# by a stranger. Same async pattern as alibaba-wan; bound into the core as MODULE_INFINITETALK.
 # account_id is read from CLOUDFLARE_ACCOUNT_ID (env), not hardcoded.
 
 name = "vivijure-module-infinitetalk"

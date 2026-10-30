@@ -1,5 +1,5 @@
 // narration-gen: a `score` module worker (vivijure-module/2). Synthesizes narration via MiniMax
-// Speech 02 HD on RunPod's hosted endpoint, using the SAME async submit+poll transport as seedance/kling.
+// Speech 02 HD on RunPod's hosted endpoint, using the SAME async submit+poll transport as alibaba-wan.
 //
 // ASYNC: a synth takes tens of seconds, longer than a Worker request can hold, so (NOT Workers AI /
 // ctx.waitUntil, which the runtime cancels ~30s after the response -> pending forever, #155):
