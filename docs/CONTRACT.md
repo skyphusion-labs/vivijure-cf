@@ -1869,7 +1869,7 @@ written by the CORE at the reclaim seam it already owns -- no producer or contra
   reclaim lists ALL same-shot candidates (not first-match-wins) and refuses an ambiguous multi-candidate
   unstamped set (rival lost-poll renders) -- re-render, never guess.
 
-**Settle window, core 1.26.1 and later (core#363).** A lone unstamped clip is adopted only after
+**Settle window, core 1.27.0 and later (core#363).** A lone unstamped clip is adopted only after
 `UNSTAMPED_SETTLE_MS` (5 minutes) since upload, because a fresh one can be a live sibling's, written and
 not yet stamped. A shot that fails terminally inside the window fails the film. Failing loud is the intent:
 the alternative is another door's clip marked done. A matching sidecar adopts at once. An archived take
