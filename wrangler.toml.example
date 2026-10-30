@@ -569,6 +569,10 @@ service = "vivijure-module-cf-grok-video"
 binding = "MODULE_CF_FLUX_3_VIDEO"
 service = "vivijure-module-cf-flux-3-video"
 
+[[services]]
+binding = "MODULE_CF_P_VIDEO_AVATAR"
+service = "vivijure-module-cf-p-video-avatar"
+
 
 # Subtitle (film.finish): burns a time-synced SRT via the video-finish container (POST /subtitle).
 # ADDED in v0.3.0; depends on the video-finish container rebuild (runbook 1.0).

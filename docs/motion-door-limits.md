@@ -185,6 +185,19 @@ this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).
 | First+last? | No. |
 | Cannot | Native talking audio. Commercial self-host. Cloud API-free is the point, not datacenter parity. |
 
+## cf-p-video-avatar
+
+Portrait plus Cast audio, at 720p or 1080p. The speaker is ours. Higher
+resolution than infinitetalk. Not a default door.
+
+| | |
+|---|---|
+| Duration | 1 to 15 seconds. 15 is our door cap, not the provider's, until a real long-line test (#931). |
+| Talks? | Mouth follows our file. Not invented speech. |
+| Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line is refused. |
+| First+last? | No. The page has a portrait and no end frame. |
+| Cannot | Invent speech. Lock the sample you kept. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. Trim trailing silence. |
+
 ## infinitetalk
 
 Portrait plus Cast audio. The speaker is ours, not invented.
