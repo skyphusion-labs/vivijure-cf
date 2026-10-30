@@ -44,10 +44,7 @@ A named step lands in `finish_incomplete` with what is kept. The film finishes a
 a film to give, and `failed` when assemble or mux did not run. The panel shows "completed, steps missing"
 with a retry button, and a clean green "completed" means the list is absent.
 
-`POST /api/render/film/:id/finish-retry` runs the named steps again. It rewinds to the earliest
-stage with a missing step and rebuilds what depends on it. No clip is re-rendered. The film rejoins the
-queue at the back. It answers 409 when the film has nothing to retry. Per-shot steps inside a scatter
-shard are recorded on the shard and are not retried from the scatter job.
+`POST /api/render/film/:id/finish-retry` runs the named steps again. No clip is re-rendered, but a retried per-shot step calls its door, so the route is metered as spend. It deletes nothing: the job is kept, new steps write new keys, and the new film replaces the old only when every step ran. Anything less, including a cancel, restores the film exactly as it was, with `finish_retry_failed` saying why, and it can be retried again. The film rejoins the queue at the back. It answers 409 when the film has nothing to retry. A scatter film names missing steps and has no retry: scatter is retired.
 
 ## Events
 

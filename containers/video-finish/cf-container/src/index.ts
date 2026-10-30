@@ -1,4 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import { forwardToInstance } from "./routing";
 
 interface Env {
   FINISH: DurableObjectNamespace;
@@ -7,7 +8,9 @@ interface Env {
 
 export class VideoFinishDoor extends Container<Env> {
   defaultPort = 8000;
-  sleepAfter = "5m";
+  // Same as the studio door. Only this film's polls keep its instance awake, and a poll can be minutes
+  // apart, so a shorter timer could put the instance to sleep under its own running job.
+  sleepAfter = "10m";
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -46,6 +49,6 @@ export default {
         return unauthorized();
       }
     }
-    return getContainer(env.FINISH, "subtitle").fetch(request);
+    return forwardToInstance(request, (name, req) => getContainer(env.FINISH, name).fetch(req));
   },
 };

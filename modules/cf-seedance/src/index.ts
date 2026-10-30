@@ -43,6 +43,7 @@ import {
   type RunState,
   type ModuleConfig,
 } from "./params";
+import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -158,14 +159,16 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Blocking env.AI.run -> download video -> R2 clip + done state. Runs inside a Workflow step. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
+/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
+async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  const result = await env.AI.run(selectedModel(params.config), modelParams, { gateway: { id: gatewayId } });
-  const url = parseVideoUrl(result);
-  if (!url) throw new Error("model completed but returned no video URL");
+  return env.AI.run(selectedModel(params.config), modelParams, { gateway: { id: gatewayId } });
+}
+
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
   const bytes = await vresp.arrayBuffer();
@@ -190,8 +193,10 @@ export class CfSeedanceWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => requireVideoUrl(parseVideoUrl(raw)),
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

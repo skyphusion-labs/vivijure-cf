@@ -21,6 +21,7 @@ export interface RenderOutput {
   clips?: unknown;
   finish_unavailable?: unknown;
   finish_incomplete?: unknown;
+  finish_retry_failed?: unknown;
   finish_waiting?: unknown;
   [k: string]: unknown;
 }
@@ -173,4 +174,5 @@ export function completedStatus(
   limited: boolean,
 ): { text: string; tone: "warn" | "success"; retry: boolean };
 export function canRetryFinish(jobId: unknown): boolean;
+export function retryFailedNote(output: RenderOutput | null | undefined): string | null;
 export function waitingLabel(output: RenderOutput | null | undefined): string | null;

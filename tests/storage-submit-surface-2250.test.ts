@@ -38,8 +38,6 @@ const NOT_WRITERS: Record<string, string> = {
     "reads the cast row and its artifacts and streams a bundle back; exportCastBundle performs no put (the puts in src/cast-bundle.ts belong to importCastBundle, and /api/cast/import is already covered by core)",
   "/api/cast/:id/voice-sample/keep":
     "re-points the cast row at the clip the already-metered sample run produced; writes no new artifact bytes",
-  "/api/render/film/:id/finish-retry":
-    "runs a named finish step of an existing film again, in place of the artifact it deletes; starts no new render",
   "/api/storyboard/renders/adopt":
     "adopts an EXISTING artifact into a render row (core render-adopt performs no R2 write)",
 };

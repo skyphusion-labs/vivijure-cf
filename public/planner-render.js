@@ -921,7 +921,8 @@ function paintFinishIncomplete(out) {
     const anchor = $("#planner-render-output");
     anchor.parentNode.insertBefore(box, anchor);
   }
-  box.textContent = fd.incompleteSummary(list) + " ";
+  const retryFailed = fd.retryFailedNote(out);
+  box.textContent = (retryFailed ? retryFailed + " " : "") + fd.incompleteSummary(list) + " ";
   const jobId = renderState.jobId;
   box.hidden = false;
   if (!fd.canRetryFinish(jobId)) {

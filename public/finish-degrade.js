@@ -477,6 +477,13 @@
     return parts.join(". ") + ". Retry runs these steps again without re-rendering any clip.";
   }
 
+  // The last retry did not finish, so the film stands as it was. Null when there was none.
+  function retryFailedNote(output) {
+    var f = output && output.finish_retry_failed;
+    if (!f || typeof f !== "object") return null;
+    return "The last retry did not finish, so your film is unchanged" + (typeof f.reason === "string" && f.reason ? ": " + f.reason : "") + ".";
+  }
+
   // The status line for a COMPLETED render. The one decision point, so a test can hold it.
   function completedStatus(output, limited) {
     if (incompleteFrom(output)) return { text: "completed, steps missing", tone: "warn", retry: true };
@@ -504,6 +511,7 @@
   return {
     incompleteFrom: incompleteFrom,
     canRetryFinish: canRetryFinish,
+    retryFailedNote: retryFailedNote,
     incompleteSummary: incompleteSummary,
     completedStatus: completedStatus,
     waitingLabel: waitingLabel,

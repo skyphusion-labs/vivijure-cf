@@ -44,6 +44,7 @@ function vfCall(env: Env) {
   };
 }
 import { FAILURE_BAD_RESPONSE, FAILURE_NOT_CONFIGURED, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { finishAffinity, withAffinity } from "../../_shared/finish-affinity";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
@@ -95,7 +96,7 @@ async function submitAsync(
 ): Promise<string | "capacity" | null> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -128,7 +129,7 @@ async function invokeSync(
 ): Promise<InvokeResponse<FilmFinishOutput>> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -188,7 +189,7 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   const jobId = await submitAsync(env, spec, corr);
   if (jobId === "capacity") return withFailure(passthrough(input, "passthrough:container-capacity", true), failureFromStatus(429));
   if (jobId) {
-    return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0, titleSeconds }) };
+    return { ok: true, pending: true, poll: encodePoll({ jobId, affinity: finishAffinity(corr), filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0, titleSeconds }) };
   }
   return invokeSync(env, input, spec, titleSeconds, corr);
 }
@@ -202,7 +203,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
   // Intermediate pending polls stay silent; only terminal outcomes emit vpc.call with job wall-clock.
   const timed = await timedVpcFetch(
     vfCall(env),
-    { headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN) },
+    { headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), st.affinity) },
     {
       module: MANIFEST.name,
       service: "video-finish",

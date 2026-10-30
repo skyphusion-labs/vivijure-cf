@@ -34,17 +34,3 @@
 #   cf-first : (1) cf edit + line   (2) hub edit   (3) cf PR that deletes the line
 #   hub-first: (1) hub edit         (2) cf edit + line deleted in the same PR   -- two PRs
 # Neither order is wrong and both stay green throughout; hub-first is simply one PR shorter.
-
-# cf-p-video-avatar is on disk in this repo. The hub row is not on vivijure main yet.
-cf-p-video-avatar adding cf#1072
-
-# cf-kling-v4 is on disk in this repo. The hub row is not on vivijure main yet.
-cf-kling-v4 adding cf#1073
-
-# cf-minimax-h3 is on disk in this repo. The hub row is not on vivijure main yet.
-cf-minimax-h3 adding cf#1074
-
-cf-vidu-q3-turbo adding cf#1075
-google-veo retiring cf#1075
-seedance retiring cf#1075
-vidu-q3 retiring cf#1075

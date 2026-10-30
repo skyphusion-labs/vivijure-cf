@@ -1,7 +1,7 @@
 // Pure Wan 2.2 (LoRA) mapping/parsing: build the RunPod request body, parse custom LoRA config, parse
 // the result video URL + cost, and encode/decode the async poll token. No I/O here, so it unit-tests
 // without the runtime or spend. The video-URL parse, poll token, and RunPod-GC helpers are shared,
-// vendored per-module so the module stays independent (matches the alibaba-wan / seedance reference).
+// vendored per-module so the module stays independent (matches the alibaba-wan reference).
 //
 // This is the alibaba-wan pattern (Wan I2V on RunPod) plus the distinctive trait of the
 // `wan-2-2-t2v-720-lora` managed endpoint: the operator can bring CUSTOM LoRAs (high-noise + low-noise

@@ -37,6 +37,7 @@ import {
   type RunState,
   type ModuleConfig,
 } from "./params";
+import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -75,10 +76,10 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-kling-v4",
-  version: "0.1.0",
+  version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Silent long clips (start and end stills)" }],
+  provides: [{ id: "i2v-cloud", label: "Clips with the model's own sound, no speech (start and end stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution" },
     ratio: { type: "enum", values: ["21:9", "16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
@@ -88,10 +89,11 @@ const MANIFEST: ModuleManifest = {
     order: 94,
     locality: "cloud",
     cost: "$0.157/s at 720p, $0.235/s at 1080p",
-    blurb: "Silent clips from your stills, 3 to 30 seconds. The next still can be the end frame.",
+    blurb: "Clips with the model's own sound, no speech, from your stills, 3 to 30 seconds. The next still can be the end frame.",
     limits: [
       "3 to 30 second clips. Whole seconds.",
-      "Silent motion",
+      "The model adds its own sound. It cannot be turned off, and it is not speech",
+      "A score replaces that sound in the finished film",
       "No spoken lines. A board with a line needs a talking door",
       "Start still, and the next shot's start still when we have one",
       "The model allows up to 9 middle frames. This door does not send them",
@@ -142,14 +144,16 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Blocking env.AI.run -> download video -> R2 clip + done state. Runs inside a Workflow step. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
+/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
+async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
-  const url = parseVideoUrl(result);
-  if (!url) throw new Error("model completed but returned no video URL");
+  return env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+}
+
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
   const bytes = await vresp.arrayBuffer();
@@ -177,8 +181,10 @@ export class CfKlingV4Workflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => requireVideoUrl(parseVideoUrl(raw)),
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -260,6 +266,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
         clip_key: state.clip_key,
         fps: state.fps,
         frames: state.frames,
+        has_audio: true,
       },
     };
   }

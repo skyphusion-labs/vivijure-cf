@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
+import { isSpendRoute } from "../src/rate-limit";
+import { isPanelStorageSubmitRoute } from "../src/storage-submit-routes";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { canRetryFinish, completedStatus, incompleteFrom, incompleteSummary, waitingLabel } from "../public/finish-degrade.js";
+import { canRetryFinish, completedStatus, retryFailedNote, incompleteFrom, incompleteSummary, waitingLabel } from "../public/finish-degrade.js";
 import {
   FAILURE_NOT_CONFIGURED,
   FAILURE_REFUSED,
@@ -48,6 +50,22 @@ describe("a film with finish_incomplete", () => {
     expect(render).toContain("setRenderStatus(verdict.text + elapsed, verdict.tone)");
     expect(render).toContain("/finish-retry");
     expect(render).not.toContain('(limited ? "completed with limits" : "completed") + elapsed');
+  });
+});
+
+describe("a retry that did not finish", () => {
+  it("says the film is unchanged, and why", () => {
+    expect(retryFailedNote({ finish_retry_failed: { at: 1, reason: "door down" } })).toBe("The last retry did not finish, so your film is unchanged: door down.");
+    expect(retryFailedNote({})).toBeNull();
+    expect(render).toContain("fd.retryFailedNote(out)");
+  });
+});
+
+describe("the retry route is gated like a render", () => {
+  it("is metered as spend, and not for a poll", () => {
+    expect(isSpendRoute("POST", "/api/render/film/film-1/finish-retry")).toBe(true);
+    expect(isSpendRoute("GET", "/api/render/film/film-1")).toBe(false);
+    expect(isPanelStorageSubmitRoute("POST", "/api/render/film/film-1/finish-retry")).toBe(true);
   });
 });
 

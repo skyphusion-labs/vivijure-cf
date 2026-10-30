@@ -5,6 +5,121 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.40.1 -- 2026-10-30
+
+### fix(modules): a failure after the provider succeeds no longer buys the run again
+
+The cloud video doors did the model call, the parse, the download and the R2 write in one retried workflow step, so a failure after a paid success bought the clip up to three times. The call is now its own step, the parse runs once, and the download and write retry on their own step without reaching the provider. A failed parse or store fails the render with a clear error. A provider call that throws still retries.
+
+### feat(motion): a spoken shot is the cast line on InfiniteTalk (cf#983)
+
+The hosted default for a board with a line is InfiniteTalk when that driving-only
+door is installed. own-gpu and alibaba-wan are not that default. A kept Cast
+sample does not switch the default to Seedance. `generate_audio` stays off when
+the module declares it, and the voice-sample clip is not sent. A board with no
+line uses one silent catalog door. The clip is the shot still. The ten cast
+training refs are not attached.
+
+This code shipped in v1.38.0 (#987). Its note was held by mistake until now, so it appears in a later release than the code.
+
+### fix(modules): cf-kling-v4 declares the sound the model returns
+
+The door said silent, and the model returns its own soundtrack with no field to turn it off. The door now says so and reports `has_audio`. A board with a spoken line is still refused.
+
+### fix(modules): cf-minimax-h3 reads the wrapped response
+
+The gateway returns `{ state, result: { task } }`, and the door read `task` from the top. Every clip was generated and billed, then thrown away with "model completed but returned no video URL", and the workflow retried it twice more. The door now reads both shapes.
+
+### fix(modules): cf-veo sends bare base64
+
+The provider rejected the data URI with "Invalid base64 encoded bytes", so `image_input` is now the base64 of the keyframe with no prefix.
+
+### fix(finish): the standalone video-finish door gives each film its own instance
+
+Every title and subtitle job ran in one fixed `standard-1` instance, so `max_instances` could not be reached and concurrent films piled into one small container. The door now routes on `x-vivijure-finish-affinity`, which `film-titles` and `subtitle` send on submit and on status, and it runs `standard-4` with `max_instances = 20`. A full door answers 429. A request with no header goes to the old instance. A `v*` tag now deploys this door too, on a GitHub-hosted runner, under the same gates as the studio. About USD 0.03 per film with cards.
+
+## v1.40.0 -- 2026-10-30
+
+### fix(finish): a finished job gives its instance back sooner
+
+A finish container now sleeps 5 minutes after core reads a terminal status, in place of 10. While a job can still be running the timer stays at 10 minutes. This doubles the rate at which short films can start, and halves the idle bill per film.
+
+### fix(ci): the changelog assembler respects holds, and the fragment gate refuses a bad root
+
+`scripts/changelog-assemble.py` now leaves a held fragment in place and names it, and it refuses a fragment with only one half of a hold. It reads the rule from `scripts/changelog-fragments-consumed.py`, so the two cannot disagree. That gate now exits 2 on a root with no `changelog.d/`, where a version passed by mistake used to report OK on 0 fragments.
+
+### fix(cf-seedance): send each Seedance model the body its Cloudflare schema allows (cf#1071)
+
+The default model is `bytedance/seedance-2.5`. That schema rejects `reference_video`, `1080p`, `4k`, and `9:21`, and it requires `output_format`. The kept voice sample now goes out as one `reference_videos` item on 2.5 and as `reference_video` on the 2.0 family. Duration follows the model: 4-30s on 2.5, 4-12s on 2.0, Fast, and Mini. With a first and last still, 2.5 sends aspect ratio `adaptive`, so a vertical clip depends on a 9:16 keyframe.
+
+### feat(modules): add a p-video-avatar door (cf#1072)
+
+Portrait plus Cast audio on Cloudflare AI Gateway (`pruna/p-video-avatar`).
+720p is $0.025/s and 1080p is $0.045/s. The provider page lists no duration
+and no aspect ratio. The door is installable and is not a spoken or silent default.
+
+### feat(modules): add a kling-v4 door (cf#1073)
+
+Silent clips on Cloudflare AI Gateway (`klingai/kling-v4`). 3 to 30 seconds.
+720p is $0.157/s and 1080p is $0.235/s. The door defaults to 720p. It
+is installable and is not a spoken or silent default.
+
+### feat(modules): add a minimax h3 door (cf#1074)
+
+Silent clips on Cloudflare AI Gateway (`minimax/h3`). 4 to 15 seconds.
+768P is $0.08/s and 2K is $0.13/s. The schema states no resolution default
+and no native audio output, so the door stays silent and sends 768P unless
+you choose 2K. The door is installable and is not a spoken or silent default.
+
+### fix(modules): cf-vidu-q3-turbo reports has_audio, and retired doors leave the examples
+
+`cf-vidu-q3-turbo` now reports `has_audio` on poll, as `cf-seedance` does, so the clip record says whether it carries talking audio. The expert JSON example in the planner names `cf-seedance`, because the old example named a retired door and returned a missing-door error when copied. Stale provider lists in module READMEs, comments and the deploy runbook no longer name retired doors.
+
+### feat(modules)!: retire seedance, google-veo, and vidu-q3 (cf#1075)
+
+RunPod marks Seedance 1.5 Pro Deprecated. `google-veo` is the same model
+family as `cf-veo` at a higher RunPod rate. `vidu-q3` is replaced by
+`cf-vidu-q3-turbo` (`vidu/q3-turbo` on Cloudflare). `minimax-hailuo` stays:
+the $0.19 unit is not settled. `hostedMotionFallback` does not name RunPod
+Seedance; the spoken selector is InfiniteTalk.
+
+The plane catalog still names the three retired doors. The mirror matches
+the plane. Do not cut a release until the plane drops those rows.
+
+### feat(modules): refresh image model enums against the catalog (cf#1076)
+
+`google/imagen-4` is gone: its model page and schema-input.json 404. The picker
+offers `openai/gpt-image-2`; `gpt-image-1.5` stays runnable for a saved session
+and is still the transparent-PNG path. Keyframe can select `google/nano-banana-2.1`
+and `pruna/p-image-edit`. Cast references can select `black-forest-labs/flux-3-image-klein`.
+The image catalog can select `bytedance/seedream-5-lite`. No default changed.
+
+`google/imagen-4` leaves the picker and stays runnable, so a saved config still resolves. A live check is still owed before it is dropped. A saved `cloud-keyframe` model is now honoured when it is in the module's list. Anything else falls to `google/nano-banana-2`.
+
+### fix(catalog): the tenant catalog mirror drops the retired doors
+
+`seedance`, `google-veo` and `vidu-q3` leave `scripts/tenant-module-catalog.txt`, matching `TENANT_MODULE_CATALOG` in the control plane (cp#569). The mirror goes from 16 entries to 13.
+
+### fix(modules): cf-veo sends the keyframe as base64
+
+The model's schema takes `image_input` as a base64 image, and the door sent a presigned URL. Every render failed in seconds with `AiGatewayError: 2002: Error`. The door now reads the keyframe and sends a data URI.
+
+### fix(keyframe): forward the backend's reused flag to the core
+
+The keyframe module dropped `reused`, so the core would stamp its config provenance on a still the job did not draw (core#372).
+
+### fix(containers): one fetch setting across the CPU containers
+
+`guarded_get` and `guarded_put` now set `allow_redirects=False` themselves, so all five containers behave the same way and no call site has to repeat it.
+
+### ci: pin the docker actions to commit shas
+
+`docker/setup-buildx-action`, `docker/login-action` and `docker/build-push-action` now name a commit, with the tag in a comment.
+
+### fix(ci): the smoke citation prints before any verdict
+
+The container smoke script printed the image id after it read the published port, and a container that died first exited before that line. The control then failed on a race and blocked a tag deploy. The citation now prints right after the container starts. A new case forces the early path with a docker shim. See the v1.39.0 tag run.
+
 ## v1.39.0 -- 2026-10-30
 
 ### fix(modules)!: retire the kling-o1-r2v door (cf#1057)
