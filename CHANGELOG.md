@@ -5,6 +5,16 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.42.1 -- 2026-10-30
+
+### fix(modules): a failure after a track or line is bought no longer buys it again (#1107)
+
+`music-gen` and `chatterbox` ran the provider call, the download and the R2 write in one retried step. A failed write bought the track three times at $0.15 each, or a Chatterbox line four times. The call is now its own step, and the store step retries alone. A write that keeps failing reports that the audio was not stored and will not be bought again. `dialogue-gen` is unchanged: Aura returns bytes that a step cannot checkpoint, and a repeat costs about $0.001.
+
+### fix(finish): a finish retry says why it did not start (#1114)
+
+`POST /api/render/film/:id/finish-retry` answered "no finish step to retry" for a film that was only busy. The 409 now has a `code`: `busy` with `Retry-After: 30`, `nothing_to_retry`, or `cannot_deliver`. With core 1.28.3, `clip_deliveries` reports the frames a clip has, and marks them `measured: true` (#1125).
+
 ## v1.42.0 -- 2026-10-30
 
 ### fix(finish): title cards and captions are sized for a vertical frame (#1111)
