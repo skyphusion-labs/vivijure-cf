@@ -34,7 +34,7 @@ RUN pip install -r requirements.txt
 # this file) and the image could not start at all: the import is at column 0 and the bind is a
 # thousand lines below it, so the interpreter died before anything listened on 8000 and the
 # platform reported `Container crashed while checking for ports`.
-COPY url_guard.py inspect_core.py photometric_gate.py bearer.py ffmpeg_run.py concat_guard.py app.py .
+COPY url_guard.py inspect_core.py photometric_gate.py bearer.py ffmpeg_run.py concat_guard.py frame_text.py app.py .
 
 # Build-time libx264 sanity-encode. ffmpeg has no JIT/model cache to bake (unlike
 # the numba/pymatting fix the audio + image-prep containers needed), so the only

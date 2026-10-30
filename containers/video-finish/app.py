@@ -29,6 +29,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 from bearer import bearer_middleware, require_bearer_config
 from ffmpeg_run import FFPROBE_TIMEOUT, FfmpegTimeout, _run
 from concat_guard import assert_no_dropped_parts
+import frame_text
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 import photometric_gate
@@ -589,6 +590,21 @@ def _probe_duration(path):
     return max(0.1, float(proc.stdout.strip()))
 
 
+def _probe_frame(path):
+    """(width, height) of the first video stream, or (None, None) when it cannot be read. The film
+    itself is the truth for a burn: a caption is drawn on the frame it has."""
+    proc = _run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+        timeout=FFPROBE_TIMEOUT, text=True,
+    )
+    try:
+        w, h = proc.stdout.strip().split(",")[:2]
+        return int(w), int(h)
+    except ValueError:
+        return None, None
+
+
 def _probe_audio(path):
     """Probe the first audio stream of path.
     Returns (has_audio, sample_rate, channel_layout).
@@ -973,38 +989,53 @@ def _escape_drawtext(text):
 
 
 def _title_card_filter(text, *, subtitle=None, font="DejaVu Sans",
-                       font_size=80, sub_font_size=48, color="white"):
+                       font_size=80, sub_font_size=48, color="white",
+                       width=1920, height=1080):
     """Build a drawtext -vf filter string for a title card.
     Title is vertically centered (or offset upward when subtitle is present);
-    subtitle appears below at a smaller size. Pure function; no I/O.
+    subtitle appears below at a smaller size. Sized for the frame, and a title
+    too long for the card wraps or shrinks (frame_text). Pure function; no I/O.
     """
-    t = _escape_drawtext(text)
+    scale = frame_text.card_scale(width, height)
+    lines, size = frame_text.fit_title(text, round(font_size * scale), width)
+    line_h = round(size * frame_text.LINE_HEIGHT_FACTOR)
+    # Each drawtext filter evaluates its own text_h independently, so use
+    # fixed pixel offsets from h/2: title above the midline, subtitle below.
+    gap = round(16 * scale)
+
+    def title_y(i):
+        if len(lines) == 1:
+            return f"(h/2-text_h-{gap})" if subtitle else "(h-text_h)/2"
+        if subtitle:
+            return f"(h/2-{gap}-{(len(lines) - i) * line_h})"
+        return f"((h-{len(lines) * line_h})/2+{i * line_h})"
+
+    parts = [
+        f"drawtext=font='{font}':text='{_escape_drawtext(line)}':fontsize={size}"
+        f":fontcolor={color}:x=(w-text_w)/2:y={title_y(i)}"
+        for i, line in enumerate(lines)
+    ]
     if subtitle:
-        # Each drawtext filter evaluates its own text_h independently, so use
-        # fixed pixel offsets from h/2: title above the midline, subtitle below.
-        gap = 16
-        vf = (
-            f"drawtext=font='{font}':text='{t}':fontsize={font_size}"
-            f":fontcolor={color}:x=(w-text_w)/2:y=(h/2-text_h-{gap})"
-            f",drawtext=font='{font}':text='{_escape_drawtext(subtitle)}'"
-            f":fontsize={sub_font_size}:fontcolor={color}"
+        sub_size = frame_text.fit_lines([subtitle], round(sub_font_size * scale), width)
+        parts.append(
+            f"drawtext=font='{font}':text='{_escape_drawtext(subtitle)}'"
+            f":fontsize={sub_size}:fontcolor={color}"
             f":x=(w-text_w)/2:y=(h/2+{gap})"
         )
-    else:
-        vf = (
-            f"drawtext=font='{font}':text='{t}':fontsize={font_size}"
-            f":fontcolor={color}:x=(w-text_w)/2:y=(h-text_h)/2"
-        )
-    return vf
+    return ",".join(parts)
 
 
 def _credits_card_filter(lines, duration, *, font="DejaVu Sans",
-                         font_size=48, color="white", line_spacing=20):
+                         font_size=48, color="white", line_spacing=20,
+                         width=1920, height=1080):
     """Build a scrolling-credits -vf filter for a list of text lines.
     Lines scroll upward from the bottom of the frame to above the top over
-    `duration` seconds. One drawtext segment per line. Pure function; no I/O.
+    `duration` seconds. One drawtext segment per line, one size for all of them,
+    sized for the frame (frame_text). Pure function; no I/O.
     """
-    line_height = font_size + line_spacing
+    scale = frame_text.card_scale(width, height)
+    size = frame_text.fit_lines(lines, round(font_size * scale), width)
+    line_height = size + round(line_spacing * size / font_size)
     total_h = len(lines) * line_height
     filters = []
     for i, line in enumerate(lines):
@@ -1014,7 +1045,7 @@ def _credits_card_filter(lines, duration, *, font="DejaVu Sans",
         # t=dur -> y_0 = -total_h       (block ends above the frame)
         y_expr = f"h-(t/{duration:.3f})*(h+{total_h})+{i * line_height}"
         filters.append(
-            f"drawtext=font='{font}':text='{t}':fontsize={font_size}"
+            f"drawtext=font='{font}':text='{t}':fontsize={size}"
             f":fontcolor={color}:x=(w-text_w)/2:y=({y_expr})"
         )
     return ",".join(filters)
@@ -1090,7 +1121,7 @@ def _assemble_film_titles(work, film_path, title_spec, credits_spec,
             card = os.path.join(work, "title_card.mp4")
             _make_card(card, width=width, height=height, fps=fps, crf=crf,
                        preset=preset, duration=secs,
-                       vf_filter=_title_card_filter(text, subtitle=subtitle),
+                       vf_filter=_title_card_filter(text, subtitle=subtitle, width=width, height=height),
                        **card_audio)
             segments.append(card)
 
@@ -1110,7 +1141,7 @@ def _assemble_film_titles(work, film_path, title_spec, credits_spec,
             card = os.path.join(work, "credits_card.mp4")
             _make_card(card, width=width, height=height, fps=fps, crf=crf,
                        preset=preset, duration=secs,
-                       vf_filter=_credits_card_filter(lines, secs),
+                       vf_filter=_credits_card_filter(lines, secs, width=width, height=height),
                        **card_audio)
             segments.append(card)
 
@@ -1266,7 +1297,7 @@ def _ass_colour(color):
     return "&H00FFFFFF"
 
 
-def _subtitle_filter(srt_path, style):
+def _subtitle_filter(srt_path, style, width=None, height=None):
     """Build the ffmpeg -vf subtitles filter string for an SRT burn. Pure; no I/O.
     style: {font, fontSize, color, position, box, marginV}. `box` == "box" draws an opaque box
     behind the text (BorderStyle 3); otherwise the text is outlined (BorderStyle 1, Outline 2)."""
@@ -1286,10 +1317,15 @@ def _subtitle_filter(srt_path, style):
         border_style, outline, shadow = 3, 0, 0
     else:
         border_style, outline, shadow = 1, 2, 0
+    # cf#1111: a vertical frame scales the type down. Landscape formats the same integers as before.
+    if width and height:
+        scale = frame_text.caption_scale(width, height)
+        size = round(size * scale, 1)
+        outline = round(outline * scale, 1)
     force_style = (
-        f"FontName={font},FontSize={size},PrimaryColour={primary},"
+        f"FontName={font},FontSize={size:g},PrimaryColour={primary},"
         f"Alignment={alignment},MarginV={margin_v},"
-        f"BorderStyle={border_style},Outline={outline},Shadow={shadow}"
+        f"BorderStyle={border_style},Outline={outline:g},Shadow={shadow}"
     )
     return f"subtitles={_escape_subtitles_path(srt_path)}:force_style='{force_style}'"
 
@@ -1434,7 +1470,8 @@ async def _subtitle_work(body):
                     sc = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(sc, f"film {info}")
 
-            vf = _subtitle_filter(srt_path, style)
+            frame_w, frame_h = _probe_frame(film_path)
+            vf = _subtitle_filter(srt_path, style, frame_w, frame_h)
             out_path = os.path.join(work, "subbed.mp4")
             loop = asyncio.get_running_loop()
             try:
