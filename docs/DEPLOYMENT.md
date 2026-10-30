@@ -116,7 +116,7 @@ opt-in because it needs your own local GPU box.
 
 > **Known deviation (#764, DP-3):** today `deploy.sh` cannot complete a fresh-account deploy. The
 > core template binds `MODULE_INFINITETALK`, `MODULE_CHATTERBOX`,
-> `MODULE_CF_HAILUO`, `MODULE_CF_VEO` and `MODULE_ALIBABA_WAN_LORA`, which `STANDARD_MODULES` never
+> `MODULE_CF_HAILUO`, `MODULE_CF_VEO`, `MODULE_CF_P_VIDEO_AVATAR`, `MODULE_CF_KLING_V4` and `MODULE_ALIBABA_WAN_LORA`, which `STANDARD_MODULES` never
 > deploys; `deploy.sh` fills only `store_id` in module configs (it never runs
 > `scripts/fill-module-placeholders.sh`, so `REPLACE_WITH_D1_DATABASE_ID`, `REPLACE_WITH_R2_S3_*` and
 > the `${*_URL}` / `${*_DOORS}` placeholders stay unfilled); and it never seeds `FINISH_DOOR_TOKEN` or
@@ -470,7 +470,7 @@ done
 # endpoint): finish-upscale. finish-blender is added only when
 # BLENDER_RUNPOD_ENDPOINT_ID is set.
 # NOTE (#764, DP-3): the core template ALSO binds infinitetalk, chatterbox, cf-hailuo,
-# cf-veo and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
+# cf-veo, cf-p-video-avatar, cf-kling-v4 and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
 # the core deploy fails on a dangling [[services]] binding. Derive the full set from the uncommented
 # `service = "vivijure-module-..."` lines of your rendered wrangler.toml.
 npm run deploy   # the core Studio Worker

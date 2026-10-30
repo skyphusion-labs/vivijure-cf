@@ -96,6 +96,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
   it("the scan read the tree (positive control)", () => {
     // Every assertion below is shaped so that a scan reading NOTHING would produce empty sets and
     // pass. Pin real data with named members so a path or parse regression is loud.
+    // cf#1073: 33 -> 34.
     expect(ENTRIES.length).toBeGreaterThan(20);
     expect(READY).toContain("keyframe");
     expect(WRITES_JOB_LOG).toContain("finish-rife");
@@ -154,7 +155,9 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
     // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
-    expect(ENTRIES.length).toBe(32);
+    // cf#1057 retires kling-o1-r2v and cf#1072 adds cf-p-video-avatar, so the tree stays 33.
+    // cf#1073: 33 -> 34.
+    expect(ENTRIES.length).toBe(34);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
