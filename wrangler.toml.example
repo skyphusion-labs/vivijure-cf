@@ -286,7 +286,7 @@ class_name = "FinishContainer"
 #
 #     SYNC_POOL_SIZE + concurrent finish jobs <= max_instances
 #
-# and at 3 that is a pool of 1 leaving room for 2 concurrent films. Because an over-cap request
+# and at 6 that is a pool of 1 leaving room for 5 concurrent films. Because an over-cap request
 # ERRORS rather than queueing, breaking the inequality does not slow the tier down, it refuses
 # encodes. RAISE THIS BEFORE widening the pool, never after.
 # tests/video-finish-pool-ceiling-cf810.test.ts asserts it against this file.
@@ -294,7 +294,7 @@ class_name = "FinishContainer"
 class_name = "FinishContainer"
 image = "./containers/video-finish/Dockerfile"
 instance_type = "standard-4"
-max_instances = 3
+max_instances = 6
 
 # --- Credential secrets via the Cloudflare Secrets Store (#238). Seeded ONCE by the operator
 # --- (npx wrangler secrets-store secret create <STORE_ID> --name <NAME> ...); values never touch
