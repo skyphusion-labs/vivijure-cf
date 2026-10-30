@@ -63,7 +63,7 @@ describe("cf-kling-v4 params (cf#1073)", () => {
     expect(p.last_frame).toBe(shot.last_keyframe_url);
     expect(p.prompt).toBe(shot.prompt);
     expect(p.duration).toBe(12);
-    expect(p.resolution).toBe("1080p");
+    expect(p.resolution).toBe("720p");
     expect(p.aspect_ratio).toBe("16:9");
     expect(p).not.toHaveProperty("middle_frames");
     expect(p).not.toHaveProperty("audio");
@@ -77,10 +77,10 @@ describe("cf-kling-v4 params (cf#1073)", () => {
     expect(p).not.toHaveProperty("last_frame");
   });
 
-  it("720p and 9:16 are choices, and a bad value falls back to the schema default", () => {
-    expect(buildParams(shot, normalizeConfig({ resolution: "720p", ratio: "9:16" })).resolution).toBe("720p");
-    expect(buildParams(shot, normalizeConfig({ resolution: "720p", ratio: "9:16" })).aspect_ratio).toBe("9:16");
-    expect(buildParams(shot, normalizeConfig({ resolution: "4k", ratio: "2:1" })).resolution).toBe("1080p");
+  it("1080p and 9:16 are choices, and a bad value falls back to our default", () => {
+    expect(buildParams(shot, normalizeConfig({ resolution: "1080p", ratio: "9:16" })).resolution).toBe("1080p");
+    expect(buildParams(shot, normalizeConfig({ resolution: "1080p", ratio: "9:16" })).aspect_ratio).toBe("9:16");
+    expect(buildParams(shot, normalizeConfig({ resolution: "4k", ratio: "2:1" })).resolution).toBe("720p");
     expect(buildParams(shot, normalizeConfig({ resolution: "4k", ratio: "2:1" })).aspect_ratio).toBe("16:9");
   });
 
@@ -123,7 +123,7 @@ describe("cf-kling-v4 is installable and is not a default", () => {
     expect(m.usage.duration_steps).toBeUndefined();
     expect(m.ui.order).toBeGreaterThan(90);
     expect(m.ui.locality).toBe("cloud");
-    expect(m.config_schema.resolution.default).toBe("1080p");
+    expect(m.config_schema.resolution.default).toBe("720p");
     expect(m.config_schema.resolution.values).toEqual(["720p", "1080p"]);
     expect(m.config_schema.ratio.values).toContain("9:16");
     expect(m.ui.limits.join(" ")).toMatch(/middle frames/);

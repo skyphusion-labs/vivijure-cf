@@ -16,8 +16,8 @@ export const MIN_DURATION = 3;
 export const MAX_DURATION = 30;
 export const MAX_PROMPT = 26000;
 export const RESOLUTIONS = ["720p", "1080p"] as const;
-/** Schema default. The default per-second price on the page is the 1080p rate. */
-export const DEFAULT_RESOLUTION = "1080p";
+/** Our default, and the cheaper rate. The schema default is 1080p, and it stays selectable. */
+export const DEFAULT_RESOLUTION = "720p";
 export const RATIOS = ["21:9", "16:9", "9:16", "1:1"] as const;
 export const DEFAULT_RATIO = "16:9";
 

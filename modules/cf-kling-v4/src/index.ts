@@ -80,7 +80,7 @@ const MANIFEST: ModuleManifest = {
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Silent long clips (start and end stills)" }],
   config_schema: {
-    resolution: { type: "enum", values: ["720p", "1080p"], default: "1080p", label: "resolution" },
+    resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution" },
     ratio: { type: "enum", values: ["21:9", "16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
   },
   ui: {
@@ -95,7 +95,7 @@ const MANIFEST: ModuleManifest = {
       "No spoken lines. A board with a line needs a talking door",
       "Start still, and the next shot's start still when we have one",
       "The model allows up to 9 middle frames. This door does not send them",
-      "720p or 1080p. 1080p is the provider default.",
+      "720p by default. 1080p is selectable and costs more.",
       "Prompt up to 26000 characters.",
       "9:16 is a choice. The provider page says aspect is ignored when a still is sent",
       "One film, no scatter",

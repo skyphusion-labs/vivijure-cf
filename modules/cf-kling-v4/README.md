@@ -5,7 +5,7 @@ A **`motion.backend`** module (vivijure-module/2): Kling 4.0 via Cloudflare AI G
 still as the end frame when we have one. No RunPod.
 
 The provider page lists 3 to 30 seconds, 720p at $0.157/s and 1080p at $0.235/s.
-1080p is the schema default, and the default per-second price is $0.235. There is
+This door defaults to 720p, and 1080p is selectable. The schema default is 1080p. There is
 no audio input. Up to 9 middle frames exist on the model. This hook has a start
 still and an optional end still, so middle frames are not sent. Whether a real
 clip follows the stills, and whether the sent aspect survives them, are unsettled
