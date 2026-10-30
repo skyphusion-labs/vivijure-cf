@@ -8,8 +8,8 @@ reports "Container crashed while checking for ports". It shipped through a fully
 because `container-tests` runs those scripts from the REPO CHECKOUT (where the file is present) and
 `container-deploy-shape` proves an image was BUILT, never that it RUNS.
 
-`tests/container-smoke.test.sh` + the `container-smoke` job are the end-to-end answer: they start the
-image. This file is the FAST, DOCKER-FREE half, and it earns its place on three counts:
+`scripts/container-smoke.sh` can start an image locally. cf#1052 took the CI job out.
+This file is the FAST, DOCKER-FREE half, and it earns its place on three counts:
   1. It runs on every PR with no daemon, no pull and no build, so it cannot be skipped by the plane
      the docker gate depends on being available.
   2. It NAMES THE MISSING FILE. A smoke failure says "it died at startup"; this says "app.py imports
