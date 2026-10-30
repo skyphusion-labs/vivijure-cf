@@ -138,6 +138,8 @@ export interface KeyframeInput {
 export interface KeyframeShot {
   shot_id: string;
   keyframe_key: string;
+  /** This job drew nothing and returns a still already in the store. Absent means drawn. */
+  reused?: boolean;
 }
 export interface KeyframeOutput {
   project: string;

@@ -149,6 +149,19 @@ describe("keyframe pure logic", () => {
     expect(parseKeyframes(wrapped)).toEqual([{ shot_id: "shot_01", keyframe_key: "k.png" }]);
   });
 
+  it("parseKeyframes forwards reused only when the backend sent true (core#372)", () => {
+    const parsed = parseKeyframes({ keyframes: [
+      { shot_id: "shot_01", key: "a", reused: true },
+      { shot_id: "shot_02", key: "b" },
+      { shot_id: "shot_03", key: "c", reused: "yes" },
+    ] });
+    expect(parsed).toEqual([
+      { shot_id: "shot_01", keyframe_key: "a", reused: true },
+      { shot_id: "shot_02", keyframe_key: "b" },
+      { shot_id: "shot_03", keyframe_key: "c" },
+    ]);
+  });
+
   it("parseKeyframes skips malformed entries and returns [] for junk", () => {
     const messy = { keyframes: [{ shot_id: "ok", key: "k.png" }, { shot_id: "nokey" }, null, 7] };
     expect(parseKeyframes(messy)).toEqual([{ shot_id: "ok", keyframe_key: "k.png" }]);

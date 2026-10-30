@@ -90,7 +90,8 @@ export function parseKeyframes(result: unknown): KeyframeShot[] {
     const o = e as Record<string, unknown>;
     const shot_id = typeof o.shot_id === "string" ? o.shot_id : null;
     const key = typeof o.key === "string" ? o.key : typeof o.keyframe_key === "string" ? o.keyframe_key : null;
-    if (shot_id && key) out.push({ shot_id, keyframe_key: key });
+    // reused: this job drew nothing, so the core must not stamp its config provenance on the still.
+    if (shot_id && key) out.push({ shot_id, keyframe_key: key, ...(o.reused === true ? { reused: true } : {}) });
   }
   return out;
 }
