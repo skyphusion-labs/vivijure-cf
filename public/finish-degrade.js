@@ -73,6 +73,7 @@
     return {
       at: at,
       delivered: delivered,
+      retained: isNonEmptyString(raw.retained) ? raw.retained.trim() : null,
       reason: isNonEmptyString(raw.reason) ? raw.reason.trim() : NO_REASON,
       clips: clipsFrom(output),
     };
@@ -104,6 +105,14 @@
         : degrade.at === "assemble"
           ? "The assemble step"
           : "The finishing step";
+    if (degrade.retained === "clips") {
+      var kept = degrade.clips.length;
+      return where + " did not run, so no film was made. " +
+        (kept ? kept + " per-shot clip" + (kept === 1 ? " is" : "s are") : "The per-shot clips are") + " kept.";
+    }
+    if (degrade.retained === "silent_film") {
+      return where + " did not run, so no film was delivered. The silent cut is kept.";
+    }
     if (degrade.delivered === "clips") {
       var n = degrade.clips.length;
       var what = n ? n + " per-shot clip" + (n === 1 ? "" : "s") : "the per-shot clips";

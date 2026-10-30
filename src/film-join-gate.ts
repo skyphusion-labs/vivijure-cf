@@ -72,6 +72,18 @@ export function lineWindowRefusal(
   return null;
 }
 
+/** The per-shot clips a caller may fetch when no assembled film exists. Core >= 1.26.0 fails the film
+ *  and names them as retained. An older job doc says done and names them as delivered. Paid clips stay
+ *  reachable either way. A film that is still running gets none. */
+export function downloadableClips(summary: {
+  phase: string;
+  finish_unavailable?: FilmJob["finish_unavailable"];
+}): { shot_id: string; clip_key: string }[] {
+  const u = summary.finish_unavailable;
+  if (u?.at !== "assemble" || !u.clips?.length) return [];
+  return summary.phase === "done" || summary.phase === "failed" ? u.clips : [];
+}
+
 /** Published core can still say phase done after a join that did not run. Report that film as failed. */
 export function jobAfterSkippedJoin(job: FilmJob): FilmJob {
   const missed = job.finish_unavailable;

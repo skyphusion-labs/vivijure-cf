@@ -16,7 +16,7 @@ import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-mo
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
 import { readIdempotencyKey } from "./film-idempotency";
-import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal } from "./film-join-gate";
+import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
@@ -1620,11 +1620,10 @@ async function withFilmDownloadUrl(env: StudioEnv, summary: FilmSummary): Promis
   if (summary.phase === "done" && summary.film_key) {
     return { ...summary, download_url: await presignR2Get(env, summary.film_key, FILM_DOWNLOAD_TTL_SECONDS) };
   }
-  // #519: clips-only degrade (video-finish tier unavailable at assemble) has no single assembled film,
-  // but the per-shot clips ARE the delivered render -- presign each so the caller can actually fetch them.
-  const u = summary.finish_unavailable;
-  if (summary.phase === "done" && u?.at === "assemble" && u.clips?.length) {
-    const clip_urls = await Promise.all(u.clips.map(async (c) => ({
+  // #519: with no assembled film, the per-shot clips are what the caller paid for, so presign each.
+  const clips = downloadableClips(summary);
+  if (clips.length) {
+    const clip_urls = await Promise.all(clips.map(async (c) => ({
       shot_id: c.shot_id,
       download_url: await presignR2Get(env, c.clip_key, FILM_DOWNLOAD_TTL_SECONDS),
     })));

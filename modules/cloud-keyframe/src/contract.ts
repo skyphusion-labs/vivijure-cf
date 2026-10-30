@@ -91,7 +91,7 @@ export interface KeyframeInput {
 }
 export interface KeyframeShot {
   shot_id: string;
-  keyframe_key: string; // R2 key of the PNG (renders/<project>/keyframes/<shot>.png)
+  keyframe_key: string; // R2 key of the PNG (renders/<project>/keyframes/[<job>/]<shot>.png)
 }
 export interface KeyframeOutput {
   project: string;
