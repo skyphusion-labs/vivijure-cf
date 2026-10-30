@@ -75,10 +75,10 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-kling-v4",
-  version: "0.1.0",
+  version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Silent long clips (start and end stills)" }],
+  provides: [{ id: "i2v-cloud", label: "Clips with the model's sound (start and end stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution" },
     ratio: { type: "enum", values: ["21:9", "16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
@@ -88,11 +88,11 @@ const MANIFEST: ModuleManifest = {
     order: 94,
     locality: "cloud",
     cost: "$0.157/s at 720p, $0.235/s at 1080p",
-    blurb: "Silent clips from your stills, 3 to 30 seconds. The next still can be the end frame.",
+    blurb: "Clips with the model's own sound from your stills, 3 to 30 seconds. The next still can be the end frame.",
     limits: [
       "3 to 30 second clips. Whole seconds.",
-      "Silent motion",
-      "No spoken lines. A board with a line needs a talking door",
+      "The model returns its own soundtrack. No field turns it off, and we keep it",
+      "Whether it speaks a storyboard line is not measured. Use a talking door for dialogue",
       "Start still, and the next shot's start still when we have one",
       "The model allows up to 9 middle frames. This door does not send them",
       "720p by default. 1080p is selectable and costs more.",
@@ -102,8 +102,8 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
-    native_audio: false,
-    voice: "cast_tts",
+    native_audio: true,
+    voice: "prompt_lock",
     scatter_native_audio: false,
     min_seconds: 3,
     max_seconds: 30,
@@ -260,6 +260,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
         clip_key: state.clip_key,
         fps: state.fps,
         frames: state.frames,
+        has_audio: true,
       },
     };
   }

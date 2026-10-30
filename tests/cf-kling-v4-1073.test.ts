@@ -1,4 +1,4 @@
-// cf#1073. Silent long clips. Start still, optional end still. Not a default.
+// cf#1073. Clips with the model's sound. Start still, optional end still. Not a default.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
@@ -110,11 +110,11 @@ describe("cf-kling-v4 params (cf#1073)", () => {
 });
 
 describe("cf-kling-v4 is installable and is not a default", () => {
-  it("declares a silent first-and-last envelope", async () => {
+  it("declares the model's soundtrack and a first-and-last envelope", async () => {
     const m = await manifest();
     expect(m.name).toBe("cf-kling-v4");
     expect(m.hooks).toContain("motion.backend");
-    expect(m.usage.native_audio).toBe(false);
+    expect(m.usage.native_audio).toBe(true);
     expect(m.usage.driving_audio).toBeUndefined();
     expect(m.usage.scatter_native_audio).toBe(false);
     expect(m.usage.first_last).toBe(true);
@@ -127,7 +127,8 @@ describe("cf-kling-v4 is installable and is not a default", () => {
     expect(m.config_schema.resolution.values).toEqual(["720p", "1080p"]);
     expect(m.config_schema.ratio.values).toContain("9:16");
     expect(m.ui.limits.join(" ")).toMatch(/middle frames/);
-    expect(m.ui.limits.join(" ")).toMatch(/No spoken lines/);
+    expect(m.ui.limits.join(" ")).toMatch(/returns its own soundtrack/);
+    expect(m.ui.limits.join(" ")).toMatch(/not measured/);
     expect(m.ui.cost).toMatch(/0\.157/);
     expect(m.ui.cost).toMatch(/0\.235/);
   });
