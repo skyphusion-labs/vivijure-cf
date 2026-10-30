@@ -76,7 +76,12 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
 /** Documented success shape is task.status "succeeded" and task.content.url. */
 export function parseVideoUrl(result: unknown): string | null {
   if (!result || typeof result !== "object") return null;
-  const task = (result as Record<string, unknown>).task;
+  // The gateway wraps the model's output: { state, result: { task } }. Measured 2026-10-30. Read both.
+  const r = result as Record<string, unknown>;
+  const inner = r.result && typeof r.result === "object" && !Array.isArray(r.result)
+    ? (r.result as Record<string, unknown>)
+    : null;
+  const task = r.task ?? inner?.task;
   if (!task || typeof task !== "object" || Array.isArray(task)) return null;
   const t = task as Record<string, unknown>;
   if (t.status !== "succeeded") return null;
