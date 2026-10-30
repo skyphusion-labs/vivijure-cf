@@ -43,8 +43,8 @@ describe("cf-hh1-r2v params", () => {
 });
 
 describe("cf-seedance params", () => {
-  it("buildParams matches Seedance 2.0 i2v shape (prism longrun-params)", () => {
-    const cfg = seedance.normalizeConfig({ model: "bytedance/seedance-2.0-fast", resolution: "1080p" });
+  it("buildParams matches Seedance 2.0 i2v shape (1080p is legal only on 2.0)", () => {
+    const cfg = seedance.normalizeConfig({ model: "bytedance/seedance-2.0", resolution: "1080p" });
     const p = seedance.buildParams(shot, cfg);
     expect(p).toMatchObject({
       image: "https://r2.example/k.png",
@@ -57,11 +57,17 @@ describe("cf-seedance params", () => {
       generate_audio: true,
       use_virtual_avatar: true,
     });
-    expect(seedance.selectedModel(cfg)).toBe("bytedance/seedance-2.0-fast");
+    expect(p.output_format).toBeUndefined();
+    expect(p.reference_videos).toBeUndefined();
+    expect(seedance.selectedModel(cfg)).toBe("bytedance/seedance-2.0");
   });
-  it("clampDuration is [4,12]", () => {
+  it("clampDuration follows the model (2.5 is 4-30, the 2.0 family is 4-12)", () => {
     expect(seedance.clampDuration(1)).toBe(4);
-    expect(seedance.clampDuration(99)).toBe(12);
+    expect(seedance.clampDuration(99)).toBe(30);
+    expect(seedance.clampDuration(99, "bytedance/seedance-2.0")).toBe(12);
+    expect(seedance.clampDuration(20, "bytedance/seedance-2.0-fast")).toBe(12);
+    expect(seedance.clampDuration(20, "bytedance/seedance-2.0-mini")).toBe(12);
+    expect(seedance.clampDuration(99, "not-a-model")).toBe(12);
   });
   it("falls back to default model on junk", () => {
     expect(seedance.normalizeConfig({ model: "nope" }).model).toBe("bytedance/seedance-2.5");
