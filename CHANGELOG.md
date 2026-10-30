@@ -5,6 +5,37 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.39.0 -- 2026-10-30
+
+### fix(modules)!: retire the kling-o1-r2v door (cf#1057)
+
+The provider requires a reference video, and the `motion.backend` hook has no video to
+send, so every render on this door failed after submit. The door is removed and no
+longer offered. The other silent motion doors are unchanged. Remove the
+`MODULE_KLING_O1_R2V` binding from a rendered `wrangler.toml` before the next deploy.
+
+### fix(cloud-keyframe): concurrent renders of one project keep their own stills (cf#1059)
+
+Each job now writes `renders/<project>/keyframes/<job>/<shot>.png`. A flat key let one render replace
+another's still, which failed the keyframe similarity gate on an otherwise good clip. The GPU `keyframe`
+door is unchanged. The render route contract now states that a mismatched `project` is remapped. A film delete now also removes that film's own job-scoped stills. The contract records the 5-minute settle window.
+
+### fix(core): move vivijure-core to 1.27.0
+
+This jump passes over core 1.26.0, so a render can now fail where it used to report success. A concat that did not run fails the film and keeps the clips. A song that could not be read or attached fails the film and keeps the silent cut. A film with no song still finishes on its silent cut.
+
+A failed film now gets `clip_urls` for its kept clips, and the panel says the clips are kept. A full finish tier is a wait once the door change lands. A lone unstamped clip is adopted only after 5 minutes.
+
+### fix(finish): name a full finish tier, and route retries to one instance
+
+The video-finish door now answers 429 with `capacity_exhausted` when the container instance limit refuses a submit. The base Container class reports that limit as a 500, so core could not tell it from a crash. Other refusals pass through unchanged.
+
+When core names the film (`x-vivijure-finish-affinity`), the routing key comes from the film id, so a retry and the mux leg reach one instance. Without the header the door mints a random key as before. With core 1.27.0 a full tier now holds the film in its phase and retries, up to 6 hours, in place of failing it.
+
+### fix(mcp): move vivijure-mcp to 2.0.1
+
+The Studio MCP Worker deploys from this tag, so agents now read film tool text that matches the retired scatter contract. No tool or argument changes.
+
 ## v1.38.2 -- 2026-10-30
 
 ### fix(modules): silent doors stop promising a muxed Cast voice (cf#1055)
