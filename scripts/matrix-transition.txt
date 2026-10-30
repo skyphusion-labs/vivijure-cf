@@ -37,3 +37,6 @@
 
 # cf-p-video-avatar is on disk in this repo. The hub row is not on vivijure main yet.
 cf-p-video-avatar adding cf#1072
+
+# cf-kling-v4 is on disk in this repo. The hub row is not on vivijure main yet.
+cf-kling-v4 adding cf#1073
