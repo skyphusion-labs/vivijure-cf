@@ -1,7 +1,7 @@
 # cf-kling-v4
 
 A **`motion.backend`** module (vivijure-module/2): Kling 4.0 via Cloudflare AI Gateway
-(`klingai/kling-v4`). Clips with the model's own sound, from a start still, with the next shot's start
+(`klingai/kling-v4`). Clips with the model's own sound, no speech, from a start still, with the next shot's start
 still as the end frame when we have one. No RunPod.
 
 The provider page lists 3 to 30 seconds, 720p at $0.157/s and 1080p at $0.235/s.

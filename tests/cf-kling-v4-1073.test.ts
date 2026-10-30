@@ -110,11 +110,11 @@ describe("cf-kling-v4 params (cf#1073)", () => {
 });
 
 describe("cf-kling-v4 is installable and is not a default", () => {
-  it("declares the model's soundtrack and a first-and-last envelope", async () => {
+  it("declares a no-speech first-and-last envelope, and the sound in its copy", async () => {
     const m = await manifest();
     expect(m.name).toBe("cf-kling-v4");
     expect(m.hooks).toContain("motion.backend");
-    expect(m.usage.native_audio).toBe(true);
+    expect(m.usage.native_audio).toBe(false);
     expect(m.usage.driving_audio).toBeUndefined();
     expect(m.usage.scatter_native_audio).toBe(false);
     expect(m.usage.first_last).toBe(true);
@@ -127,8 +127,8 @@ describe("cf-kling-v4 is installable and is not a default", () => {
     expect(m.config_schema.resolution.values).toEqual(["720p", "1080p"]);
     expect(m.config_schema.ratio.values).toContain("9:16");
     expect(m.ui.limits.join(" ")).toMatch(/middle frames/);
-    expect(m.ui.limits.join(" ")).toMatch(/returns its own soundtrack/);
-    expect(m.ui.limits.join(" ")).toMatch(/not measured/);
+    expect(m.ui.limits.join(" ")).toMatch(/adds its own sound/);
+    expect(m.ui.limits.join(" ")).toMatch(/No spoken lines/);
     expect(m.ui.cost).toMatch(/0\.157/);
     expect(m.ui.cost).toMatch(/0\.235/);
   });
@@ -213,5 +213,14 @@ describe("cf-kling-v4 is installable and is not a default", () => {
     expect(longBody.ok).toBe(false);
     expect(longBody.jobId).toBeUndefined();
     expect(longBody.error).toMatch(/26000/);
+  });
+});
+
+describe("cf-kling-v4 reports the sound in the file", () => {
+  it("says has_audio on poll, and a board with a line is still refused", async () => {
+    const m = await manifest();
+    expect(m.usage.native_audio).toBe(false);
+    const src = readFileSync("modules/cf-kling-v4/src/index.ts", "utf8");
+    expect(src).toMatch(/frames: state\.frames,\n\s*has_audio: true,/);
   });
 });

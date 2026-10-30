@@ -123,7 +123,7 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     name: "cf-kling-v4",
     worker: cfKlingV4Worker as unknown as Worker,
     usage: {
-      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
       min_seconds: 3, max_seconds: 30, first_last: true,
     },
   },

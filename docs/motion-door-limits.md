@@ -195,10 +195,10 @@ Clips with the model's own sound, from your stills. 3 to 30 seconds. Not a defau
 | | |
 |---|---|
 | Duration | 3 to 30 seconds. Whole seconds. |
-| Talks? | The model returns its own soundtrack, measured 2026-10-30. No field turns it off. Whether it speaks a storyboard line is not measured. |
-| Voice lock | `prompt_lock`, unproven on this door. Use a talking door for dialogue. |
+| Talks? | No. The model adds its own sound, measured 2026-10-30. It cannot be turned off. A score replaces it in the finished film. |
+| Voice lock | None. No spoken lines on this door. |
 | First+last? | Yes. The next shot's start still is the end frame when we have one. The model allows up to 9 middle frames. This door does not send them. |
-| Cannot | Turn its sound off. Scatter. Send middle frames. Say whether 9:16 survives once a still is attached (the provider page says aspect is ignored when keyframes are given). Check a still before send. Assume a frame rate. |
+| Cannot | Spoken lines. Turn its sound off. Scatter. Send middle frames. Say whether 9:16 survives once a still is attached (the provider page says aspect is ignored when keyframes are given). Check a still before send. Assume a frame rate. |
 
 ## cf-minimax-h3
 
