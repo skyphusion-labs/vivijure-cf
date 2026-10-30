@@ -5,6 +5,39 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.40.1 -- 2026-10-30
+
+### fix(modules): a failure after the provider succeeds no longer buys the run again
+
+The cloud video doors did the model call, the parse, the download and the R2 write in one retried workflow step, so a failure after a paid success bought the clip up to three times. The call is now its own step, the parse runs once, and the download and write retry on their own step without reaching the provider. A failed parse or store fails the render with a clear error. A provider call that throws still retries.
+
+### feat(motion): a spoken shot is the cast line on InfiniteTalk (cf#983)
+
+The hosted default for a board with a line is InfiniteTalk when that driving-only
+door is installed. own-gpu and alibaba-wan are not that default. A kept Cast
+sample does not switch the default to Seedance. `generate_audio` stays off when
+the module declares it, and the voice-sample clip is not sent. A board with no
+line uses one silent catalog door. The clip is the shot still. The ten cast
+training refs are not attached.
+
+This code shipped in v1.38.0 (#987). Its note was held by mistake until now, so it appears in a later release than the code.
+
+### fix(modules): cf-kling-v4 declares the sound the model returns
+
+The door said silent, and the model returns its own soundtrack with no field to turn it off. The door now says so and reports `has_audio`. A board with a spoken line is still refused.
+
+### fix(modules): cf-minimax-h3 reads the wrapped response
+
+The gateway returns `{ state, result: { task } }`, and the door read `task` from the top. Every clip was generated and billed, then thrown away with "model completed but returned no video URL", and the workflow retried it twice more. The door now reads both shapes.
+
+### fix(modules): cf-veo sends bare base64
+
+The provider rejected the data URI with "Invalid base64 encoded bytes", so `image_input` is now the base64 of the keyframe with no prefix.
+
+### fix(finish): the standalone video-finish door gives each film its own instance
+
+Every title and subtitle job ran in one fixed `standard-1` instance, so `max_instances` could not be reached and concurrent films piled into one small container. The door now routes on `x-vivijure-finish-affinity`, which `film-titles` and `subtitle` send on submit and on status, and it runs `standard-4` with `max_instances = 20`. A full door answers 429. A request with no header goes to the old instance. A `v*` tag now deploys this door too, on a GitHub-hosted runner, under the same gates as the studio. About USD 0.03 per film with cards.
+
 ## v1.40.0 -- 2026-10-30
 
 ### fix(finish): a finished job gives its instance back sooner
