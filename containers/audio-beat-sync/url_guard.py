@@ -94,13 +94,17 @@ def safe_log_value(val, max_len=200):
 # Sync factories on purpose: aiohttp's session.get/put return an async context
 # manager. `async def` here would return a coroutine, and `async with guarded_get(...)`
 # would then blow up with TypeError (never awaited) -- the 2026-07-15 assemble 500.
+#
+# allow_redirects is set here, so every container behaves the same way and no call site has to repeat it.
 def guarded_get(session, url, **kwargs):
     # _safe_fetch_url already rejected anything off the https+R2 allowlist.
     # codeql[py/full-ssrf]
+    kwargs["allow_redirects"] = False
     return session.get(_safe_fetch_url(url), **kwargs)
 
 
 def guarded_put(session, url, **kwargs):
     # _safe_fetch_url already rejected anything off the https+R2 allowlist.
     # codeql[py/full-ssrf]
+    kwargs["allow_redirects"] = False
     return session.put(_safe_fetch_url(url), **kwargs)
