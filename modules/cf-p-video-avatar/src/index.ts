@@ -88,7 +88,7 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "Mouth follows the storyboard line in the Cast voice. A shot with no line is refused.",
       "720p or 1080p.",
-      "No published maximum length. Clip length is not chosen here.",
+      "15 seconds is this door's own cap, not the provider's, until a real long-line test (#931).",
       "Trailing silence is not trimmed. If billing follows the audio, that silence is billed.",
       "Whether the picture follows the portrait's shape is unknown until a real render.",
       "A named voice is sent because the provider requires one. Whether it changes an audio-driven clip is unknown until a real render.",
@@ -100,10 +100,9 @@ const MANIFEST: ModuleManifest = {
     voice: "cast_tts",
     scatter_native_audio: false,
     driving_audio: true,
-    // Positive only so the usage block is kept. Not a provider cap.
+    // OUR door cap, matching infinitetalk (#931). The provider page lists no duration.
     min_seconds: 1,
-    max_seconds: 1,
-    duration_unspecified: true,
+    max_seconds: 15,
   },
 };
 

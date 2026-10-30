@@ -6,8 +6,11 @@ AI Gateway (`pruna/p-video-avatar`). Portrait plus the Cast line. No RunPod.
 The provider page lists no duration and no aspect ratio. 720p is $0.025/s and
 1080p is $0.045/s. A shot with no Cast audio is refused, so the named voice
 cannot invent the line. Whether that required voice name still colors an
-audio-driven clip, whether the picture follows the portrait, and what the
-maximum length is, are unsettled until a real render.
+audio-driven clip and whether the picture follows the portrait are unsettled
+until a real render.
+
+**15 seconds is this door's own cap, not the provider's.** It matches
+`infinitetalk` and stands until a real long-line test (#931).
 
 ## Contract
 

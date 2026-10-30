@@ -40,7 +40,6 @@ async function manifest() {
       min_seconds: number;
       max_seconds: number;
       duration_steps?: number[];
-      duration_unspecified?: boolean;
       first_last?: boolean;
     };
     config_schema: { resolution: { default: string; values: string[] } };
@@ -80,18 +79,19 @@ describe("cf-p-video-avatar params (cf#1072)", () => {
 });
 
 describe("cf-p-video-avatar is installable and is not a default", () => {
-  it("declares driving audio, no native audio, and no duration cap", async () => {
+  it("declares driving audio, no native audio, and our own 15 second cap", async () => {
     const m = await manifest();
     expect(m.name).toBe("cf-p-video-avatar");
     expect(m.hooks).toContain("motion.backend");
     expect(m.usage.driving_audio).toBe(true);
     expect(m.usage.native_audio).toBe(false);
-    expect(m.usage.duration_unspecified).toBe(true);
+    expect(m.usage.max_seconds).toBe(15);
+    expect(m.usage.min_seconds).toBe(1);
     expect(m.usage.duration_steps).toBeUndefined();
     expect(m.usage.first_last).toBeUndefined();
     expect(m.ui.order).toBeGreaterThan(90);
     expect(m.config_schema.resolution.default).toBe("720p");
-    expect(m.ui.limits.join(" ")).toMatch(/No published maximum length/);
+    expect(m.ui.limits.join(" ")).toMatch(/own cap.*#931/);
     expect(m.ui.cost).toMatch(/0\.025/);
     expect(m.ui.cost).toMatch(/0\.045/);
   });
@@ -116,13 +116,12 @@ describe("cf-p-video-avatar is installable and is not a default", () => {
     expect(hostedSilentDoor([hailuo, m])?.name).toBe("cf-hailuo");
   });
 
-  it("a long shot is not refused on an invented ceiling", async () => {
+  it("preflight applies our 15 second cap", async () => {
     const m = await manifest();
-    const issues = checkDoorDurations(
-      { scenes: [{ id: "shot_01", target_seconds: 20 }] },
-      { name: m.name, usage: m.usage },
-    );
-    expect(issues).toEqual([]);
+    const door = { name: m.name, usage: m.usage };
+    expect(checkDoorDurations({ scenes: [{ id: "shot_01", target_seconds: 15 }] }, door)).toEqual([]);
+    const over = checkDoorDurations({ scenes: [{ id: "shot_01", target_seconds: 16 }] }, door);
+    expect(over.map((i) => i.level)).toEqual(["error"]);
   });
 
   it("is not in the tenant catalog", () => {

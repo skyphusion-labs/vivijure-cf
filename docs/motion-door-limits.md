@@ -192,11 +192,11 @@ resolution than infinitetalk. Not a default door.
 
 | | |
 |---|---|
-| Duration | Not on the provider page. We do not snap, and we do not state a maximum. |
+| Duration | 1 to 15 seconds. 15 is our door cap, not the provider's, until a real long-line test (#931). |
 | Talks? | Mouth follows our file. Not invented speech. |
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line is refused. |
 | First+last? | No. The page has a portrait and no end frame. |
-| Cannot | Invent speech. Lock the sample you kept. State a maximum length. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. Trim trailing silence. |
+| Cannot | Invent speech. Lock the sample you kept. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. Trim trailing silence. |
 
 ## infinitetalk
 

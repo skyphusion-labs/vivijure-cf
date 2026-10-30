@@ -37,12 +37,6 @@ export interface MotionUsageDecl {
   seed?: boolean;
   /** Shot LINE file as driving audio. Never the Cast sample. */
   driving_audio?: boolean;
-  /**
-   * The provider page lists no duration. min_seconds and max_seconds stay
-   * only so parseMotionUsage keeps the block. Preflight must not publish
-   * them as a cap.
-   */
-  duration_unspecified?: boolean;
 }
 
 export interface ModuleManifest {

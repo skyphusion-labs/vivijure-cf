@@ -124,7 +124,7 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     worker: cfPVideoAvatarWorker as unknown as Worker,
     usage: {
       native_audio: false, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
-      min_seconds: 1, max_seconds: 1,
+      min_seconds: 1, max_seconds: 15,
     },
   },
   {
