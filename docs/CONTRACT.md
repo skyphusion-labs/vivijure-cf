@@ -1656,7 +1656,7 @@ Per-shot: turns one start keyframe + motion intent into a clip (GPU or cloud i2v
 | `keyframe_key?` | string | no | The underlying R2 key, for reference. |
 | `last_keyframe_url?` | string | no | Presigned END still (the next shot's start keyframe). When set, a first/last-frame backend animates first -> last. |
 | `last_keyframe_key?` | string | no | The R2 key behind `last_keyframe_url`. |
-| `voice_ref_url?` | string | no | Presigned kept voice-sample clip (2.9) for a door that can lock a voice from it (Seedance sends it as `reference_video`). Never used as Wan audio. |
+| `voice_ref_url?` | string | no | Presigned kept voice-sample clip (2.9) for a door that can lock a voice from it. Cloudflare Seedance 2.5 sends it as one `reference_videos` item. The 2.0 family sends `reference_video`. Never used as Wan audio. |
 | `voice_ref_key?` | string | no | The R2 key behind `voice_ref_url`. |
 | `audio_url?` | string | no | Presigned shot LINE audio (cast TTS of this shot's storyboard line) for a driving-audio door (InfiniteTalk / Wan 2.6; see `usage.driving_audio`, section 4). |
 | `audio_key?` | string | no | The R2 key behind `audio_url`. |
@@ -2440,7 +2440,7 @@ are integer epoch SECONDS.
 | `sdxl_lora_ready` | boolean | Derived: SDXL identity adapter present (`lora_key` under `loras/`). Prefer for keyframe binding. |
 | `wan_lora_ready` | boolean | Derived: both Wan experts present under `loras/`. Prefer for Wan motion binding. |
 | `voice_id` | string \| null | Aura-1 speaker (one of the 12; see 2.4). null = unassigned. |
-| `voice_ref_key` | string \| null | Kept talking sample (R2 key). Cloudflare Seedance sends this clip as `reference_video`. Veo cannot lock it. |
+| `voice_ref_key` | string \| null | Kept talking sample (R2 key). Cloudflare Seedance 2.5 sends this clip as one `reference_videos` item. The 2.0 family sends `reference_video`. Veo cannot lock it. |
 
 ### A.2 StoryboardProject
 

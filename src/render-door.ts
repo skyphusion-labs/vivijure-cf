@@ -53,7 +53,7 @@ export interface ResolvedCast {
   wanPretrained: Record<string, { high: string; low: string }>;
   castIds: Record<string, number>;
   voices: Record<string, string>;
-  /** Slot -> kept Cast preview clip key (Seedance reference_video). */
+  /** Slot -> kept Cast preview clip key (Seedance 2.5 reference_videos, 2.0 family reference_video). */
   voiceRefs: Record<string, string>;
 }
 
