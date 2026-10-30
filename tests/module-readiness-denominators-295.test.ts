@@ -154,7 +154,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
     // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
-    expect(ENTRIES.length).toBe(32);
+    expect(ENTRIES.length).toBe(33);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
