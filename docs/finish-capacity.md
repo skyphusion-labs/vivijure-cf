@@ -66,3 +66,14 @@ job's end is seen within a tick and its slot is granted in that same tick: about
 case, and at most about 2 when a client poll asked the same waiter in the 30 seconds before. A client poll
 can only shorten this. It lengthens only if more than 10 slots free in one tick, when a waiter further
 back is reached by its sweep page.
+
+**That is the grant, not the job.** The door keeps an instance up for 5 minutes after its job ends (`src/finish-job-tail.ts`), so a slot the queue hands out can still be a full door. The grant then gets a 429, the film keeps its place, and the temporary cap applies. A film's next step reuses its own instance and does not pay this.
+
+Simulated, not measured: 19 job instances, 40 films, jobs of 60 s, a 30 s tick, one job per film, with the real queue on a local copy of the table and a fake door.
+
+| Tail | 20th film done | 40th film done |
+|------|----------------|----------------|
+| none | 120 s | 180 s |
+| 5 minutes | 420 s | 840 s |
+
+Every film finished in both runs. There is no live load reading yet. Whether a full door should drop the tail is cf#1115.
