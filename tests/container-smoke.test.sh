@@ -12,6 +12,7 @@
 #                                 `docker port` on that dead container is still exit 4 (cf#1052).
 #   binds-wrong-port  -> exit 5   started, stayed up, never answered on the port under test.
 #   image-not-present -> exit 3   an instrument failure is a FAILURE, never a skip.
+#   died-before-publish -> exit 4 the same crash on its early path, forced with a docker shim.
 #
 # EXIT CODES ARE ASSERTED EXACTLY, not merely "non-zero". A check that accepts any failure cannot
 # tell a working guard from one that is broken in a new way, and this whole issue is about a green
@@ -48,16 +49,17 @@ check() {
   ran=$((ran + 1))
   out="$(sh "$SMOKE" "$image" 8000 /health 20 2>&1)" && got=0 || got=$?
   ok=1
-  [ "$got" = "$want" ] || ok=0
+  why=""
+  [ "$got" = "$want" ] || { ok=0; why="${why} exit-code"; }
   if [ -n "$want_text" ]; then
-    printf '%s' "$out" | grep -q "$want_text" || ok=0
+    printf '%s' "$out" | grep -q "$want_text" || { ok=0; why="${why} reason-text"; }
   fi
   # CITATION IS PART OF THE CONTRACT, not a nicety. A verdict nobody can attach to a specific image
   # cannot be checked later, and "the broken one" versus "the fixed one" is the whole comparison this
   # gate exists to make. Asserted wherever a container actually started, on the pass path AND the two
   # failure paths; the missing-image case never starts one, so it is not required to cite.
   if [ -n "$want_cite" ]; then
-    printf '%s' "$out" | grep -q "$want_cite" || { ok=0; cite_missing="${cite_missing} ${name}"; }
+    printf '%s' "$out" | grep -q "$want_cite" || { ok=0; why="${why} image-citation"; cite_missing="${cite_missing} ${name}"; }
   fi
   if [ "$ok" = "1" ]; then
     printf '  ok    %-18s exit %s%s\n' "$name" "$got" "$([ -n "$want_text" ] && printf ' (reason matched)')"
@@ -65,7 +67,7 @@ check() {
     failed=$((failed + 1))
     printf '  FAIL  %-18s wanted exit %s' "$name" "$want"
     [ -n "$want_text" ] && printf ' with /%s/' "$want_text"
-    printf ', got exit %s\n' "$got"
+    printf ', got exit %s; failed on:%s\n' "$got" "$why"
     printf '%s\n' "$out" | sed 's/^/        /'
   fi
 }
@@ -127,10 +129,38 @@ check crash-on-import  4 "started and died rather than"      vivijure-cf857-fixt
 check binds-wrong-port 5 "nothing is bound on 8000"          vivijure-cf857-fixture-wrongport:test "image id sha256:"
 check image-not-present 3 "not even startable"               vivijure-cf857-no-such-image-exists:test
 
+# THE RACE, PINNED. crash-on-import above reaches one of two paths, depending on whether the container
+# has already died when `docker port` runs. A real image cannot choose. This shim always takes the
+# early path, so a verdict there that drops the citation fails every run, not one run in many.
+mkdir -p "$WORK/fakebin"
+cat > "$WORK/fakebin/docker" <<'SH'
+#!/bin/sh
+case "$1" in
+  version) echo 0.0.0 ;;
+  run) echo fake-container-id ;;
+  port) : ;;
+  inspect)
+    case "$*" in
+      *State.ExitCode*) echo "    status=exited exitCode=1" ;;
+      *State.Status*) echo exited ;;
+      *"image="*) echo "    image=sha256:fake" ;;
+      *) echo sha256:fake ;;
+    esac ;;
+  image) echo "(none: locally built, never pushed)" ;;
+  logs) echo "fake crash" ;;
+  rm) : ;;
+esac
+SH
+chmod +x "$WORK/fakebin/docker"
+REAL_PATH="$PATH"
+PATH="$WORK/fakebin:$PATH"
+check died-before-publish 4 "started and died rather than"   vivijure-cf857-fake:test              "image id sha256:"
+PATH="$REAL_PATH"
+
 # The floor. A control loop that runs zero cases exits 0 and is indistinguishable from four passes,
 # which is the exact failure family cf#857 was filed about.
 [ -z "${cite_missing}" ] || echo "::error::no image-id citation in the output for:${cite_missing}"
 echo "ran ${ran} cases, ${failed} failed"
-[ "$ran" -eq 4 ] || { echo "::error::expected 4 control cases, ran ${ran}"; exit 1; }
+[ "$ran" -eq 5 ] || { echo "::error::expected 5 control cases, ran ${ran}"; exit 1; }
 [ "$failed" -eq 0 ] || { echo "::error::${failed} control case(s) failed: scripts/container-smoke.sh does not behave as claimed, so any green it reports on a real image is worthless"; exit 1; }
 echo "control OK: the smoke script passes a serving image and fails BOTH planted failures with distinct, asserted reasons."
