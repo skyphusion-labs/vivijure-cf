@@ -143,9 +143,9 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // census of the table showed six healthy lanes and could not mention the other eight.
     // cf#783: 17 -> 16 with finish-lipsync removed (MuseTalk ruled out permanently).
     // cf#786: 16 -> 15 with speech-upscale removed (endpoint dead, no trigger, purpose retired).
-    expect(WRITES_JOB_LOG.length).toBe(14);
+    expect(WRITES_JOB_LOG.length).toBe(13);
     // cf#921: `kling` left this roster by being RETIRED, not by stopping recording.
-    for (const m of ["seedance", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "kling-o1-r2v", "infinitetalk"]) {
+    for (const m of ["seedance", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "infinitetalk"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
     }
   });
@@ -154,12 +154,12 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
     // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
-    expect(ENTRIES.length).toBe(33);
+    expect(ENTRIES.length).toBe(32);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
     // population this counts is unchanged by this PR and 15 stands. cf#783: 16. cf#786: 15.
-    expect(WRITES_JOB_LOG.length).toBe(14);
+    expect(WRITES_JOB_LOG.length).toBe(13);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
