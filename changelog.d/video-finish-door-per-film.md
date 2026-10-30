@@ -1,0 +1,3 @@
+### fix(finish): the standalone video-finish door gives each film its own instance
+
+Every title and subtitle job ran in one fixed `standard-1` instance, so `max_instances` could not be reached and concurrent films piled into one small container. The door now routes on `x-vivijure-finish-affinity`, which `film-titles` and `subtitle` send on submit and on status, and it runs `standard-4` with `max_instances = 20`. A full door answers 429. A request with no header goes to the old instance. A `v*` tag now deploys this door too, on a GitHub-hosted runner, under the same gates as the studio. About USD 0.03 per film with cards.
