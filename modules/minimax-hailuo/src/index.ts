@@ -56,11 +56,11 @@ const MANIFEST: ModuleManifest = {
     order: 40,
     locality: "cloud",
     cost: "Pay per render",
-    blurb: "Physical motion, silent. 6 or 10 seconds. Cast voice muxed if they speak.",
+    blurb: "Physical motion, silent. 6 or 10 seconds. No spoken lines.",
     limits: [
       "6 or 10 second clips",
       "Silent motion",
-      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
+      "No spoken lines. A board with a line needs a talking door",
     ],
   },
   usage: {
