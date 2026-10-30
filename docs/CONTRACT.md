@@ -928,8 +928,9 @@ short-lived presigned URLs, so bytes never touch the Worker.
 Pre-render validation. A storyboard with problems is **data**, not an HTTP error: this returns `200`
 with `ok:false` + the issues so the panel renders the reasons.
 
-**Request body (envelope):** `{ storyboard (req), castBindings?, motionBackend?, quality? }`. No
-other envelope field is read: in particular `bundleKey` / `audioKey` are NOT validated here (a caller
+**Request body (envelope):** `{ storyboard (req), castBindings?, motionBackend?, quality? }`.
+`motion_backend` is read as the same field when `motionBackend` is absent (cf#926). No other
+envelope field is read: in particular `bundleKey` / `audioKey` are NOT validated here (a caller
 that sends them gets no check of them; mcp#26 / cf#315).
 `castBindings` is `{ [slot]: cast_id }`. A `cast_id` may be the cast member's **public id** (the
 `id` value `GET /api/cast` returns), the internal **numeric row id**, or a numeric string of one;
@@ -948,6 +949,13 @@ clip is just shorter, submit is unblocked. A clamp that lands BELOW the floor is
 gate; the message names the deliverable ceiling and the floor so the user can shorten the shot or
 pick a backend/tier with more frames. With the gate disabled (`FILM_CLIP_DURATION_FLOOR=0`) every
 clamp stays a warning. An older client that sends neither field gets the pre-#707 behavior unchanged.
+
+A named `motionBackend` that is not an installed, serving door is a `level:"error"` with scope
+`motionBackend` (cf#926). A door that declares `usage` and no `duration_grid` is checked per shot
+against that `usage` (cf#926): over `max_seconds` is a `level:"error"`; under `min_seconds`, or a
+length not in `duration_steps`, is a `level:"warning"`. The warnings do not block submit, because
+the door still renders a clip. A shot with no `target_seconds` uses `clip_seconds`. A shot with
+neither is not checked. Submit itself does not run this check.
 
 **Response 200** (`PreflightResult`):
 
@@ -1100,7 +1108,7 @@ the planner's existing poll loop understands a module render identically to a ra
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
 | `bundleKey` | string | yes | -- | R2 key of the render bundle (storyboard + cast refs/LoRAs). |
-| `project` | string | no | derived from `bundleKey` | Project namespace. |
+| `project` | string | no | derived from `bundleKey` | Project namespace. A caller value that does not match the bundle key is remapped to the bundle slug, as in section 2.20, so it does not separate two renders of one bundle. |
 | `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Injected into keyframe + motion configs. |
 | `renderOverrides` | object | no | -- | Per-module config overrides; see 2.18.1. |
 | `keyframesOnly` | bool | no | false | Stop after keyframes (preview), no i2v/assemble. |
@@ -1363,14 +1371,14 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `finish` | `{ total, done, failed, pending, adopted, degraded, reasons }` \| undefined | Finish-chain progress, when finish shots exist. `adopted` = count of shots with >=1 finish step REUSED from a prior same-project render's R2 artifact rather than run this pass (#583). `degraded` = count of shots whose finish soft-degraded (passed through without doing its work; an intentional `noop:` is not counted); `reasons` = the distinct degrade reasons, first-seen order (#226). |
 | `film_key` | string \| undefined | R2 key of the assembled film, present once `phase === "done"`. |
 | `film_finish` | object \| undefined | Outcome of the `film.finish` chain (title/credit cards): `degraded` marks a film that reached `done` WITHOUT cards (the container was unreachable; fail-safe by design), `sidecar_key` (#663/#669) carries the re-timed soft `.srt` subtitle sidecar's R2 key when one was produced. Absent until `film.finish` runs. |
-| `finish_unavailable` | `{ at, reason, delivered }` \| undefined | Loud degrade when the video-finish tier was UNAVAILABLE (#519): the film COMPLETED delivering `clips` (at assemble; plus the deliverable `clips[]` with presigned URLs) or `silent_film` (at mux) instead of the finished film. Absent on a normal render. |
+| `finish_unavailable` | `{ at, reason, delivered?, retained?, clips? }` \| undefined | The video-finish tier did not run a step. `retained` means the film FAILED and names what is kept: `clips` at assemble, or `silent_film` at mux for a film with a song. `delivered: "silent_film"` means a film with no song completed on its silent cut. Job docs written by core below 1.26.0 can also say `delivered: "clips"`. Absent on a normal render. |
 | `finish_waiting` | `{ since, attempts, next_at, detail }` \| undefined | The film is waiting for a free video-finish instance. Its phase stays `assemble` or `mux`, nothing has failed, and the sweep retries with backoff. `since` and `next_at` are epoch ms. `detail` is the door's text. Absent otherwise. |
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
 | `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
 | `wan_lora_projection` | `{ injected, dropped }` \| undefined | cf#392: counts from the host Wan cast-LoRA projection into `alibaba-wan-lora` (`high_noise_loras` / `low_noise_loras`). `injected` = cast slots whose expert pair was presigned into the motion config; `dropped` = slots skipped by the per-pass cap. Present only when at least one slot was injected or dropped; absent on non-Wan / no-Wan-cast renders (absence is honest, never fabricated zeros). Also relayed on the planner poll view (`GET /api/storyboard/render/:jobId` -> `output.wan_lora_projection`). Paired with the `film.wan_lora_projection` structured event. |
 | `download_url` | string \| undefined | Presigned GET of the finished film (6h TTL, `FILM_DOWNLOAD_TTL_SECONDS`; a later poll re-issues a fresh one), added only when `phase === "done"` and `film_key` is set. |
-| `clip_urls` | `{ shot_id, download_url }[]` \| undefined | #519 clips-only degrade: when `phase === "done"` with `finish_unavailable.at === "assemble"` (no assembled film exists), one presigned GET (6h TTL) per delivered shot clip. Absent otherwise. |
+| `clip_urls` | `{ shot_id, download_url }[]` \| undefined | When `phase` is `failed` or `done` with `finish_unavailable.at === "assemble"` (no assembled film exists), one presigned GET (6h TTL) per kept shot clip. Absent otherwise. |
 
 **404** `{ "error": "film job" }` for an unknown id.
 
@@ -1632,7 +1640,7 @@ Project-level pass: trains/reuses cast LoRAs once and emits every shot's start k
 | Field | Type | Req | Meaning |
 |-------|------|-----|---------|
 | `project` | string | yes | Echo of the project. |
-| `keyframes` | `{ shot_id, keyframe_key }[]` | yes | Each generated start keyframe (PNG R2 key). |
+| `keyframes` | `{ shot_id, keyframe_key }[]` | yes | Each generated start keyframe (PNG R2 key). A module SHOULD write `renders/<project>/keyframes/<job>/<shot>.png`, with `<job>` the `jobId` it returned, so concurrent renders cannot overwrite it and the core can recover it after a lost poll. See 3.3.2. |
 | `trained_loras?` | `{ [slot]: string }` | no | slot -> R2 key of the LoRA this render trained or reused; the core banks it onto the cast member (`lora_status` -> ready). |
 
 ### 3.2 motion.backend (pick_one)
@@ -1826,9 +1834,11 @@ re-pays keyframes + motion).
 
 #### 3.3.2 Raw-clip + keyframe provenance sidecars, and cross-render adoption (#767)
 
-The RAW motion clip (`renders/<project>/clips/<shot>_<backend>.mp4`) and the SDXL keyframe
-(`renders/<project>/keyframes/<shot>.png`) are ALSO project-scoped and carry no render-job id, so every
-render of the same project shares the namespace. The R2-presence reclaim (`reclaimClipsFromR2`,
+The RAW motion clip (`renders/<project>/clips/<shot>_<backend>.mp4`) is ALSO project-scoped and carries no
+render-job id, so every render of the same project shares the namespace. A keyframe is **job-scoped**,
+`renders/<project>/keyframes/<job>/<shot>.png` (cf#1059, backend#534), because a flat key let a concurrent
+render replace a still after a film had recorded it. Older artifacts stay at the flat
+`renders/<project>/keyframes/<shot>.png`, and the reclaim still reads them. The R2-presence reclaim (`reclaimClipsFromR2`,
 `listProjectKeyframes`) recovers a clip / keyframe whose module poll was lost (GC'd / frozen job, #141 /
 #143 / #619). Matching by shot-id boundary with only the #661 upload-time floor as a guard let a SECOND
 render of the same project with a **different motion backend / config** adopt the FIRST render's artifact
@@ -1843,11 +1853,11 @@ written by the CORE at the reclaim seam it already owns -- no producer or contra
 - **Clip** (`<clip_key>.prov`): a 64-char hex hash over the identity-determining inputs `{motion_backend,
   config, keyframe_etag, prompt, seconds}` (`clipProvenanceHash`). Stamped the moment the core ACCEPTS a
   clip (a motion.backend poll / synchronous output; the reclaim also heals a legacy / lost-poll clip).
-- **Keyframe** (`<keyframe_key>.prov`): a hash over `{keyframe_config}` only (`keyframeProvenanceHash`).
-  The motion backend is DELIBERATELY excluded -- keyframes are backend-agnostic (SDXL), so two renders that
-  differ only in motion backend legitimately SHARE keyframes; only a changed keyframe config regenerates.
-  (The project namespace is already the content-addressed bundle stem, #759, so same-project keyframes can
-  differ only by the keyframe config.)
+- **Keyframe** (`<keyframe_key>.prov`): a hash over `{keyframe_config, bundle_key}` (`keyframeProvenanceHash`,
+  cf#388). The motion backend is DELIBERATELY excluded -- keyframes are backend-agnostic, so a flat legacy
+  still may be shared by two renders that differ only in motion backend. A job-scoped still is adopted only
+  by the film whose keyframe job wrote it. The GPU door reuses across jobs through its own pointer
+  (`renders/<project>/keyframes/<shot>.latest.json`) and copies the still to the new job's key.
 
 **Adoption gate.** The reclaim adopts a candidate ONLY when its sidecar PROVES identical-config:
 
@@ -1859,6 +1869,12 @@ written by the CORE at the reclaim seam it already owns -- no producer or contra
   to the existing #661 freshness-floored behavior, and HEAL it by stamping this render fingerprint. A clip
   reclaim lists ALL same-shot candidates (not first-match-wins) and refuses an ambiguous multi-candidate
   unstamped set (rival lost-poll renders) -- re-render, never guess.
+
+**Settle window, core 1.27.0 and later (core#363).** A lone unstamped clip is adopted only after
+`UNSTAMPED_SETTLE_MS` (5 minutes) since upload, because a fresh one can be a live sibling's, written and
+not yet stamped. A shot that fails terminally inside the window fails the film. Failing loud is the intent:
+the alternative is another door's clip marked done. A matching sidecar adopts at once. An archived take
+(`<clip>_take<ms>.<ext>`) is never a candidate.
 
 Because the core writes the sidecar itself, the gate is safe to ship in one deploy: pre-#767 artifacts are
 simply unstamped and take the freshness fallback (no behavior change) until the first accept stamps them.

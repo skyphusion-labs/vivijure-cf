@@ -31,8 +31,9 @@ flowchart LR
 
 The seam is the keyframe key: this module reads each shot's prompt + character portraits from the
 bundle, generates a reference-conditioned keyframe, writes the PNG to the shared `vivijure` bucket at
-`renders/<project>/keyframes/<shot>.png`, and reports the key. The core presigns it so
-**motion.backend** can pull the frame and animate it.
+`renders/<project>/keyframes/<job>/<shot>.png`, and reports the key. The core presigns it so
+**motion.backend** can pull the frame and animate it. The job segment keeps concurrent renders of one
+project from overwriting each other's stills (cf#1059).
 
 **Aspect is pinned in two halves**, because the keyframe aspect drives the downstream i2v clip aspect
 (a square keyframe forces square clips the assembler then pillarboxes): (1) the model is asked for the

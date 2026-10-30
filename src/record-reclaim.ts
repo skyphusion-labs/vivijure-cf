@@ -168,6 +168,7 @@ export function clipJobIdOf(doc: unknown): string | null {
  *                        render would otherwise destroy a cast member's reference clip.
  *   keyframe_key /       the project-keyed keyframe set, already named by renders.keyframes_json,
  *   last_keyframe_key    and sometimes a cast PORTRAIT passed straight through as the still.
+ *                        One exception below: a still this job's own keyframe job wrote.
  *   audio_key            the operator-uploaded music bed under `audio/`, owned by the upload and
  *                        reused by any render that selects it.
  *
@@ -175,6 +176,10 @@ export function clipJobIdOf(doc: unknown): string | null {
  * deleted without reading it strands every take that render ever rolled. Take keys are unique per
  * archive pass (timestamped, and the archiver skips anything already matching `_take<digits>`), so
  * exactly one doc names each one.
+ *
+ * A JOB-SCOPED still (cf#1059) IS harvested from a film that drew or copied its own. A full film row
+ * carries no keyframes_json, so nothing else names that still, and a delete would strand it. A
+ * from-keyframes child (`derive_mode` set) names its parent's still, so it harvests none.
  */
 export function parseJobDocKeys(doc: unknown): string[] {
   const out: string[] = [];
@@ -182,6 +187,13 @@ export function parseJobDocKeys(doc: unknown): string[] {
   const d = doc as { film_key?: unknown; silent_film_key?: unknown; film_finish?: unknown; shots?: unknown };
   pushKey(out, d.film_key);
   pushKey(out, d.silent_film_key);
+  const film = doc as { derive_mode?: unknown; keyframes?: unknown };
+  if (!film.derive_mode && Array.isArray(film.keyframes)) {
+    for (const k of film.keyframes) {
+      const key = k && typeof k === "object" ? (k as { keyframe_key?: unknown }).keyframe_key : undefined;
+      if (typeof key === "string" && /\/keyframes\/[^/]+\/[^/]+$/.test(key)) pushKey(out, key);
+    }
+  }
   if (d.film_finish && typeof d.film_finish === "object") {
     pushKey(out, (d.film_finish as { sidecar_key?: unknown }).sidecar_key);
   }

@@ -5,6 +5,25 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.38.2 -- 2026-10-30
+
+### fix(modules): silent doors stop promising a muxed Cast voice (cf#1055)
+
+Six silent motion door cards said a spoken line would be the Cast voice, muxed. Submit
+refuses that board, and that refusal is the contract. The cards and docs now say a
+board with a line needs a talking door. The gate is unchanged.
+
+### fix(preflight): a shot is checked against the door the caller named (cf#926)
+
+Preflight now reads the named door's `usage`. A shot over `max_seconds` is an error. A
+shot under `min_seconds` or between `duration_steps` is a warning. A door that is not
+installed is an error, where it used to pass with `ok: true`. `motion_backend` is read
+as well as `motionBackend`, because the snake_case key was dropped with no word.
+
+### infra(finish): raise FinishContainer max_instances from 3 to 20
+
+Three instances left two job slots, and a finished job holds its slot for the 10 minute idle tail. Six films were refused in five minutes on 2026-10-30. The worst case at 20 is about USD 8 per hour at full CPU, and nothing at rest. The cost basis is in docs/containers-control-plane.md. This applies on the next `v*` tag deploy.
+
 ## v1.38.1 -- 2026-10-29
 
 ### fix(ci): a dead container with no publish is exit 4

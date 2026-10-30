@@ -474,7 +474,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " normalize failed: " + (e as Error).message };
     }
 
-    const key = keyframeKey(state.project, shot.shot_id);
+    const key = keyframeKey(state.project, state.job_id, shot.shot_id);
     try {
       await env.R2_RENDERS.put(key, norm.bytes, { httpMetadata: { contentType: norm.mime } });
     } catch (e) {

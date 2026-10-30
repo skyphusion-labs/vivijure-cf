@@ -7,6 +7,7 @@ import {
   videoFinishDoor,
   type VideoFinishDoorDeps,
 } from "../src/video-finish-binding";
+import { tickVideoFinishAssemble } from "@skyphusion-labs/vivijure-core/video-finish-assemble";
 
 // A finish instance limit answers a submit with a 500. Core could not tell that from a crash, so
 // six films with paid clips failed terminally. The door turns it into the one status core retries.
@@ -129,5 +130,31 @@ describe("isCapacityRefusalText", () => {
   it("does not match an ordinary crash", () => {
     expect(isCapacityRefusalText("Container crashed while checking for ports")).toBe(false);
     expect(isCapacityRefusalText(MAX)).toBe(true);
+  });
+});
+
+// The door and core meet here with no stub between them: the real door over a fake namespace, driven by
+// the real published tick. This is the seam the two PRs share, so neither side's own tests can see it.
+describe("the door and the pinned core together", () => {
+  const coreEnv = (d: unknown) =>
+    ({ VIDEO_FINISH_URL: "http://video-finish", MEDIA_FINISH_TOKEN: "t", MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: d } }) as never;
+  const payload = { clips: [{ url: "https://r2/c.mp4" }], outputUrl: "https://r2/o.mp4", outputKey: "renders/f/film.mp4" };
+
+  it("the platform limit becomes a wait, naming the cause, on the film's own instance", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { d, names } = door(() => new Response(MAX, { status: 500 }));
+    const tick = await tickVideoFinishAssemble(coreEnv(d), payload, undefined, { affinity: "film-a" });
+    if (tick.kind !== "waiting") throw new Error(`expected waiting, got ${tick.kind}`);
+    expect(tick.detail).toContain("Maximum number of running container instances");
+    expect(names).toEqual([await affinityRoutingKey("film-a")]);
+  });
+
+  it("a crash stays terminal and names its own words", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { d } = door(() => new Response("Failed to start container: crashed while checking for ports", { status: 500 }));
+    const tick = await tickVideoFinishAssemble(coreEnv(d), payload, undefined, { affinity: "film-a" });
+    if (tick.kind !== "failed") throw new Error(`expected failed, got ${tick.kind}`);
+    expect(tick.error).toContain("crashed while checking");
   });
 });

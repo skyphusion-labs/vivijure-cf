@@ -153,8 +153,9 @@ describe("cloud-keyframe pure logic", () => {
     expect(p).toMatch(/Wren runs down a wet alley/);
   });
 
-  it("R2 key conventions match the contract (renders/<project>/keyframes/<shot>.png)", () => {
-    expect(keyframeKey("neon_film", "shot_01")).toBe("renders/neon_film/keyframes/shot_01.png");
+  it("R2 key conventions match the contract (renders/<project>/keyframes/<job>/<shot>.png)", () => {
+    expect(keyframeKey("neon_film", "job-1", "shot_01")).toBe("renders/neon_film/keyframes/job-1/shot_01.png");
+    expect(keyframeKey("neon_film", "job-1", "shot_01")).not.toBe(keyframeKey("neon_film", "job-2", "shot_01"));
     expect(stageRefKey("neon_film", "job-7", "A", 1)).toBe("keyframe-stage/neon_film/job-7/ref_A_01.png");
     expect(plateKey("neon_film", "job-7", "shot_01")).toBe("keyframe-stage/neon_film/job-7/plate_shot_01.png");
     expect(stateKey("neon_film", "job-7")).toBe("keyframe-stage/neon_film/job-7.state.json");
@@ -638,7 +639,7 @@ describe("cloud-keyframe plate-then-edit", () => {
     expect(genCalls[1].prompt).toMatch(/diner booth at night/);
     const out = done.output as { keyframes: { shot_id: string; keyframe_key: string }[] };
     expect(out.keyframes).toEqual([
-      { shot_id: "shot_01", keyframe_key: "renders/neon_film/keyframes/shot_01.png" },
+      { shot_id: "shot_01", keyframe_key: keyframeKey("neon_film", token.job_id, "shot_01") },
     ]);
     const plate = plateKey(token.project, token.job_id, "shot_01");
     expect(out.keyframes[0].keyframe_key).not.toBe(plate);
@@ -678,10 +679,27 @@ describe("cloud-keyframe plate-then-edit", () => {
     ]);
     const out = done.output as { keyframes: { shot_id: string; keyframe_key: string }[] };
     expect(out.keyframes.map((k) => k.keyframe_key)).toEqual([
-      "renders/neon_film/keyframes/shot_01.png",
-      "renders/neon_film/keyframes/shot_02.png",
+      keyframeKey("neon_film", token.job_id, "shot_01"),
+      keyframeKey("neon_film", token.job_id, "shot_02"),
     ]);
     expect(out.keyframes[0].keyframe_key).not.toBe(plateKey(token.project, token.job_id, "shot_01"));
+  });
+
+  it("two concurrent jobs of one project keep separate stills (cf#1059)", async () => {
+    genCalls.length = 0;
+    const board = ["scenes:", '  - prompt: "empty diner after close"', '    id: "shot_01"', "    character_slots: []", ""].join("\n");
+    const env = await makeKeyframeEnv(board);
+    const first = await invokeKeyframe(env, {});
+    const second = await invokeKeyframe(env, {});
+    expect(first.ok, first.error).toBe(true);
+    expect(second.ok, second.error).toBe(true);
+    const a = await drainPolls(env, first.poll!);
+    const b = await drainPolls(env, second.poll!);
+    const keyOf = (r: typeof a) => (r.output as { keyframes: { keyframe_key: string }[] }).keyframes[0].keyframe_key;
+    expect(keyOf(a)).not.toBe(keyOf(b));
+    const r2 = env.R2_RENDERS as { get: (k: string) => Promise<unknown> };
+    expect(await r2.get(keyOf(a)), "the first job's still survives the second job").toBeTruthy();
+    expect(await r2.get(keyOf(b))).toBeTruthy();
   });
 });
 

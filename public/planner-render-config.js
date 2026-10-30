@@ -920,8 +920,8 @@
     // wanted cleaned dialogue first. That trigger went with the module (cf#783), so the planner
     // no longer enables speech-upscale at all, and as of cf#786 the module itself is REMOVED:
     // dead endpoint, no trigger, and its purpose was feeding the post-hoc lip-sync step. Nothing
-    // replaced it, deliberately. The Cast voice is muxed as recorded, and a synced mouth comes
-    // from infinitetalk at motion time.
+    // replaced it, deliberately. A synced mouth comes from infinitetalk at motion time, and
+    // submit refuses a spoken line on a silent door.
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;

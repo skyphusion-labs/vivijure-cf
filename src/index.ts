@@ -16,7 +16,7 @@ import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-mo
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
 import { readIdempotencyKey } from "./film-idempotency";
-import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal } from "./film-join-gate";
+import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { normalizeHybridBackends } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { startCastRefsJob, advanceCastRefsJob, summarizeCastRefs } from "./cast-image-orchestrator";
@@ -120,6 +120,7 @@ import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { checkDoorDurations } from "./door-duration-preflight";
 import { spokenLinesPresent, bundleScenesHaveLines, hostedMotionFallback, prepareSpokenClip, withMotionBackend } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
@@ -1481,7 +1482,10 @@ const hPreflight: Handler = async (req, env) => {
   // optionally the quality tier), and that module's manifest declares a fixed duration_grid, warn
   // per shot whose planned seconds exceed what the grid can deliver. Both fields are OPTIONAL and
   // additive on the envelope: an older client sends neither and gets the pre-#707 behavior.
-  const motionBackend = typeof envelope.motionBackend === "string" ? envelope.motionBackend : null;
+  // cf#926: the snake_case key is the one every submit route takes, so a caller reasonably sends it
+  // here. Dropping it left the door checks silently off.
+  const namedBackend = envelope.motionBackend ?? envelope.motion_backend;
+  const motionBackend = typeof namedBackend === "string" && namedBackend.trim() ? namedBackend.trim() : null;
   if (motionBackend) {
     const quality = typeof envelope.quality === "string" ? envelope.quality : null;
     const motionModules = servingForHook(
@@ -1489,6 +1493,10 @@ const hPreflight: Handler = async (req, env) => {
       "motion.backend",
     );
     const mod = motionModules.find((m) => m.name === motionBackend);
+    // cf#926: a named door that is not serving used to fall through to ok:true.
+    const unknownDoor = motionBackendPreflightError(motionModules, motionBackend);
+    if (unknownDoor) issues.push({ level: "error", scope: "motionBackend", message: unknownDoor });
+    if (mod) issues.push(...checkDoorDurations(validated.value, mod));
     if (mod?.duration_grid) {
       // #751: pass the live duration-floor fraction so a clamp that would breach the #697 gate is
       // surfaced as an ERROR (guaranteed hard-fail), not a "clip will be clamped" warning.
@@ -1612,11 +1620,10 @@ async function withFilmDownloadUrl(env: StudioEnv, summary: FilmSummary): Promis
   if (summary.phase === "done" && summary.film_key) {
     return { ...summary, download_url: await presignR2Get(env, summary.film_key, FILM_DOWNLOAD_TTL_SECONDS) };
   }
-  // #519: clips-only degrade (video-finish tier unavailable at assemble) has no single assembled film,
-  // but the per-shot clips ARE the delivered render -- presign each so the caller can actually fetch them.
-  const u = summary.finish_unavailable;
-  if (summary.phase === "done" && u?.at === "assemble" && u.clips?.length) {
-    const clip_urls = await Promise.all(u.clips.map(async (c) => ({
+  // #519: with no assembled film, the per-shot clips are what the caller paid for, so presign each.
+  const clips = downloadableClips(summary);
+  if (clips.length) {
+    const clip_urls = await Promise.all(clips.map(async (c) => ({
       shot_id: c.shot_id,
       download_url: await presignR2Get(env, c.clip_key, FILM_DOWNLOAD_TTL_SECONDS),
     })));

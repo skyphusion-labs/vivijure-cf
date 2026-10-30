@@ -45,9 +45,8 @@ export function videoFinishDoorOf(env: Partial<VideoFinishDoorHost>): MediaDoorF
 
 /** Instances serving routes that carry NO cross-call state.
  *
- *  ONE, and the reason is the application ceiling, not a preference. `max_instances = 3` in
- *  wrangler.toml.example is a deliberate spend and blast-radius knob (its own comment: the platform
- *  default is 20 and this is "deliberately low to start"), and critically **a request that would
+ *  ONE, and the reason is the application ceiling, not a preference. `max_instances` in
+ *  wrangler.toml.example is a spend and blast-radius knob, and critically **a request that would
  *  exceed the cap does NOT queue: it fails**. So the pool is not free-running: every name it can
  *  address is one the load-bearing job path cannot have.
  *
@@ -70,7 +69,7 @@ export function videoFinishDoorOf(env: Partial<VideoFinishDoorHost>): MediaDoorF
  *  The arithmetic, which is the whole of it:
  *
  *      SYNC_POOL_SIZE  +  concurrent finish jobs  <=  max_instances
- *              1       +            2             <=        3
+ *              1       +           19             <=       20
  *
  *  I first set this to 4 against a ceiling of 3, which means the pool ALONE could exceed the cap
  *  before a single encode ran. That was measured off the live application (cf#810), not reasoned
@@ -89,7 +88,7 @@ export const SYNC_POOL_SIZE = 1;
 
 /** Concurrent finish jobs the pool must leave room for. Not a limit we enforce -- it is the headroom
  *  the ceiling test requires, so a future pool widening cannot silently eat the job budget. */
-export const RESERVED_JOB_INSTANCES = 2;
+export const RESERVED_JOB_INSTANCES = 19;
 
 /** Separator between the routing key and the container's own job id in the compound id handed
  *  back to core. A container job id is uuid4().hex -- 32 hex characters, no dot -- so one dot is
