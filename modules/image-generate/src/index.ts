@@ -50,9 +50,12 @@ const MODELS = [
   "recraft/recraftv4",
 ];
 // Still runnable if a saved session names them. Not on the picker.
-// gpt-image-1.5 stays here for the transparent-PNG BYOK path. The catalog model is gpt-image-2.
-// imagen-4 is not here: its Cloudflare model page and schema-input.json 404 (checked 2026-10-30).
+// gpt-image-1.5 stays here for the transparent-PNG BYOK path.
+// google/imagen-4 has no Cloudflare model page and its schema-input.json 404s (checked 2026-10-30), so
+// it left the picker. It stays here so a saved config still resolves. A live check is still owed, and
+// #1076 says to drop it after that check.
 export const LEGACY_MODELS = [
+  "google/imagen-4",
   "openai/gpt-image-1.5",
   "@cf/black-forest-labs/flux-1-schnell",
   "@cf/leonardo/lucid-origin",

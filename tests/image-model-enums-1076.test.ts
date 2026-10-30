@@ -1,3 +1,4 @@
+import { MODELS as KEYFRAME_MODELS, clampModel } from "../modules/cloud-keyframe/src/keyframe";
 // cf#1076: image model enums against schema-input.json, read 2026-10-30.
 // Defaults stay the first declared id. A new option is selectable. It is not the default.
 import { describe, expect, it, vi } from "vitest";
@@ -17,9 +18,9 @@ describe("cf#1076 image model enums", () => {
     expect(KF_MODELS[0]).toBe("google/nano-banana-2");
   });
 
-  it("drops imagen-4 and offers gpt-image-2, keeping 1.5 runnable off the picker", () => {
+  it("takes imagen-4 off the picker, keeps it runnable, and offers gpt-image-2", () => {
     expect(IMAGE_MODELS).not.toContain("google/imagen-4");
-    expect(LEGACY_MODELS).not.toContain("google/imagen-4");
+    expect(LEGACY_MODELS).toContain("google/imagen-4");
     expect(IMAGE_MODELS).toContain("openai/gpt-image-2");
     expect(IMAGE_MODELS).not.toContain("openai/gpt-image-1.5");
     expect(LEGACY_MODELS).toContain("openai/gpt-image-1.5");
@@ -90,5 +91,21 @@ describe("cf#1076 image model enums", () => {
     expect(p.aspect_ratio).toBe("match_input_image");
     expect(p.disable_safety_checker).toBe(false);
     expect(maxRefsForModel("pruna/p-image-edit")).toBe(5);
+  });
+});
+
+describe("cloud-keyframe saved model", () => {
+  it("the default is still google/nano-banana-2", () => {
+    expect(KEYFRAME_MODELS[0]).toBe("google/nano-banana-2");
+  });
+
+  it("honours a saved model that is in MODELS", () => {
+    for (const id of KEYFRAME_MODELS) expect(clampModel(id)).toBe(id);
+  });
+
+  it("an unknown, stale, or missing saved id falls to the default", () => {
+    for (const id of ["google/imagen-4", "not/a-model", "", null, undefined, 7]) {
+      expect(clampModel(id)).toBe("google/nano-banana-2");
+    }
   });
 });
