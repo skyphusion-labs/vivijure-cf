@@ -108,9 +108,20 @@ cid="$(docker run -d --pull=never \
 
 mapped="$(docker port "$cid" "${PORT}"/tcp 2>/dev/null | head -1 | sed 's/.*://')"
 # NOT "did you EXPOSE it?": `-p` publishes regardless of EXPOSE, so an empty mapping here means the
-# daemon reported no binding for the port at all, which is a daemon or argument problem rather than a
-# Dockerfile one. Blaming EXPOSE would send the next reader to a line that is not the cause.
-[ -n "${mapped:-}" ] || die 3 "the daemon published no host port for container port ${PORT} (docker port returned nothing; this is not an EXPOSE problem, -p publishes without it)"
+# daemon reported no binding for the port at all. Blaming EXPOSE would send the next reader to a
+# line that is not the cause.
+#
+# cf#1052: a crash-on-import fixture can die before the publish is visible. `docker port` is then
+# empty. That is exit 4 (started and died), not exit 3 (docker run failed, or a live container
+# with no publish). Inspect first. Measured on 58186cc: main-push run 40980267346 took the empty
+# map as exit 3; tag run 40980318306 on the same SHA reached the loop and exit 4.
+if [ -z "${mapped:-}" ]; then
+  status="$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)"
+  if [ "$status" = "running" ]; then
+    die 3 "the daemon published no host port for container port ${PORT} (docker port returned nothing; this is not an EXPOSE problem, -p publishes without it)"
+  fi
+  die 4 "the container is '${status}' after 0s without ever serving ${PATH_}: it started and died rather than binding its port. This is the shape that shipped green in cf#851."
+fi
 url="http://127.0.0.1:${mapped}${PATH_}"
 echo "container-smoke: container ${cid} mapped ${PORT} -> 127.0.0.1:${mapped}, probing ${url}"
 

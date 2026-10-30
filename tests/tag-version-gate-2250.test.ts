@@ -127,8 +127,9 @@ const tagGated = (j: Job) => /refs\/tags\/v/.test(j.ifExpr);
  *      `wrangler d1 migrations apply vivijure-studio --remote` step below".
  *
  *  Nothing was wrong while the job above that paragraph was not tag-gated. cf#857 added
- *  `container-smoke` (removed in cf#1052). A leftover mention of that name must still not count
- *  as a publisher.
+ *  `container-smoke`, which IS tag-gated on purpose so a release cannot skip the only gate that
+ *  starts the container, and it was immediately classified as a publishing job that must depend on
+ *  the version assert. It publishes nothing; it runs `docker build` and `docker run`.
  *
  *  Stripping whole-line comments before matching can only make this MORE precise: a real publish
  *  step is a command line, never a `#` line. The HARNESS FLOOR above is the counter-proof and it is

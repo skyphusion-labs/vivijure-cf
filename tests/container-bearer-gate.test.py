@@ -262,7 +262,17 @@ if declared:
             else:
                 os.environ[k] = v
 
-# cf#1052: the container-smoke CI job is gone. This file still pins the hosted start env.
+# The smoke gate has to run the DEPLOYMENT configuration, or it goes green on an image the hosted
+# tier cannot start -- which it did. Pinned so the token form cannot come back.
+ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+smoke_line = [l for l in ci.splitlines() if "container-smoke.sh" in l and "sh scripts/" in l]
+check("the smoke gate invokes the smoke script exactly once", len(smoke_line) == 1)
+if smoke_line:
+    line = smoke_line[0]
+    check("the smoke gate does NOT inject a token production cannot set",
+          "LOCAL_FINISH_TOKEN=" not in line)
+    check("the smoke gate supplies the same var the deployment supplies",
+          all(k in line for k in declared) if declared else False)
 
 for _k, _v in saved.items():
     if _v is None:
