@@ -15,9 +15,9 @@ the modules, that test fails.
 | 1 | Modules in this repo | **33** | `modules/*/src/index.ts` (excluding `_shared`) |
 | 2 | Modules that WRITE `runpod_job_log` rows | **10** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
 | 3 | Modules PUBLISHED as tenant bundles by a studio release | **19** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
-| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **16** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **13** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **16 of 33**.
+Population 4 is the one an operator actually sees, and it is **13 of 33**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -27,7 +27,7 @@ existed the copy lived as a literal inside the test that asserted its length, so
 compared the copy against itself: the catalog went 6 to 7 to 15 and nothing ever failed. **If you
 are correcting this page, correct the mirror in the same commit; the test asserts they agree.**
 
-**Populations 3 and 4 are no longer a nested pair.** cf#1075 removed `seedance`, `google-veo`, and `vidu-q3` from this tree and from the publish list. The plane catalog still names them, so the mirror still names them, and a release of this sha cannot upload those three bundles. They were briefly equal
+**Populations 3 and 4 are no longer a nested pair.** cf#1075 removed `seedance`, `google-veo`, and `vidu-q3` from this tree and from the publish list. cp#569 removed them from the plane catalog and from the mirror, taking 4 to 13. They were briefly equal
 -- 7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane could not add a
 single further module without a studio release first. cf#394 published nine more (the eight
 cost-door modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine,
@@ -131,7 +131,7 @@ holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, 16 of 33. A route
+`module-readiness` looks complete while speaking for population 4, 13 of 33. A route
 that reports a subset without saying so is the same defect one layer up, which is why the
 denominator is published here rather than left to be re-derived.
 
@@ -147,7 +147,7 @@ maintained by hand here.
   provisioned to tenants, so a tenant provision does not reach them. **This does not include the
   GPUless cost door**: every cost-door module catalogued by cp#317 is still there and a tenant
   reaches them through the plane-side proxy, except the three RunPod doors retired in cf#1075
-  (seedance, google-veo, vidu-q3), which the plane catalog still names and this repo no longer ships.
+  (seedance, google-veo, vidu-q3).
   The 20
   are `audio-master`, `beat-sync`, `cast-image`,
   `cf-hailuo`, `cf-kling-v4`, `cf-minimax-h3`, `cf-p-video-avatar`, `cf-veo`, `cf-vidu-q3-turbo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
