@@ -8,12 +8,15 @@ import alibabaWanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
+import cfKlingV4Worker from "../modules/cf-kling-v4/src/index";
+import cfMinimaxH3Worker from "../modules/cf-minimax-h3/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
 import cfViduQ3TurboWorker from "../modules/cf-vidu-q3-turbo/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
+import cfPVideoAvatarWorker from "../modules/cf-p-video-avatar/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -101,11 +104,35 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     },
   },
   {
+    name: "cf-p-video-avatar",
+    worker: cfPVideoAvatarWorker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
+      min_seconds: 1, max_seconds: 15,
+    },
+  },
+  {
     name: "alibaba-wan-lora",
     worker: alibabaWanLoraWorker as unknown as Worker,
     usage: {
       native_audio: false, voice: "cast_tts", scatter_native_audio: false,
       min_seconds: 5, max_seconds: 8, duration_steps: [5, 8], seed: true,
+    },
+  },
+  {
+    name: "cf-kling-v4",
+    worker: cfKlingV4Worker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      min_seconds: 3, max_seconds: 30, first_last: true,
+    },
+  },
+  {
+    name: "cf-minimax-h3",
+    worker: cfMinimaxH3Worker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      min_seconds: 4, max_seconds: 15, first_last: true,
     },
   },
   {
