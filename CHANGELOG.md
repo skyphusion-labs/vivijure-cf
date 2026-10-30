@@ -5,6 +5,22 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.41.0 -- 2026-10-30
+
+**Fix: a cancelled film can stop a running GPU finish step (#1109).**
+
+`finish-rife`, `finish-upscale` and `finish-blender` now implement `POST /cancel` and set `cancelable: true`. It needs a vivijure-core with vivijure-core#378 to be called.
+
+`film-titles` and `subtitle` stay uncancelable, because the video-finish container has no cancel route. `audio-master` returns synchronously, so it has no running job to stop.
+
+### feat(finish): films queue for a finish slot in order, and a missing step is never a clean finish
+
+Films now take finish slots first come, first served, and a poll shows "waiting, position 3". A transient failure in any finish step holds the film; a permanent one, or a wait that runs out, leaves the film `done` with `finish_incomplete`, which the panel shows as a warning with a retry that re-renders no clip. Adds migration 0023. Requires core 1.28.0.
+
+### chore(deps): undici 7.30.1
+
+The root npm override now pins undici to 7.30.1. That release fixes five development-scope advisories in the root lockfile: cache poisoning via cross-origin redirects (GHSA-4w7w-5xrc-9h26), a TLS certificate validation bypass (GHSA-2m5v-pch6-74hx), denial of service via TLS 1.2 renegotiation (GHSA-qrxm-fqhp-jwvm), unbounded WebSocket PONG buffering (GHSA-9fm3-97px-rjf6), and denial of service via excessive content-encodings (GHSA-xjj6-f33q-929c).
+
 ## v1.40.1 -- 2026-10-30
 
 ### fix(modules): a failure after the provider succeeds no longer buys the run again
