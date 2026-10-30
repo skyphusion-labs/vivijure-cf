@@ -5,6 +5,30 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.38.0 -- 2026-10-29
+
+### feat(keyframe): photoreal and anime still looks
+
+The keyframe module offers two still looks.
+Photoreal uses RealVisXL.
+Anime uses Animagine XL 4.0.
+The panel reads the look from the module catalog.
+See #1037.
+
+### feat(finish): opt-in polish and a still-look knob
+
+Finish polish is opt-in.
+A still-look knob follows the keyframe look.
+Anime final does not turn GFPGAN on by itself.
+See #1039.
+
+### feat(finish): isolate media doors on Cloudflare Containers
+
+video-finish, image-prep, audio-mix, audio-beat-sync, and audio-master each have an isolated Worker.
+Each Worker owns one Cloudflare Container.
+The studio points at those doors by URL.
+See #1041, #1043, #1047, #1048, and #1049.
+
 ## v1.37.1 -- 2026-10-19
 
 ### fix(ci): the post-deploy gate self-check exits 0 when every host passes
