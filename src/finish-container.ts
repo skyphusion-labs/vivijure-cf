@@ -15,6 +15,7 @@
 
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
+import { FinishJobTail, RELEASE_SLEEP_AFTER, RUNNING_SLEEP_AFTER, observeExchange } from "./finish-job-tail";
 
 export class FinishContainer extends Container<Env> {
   // containers/video-finish/Dockerfile sets ENV PORT=8000 and app.py binds 0.0.0.0:8000.
@@ -56,6 +57,10 @@ export class FinishContainer extends Container<Env> {
   // (which fleet-chezmoi#2234 recommended for one-shot stages, and which was my error) would
   // make that near-certain.
   //
+  // The value below is the timer WHILE A JOB CAN BE RUNNING. Once core has read a terminal status it
+  // drops to RELEASE_SLEEP_AFTER, so a finished job does not spend a slot for the whole 10 minutes
+  // (cf#1064, src/finish-job-tail.ts holds the measurements).
+  //
   // Why it is not huge either. Memory and disk bill on PROVISIONED size for the whole time an
   // instance is awake, and standard-4 provisions 12 GiB. At the published rates that idle tail is
   // about 12 * 600 * 0.0000025 = USD 0.018 in memory plus USD 0.0008 in disk per wake, which is
@@ -66,5 +71,17 @@ export class FinishContainer extends Container<Env> {
   // THE REQUIREMENT THIS IMPLIES, stated so it is not discovered the hard way: the job loop must
   // renew MORE OFTEN than this value. If a single chunk batch can run longer than 10 minutes,
   // renew inside the batch (on ffmpeg progress), not only between batches.
-  sleepAfter = "10m";
+  sleepAfter: string = RUNNING_SLEEP_AFTER;
+
+  private jobTail = new FinishJobTail();
+
+  override async fetch(request: Request): Promise<Response> {
+    const resp = await super.fetch(request);
+    const decision = await observeExchange(this.jobTail, request.method, new URL(request.url).pathname, resp);
+    if (decision) {
+      this.sleepAfter = decision === "release" ? RELEASE_SLEEP_AFTER : RUNNING_SLEEP_AFTER;
+      this.renewActivityTimeout();
+    }
+    return resp;
+  }
 }
