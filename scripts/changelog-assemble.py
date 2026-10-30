@@ -40,10 +40,39 @@ IDEMPOTENT-SAFE. Refuses loudly, and writes nothing, when `<version>` already ap
 anywhere in CHANGELOG.md -- released or not. Re-running this script for a version already promoted
 would otherwise silently duplicate the heading.
 """
+import importlib.util
 import pathlib
 import sys
 
 FRAGMENT_DIR = "changelog.d"
+
+
+def load_gate():
+    """The release gate defines what a hold is. Loaded, not copied, so the two cannot disagree: the
+    copy that used to be absent here is why this script consumed a held fragment (cf#1069)."""
+    path = pathlib.Path(__file__).resolve().parent / "changelog-fragments-consumed.py"
+    spec = importlib.util.spec_from_file_location("changelog_fragments_consumed", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def split_holds(root, names):
+    """(to_consume, held, half_held). A hold needs BOTH halves, as the gate requires: the holds file
+    line and the first-line marker. One half alone is a mistake to fix, not a guess to make."""
+    gate = load_gate()
+    listed = gate.listed_holds(str(root))
+    consume, held, half = [], [], []
+    for name in names:
+        is_listed = name in listed
+        is_marked = gate.marker_reason(str(root), name) is not None
+        if is_listed and is_marked:
+            held.append(name)
+        elif is_listed or is_marked:
+            half.append(name)
+        else:
+            consume.append(name)
+    return consume, held, half
 
 
 def normalize_version(v):
@@ -151,7 +180,15 @@ def main(argv):
     changelog_path = root / "CHANGELOG.md"
     text = changelog_path.read_text()
 
-    names, bodies = read_fragments(root)
+    all_names, all_bodies = read_fragments(root)
+    consume, held, half = split_holds(root, all_names)
+    if half:
+        print("changelog-assemble: refusing: a hold needs both a line in scripts/changelog-holds.txt "
+              "and a first-line HELD marker, and these have one: " + ", ".join(half) +
+              ". Nothing was written.", file=sys.stderr)
+        return 1
+    names = consume
+    bodies = [body for name, body in zip(all_names, all_bodies) if name in consume]
     ok, result = assemble(text, names, bodies, version, date)
     if not ok:
         print("changelog-assemble: " + result, file=sys.stderr)
@@ -164,6 +201,8 @@ def main(argv):
     summary = "consumed " + str(len(names)) + " fragment(s)"
     if names:
         summary += ": " + ", ".join(names)
+    if held:
+        summary += "; left held: " + ", ".join(held)
     print("changelog-assemble: wrote '## " + normalize_version(version) + " -- " + date + "', " + summary)
     return 0
 

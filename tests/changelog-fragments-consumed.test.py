@@ -100,6 +100,12 @@ check("the self-disarm attempt is reported as UNCONSUMED, not as a hold", "UNCON
 # 8. Comments and blank lines in the holds file do not accidentally grant a hold.
 case("holds file with only comments", {"804-x.md": HELD_BODY}, "# 804-x.md  nope\n\n", False)
 
+# 9. cf#1069: a root with no changelog.d/ cannot be measured, and must not report OK on 0 fragments.
+p = subprocess.run([sys.executable, SCRIPT, "v1.38.2"], capture_output=True, text=True, cwd=ROOT)
+check("a version passed as the root is refused with exit 2", p.returncode == 2)
+check("the refusal does not say OK", "OK" not in p.stdout)
+check("the refusal says it cannot measure", "cannot measure" in p.stdout)
+
 print("\n%d passed, %d failed" % (len(passes), len(failures)))
 for f in failures:
     print("  " + f)
