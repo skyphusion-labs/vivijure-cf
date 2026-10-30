@@ -16,6 +16,8 @@ import {
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
+  type CancelRequest,
+  type CancelResponse,
   type PollResponse,
   type FinishInput,
   type FinishOutput,
@@ -91,6 +93,8 @@ export const MANIFEST: ModuleManifest = {
   participation: "opt_in",
   // Declared artifact conventions (S6): the container names its output off the shot id, and its
   // applied marker depends on the interpolate knob. The core's R2 recovery reads THIS, not our name.
+  // Async and GPU-backed, so a cancelled film can stop this job (cf#1109).
+  cancelable: true,
   finish_artifacts: {
     output_key: { kind: "shot_named", filename: "_finished.mp4" },
     applied: [
@@ -417,6 +421,26 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   };
 }
 
+// Stop the running job this token names (cf#1109). A 200 and a 404 both mean it is not running on our
+// account, so both are ok:true. Anything else, including a plane refusal, is ok:false, so the core logs
+// an orphan rather than assuming it stopped. Failures are data, never thrown.
+async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
+  const st = decodePoll(body.poll);
+  if (!st) return { ok: false, error: "finish-rife: bad poll token" };
+  const { route, endpointId } = await runpodCreds(env);
+  const credProblem = credentialProblem(route, endpointId);
+  if (credProblem) return { ok: false, error: "finish-rife: " + credProblem };
+  try {
+    const resp = await fetch(runpodBase(route, endpointId) + "/cancel/" + st.jobId, { method: "POST", headers: auth(route) });
+    const refusal = planeRefusalReason(route, resp);
+    if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "finish-rife /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "finish-rife cancel failed: " + (e as Error).message };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -460,6 +484,14 @@ export default {
       catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
       if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
       return json(await submit(env, req));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: CancelRequest;
+      try { body = await request.json() as CancelRequest; }
+      catch { return json({ ok: false, error: "invalid JSON body" } as CancelResponse); }
+      if (!body?.poll || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as CancelResponse);
+      return json(await cancel(env, body));
     }
 
     if (request.method === "POST" && url.pathname === "/poll") {

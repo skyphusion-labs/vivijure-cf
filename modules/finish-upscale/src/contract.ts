@@ -44,6 +44,8 @@ export interface ModuleManifest {
    *  full contract text, including why the permissive default is a stated limit rather than an
    *  oversight. */
   participation?: "default" | "opt_in";
+  /** This module implements POST /cancel. OPTIONAL/additive, mirrors src/modules/types.ts (cf#1109). */
+  cancelable?: boolean;
 }
 
 export interface InvokeContext { project: string; job_id: string; }
@@ -134,3 +136,12 @@ export interface FinishOutput {
   applied: string[];   // ["upscale:2x", ...] on success; ["passthrough:<reason>"] / ["noop:nothing-enabled"] otherwise
   degraded?: string;   // reason, set ONLY on a real passthrough degrade (never on success or the no-op); see #77
 }
+
+// Stop a running job by its poll token. Idempotent: an already-terminal or unknown job is a success, so
+// ok:true means "not running on our account" (#327/#328, cf#1109).
+export interface CancelRequest {
+  poll: string;
+}
+export type CancelResponse =
+  | { ok: true }
+  | { ok: false; error: string };
