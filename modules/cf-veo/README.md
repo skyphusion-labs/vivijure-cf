@@ -1,6 +1,6 @@
 # cf-veo
 
-A **`motion.backend`** module (vivijure-module/2): **HappyHorse 1.1 R2V (CF AI)** via Cloudflare AI Gateway /
+A **`motion.backend`** module (vivijure-module/2): **Veo 3.1 Fast** via Cloudflare AI Gateway /
 Unified Billing (`google/veo-3.1-fast`). Turns one shot's start keyframe into a clip with **no RunPod**.
 
 ## Why Workflow, not RunPod /run

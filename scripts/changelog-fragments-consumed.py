@@ -115,6 +115,12 @@ def verdict(present, holds, markers):
 
 def main(argv):
     root = argv[1] if len(argv) > 1 else "."
+    # A root with no changelog.d/ has nothing this gate can see, so it cannot say OK. A version passed
+    # by mistake used to report OK on 0 fragments (cf#1069). The repo keeps the directory with a .gitkeep.
+    if not os.path.isdir(os.path.join(root, FRAGMENT_DIR)):
+        print("::error::changelog-fragments-consumed: no %s/ under %r, so this gate cannot measure. "
+              "The only argument is the repo root." % (FRAGMENT_DIR, root))
+        return 2
     present = fragments(root)
     holds = listed_holds(root)
     markers = {n: marker_reason(root, n) for n in present}
