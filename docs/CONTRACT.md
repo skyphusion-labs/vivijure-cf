@@ -928,8 +928,9 @@ short-lived presigned URLs, so bytes never touch the Worker.
 Pre-render validation. A storyboard with problems is **data**, not an HTTP error: this returns `200`
 with `ok:false` + the issues so the panel renders the reasons.
 
-**Request body (envelope):** `{ storyboard (req), castBindings?, motionBackend?, quality? }`. No
-other envelope field is read: in particular `bundleKey` / `audioKey` are NOT validated here (a caller
+**Request body (envelope):** `{ storyboard (req), castBindings?, motionBackend?, quality? }`.
+`motion_backend` is read as the same field when `motionBackend` is absent (cf#926). No other
+envelope field is read: in particular `bundleKey` / `audioKey` are NOT validated here (a caller
 that sends them gets no check of them; mcp#26 / cf#315).
 `castBindings` is `{ [slot]: cast_id }`. A `cast_id` may be the cast member's **public id** (the
 `id` value `GET /api/cast` returns), the internal **numeric row id**, or a numeric string of one;
@@ -948,6 +949,13 @@ clip is just shorter, submit is unblocked. A clamp that lands BELOW the floor is
 gate; the message names the deliverable ceiling and the floor so the user can shorten the shot or
 pick a backend/tier with more frames. With the gate disabled (`FILM_CLIP_DURATION_FLOOR=0`) every
 clamp stays a warning. An older client that sends neither field gets the pre-#707 behavior unchanged.
+
+A named `motionBackend` that is not an installed, serving door is a `level:"error"` with scope
+`motionBackend` (cf#926). A door that declares `usage` and no `duration_grid` is checked per shot
+against that `usage` (cf#926): over `max_seconds` is a `level:"error"`; under `min_seconds`, or a
+length not in `duration_steps`, is a `level:"warning"`. The warnings do not block submit, because
+the door still renders a clip. A shot with no `target_seconds` uses `clip_seconds`. A shot with
+neither is not checked. Submit itself does not run this check.
 
 **Response 200** (`PreflightResult`):
 
