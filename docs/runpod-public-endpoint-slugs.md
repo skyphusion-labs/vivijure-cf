@@ -88,8 +88,8 @@ that the upstream model does. See the section below.
 | *(negative)* | `definitely-not-a-slug-xyz` | 404 | not found (control) |
 
 Scope: the table and the probe's `DEFAULT_SLUGS` cover the #267 **motion** cost-door set only. Two
-other modules also call RunPod public-endpoint slugs and are not probed by default (pass them as
-arguments to check them): `kling-o1-r2v` (`ENDPOINT_ID = "kling-video-o1-r2v"`) and `narration-gen`
+other modules also called RunPod public-endpoint slugs and were not probed by default: `kling-o1-r2v`
+(`ENDPOINT_ID = "kling-video-o1-r2v"`, retired in cf#1057) and `narration-gen`
 (`ENDPOINT_ID = MODEL = "minimax-speech-02-hd"`).
 
 ## These readings have a shelf life
@@ -157,3 +157,10 @@ Full eight-model rate table and remaining probes: control-plane cp#284 / `docs/c
 
 Substance answered: both slugs resolve (401 on free `/health`) and have published rates (Conrad
 2026-08-03). Remaining pricing work lives on the control-plane cost basis, not a blocked slug.
+
+## A published schema can disagree with the live validator
+
+`kling-video-o1-r2v` answers 401 and is listed live. RunPod's model page lists `input.video` as
+optional. Two real jobs without it, film-c732d4e6 and film-39bfc68a, failed with
+`Kling_Video_O1_R2VInput`, `video`, `Field required` (cf#1057). The live validator is the contract. The `/openapi.json` under an endpoint is generic: it also answers 200 for a slug that does
+not exist, so it says nothing about one model's inputs.

@@ -115,7 +115,7 @@ vars (empty = that service is off), with `MEDIA_FINISH_TOKEN` bound from store s
 opt-in because it needs your own local GPU box.
 
 > **Known deviation (#764, DP-3):** today `deploy.sh` cannot complete a fresh-account deploy. The
-> core template binds `MODULE_KLING_O1_R2V`, `MODULE_INFINITETALK`, `MODULE_CHATTERBOX`,
+> core template binds `MODULE_INFINITETALK`, `MODULE_CHATTERBOX`,
 > `MODULE_CF_HAILUO`, `MODULE_CF_VEO`, `MODULE_CF_P_VIDEO_AVATAR` and `MODULE_ALIBABA_WAN_LORA`, which `STANDARD_MODULES` never
 > deploys; `deploy.sh` fills only `store_id` in module configs (it never runs
 > `scripts/fill-module-placeholders.sh`, so `REPLACE_WITH_D1_DATABASE_ID`, `REPLACE_WITH_R2_S3_*` and
@@ -469,7 +469,7 @@ done
 # The satellites profile also deploys (SATELLITE_MODULES in deploy.sh; each needs a separate RunPod
 # endpoint): finish-upscale. finish-blender is added only when
 # BLENDER_RUNPOD_ENDPOINT_ID is set.
-# NOTE (#764, DP-3): the core template ALSO binds kling-o1-r2v, infinitetalk, chatterbox, cf-hailuo,
+# NOTE (#764, DP-3): the core template ALSO binds infinitetalk, chatterbox, cf-hailuo,
 # cf-veo, cf-p-video-avatar and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
 # the core deploy fails on a dangling [[services]] binding. Derive the full set from the uncommented
 # `service = "vivijure-module-..."` lines of your rendered wrangler.toml.

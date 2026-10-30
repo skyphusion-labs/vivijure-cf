@@ -203,6 +203,48 @@ with tempfile.TemporaryDirectory() as root:
     check("main(): a second run for the same version REFUSES (idempotent-safe end to end)",
           proc2.returncode == 1 and "already appears as a heading" in proc2.stderr)
 
+# cf#1069: a held fragment stays put. The first v1.38.2 run consumed one and deleted it.
+HELD = "<!-- HELD: this belongs to a later release -->\n### feat: held body\n"
+
+
+def holds_fixture(fragments, holds_text):
+    root = pathlib.Path(tempfile.mkdtemp(prefix="asm-holds-"))
+    (root / "changelog.d").mkdir()
+    (root / "scripts").mkdir()
+    (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n## v1.0.0 -- 2026-01-01\n\nold\n")
+    (root / "changelog.d" / ".gitkeep").write_text("")
+    for name, body in fragments.items():
+        (root / "changelog.d" / name).write_text(body)
+    if holds_text is not None:
+        (root / "scripts" / "changelog-holds.txt").write_text(holds_text)
+    proc = subprocess.run(
+        [sys.executable, str(repo_root / "scripts" / "changelog-assemble.py"), "v1.1.0", "2026-08-14"],
+        cwd=root, capture_output=True, text=True,
+    )
+    return root, proc
+
+
+root, proc = holds_fixture(
+    {"100-ship.md": "### fix: shipped body\n", "983-held.md": HELD},
+    "983-held.md  belongs to a later release\n",
+)
+written = (root / "CHANGELOG.md").read_text()
+check("holds: exits 0 with one held and one normal fragment", proc.returncode == 0)
+check("holds: the normal fragment is consumed", "shipped body" in written and not (root / "changelog.d" / "100-ship.md").exists())
+check("holds: the held fragment is NOT in the release section", "held body" not in written)
+check("holds: the held fragment is still on disk, byte for byte", (root / "changelog.d" / "983-held.md").read_text() == HELD)
+check("holds: the summary names what was left held", "left held: 983-held.md" in proc.stdout)
+
+for label, frags, holds_text in (
+    ("marked but not listed", {"983-held.md": HELD}, None),
+    ("listed but not marked", {"983-held.md": "### feat: held body\n"}, "983-held.md  belongs to a later release\n"),
+):
+    root, proc = holds_fixture(frags, holds_text)
+    check("holds: %s is refused, and nothing is written" % label,
+          proc.returncode == 1 and "Nothing was written" in proc.stderr
+          and "v1.1.0" not in (root / "CHANGELOG.md").read_text()
+          and (root / "changelog.d" / "983-held.md").exists())
+
 print("")
 print("  %d passed, %d failed" % (len(passes), len(failures)))
 sys.exit(1 if failures else 0)

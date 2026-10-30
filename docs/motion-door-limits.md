@@ -48,19 +48,21 @@ Stylized talking clips from your stills. Faces drift.
 
 ## cf-seedance (Seedance talking)
 
-Fast talking clips. Uses the sample you kept.
+Fast talking clips. Uses the sample you kept. The default model is Seedance 2.5.
+The same door also calls 2.0, 2.0 Fast, and 2.0 Mini. Those four models do not
+share one input document.
 
 | | |
 |---|---|
-| Duration | 4-12 seconds |
+| Duration | 4-30 seconds on 2.5. 4-12 seconds on 2.0, 2.0 Fast, and 2.0 Mini. A longer ask is clamped to that model's max. |
 | Talks? | Yes. |
-| Voice lock | The sample you kept. Same voice on every shot. |
-| First+last? | Yes. The next shot's start still is the end frame when we have one. |
-| Cannot | Invent a different speaker. Hosted does not add mouths in finish. |
+| Voice lock | The sample you kept. 2.5 sends that clip as one item in `reference_videos`. The 2.0 family sends `reference_video`. 2.5 also publishes `reference_audios`, and Mini publishes `reference_audio`. The sample is a video, so those audio fields are not set. Whether 2.5 keeps the voice from `reference_videos` is unproven until a real render. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. On 2.5, first and last frames always use aspect ratio `adaptive` (a supplied ratio is overridden), so the ratio knob does not make a vertical clip. The keyframe has to be 9:16. On 2.0, Fast, and Mini, Cloudflare says aspect ratio is ignored when an image is used. |
+| Cannot | 1080p or 4k except on Seedance 2.0. 2.5, Fast, and Mini allow 480p and 720p. An ask outside that set is sent as 720p, the published default. 9:21 is not on 2.5. That ask is sent as `adaptive`. Invent a different speaker. Finish does not add mouths on this door. |
 
 ## seedance (Seedance talking, hosted speed default)
 
-Same idea as `cf-seedance`. This is the hosted speed default. 4-12 seconds.
+Same voice lock idea as `cf-seedance`. This door is 4-12 seconds.
 
 | | |
 |---|---|
@@ -207,18 +209,6 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet. |
 | First+last? | No. |
 | Cannot | Invent speech. Lock the sample you kept. |
-
-## kling-o1-r2v (RunPod)
-
-Multi-ref silent. Cast, props, locations.
-
-| | |
-|---|---|
-| Duration | 3, 5, or 10 seconds |
-| Talks? | No. |
-| Voice lock | None. No spoken lines on this door. |
-| First+last? | Yes, as extra reference images. |
-| Cannot | Native talking audio. Kling 2.6 voice_id. |
 
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 

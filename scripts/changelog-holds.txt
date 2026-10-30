@@ -19,8 +19,8 @@
 #
 # FORMAT: one fragment filename per line, free text reason after it, `#` starts a comment.
 #
-# STATE: 983-spoken-infinitetalk.md is held for a later cut. It is not the 1.38.2 finish-cap work.
+# STATE: 983-spoken-infinitetalk.md is held for a later cut. It is not part of the 1.39.0 work.
 #
 # 804-storage-posture-comment.md was the live example that motivated this mechanism
 # and it was folded into v1.34.1's corrected section in #899, so it is consumed and gone.
-983-spoken-infinitetalk.md  spoken InfiniteTalk work is not part of the 1.38.2 finish-cap cut
+983-spoken-infinitetalk.md  spoken InfiniteTalk work is not part of the 1.39.0 cut

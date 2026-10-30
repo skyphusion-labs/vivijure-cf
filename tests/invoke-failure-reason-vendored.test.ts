@@ -26,7 +26,8 @@ import { INVOKE_FAILURE_REASONS } from "@skyphusion-labs/vivijure-core/modules/t
 // WHY ONLY 33 OF THE 63 IDENTICAL `| { ok: false; error: string };` ARMS CARRY `reason`.
 //
 // That string appears 63 times across the 33 contracts and serves THREE different types:
-// `InvokeResponse` 33, `PollResponse` 28, `CancelResponse` 2. (Was 65/34/29 until cf#921
+// `InvokeResponse` 33, `PollResponse` 28, `CancelResponse` 2. (Was 61/32/27 until cf#1072
+// added cf-p-video-avatar, 63/33/28 until cf#1057, 65/34/29 until cf#921
 // retired modules/kling, which took one InvokeResponse arm and one PollResponse arm with it.) The string cannot tell you which; only
 // the enclosing declaration can, so a global replace would widen the contract in 31 places.
 //
@@ -82,7 +83,7 @@ const BARE_ARM = "  | { ok: false; error: string };";
 
 describe("cf#846: the vendored InvokeFailureReason block is byte-identical in all 33 contracts", () => {
   it("there are 33 module contracts (denominator, so a shrinking sweep cannot pass)", () => {
-    expect(contractPaths().length).toBe(34);
+    expect(contractPaths().length).toBe(33);
   });
 
   it("every contract carries the canonical block EXACTLY, derived from core", () => {
@@ -178,8 +179,8 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
         (l) => l.startsWith("export type CancelResponse") && l.includes("ok: false; error: string"),
       ).length;
     }
-    expect(standalone).toBe(30);
+    expect(standalone).toBe(29);
     expect(inlineCancel).toBe(1);
-    expect(standalone + inlineCancel).toBe(31); // == PollResponse 29 + CancelResponse 2
+    expect(standalone + inlineCancel).toBe(30); // == PollResponse 28 + CancelResponse 2
   });
 });

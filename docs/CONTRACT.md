@@ -1372,6 +1372,7 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 | `film_key` | string \| undefined | R2 key of the assembled film, present once `phase === "done"`. |
 | `film_finish` | object \| undefined | Outcome of the `film.finish` chain (title/credit cards): `degraded` marks a film that reached `done` WITHOUT cards (the container was unreachable; fail-safe by design), `sidecar_key` (#663/#669) carries the re-timed soft `.srt` subtitle sidecar's R2 key when one was produced. Absent until `film.finish` runs. |
 | `finish_unavailable` | `{ at, reason, delivered?, retained?, clips? }` \| undefined | The video-finish tier did not run a step. `retained` means the film FAILED and names what is kept: `clips` at assemble, or `silent_film` at mux for a film with a song. `delivered: "silent_film"` means a film with no song completed on its silent cut. Job docs written by core below 1.26.0 can also say `delivered: "clips"`. Absent on a normal render. |
+| `finish_waiting` | `{ since, attempts, next_at, detail }` \| undefined | The film is waiting for a free video-finish instance. Its phase stays `assemble` or `mux`, nothing has failed, and the sweep retries with backoff. `since` and `next_at` are epoch ms. `detail` is the door's text. Absent otherwise. |
 | `keyframes_incomplete` | `{ adopted, expected, dropped }` \| undefined | Loud degrade when the keyframe phase delivered a PARTIAL set (#619 ceiling recovery, #622 partial module completion): the film shipped only the scenes that rendered, and this records how many and which were dropped. Absent on a normal render. |
 | `assemble_ms` | number \| undefined | cf#365: CONTENT length (ms) of the pre-`film.finish` assemble at the deterministic `renders/<id>/film.mp4` key. Absent = NOT MEASURED. Distinct from CPU wall-clock `finish_elapsed_ms` (cf#268) and from plan `duration_seconds`. Shipped in vivijure-core **1.8.0** (`summarizeFilm` projects `film_output_seconds`). Hosts must pin >=1.8.0. |
 | `output_ms` | number \| undefined | cf#365: CONTENT length (ms) of the DELIVERED film (`job.film_key`, last writer -- same basis as `renders.output_ms`). Together with `assemble_ms` lets a poll decompose a predicted-vs-delivered delta. Absent = NOT MEASURED. |
@@ -1655,7 +1656,7 @@ Per-shot: turns one start keyframe + motion intent into a clip (GPU or cloud i2v
 | `keyframe_key?` | string | no | The underlying R2 key, for reference. |
 | `last_keyframe_url?` | string | no | Presigned END still (the next shot's start keyframe). When set, a first/last-frame backend animates first -> last. |
 | `last_keyframe_key?` | string | no | The R2 key behind `last_keyframe_url`. |
-| `voice_ref_url?` | string | no | Presigned kept voice-sample clip (2.9) for a door that can lock a voice from it (Seedance sends it as `reference_video`). Never used as Wan audio. |
+| `voice_ref_url?` | string | no | Presigned kept voice-sample clip (2.9) for a door that can lock a voice from it. Cloudflare Seedance 2.5 sends it as one `reference_videos` item. The 2.0 family sends `reference_video`. Never used as Wan audio. |
 | `voice_ref_key?` | string | no | The R2 key behind `voice_ref_url`. |
 | `audio_url?` | string | no | Presigned shot LINE audio (cast TTS of this shot's storyboard line) for a driving-audio door (InfiniteTalk / Wan 2.6; see `usage.driving_audio`, section 4). |
 | `audio_key?` | string | no | The R2 key behind `audio_url`. |
@@ -2439,7 +2440,7 @@ are integer epoch SECONDS.
 | `sdxl_lora_ready` | boolean | Derived: SDXL identity adapter present (`lora_key` under `loras/`). Prefer for keyframe binding. |
 | `wan_lora_ready` | boolean | Derived: both Wan experts present under `loras/`. Prefer for Wan motion binding. |
 | `voice_id` | string \| null | Aura-1 speaker (one of the 12; see 2.4). null = unassigned. |
-| `voice_ref_key` | string \| null | Kept talking sample (R2 key). Cloudflare Seedance sends this clip as `reference_video`. Veo cannot lock it. |
+| `voice_ref_key` | string \| null | Kept talking sample (R2 key). Cloudflare Seedance 2.5 sends this clip as one `reference_videos` item. The 2.0 family sends `reference_video`. Veo cannot lock it. |
 
 ### A.2 StoryboardProject
 
