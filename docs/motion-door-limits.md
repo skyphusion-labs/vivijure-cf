@@ -205,18 +205,6 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 | First+last? | No. |
 | Cannot | Invent speech. Lock the sample you kept. |
 
-## kling-o1-r2v (RunPod)
-
-Multi-ref silent. Cast, props, locations.
-
-| | |
-|---|---|
-| Duration | 3, 5, or 10 seconds |
-| Talks? | No. |
-| Voice lock | `cast_tts`. |
-| First+last? | Yes, as extra reference images. |
-| Cannot | Native talking audio. Kling 2.6 voice_id. |
-
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 
 | | |

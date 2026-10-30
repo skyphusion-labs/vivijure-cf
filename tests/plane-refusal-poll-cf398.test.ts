@@ -53,7 +53,6 @@ import hailuoWorker from "../modules/minimax-hailuo/src/index";
 import wanWorker from "../modules/alibaba-wan/src/index";
 import wanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
-import klingO1Worker from "../modules/kling-o1-r2v/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -115,7 +114,6 @@ const CASES: Case[] = [
   { name: "alibaba-wan-lora", worker: wanLoraWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   // own-gpu drives OUR backend endpoint, so it needs the endpoint id as well.
   { name: "own-gpu", worker: ownGpuWorker as unknown as Worker, hook: "motion.backend", extraEnv: { ...ENDPOINT, ...R2 }, input: MOTION_INPUT, config: {} },
-  { name: "kling-o1-r2v", worker: klingO1Worker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   { name: "infinitetalk", worker: infinitetalkWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: { ...MOTION_INPUT, audio_url: "https://example.invalid/line.wav" }, config: {} },
 ];
 
