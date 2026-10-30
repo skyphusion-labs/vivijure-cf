@@ -120,6 +120,7 @@ import { dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
+import { checkDoorDurations } from "./door-duration-preflight";
 import { spokenLinesPresent, bundleScenesHaveLines, hostedMotionFallback, prepareSpokenClip, withMotionBackend } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
@@ -1481,7 +1482,10 @@ const hPreflight: Handler = async (req, env) => {
   // optionally the quality tier), and that module's manifest declares a fixed duration_grid, warn
   // per shot whose planned seconds exceed what the grid can deliver. Both fields are OPTIONAL and
   // additive on the envelope: an older client sends neither and gets the pre-#707 behavior.
-  const motionBackend = typeof envelope.motionBackend === "string" ? envelope.motionBackend : null;
+  // cf#926: the snake_case key is the one every submit route takes, so a caller reasonably sends it
+  // here. Dropping it left the door checks silently off.
+  const namedBackend = envelope.motionBackend ?? envelope.motion_backend;
+  const motionBackend = typeof namedBackend === "string" && namedBackend.trim() ? namedBackend.trim() : null;
   if (motionBackend) {
     const quality = typeof envelope.quality === "string" ? envelope.quality : null;
     const motionModules = servingForHook(
@@ -1489,6 +1493,10 @@ const hPreflight: Handler = async (req, env) => {
       "motion.backend",
     );
     const mod = motionModules.find((m) => m.name === motionBackend);
+    // cf#926: a named door that is not serving used to fall through to ok:true.
+    const unknownDoor = motionBackendPreflightError(motionModules, motionBackend);
+    if (unknownDoor) issues.push({ level: "error", scope: "motionBackend", message: unknownDoor });
+    if (mod) issues.push(...checkDoorDurations(validated.value, mod));
     if (mod?.duration_grid) {
       // #751: pass the live duration-floor fraction so a clamp that would breach the #697 gate is
       // surfaced as an ERROR (guaranteed hard-fail), not a "clip will be clamped" warning.

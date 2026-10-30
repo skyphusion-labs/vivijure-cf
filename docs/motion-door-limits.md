@@ -14,7 +14,7 @@ contract we actually honor.
 
 | Fact | What it means on a film |
 |---|---|
-| Duration | Clip length we snap to. A storyboard second outside this band is clamped. |
+| Duration | Clip length we snap to. A storyboard second outside this band is clamped. Preflight reports it: over the top is an error, other misses are warnings (cf#926). |
 | Talks? | Whether we keep the model's own soundtrack (`usage.native_audio`). |
 | Voice lock | How the speaker stays the same shot to shot. |
 | First+last? | Whether we pass the next shot's start still as this clip's end frame. |
