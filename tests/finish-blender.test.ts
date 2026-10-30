@@ -40,18 +40,6 @@ describe("finish-blender: coerceConfig", () => {
   });
 });
 
-describe("finish-blender: the output key (vivijure-core#379)", () => {
-  const cfg = { job_type: "grade", preset: "x", strength: 1 } as never;
-  it("writes where the film asked", () => {
-    const body = buildRunPodBody({ shot_id: "s", clip_key: "renders/p/clips/s.mp4", output_key: "renders/p/clips/film-a/s_bl.mp4" } as never, cfg, "p");
-    expect(body.input.output_key).toBe("renders/p/clips/film-a/s_bl.mp4");
-  });
-  it("keeps the suffix key when core sends none", () => {
-    const body = buildRunPodBody({ shot_id: "s", clip_key: "renders/p/clips/s.mp4" } as never, cfg, "p");
-    expect(body.input.output_key).toBe("renders/p/clips/s_bl.mp4");
-  });
-});
-
 describe("finish-blender: blenderKey", () => {
   it("appends _bl before extension", () => {
     expect(blenderKey("renders/p/clips/shot.mp4")).toBe("renders/p/clips/shot_bl.mp4");

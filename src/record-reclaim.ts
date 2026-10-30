@@ -31,7 +31,9 @@
 //   module-returned artifact is project-keyed, so this is the rule and not an edge case:
 //     renders/<project>/clips/<shot>_<module>.mp4   render-orchestrator.js:18
 //     renders/<project>/clips/<shot>_finished.mp4   written by a backend or module without core#379.
-//       With it, a film's finish clips are under renders/<project>/clips/<film_id>/: see renderClipPrefix.
+//       With it, a film's finish clips are under renders/<project>/clips/<film_id>/ (see renderClipPrefix),
+//       and <shot>_finished.latest.json is a shared reuse pointer naming the newest film's clip.
+//     renders/<project>/clips/<shot>_<suffix>.mp4   an append_suffix step (_up, _bl, _ls). Still shared.
 //     renders/<project>/dialogue/<shot>.wav         film-orchestrator.js:202
 //     renders/<project>/keyframes/<shot>.png        film-orchestrator.js:2866
 //     renders/<project>/bundle-kf/<shot>.png        src/bundle-keyframes.ts:44
