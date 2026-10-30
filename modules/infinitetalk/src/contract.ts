@@ -1,4 +1,4 @@
-// Vendored subset of the Vivijure module contract (vivijure-module/2) for the seedance module.
+// Vendored subset of the Vivijure module contract (vivijure-module/2) for the alibaba-wan module.
 // Matches src/modules/types.ts for the shapes used here. Dependency-free.
 
 export const MODULE_API = "vivijure-module/2" as const;

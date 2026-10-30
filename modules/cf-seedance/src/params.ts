@@ -1,5 +1,5 @@
 // Pure helpers for cf-seedance: ByteDance Seedance via CF AI Gateway.
-// Distinct from modules/seedance (RunPod Seedance V1.5 Pro).
+// RunPod Seedance V1.5 Pro (modules/seedance) was retired in cf#1075.
 // Four published input schemas, vendored under ../schemas/ from
 // https://developers.cloudflare.com/ai/models/bytedance/<id>/schema-input.json
 // The manifest enum is the union. The body is the selected model's schema.

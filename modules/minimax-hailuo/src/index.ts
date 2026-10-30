@@ -7,7 +7,7 @@
 // fast (a status check; only the final one downloads), so nothing holds a multi-minute request.
 //
 // Phase 1 (#171): video-only. Hailuo 2.3 Fast does not emit its own audio, so the clip is silent and
-// the core's score/mux chain owns audio, exactly like the seedance reference. Failures are DATA.
+// the core's score/mux chain owns audio, exactly like the alibaba-wan door. Failures are DATA.
 
 import {
   MODULE_API,

@@ -7,7 +7,7 @@
 // fast (a status check; only the final one downloads), so nothing holds a multi-minute request.
 //
 // Phase 1 (#175): video-only. Wan 2.6 has no audio output param; the core's score/mux chain owns
-// audio, exactly like the seedance/hailuo reference. enable_prompt_expansion defaults false so the
+// audio, exactly like the minimax-hailuo door. enable_prompt_expansion defaults false so the
 // prompt is sent as-is; expose it as an opt-in config bool for one-line enable later.
 
 import {
