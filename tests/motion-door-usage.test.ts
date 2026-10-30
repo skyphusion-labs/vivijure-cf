@@ -9,6 +9,7 @@ import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
 import cfKlingV4Worker from "../modules/cf-kling-v4/src/index";
+import cfMinimaxH3Worker from "../modules/cf-minimax-h3/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
 import googleVeoWorker from "../modules/google-veo/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
@@ -142,6 +143,14 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     usage: {
       native_audio: false, voice: "cast_tts", scatter_native_audio: false,
       min_seconds: 3, max_seconds: 30, first_last: true,
+    },
+  },
+  {
+    name: "cf-minimax-h3",
+    worker: cfMinimaxH3Worker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      min_seconds: 4, max_seconds: 15, first_last: true,
     },
   },
   {

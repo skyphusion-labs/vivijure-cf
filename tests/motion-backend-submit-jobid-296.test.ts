@@ -37,6 +37,7 @@ import cfGrokWorker from "../modules/cf-grok-video/src/index";
 import cfFluxWorker from "../modules/cf-flux-3-video/src/index";
 import cfHailuoWorker from "../modules/cf-hailuo/src/index";
 import cfKlingV4Worker from "../modules/cf-kling-v4/src/index";
+import cfMinimaxH3Worker from "../modules/cf-minimax-h3/src/index";
 import cfVeoWorker from "../modules/cf-veo/src/index";
 import cfPVideoAvatarWorker from "../modules/cf-p-video-avatar/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
@@ -109,6 +110,7 @@ const CF_MODULES: { name: string; worker: Worker }[] = [
   { name: "cf-flux-3-video", worker: cfFluxWorker as unknown as Worker },
   { name: "cf-hailuo", worker: cfHailuoWorker as unknown as Worker },
   { name: "cf-kling-v4", worker: cfKlingV4Worker as unknown as Worker },
+  { name: "cf-minimax-h3", worker: cfMinimaxH3Worker as unknown as Worker },
   { name: "cf-veo", worker: cfVeoWorker as unknown as Worker },
   { name: "cf-p-video-avatar", worker: cfPVideoAvatarWorker as unknown as Worker },
 ];
