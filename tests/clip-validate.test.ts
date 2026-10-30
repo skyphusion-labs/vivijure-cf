@@ -204,10 +204,12 @@ describe("validateDoneClips (the clip-job seam)", () => {
     expect(job.shots[0].error).toContain("output validation");
     expect(job.shots[0].poll).toBeUndefined(); // no orphan-cancel on a clip that already landed
   });
-  it("passes a valid clip: stays done, validated=pass, no change", async () => {
+  it("passes a valid clip: stays done, validated=pass, and asks to persist what it measured", async () => {
     const job = jobWith("k");
+    // cf#1125: the caller only writes the clip doc on true, and the measured frames must reach it.
     const changed = await validateDoneClips(orch(fakeR2(buildMp4())), job);
-    expect(changed).toBe(false);
+    expect(changed).toBe(true);
+    expect(job.shots[0].delivered_measured).toBe(true);
     expect(job.shots[0].status).toBe("done");
     expect(job.shots[0].validated).toBe("pass");
   });

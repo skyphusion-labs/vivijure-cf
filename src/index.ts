@@ -7,7 +7,7 @@ import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledMo
 import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
@@ -1409,6 +1409,11 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
   await updateRenderFromView(env, view);
   return json(view);
 };
+const FINISH_RETRY_NOT_STARTED: Record<FinishRetryNotStarted, string> = {
+  busy: "this film is busy, try again shortly",
+  nothing_to_retry: "this film has no finish step to retry",
+  cannot_deliver: "this film holds a shot that cannot be delivered, so a retry would not help",
+};
 /** core#377: run again the finish steps a film names in `finish_incomplete`. No clip is re-rendered. */
 const hRetryFinish: Handler = async (_req, env, _c, p) => {
   if (!isFilmJobId(p.id)) {
@@ -1417,7 +1422,11 @@ const hRetryFinish: Handler = async (_req, env, _c, p) => {
   const r = await retryFilmFinish(env, p.id);
   if (!r) throw notFound("render job");
   if (r.retried.length === 0) {
-    return json({ error: "this film has no finish step to retry", jobId: p.id, phase: r.job.phase }, 409);
+    // cf#1114: a caller must be able to tell "try again" from "there is no point".
+    const notStarted = r.not_started ?? "nothing_to_retry";
+    const body = json({ error: FINISH_RETRY_NOT_STARTED[notStarted], code: notStarted, jobId: p.id, phase: r.job.phase }, 409);
+    if (notStarted === "busy") body.headers.set("retry-after", "30");
+    return body;
   }
   return json({ ...filmJobToPollView(r.job, null), retried: r.retried });
 };
