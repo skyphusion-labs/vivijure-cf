@@ -5,6 +5,15 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.38.1 -- 2026-10-29
+
+### fix(ci): a dead container with no publish is exit 4
+
+The smoke control can die before `docker port` shows a mapping.
+That case is now exit 4.
+A live container with no publish stays exit 3.
+See #1053.
+
 ## v1.38.0 -- 2026-10-29
 
 ### feat(keyframe): photoreal and anime still looks
