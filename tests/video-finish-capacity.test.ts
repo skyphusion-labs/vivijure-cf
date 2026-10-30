@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  CAPACITY_DETAIL,
   CAPACITY_ERROR,
   FINISH_AFFINITY_HEADER,
   affinityRoutingKey,
@@ -47,7 +48,7 @@ describe("capacity refusals at submit", () => {
     expect(resp.status).toBe(429);
     const body = (await resp.json()) as { error: string; detail: string };
     expect(body.error).toBe(CAPACITY_ERROR);
-    expect(body.detail).toBe(text.slice(0, 240));
+    expect(body.detail).toBe(CAPACITY_DETAIL);
   });
 
   it("rewrites a thrown capacity error instead of rethrowing it", async () => {
@@ -55,6 +56,20 @@ describe("capacity refusals at submit", () => {
     const { d } = door(() => { throw new Error(MAX); });
     const resp = await d.fetch("http://video-finish/async/finish", submit());
     expect(resp.status).toBe(429);
+  });
+
+  it("never returns the refusal text or a stack: the body is exactly the fixed fields", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = new Error(MAX);
+    err.stack = `Error: ${MAX}\n    at startContainer (/internal/secret-path.js:12:3)`;
+    const thrown = door(() => { throw err; });
+    const answered = door(() => new Response(`${MAX}\n    at startContainer (/internal/secret-path.js:12:3)`, { status: 500 }));
+    for (const { d } of [thrown, answered]) {
+      const raw = await (await d.fetch("http://video-finish/async/finish", submit())).text();
+      expect(JSON.parse(raw)).toEqual({ ok: false, error: CAPACITY_ERROR, detail: CAPACITY_DETAIL });
+      expect(raw).not.toContain("secret-path");
+      expect(raw).not.toContain("Maximum number");
+    }
   });
 
   it("still rethrows any other thrown error", async () => {
@@ -146,7 +161,7 @@ describe("the door and the pinned core together", () => {
     const { d, names } = door(() => new Response(MAX, { status: 500 }));
     const tick = await tickVideoFinishAssemble(coreEnv(d), payload, undefined, { affinity: "film-a" });
     if (tick.kind !== "waiting") throw new Error(`expected waiting, got ${tick.kind}`);
-    expect(tick.detail).toContain("Maximum number of running container instances");
+    expect(tick.detail).toBe(CAPACITY_DETAIL);
     expect(names).toEqual([await affinityRoutingKey("film-a")]);
   });
 

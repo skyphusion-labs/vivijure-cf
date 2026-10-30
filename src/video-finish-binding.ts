@@ -133,8 +133,12 @@ export function isCapacityRefusalText(text: string): boolean {
 /** Longest refusal text we read. The markers sit at the front of a short platform message. */
 const REFUSAL_PEEK_CHARS = 2048;
 
-function capacityResponse(detail: string): Response {
-  return new Response(JSON.stringify({ ok: false, error: CAPACITY_ERROR, detail: detail.slice(0, 240) }), {
+/** Fixed on purpose. The refusal text is matched, then dropped: it can come from a thrown error, and
+ *  core stores this string on the job, where a user reads it. The raw text goes to the log only. */
+export const CAPACITY_DETAIL = "the video-finish container instance limit is reached";
+
+function capacityResponse(): Response {
+  return new Response(JSON.stringify({ ok: false, error: CAPACITY_ERROR, detail: CAPACITY_DETAIL }), {
     status: 429,
     headers: { "content-type": "application/json" },
   });
@@ -279,7 +283,7 @@ export function videoFinishDoor(
           const message = e instanceof Error ? e.message : String(e);
           if (isCapacityRefusalText(message)) {
             logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "capacity", detail: message });
-            return capacityResponse(message);
+            return capacityResponse();
           }
           logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "threw", detail: message });
           throw e;
@@ -293,7 +297,7 @@ export function videoFinishDoor(
             const text = (await resp.clone().text().catch(() => "")).slice(0, REFUSAL_PEEK_CHARS);
             if (resp.status === 429 || isCapacityRefusalText(text)) {
               logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "capacity", status: resp.status });
-              return capacityResponse(text);
+              return capacityResponse();
             }
           }
           logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "rejected", status: resp.status });
