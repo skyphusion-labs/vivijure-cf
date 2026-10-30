@@ -63,9 +63,9 @@ export function videoFinishDoorOf(env: Partial<VideoFinishDoorHost>): MediaDoorF
  *    - Neither of core's assemble guards can fire on this path. `ASSEMBLE_NOTFOUND_STREAK` counts
  *      misses on the POLL, and `ASSEMBLE_MAX_JOB_SECONDS` measures from `submittedAt`; both exist
  *      only AFTER a successful submit. A submit that never succeeds is unguarded.
- *    - `routingKey()` is minted per ATTEMPT, so every retry addresses a DIFFERENT object and
- *      leaves behind another instance record that cannot start. The application's instance list
- *      GROWS while the film is stuck. Watch the list length, not just the pool names.
+ *    - `routingKey()` is minted per ATTEMPT unless core names the film (FINISH_AFFINITY_HEADER), so
+ *      with an older core every retry addresses a DIFFERENT object and leaves another instance
+ *      record behind. Watch the list length, not just the pool names.
  *
  *  The arithmetic, which is the whole of it:
  *
@@ -109,6 +109,44 @@ interface AsyncSubmitBody {
 }
 
 type FinishNamespace = Env["FINISH_CONTAINER"];
+
+/** Header core sets on a submit to name the film. Mirrors FINISH_AFFINITY_HEADER in core >= the
+ *  release that adds it. Written out here so this file builds against the pinned older core, where
+ *  the header is simply never sent and the door mints a random key as before. */
+export const FINISH_AFFINITY_HEADER = "x-vivijure-finish-affinity";
+
+/** The 429 body for a capacity refusal. Core reads the STATUS. `detail` is for the error text. */
+export const CAPACITY_ERROR = "capacity_exhausted";
+
+/** Words the platform and @cloudflare/containers use when no instance can be given. The base class
+ *  answers 500 ("Failed to start container: Maximum number...") or 503 ("There is no Container
+ *  instance available..."), so the status alone cannot separate this from a crash. */
+const CAPACITY_TEXT = [
+  /maximum number of running container instances/i,
+  /no container instance available/i,
+  /no container instance that can be provided/i,
+];
+
+export function isCapacityRefusalText(text: string): boolean {
+  return CAPACITY_TEXT.some((re) => re.test(text));
+}
+
+/** Longest refusal text we read. The markers sit at the front of a short platform message. */
+const REFUSAL_PEEK_CHARS = 2048;
+
+function capacityResponse(detail: string): Response {
+  return new Response(JSON.stringify({ ok: false, error: CAPACITY_ERROR, detail: detail.slice(0, 240) }), {
+    status: 429,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** The DO name for a film: 32 hex characters, the same shape a random key has, with no separator
+ *  character in it, so the compound id still splits on its first dot. */
+export async function affinityRoutingKey(affinity: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(affinity));
+  return Array.from(new Uint8Array(digest).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /** Deps seam so the routing can be driven in a plain-node test without a Workers runtime. */
 export interface VideoFinishDoorDeps {
@@ -226,7 +264,10 @@ export function videoFinishDoor(
       const method = (init.method as string | undefined) ?? "GET";
 
       if (isAsyncSubmit(p, method)) {
-        const rk = deps.routingKey();
+        // One object per film, not one per attempt (cf#843). A retry at capacity must not mint a new
+        // instance record each time, and assemble then mux must not hold two instances for one film.
+        const affinity = new Headers(init.headers).get(FINISH_AFFINITY_HEADER);
+        const rk = affinity ? await affinityRoutingKey(affinity) : deps.routingKey();
         // BEFORE the call: addressing the object is what creates the instance record, so this line
         // must exist even if the fetch never returns.
         logSubmitAttempt({ phase: "attempt", routing_key: rk, path: p });
@@ -236,12 +277,26 @@ export function videoFinishDoor(
         } catch (e) {
           // Rethrown unchanged: core reads a thrown submit as a failed submit and that behaviour is
           // not altered here. The line is the only new thing.
-          logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "threw", detail: e instanceof Error ? e.message : String(e) });
+          const message = e instanceof Error ? e.message : String(e);
+          if (isCapacityRefusalText(message)) {
+            logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "capacity", detail: message });
+            return capacityResponse(message);
+          }
+          logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "threw", detail: message });
           throw e;
         }
-        // Anything that is not the documented 202 accept is passed through UNTOUCHED. Rewriting a
-        // failure body would invent a job id for a job that does not exist.
+        // Anything else that is not the documented 202 accept is passed through UNTOUCHED. Rewriting
+        // a failure body would invent a job id for a job that does not exist.
         if (resp.status !== 202) {
+          // Capacity is the one refusal we rewrite, because it is the one a retry can cure. The status
+          // alone cannot say so: the base class reports it as a 500, the same as a real crash.
+          if (resp.status === 429 || resp.status === 500 || resp.status === 503) {
+            const text = (await resp.clone().text().catch(() => "")).slice(0, REFUSAL_PEEK_CHARS);
+            if (resp.status === 429 || isCapacityRefusalText(text)) {
+              logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "capacity", status: resp.status });
+              return capacityResponse(text);
+            }
+          }
           logSubmitAttempt({ phase: "outcome", routing_key: rk, outcome: "rejected", status: resp.status });
           return resp;
         }
