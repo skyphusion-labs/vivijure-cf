@@ -1,3 +1,4 @@
+<!-- HELD: spoken InfiniteTalk work is not part of the 1.38.0 still-look cut -->
 ### feat(motion): a spoken shot is the cast line on InfiniteTalk (cf#983)
 
 The hosted default for a board with a line is InfiniteTalk when that driving-only
