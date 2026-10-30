@@ -43,6 +43,7 @@ describe("finish-retry when nothing starts", () => {
     });
     expect(res.status).toBe(409);
     expect(body.code).toBe("cannot_deliver");
+    expect(body.error).toBe("this film holds a shot that cannot be delivered, so a retry would not help");
     expect(JSON.stringify(body)).not.toMatch(/safety/);
     expect(res.headers.get("retry-after")).toBeNull();
   });
