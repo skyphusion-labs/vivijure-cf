@@ -21,6 +21,8 @@ import {
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
+  type CancelRequest,
+  type CancelResponse,
   type PollResponse,
   type FinishInput,
   type FinishOutput,
@@ -105,6 +107,8 @@ export const MANIFEST: ModuleManifest = {
   // every film. opt_in means the chain skips this module unless a caller names it.
   participation: "opt_in",
   // Declared artifact conventions (S6): the Real-ESRGAN container appends _up to the input clip key.
+  // Async and GPU-backed, so a cancelled film can stop this job (cf#1109).
+  cancelable: true,
   finish_artifacts: {
     output_key: { kind: "append_suffix", suffix: "_up" },
     applied: [{ tag: "upscale:{scale|2}x" }],
@@ -589,6 +593,39 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   };
 }
 
+// Stop the running job this token names (cf#1109). A 200 and a 404 both mean it is not running on our
+// account, so both are ok:true. Anything else, including a plane refusal, is ok:false, so the core logs
+// an orphan rather than assuming it stopped. Failures are data, never thrown.
+async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
+  const st = decodePoll(body.poll);
+  if (!st) return { ok: false, error: "finish-upscale: bad poll token" };
+  // The token decides the transport, as in poll: a door job id means nothing to RunPod, and the reverse.
+  let t: Transport;
+  let route: RunpodRoute | null = null;
+  if (tokenTookDoor(st.door)) {
+    const door = resolveDoor(await doorsFor(env), st.door);
+    if (!door) return { ok: false, error: "finish-upscale: door " + st.door + " is not bound; cannot cancel job " + st.jobId };
+    const problem = doorProblem(door);
+    if (problem) return { ok: false, error: "finish-upscale: " + problem };
+    t = doorTransport(door);
+  } else {
+    const creds = await runpodCreds(env);
+    const credProblem = credentialProblem(creds.route, creds.endpointId);
+    if (credProblem) return { ok: false, error: "finish-upscale: " + credProblem };
+    route = creds.route;
+    t = runpodTransport(creds.route, creds.endpointId);
+  }
+  try {
+    const resp = await t.call("/cancel/" + st.jobId, { method: "POST" });
+    const refusal = route ? planeRefusalReason(route, resp) : null;
+    if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "finish-upscale /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "finish-upscale cancel failed: " + (e as Error).message };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -650,6 +687,14 @@ export default {
       catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
       if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
       return json(await submit(env, req));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: CancelRequest;
+      try { body = await request.json() as CancelRequest; }
+      catch { return json({ ok: false, error: "invalid JSON body" } as CancelResponse); }
+      if (!body?.poll || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as CancelResponse);
+      return json(await cancel(env, body));
     }
 
     if (request.method === "POST" && url.pathname === "/poll") {
