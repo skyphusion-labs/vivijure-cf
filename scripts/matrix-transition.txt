@@ -35,4 +35,4 @@
 #   hub-first: (1) hub edit         (2) cf edit + line deleted in the same PR   -- two PRs
 # Neither order is wrong and both stay green throughout; hub-first is simply one PR shorter.
 
-# (no transitions in flight)
+kling-o1-r2v retiring cf#1057

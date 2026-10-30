@@ -1,20 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildKlingBody as buildO1, clampDuration as clampO1 } from "../modules/kling-o1-r2v/src/kling";
 import { buildKlingBody as buildTalk, clampDuration as clampTalk, deliveredTiming, mp4DurationSeconds } from "../modules/infinitetalk/src/kling";
 import { buildParams as hailuo } from "../modules/cf-hailuo/src/params";
 import { buildParams as veo, clampDuration as clampVeo } from "../modules/cf-veo/src/params";
 import { chatterboxVoice, buildTtsParams } from "../modules/chatterbox/src/chatterbox";
 
 const shot = { shot_id: "shot_01", keyframe_url: "https://r2/x.png", prompt: "a turn", seconds: 7 };
-
-describe("kling-o1-r2v", () => {
-  it("sends images[] and snaps duration up", () => {
-    expect(clampO1(4)).toBe(5);
-    const b = buildO1({ ...shot, last_keyframe_url: "https://r2/y.png" }, {});
-    expect(b.input.images).toEqual(["https://r2/x.png", "https://r2/y.png"]);
-    expect(b.input.enable_safety_checker).toBe(false);
-  });
-});
 
 function tinyMp4(timescale: number, duration: number): Uint8Array {
   const ftypSize = 24;

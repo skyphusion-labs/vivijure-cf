@@ -37,7 +37,6 @@ import cfGrokWorker from "../modules/cf-grok-video/src/index";
 import cfFluxWorker from "../modules/cf-flux-3-video/src/index";
 import cfHailuoWorker from "../modules/cf-hailuo/src/index";
 import cfVeoWorker from "../modules/cf-veo/src/index";
-import klingO1Worker from "../modules/kling-o1-r2v/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -55,7 +54,6 @@ const MODULES: { name: string; worker: Worker; env: Record<string, unknown>; job
   // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
   // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
   // directory came back; it did not just get re-enabled.
-  { name: "kling-o1-r2v", worker: klingO1Worker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "infinitetalk", worker: infinitetalkWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "vidu-q3", worker: viduWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "google-veo", worker: veoWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
