@@ -1,6 +1,6 @@
 // Cast talking-voice sample. The filmmaker hears a 5/10s clip from the portrait
 // on a talking door, then keeps it. Seedance later sends that clip as
-// reference_video. Veo cannot honor it.
+// reference_videos on Seedance 2.5, reference_video on the 2.0 family. Veo cannot honor it.
 
 import { getCastById, updateCast } from "@skyphusion-labs/vivijure-core/cast-db";
 import { discoverModules, invokeModule, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";

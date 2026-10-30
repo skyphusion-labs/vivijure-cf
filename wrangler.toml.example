@@ -570,6 +570,10 @@ binding = "MODULE_CF_FLUX_3_VIDEO"
 service = "vivijure-module-cf-flux-3-video"
 
 [[services]]
+binding = "MODULE_CF_P_VIDEO_AVATAR"
+service = "vivijure-module-cf-p-video-avatar"
+
+[[services]]
 binding = "MODULE_CF_KLING_V4"
 service = "vivijure-module-cf-kling-v4"
 

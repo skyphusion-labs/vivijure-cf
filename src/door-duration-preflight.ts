@@ -16,7 +16,11 @@ import type { PreflightIssue } from "@skyphusion-labs/vivijure-core/preflight";
 interface DoorDurationShape {
   name: string;
   duration_grid?: unknown;
-  usage?: { min_seconds?: number; max_seconds?: number; duration_steps?: number[] };
+  usage?: {
+    min_seconds?: number;
+    max_seconds?: number;
+    duration_steps?: number[];
+  };
 }
 
 interface BoardShape {

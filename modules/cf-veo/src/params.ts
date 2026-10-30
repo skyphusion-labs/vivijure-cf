@@ -34,10 +34,44 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
   };
 }
 
-export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
+/** bytes -> base64, chunked so a large keyframe does not blow the call stack. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+/**
+ * Read the keyframe and return it as the model's image_input.
+ *
+ * The model's schema says image_input is a "Base64-encoded reference image for i2v". This door used to
+ * send the presigned URL, and every render failed in seconds with `AiGatewayError: 2002: Error`, on all
+ * three workflow attempts. A data URI carries the mime type, and it is the form cloud-keyframe already
+ * sends to the Google models behind the same image_input field.
+ */
+export async function keyframeImageInput(
+  url: string,
+  fetcher: (u: string) => Promise<Response> = (u) => fetch(u),
+): Promise<string> {
+  const resp = await fetcher(url);
+  // The URL is presigned, so the message carries the status and never the URL.
+  if (!resp.ok) throw new Error("keyframe fetch " + resp.status);
+  const mime = (resp.headers.get("content-type") || "").split(";")[0].trim();
+  const type = mime.startsWith("image/") ? mime : "image/png";
+  return "data:" + type + ";base64," + bytesToBase64(new Uint8Array(await resp.arrayBuffer()));
+}
+
+export function buildParams(
+  input: MotionBackendInput,
+  config: ModuleConfig,
+  imageInput: string,
+): Record<string, unknown> {
   return {
     prompt: input.prompt,
-    image_input: input.keyframe_url,
+    image_input: imageInput,
     duration: clampDuration(input.seconds) + "s",
     aspect_ratio: config.aspect_ratio,
     resolution: config.resolution,

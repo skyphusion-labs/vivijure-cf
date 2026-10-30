@@ -26,6 +26,7 @@ import {
   MODEL,
   OUT_FPS,
   buildParams,
+  keyframeImageInput,
   parseVideoUrl,
   clampDuration,
   encodePoll,
@@ -74,7 +75,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-veo",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Veo 3.1)" }],
@@ -141,7 +142,7 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
 async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
-  const modelParams = buildParams(params.input, params.config);
+  const modelParams = buildParams(params.input, params.config, await keyframeImageInput(params.input.keyframe_url));
   const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
   const url = parseVideoUrl(result);
   if (!url) throw new Error("model completed but returned no video URL");

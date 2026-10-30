@@ -17,6 +17,7 @@ import ownGpuWorker from "../modules/own-gpu/src/index";
 import seedanceWorker from "../modules/seedance/src/index";
 import viduQ3Worker from "../modules/vidu-q3/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
+import cfPVideoAvatarWorker from "../modules/cf-p-video-avatar/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -117,6 +118,14 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     usage: {
       native_audio: false, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
       min_seconds: 2, max_seconds: 15,
+    },
+  },
+  {
+    name: "cf-p-video-avatar",
+    worker: cfPVideoAvatarWorker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
+      min_seconds: 1, max_seconds: 15,
     },
   },
   {

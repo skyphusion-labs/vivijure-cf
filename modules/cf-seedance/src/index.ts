@@ -1,5 +1,6 @@
 // cf-seedance: a motion.backend module worker (vivijure-module/2).
-// Cloudflare AI Gateway / Unified Billing model `bytedance/seedance-2.0` (i2v).
+// Cloudflare AI Gateway / Unified Billing. Default model `bytedance/seedance-2.5`.
+// Also 2.0, 2.0-fast, and 2.0-mini. Each model has its own input schema.
 //
 // ASYNC vs RunPod: RunPod POST /run returns a job id immediately and /status polls a remote
 // queue. CF env.AI.run is SYNCHRONOUS-only (no job handle) and video gens run minutes -- far
@@ -24,6 +25,12 @@ import {
 } from "./contract";
 import {
   OUT_FPS,
+  MODELS,
+  DEFAULT_MODEL,
+  RESOLUTIONS,
+  DEFAULT_RESOLUTION,
+  ASPECT_RATIOS,
+  DEFAULT_ASPECT,
   buildParams,
   parseVideoUrl,
   clampDuration,
@@ -74,19 +81,19 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-seedance",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Seedance)" }],
   config_schema: {
     model: {
       type: "enum",
-      values: ["bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini"],
-      default: "bytedance/seedance-2.5",
+      values: [...MODELS],
+      default: DEFAULT_MODEL,
       label: "Seedance model",
     },
-    resolution: { type: "enum", values: ["480p", "720p", "1080p", "4k"], default: "720p", label: "resolution" },
-    aspect_ratio: { type: "enum", values: ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"], default: "16:9", label: "aspect ratio" },
+    resolution: { type: "enum", values: [...RESOLUTIONS], default: DEFAULT_RESOLUTION, label: "resolution" },
+    aspect_ratio: { type: "enum", values: [...ASPECT_RATIOS], default: DEFAULT_ASPECT, label: "aspect ratio" },
     camera_fixed: { type: "bool", default: false, label: "lock camera" },
     generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
@@ -98,12 +105,14 @@ const MANIFEST: ModuleManifest = {
     cost: "Pay per render",
     blurb: "Fast talking clips. Seedance 2.5 goes to 30 seconds. Same seed keeps the voice closer.",
     limits: [
-      "4-12 second clips on 2.0; up to 30 seconds on 2.5",
+      "4-12 second clips on 2.0, Fast, and Mini. Up to 30 seconds on 2.5.",
       "Same seed and same voice lock",
       "Last still is the next start",
       "One film, no scatter",
       "Uses the Cast voice sample as reference video. Same voice as the clip you kept.",
       "Generate a 5 or 10 second sample on Cast first",
+      "1080p and 4k are Seedance 2.0 only. 2.5, Fast, and Mini stay at 480p or 720p.",
+      "9:21 is not on 2.5. With a first and last still, 2.5 uses adaptive ratio: a vertical clip needs a 9:16 keyframe.",
     ],
   },
   usage: {
@@ -206,7 +215,7 @@ async function submit(
   if (!gatewayId) return { ok: false, error: "cf-seedance: GATEWAY_ID not configured" };
 
   const config = normalizeConfig(req.config ?? {});
-  const seconds = clampDuration(input.seconds);
+  const seconds = clampDuration(input.seconds, config.model);
   const project = req.context?.project || "project";
   const jobId = (req.context?.job_id || crypto.randomUUID()) + "-" + input.shot_id;
 
