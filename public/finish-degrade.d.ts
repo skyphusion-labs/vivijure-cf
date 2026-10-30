@@ -12,6 +12,7 @@ export interface FinishUnavailable {
   at?: string | null;
   reason?: string | null;
   delivered?: string | null;
+  retained?: string | null;
 }
 
 export interface RenderOutput {
@@ -27,6 +28,7 @@ export interface NormalizedDegrade {
   at: string | null;
   /** "clips" | "silent_film" as reported; null when the studio did not say. */
   delivered: string | null;
+  retained: string | null;
   /** The studio reason VERBATIM, or NO_REASON when it gave none. */
   reason: string;
   clips: DeliveredClip[];
