@@ -86,8 +86,11 @@ const REGISTRY_JSON = JSON.stringify({
 });
 
 describe("cloud-keyframe pure logic", () => {
-  it("clampModel always lands on RunPod Nano Banana 2", () => {
+  it("unknown model ids clamp to the default, and listed ids pass", () => {
+    expect(MODELS[0]).toBe("google/nano-banana-2");
     expect(clampModel("google/nano-banana-2")).toBe("google/nano-banana-2");
+    expect(clampModel("google/nano-banana-2.1")).toBe("google/nano-banana-2.1");
+    expect(clampModel("pruna/p-image-edit")).toBe("pruna/p-image-edit");
     expect(clampModel("google/nano-banana-pro")).toBe("google/nano-banana-2");
     expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("google/nano-banana-2");
     expect(clampModel("nano-pro-2")).toBe("google/nano-banana-2");

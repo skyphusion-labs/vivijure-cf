@@ -71,6 +71,12 @@ export function buildProxiedImageParams(provider: Provider | undefined, prompt: 
 
 /** Proxied params WITH reference images (multi-reference models). */
 export function proxiedParams(model: string, prompt: string, imageInputs: string[] = []): Record<string, unknown> {
+  // schema-input.json 2026-10-30: prompt required, image_input maxItems 14, additionalProperties false.
+  if (model === "bytedance/seedream-5-lite") {
+    const p: Record<string, unknown> = { prompt };
+    if (imageInputs.length) p.image_input = imageInputs.slice(0, 14);
+    return p;
+  }
   if (model.startsWith("google/")) {
     const p: Record<string, unknown> = { prompt, output_format: "png" };
     if (imageInputs.length) p.image_input = imageInputs.slice(0, 8);
@@ -189,7 +195,10 @@ export async function generateImageBytes(
 
   if (provider) {
     // BYOK direct for OpenAI when a key is present: the only transparent-PNG path.
-    if (provider === "openai" && env.OPENAI_API_KEY) {
+    // Transparent PNG is the legacy 1.5 BYOK path. gpt-image-2 schema lists `background`,
+    // and the models index says transparent is not supported on that id. Do not send it
+    // until a render proves which of those is true. A key does not divert gpt-image-2.
+    if (provider === "openai" && model === "openai/gpt-image-1.5" && env.OPENAI_API_KEY) {
       return await generateOpenAIImage(env.OPENAI_API_KEY, model, args.prompt);
     }
     const refs = (args.refs ?? []).filter((r) => r.startsWith("data:"));

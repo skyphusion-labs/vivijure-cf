@@ -46,16 +46,17 @@ interface Env {
   IMAGES?: ImagesBinding; // Cloudflare Images: downscale refs to <=512px (FLUX-2's input cap; bounds nano-banana payloads)
 }
 
-const MODELS = [
+export const MODELS = [
   "@cf/black-forest-labs/flux-2-klein-9b",
   "google/nano-banana-pro",
   "@cf/black-forest-labs/flux-2-klein-4b",
   "@cf/black-forest-labs/flux-2-dev",
+  "black-forest-labs/flux-3-image-klein",
 ];
 
 const MANIFEST: ModuleManifest = {
   name: "cast-image",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["cast.image"],
   provides: [{ id: "cast-refs", label: "Training references (FLUX 2 / Nano Banana)" }],

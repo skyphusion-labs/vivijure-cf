@@ -76,4 +76,6 @@ export const MANIFEST: ModuleManifest = {
   // the MANIFEST rather than decided in core: which modules ride a pooled endpoint is a property
   // of the module, and core must not branch on module identity.
   needs_tenant_r2: true,
+  // A slot with no adapter trains in the job (core#370), so the core must not split that film.
+  trains_loras: true,
 };

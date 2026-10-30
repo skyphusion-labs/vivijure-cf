@@ -30,7 +30,7 @@ interface SecretsStoreSecret {
 interface Env {
   AI: AiRun;
   GATEWAY_ID?: SecretsStoreSecret | string;
-  /** Optional BYOK key: enables transparent-PNG output on gpt-image-1.5. Absent = opaque proxy path. */
+  /** Optional BYOK key: transparent PNG on legacy gpt-image-1.5 only. gpt-image-2 uses the proxy. */
   OPENAI_API_KEY?: SecretsStoreSecret | string;
 }
 
@@ -44,13 +44,19 @@ const MODELS = [
   "google/nano-banana-2",
   "google/nano-banana-pro",
   "bytedance/seedream-5-pro",
+  "bytedance/seedream-5-lite",
   "xai/grok-imagine-image",
-  "google/imagen-4",
-  "openai/gpt-image-1.5",
+  "openai/gpt-image-2",
   "recraft/recraftv4",
 ];
-// Still runnable if a saved session names them. Not on the hosted picker.
-const LEGACY_MODELS = [
+// Still runnable if a saved session names them. Not on the picker.
+// gpt-image-1.5 stays here for the transparent-PNG BYOK path.
+// google/imagen-4 has no Cloudflare model page and its schema-input.json 404s (checked 2026-10-30), so
+// it left the picker. It stays here so a saved config still resolves. A live check is still owed, and
+// #1076 says to drop it after that check.
+export const LEGACY_MODELS = [
+  "google/imagen-4",
+  "openai/gpt-image-1.5",
   "@cf/black-forest-labs/flux-1-schnell",
   "@cf/leonardo/lucid-origin",
   "@cf/leonardo/phoenix-1.0",
@@ -61,7 +67,7 @@ const RUNNABLE = [...MODELS, ...LEGACY_MODELS];
 
 const MANIFEST: ModuleManifest = {
   name: "image-generate",
-  version: "0.1.0",
+  version: "0.1.1",
   api: MODULE_API,
   hooks: ["image.generate"],
   provides: [{ id: "image-gen", label: "Image generation (FLUX 2 / Nano Banana / SDXL)" }],
