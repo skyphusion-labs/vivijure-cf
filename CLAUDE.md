@@ -77,6 +77,7 @@ of these areas, update the matching doc.
 - `docs/CAST-BUNDLE.md` -- the `.vvcast` cast bundle ICD (export/import tar), referenced from `CONTRACT.md`.
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
+- `docs/finish-capacity.md` -- the FIFO finish queue, step failures, `finish_incomplete` and retry.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
 - Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.

@@ -13,6 +13,7 @@
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot
 // be submitted at all.
 
+import { FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -376,7 +377,7 @@ async function submitVia(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) return withFailure(passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
     // cf#279: neither service can enumerate jobs, so an id not recorded at submit is unreachable
@@ -398,7 +399,7 @@ async function submitVia(
       jobId,  // cf#289/#296: neither service can enumerate jobs, so a caller not handed the id at submit can never reach it.
     };
   } catch (e) {
-    return passthrough(input, "exception", { detail: (e as Error).message });
+    return withFailure(passthrough(input, "exception", { detail: (e as Error).message }), FAILURE_UNREACHABLE);
   }
 }
 

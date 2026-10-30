@@ -95,6 +95,7 @@ export interface FilmFinishInput {
 export interface FilmFinishOutput {
   film_key: string;
   applied: string[];
+  failure?: { kind: "transient" | "permanent"; code: string; detail?: string }; // core#377: why the step did not run
   degraded?: string;
   // Seconds this module prepended to the FRONT of the film (a title card); the core shifts an earlier
   // film.finish .srt sidecar by this so soft subtitles match the final film (#663). Absent / 0 => none.

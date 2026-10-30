@@ -20,6 +20,9 @@ export interface RenderOutput {
   project?: string | null;
   clips?: unknown;
   finish_unavailable?: unknown;
+  finish_incomplete?: unknown;
+  finish_retry_failed?: unknown;
+  finish_waiting?: unknown;
   [k: string]: unknown;
 }
 
@@ -155,3 +158,21 @@ export interface BandComposition {
 }
 
 export function combineBands(bands: (DegradeBand | string)[] | null | undefined): BandComposition;
+
+/** core#377: one finish step that did not run. */
+export interface FinishIncomplete {
+  stage: string;
+  step: string;
+  kept: string;
+  detail: string;
+  shot_id: string;
+}
+export function incompleteFrom(output: RenderOutput | null | undefined): FinishIncomplete[] | null;
+export function incompleteSummary(list: FinishIncomplete[] | null | undefined): string | null;
+export function completedStatus(
+  output: RenderOutput | null | undefined,
+  limited: boolean,
+): { text: string; tone: "warn" | "success"; retry: boolean };
+export function canRetryFinish(jobId: unknown): boolean;
+export function retryFailedNote(output: RenderOutput | null | undefined): string | null;
+export function waitingLabel(output: RenderOutput | null | undefined): string | null;

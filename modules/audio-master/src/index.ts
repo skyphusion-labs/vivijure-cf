@@ -22,6 +22,7 @@
 // (pass the INPUT bed through unchanged, but RECORDED) is preferred over a hard ok:false unless the input
 // itself is malformed -- a master miss must never drop a fully-rendered film (#249 / #77).
 
+import { FAILURE_BAD_RESPONSE, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -113,16 +114,16 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
   );
   if (timed.err || !timed.resp) {
     const msg = timed.err instanceof Error ? timed.err.message : String(timed.err ?? "unreachable");
-    return passthrough(input, "container-unreachable", { detail: msg });
+    return withFailure(passthrough(input, "container-unreachable", { detail: msg }), FAILURE_UNREACHABLE);
   }
   const resp = timed.resp;
-  if (!resp.ok) return passthrough(input, "container-failed", { detail: "HTTP " + resp.status });
+  if (!resp.ok) return withFailure(passthrough(input, "container-failed", { detail: "HTTP " + resp.status }), failureFromStatus(resp.status));
 
   let body: unknown;
   try {
     body = await resp.json();
   } catch {
-    return passthrough(input, "container-bad-response");
+    return withFailure(passthrough(input, "container-bad-response"), FAILURE_BAD_RESPONSE);
   }
   const res = parseContainerResult(body);
   if (!res || !res.ok) return passthrough(input, "container-failed");

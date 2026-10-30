@@ -65,6 +65,9 @@ export const SPEND_RETRY_AFTER_SECONDS = 60;
 // proxy for anyone holding a studio token. The file claimed this surface was auditable in one
 // place; until now that claim was false.
 const SPEND_PATTERNS: RegExp[] = [
+  // Runs named finish steps of an existing film again, which can call a GPU door, so it is metered like a
+  // render. Any credit or suspension refusal comes from the door the step calls, as it does for a render.
+  /^\/api\/render\/film\/[^/]+\/finish-retry$/,
   // GPU submits: render / animate / train / audio generation.
   /^\/api\/storyboard\/render$/,
   /^\/api\/render\/clips$/,

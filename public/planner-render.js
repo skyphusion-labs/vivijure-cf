@@ -653,10 +653,11 @@ function updateRenderProgress(data) {
     const phaseText = window.renderEta
       ? window.renderEta.phaseLabel(phaseSrc)
       : (phaseSrc || null);
-    if (phaseText) {
+    const waiting = window.finishDegrade ? window.finishDegrade.waitingLabel(out) : null;
+    if (waiting || phaseText) {
       const el = $("#planner-render-phase");
       el.hidden = false;
-      el.textContent = phaseText;
+      el.textContent = waiting || phaseText;
     }
     if (Array.isArray(out.log) && out.log.length > 0) {
       const wrap = $("#planner-render-log-wrap");
@@ -876,7 +877,12 @@ function finalizeRenderPoll(data) {
     // something it did not. See combineBands() in finish-degrade.js.
     const stageDegrades = stageDegradesOf(out);
     const limited = !!(degrade || clipFinish || stageDegrades.length);
-    setRenderStatus((limited ? "completed with limits" : "completed") + elapsed, limited ? "warn" : "success");
+    // core#377: a film with a missing step is never painted as a clean finish, whatever else it says.
+    const verdict = window.finishDegrade
+      ? window.finishDegrade.completedStatus(out, limited)
+      : { text: limited ? "completed with limits" : "completed", tone: limited ? "warn" : "success", retry: false };
+    setRenderStatus(verdict.text + elapsed, verdict.tone);
+    paintFinishIncomplete(out);
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
     $("#planner-render-output-content").textContent = JSON.stringify(
@@ -890,10 +896,62 @@ function finalizeRenderPoll(data) {
 
   // Terminal failure of some flavor.
   setRenderStatus(data.status.toLowerCase() + elapsed, "error");
+  paintFinishIncomplete(data.output);
   const outpan = $("#planner-render-output");
   outpan.hidden = false;
   $("#planner-render-output-content").textContent = JSON.stringify(data.output || {}, null, 2);
   renderDeliverable(null, null);
+}
+
+// core#377: name each missing step and what is kept, and offer the retry. Clears itself otherwise, so
+// a clean render after a partial one in the same session shows nothing stale.
+function paintFinishIncomplete(out) {
+  let box = $("#planner-render-incomplete");
+  const fd = window.finishDegrade;
+  const list = fd ? fd.incompleteFrom(out) : null;
+  if (!list) {
+    if (box) box.hidden = true;
+    return;
+  }
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "planner-render-incomplete";
+    box.className = "planner-render-coldstart planner-render-incomplete";
+    box.setAttribute("role", "alert");
+    const anchor = $("#planner-render-output");
+    anchor.parentNode.insertBefore(box, anchor);
+  }
+  const retryFailed = fd.retryFailedNote(out);
+  box.textContent = (retryFailed ? retryFailed + " " : "") + fd.incompleteSummary(list) + " ";
+  const jobId = renderState.jobId;
+  box.hidden = false;
+  if (!fd.canRetryFinish(jobId)) {
+    box.textContent = box.textContent.replace(" Retry runs these steps again without re-rendering any clip.", "");
+    return;
+  }
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.textContent = "Retry missing steps";
+  retry.addEventListener("click", async () => {
+    retry.disabled = true;
+    let resp = null;
+    try {
+      resp = await fetch("/api/render/film/" + encodeURIComponent(jobId) + "/finish-retry", { method: "POST" });
+    } catch (_e) {
+      resp = null;
+    }
+    if (!resp || !resp.ok) {
+      retry.disabled = false;
+      setRenderStatus("could not start the retry", "error");
+      return;
+    }
+    box.hidden = true;
+    renderState.jobId = jobId;
+    setRenderStatus("retrying missing steps", "warn");
+    pollRender();
+  });
+  box.appendChild(retry);
+  box.hidden = false;
 }
 
 // cf#118: paint the download affordances from what the render ACTUALLY delivered, and
