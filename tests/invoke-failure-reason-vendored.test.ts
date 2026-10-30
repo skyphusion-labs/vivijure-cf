@@ -39,7 +39,7 @@ import { INVOKE_FAILURE_REASONS } from "@skyphusion-labs/vivijure-core/modules/t
 // other -- which would render identically to a human reading the row. A shared spelling is not a
 // shared meaning. `CancelResponse` is excluded for the same reason: it is not an invoke result.
 //
-// The counts are asserted below so that exclusion stays visible. Anyone reading 33-of-63 as a partial
+// The counts are asserted below so that exclusion stays visible. Anyone reading 33-of-66 as a partial
 // migration should read this block and the `PollResponse` assertion instead.
 
 const MODULES_DIR = join(__dirname, "..", "modules");
@@ -137,7 +137,7 @@ describe("cf#846: a near-miss spelling cannot pass as a member", () => {
 });
 
 describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asserted not assumed", () => {
-  // Without these rows, 33-of-63 reads as an incomplete migration. See the header for core#306's
+  // Without these rows, 33-of-66 reads as an incomplete migration. See the header for core#306's
   // reason: PollResponse already carries its own closed `outcome` set, and two closed unions on one
   // object sharing `backend-error` and `cancelled` would render identically while meaning different
   // things.
@@ -165,10 +165,10 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
     // If a global replace had been done, zero bare arms would remain and this row would fail.
     //
     // TWO COUNTS, ON PURPOSE, because they differ and the difference is a trap I walked into while
-    // writing this test. 30 arms are OWNED by PollResponse (28) and CancelResponse (2), but only 29
+    // writing this test. 33 arms are OWNED by PollResponse (28) and CancelResponse (5), but only 32
     // of them are a standalone `  | { ok: false; error: string };` LINE: one CancelResponse is
     // declared inline as `export type CancelResponse = { ok: true } | { ok: false; error: string };`.
-    // Asserting 30 against a line-matcher fails, and the number that is "wrong" depends entirely on
+    // Asserting 33 against a line-matcher fails, and the number that is "wrong" depends entirely on
     // which instrument you used. So both are pinned and named.
     let standalone = 0;
     let inlineCancel = 0;
@@ -179,8 +179,8 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
         (l) => l.startsWith("export type CancelResponse") && l.includes("ok: false; error: string"),
       ).length;
     }
-    expect(standalone).toBe(29);
+    expect(standalone).toBe(32);
     expect(inlineCancel).toBe(1);
-    expect(standalone + inlineCancel).toBe(30); // == PollResponse 28 + CancelResponse 2
+    expect(standalone + inlineCancel).toBe(33); // == PollResponse 28 + CancelResponse 5
   });
 });
