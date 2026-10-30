@@ -132,7 +132,7 @@ def main():
                 '[[containers]]\nclass_name = "FinishContainer"\n'
                 'image = "./containers/video-finish/Dockerfile"\n'
                 'instance_type = "standard-4"\n'
-                'max_instances = 6\n'
+                'max_instances = 20\n'
             )
             if real.count(block) != 1:
                 check("empty-set anchor is unique", False)
