@@ -142,6 +142,7 @@ service-bound, but is never installed through the dispatch install gate, and is 
 | `cancelable` | boolean | no | not validated | |
 | `finish_artifacts` | `FinishArtifactsDecl` | no | malformed (see that section) | |
 | `finish_consumes_audio` | boolean | no | not validated | |
+| `finish_scales_frame` | boolean | no | not validated | |
 | `keyframe_label` | string | no | empty / whitespace / non-string | |
 | `duration_grid` | `{ fps: number; tiers: Record<string, { max_frames: number }> }` | no | not validated | |
 | `usage` | `MotionUsageDecl` | no | present but not a valid `MotionUsageDecl` (needs `native_audio`, `voice`, `scatter_native_audio`, `min_seconds`, `max_seconds`) | |

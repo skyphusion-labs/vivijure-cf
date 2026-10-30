@@ -118,6 +118,14 @@ export function resolveUpscaleScale(
   return chooseUpscaleScale(src, target);
 }
 
+/** True when the caller set no factor and the clip is at or above the delivery height. Both must be
+ *  known: an unmeasured clip goes to the door, which probes it. An explicit factor is always honoured. */
+export function alreadyAtTarget(input: { height?: unknown; delivery_height?: unknown }, cfg: UpscaleConfig): boolean {
+  if (cfg.scaleExplicit) return false;
+  const h = usableDim(input.height), th = usableDim(input.delivery_height);
+  return h > 0 && th > 0 && h >= th;
+}
+
 /** Factors used when the caller set `scale` explicitly, or when no delivery height is known.
  *
  *  After vivijure-upscale v1.1.3 (#109) the door honours `target_height` and refuses a

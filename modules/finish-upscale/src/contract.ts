@@ -26,6 +26,7 @@ export interface FinishArtifactsDecl {
 }
 
 export interface ModuleManifest {
+  finish_scales_frame?: boolean; // core#389: output has a different frame; the core prices it before it spends
   name: string;
   version: string;
   api: typeof MODULE_API;

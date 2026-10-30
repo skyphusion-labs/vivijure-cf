@@ -29,6 +29,7 @@ import {
   type FinishOutput,
 } from "./contract";
 import {
+  alreadyAtTarget,
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey, appliedTags,
   passthroughOutput,
   type PollState,
@@ -100,10 +101,13 @@ export const MANIFEST: ModuleManifest = {
   ],
   config_schema: {
     style: { type: "enum", values: ["photoreal", "anime"], default: "photoreal", label: "still look" },
-    scale: { type: "int",  default: 2, min: 2, max: 4, label: "upscale factor (explicit; omit to send delivery height)", enum_labels: { "2": "2x", "4": "4x" } },
+    // core#389: the default is the target, so the module never buys a fixed factor by default. The core
+    // fills a schema default into every config, so a default of 2 read as an explicit 2x on every film.
+    scale: { type: "int",  default: 0, min: 0, max: 4, label: "upscale size", enum_labels: { "0": "to delivery height", "2": "2x", "4": "4x" } },
     model: { type: "enum", values: ["realesr-animevideov3", "RealESRGAN_x4plus"], default: "realesr-animevideov3", label: "model" },
   },
   ui: { section: "finish", icon: "expand", order: 20 },
+  finish_scales_frame: true,
   // cf#1038: the owned upscale endpoint is gone. MuseTalk is gone. Default-on now degrades
   // every film. opt_in means the chain skips this module unless a caller names it.
   participation: "opt_in",
@@ -312,6 +316,8 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   if (!input?.shot_id || !input?.clip_key) {
     return { ok: false, error: "finish-upscale: input needs shot_id and clip_key" };
   }
+  // A clip already at the target has nothing to gain, so it is not sent to a paid door.
+  if (alreadyAtTarget(input, coerceConfig(req.config))) return passthrough(input, "already-at-target", { degraded: false });
 
   // cf#480: our own always-on iron first, and ONLY on bound-ness. RunPod is not consulted, not
   // probed and not billed when the binding is present -- there is no failover, by design, because
