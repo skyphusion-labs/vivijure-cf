@@ -8,7 +8,8 @@
 #   serves            -> exit 0   the POSITIVE control. Without this the gate might always fail,
 #                                 and "it went red on the broken image" would prove nothing.
 #   crash-on-import   -> exit 4   the cf#851 shape, planted: a top-level import of a module that is
-#                                 not in the image, so the process dies before binding.
+#                                 not in the image, so the process dies before binding. An empty
+#                                 `docker port` on that dead container is still exit 4 (cf#1052).
 #   binds-wrong-port  -> exit 5   started, stayed up, never answered on the port under test.
 #   image-not-present -> exit 3   an instrument failure is a FAILURE, never a skip.
 #
