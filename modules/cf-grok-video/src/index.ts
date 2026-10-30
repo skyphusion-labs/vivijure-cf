@@ -36,6 +36,7 @@ import {
   type RunState,
   type ModuleConfig,
 } from "./params";
+import { runPaidGeneration } from "../../_shared/paid-generation";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import { presignR2Put } from "./r2-put";
 
@@ -168,15 +169,19 @@ async function mintUploadUrl(env: Env, key: string): Promise<string> {
   return presignR2Put({ accessKeyId, secretAccessKey, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
 }
 
-/** Blocking env.AI.run. ZDR teams get no xAI-hosted URL; they PUT to output.upload_url. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
+/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
+async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const key = clipKey(params.project, params.shot_id);
   const uploadUrl = await mintUploadUrl(env, key);
   const modelParams = buildParams(params.input, params.config, uploadUrl);
-  const result = await env.AI.run(params.config.model || MODEL, modelParams, { gateway: { id: gatewayId } });
+  return env.AI.run(params.config.model || MODEL, modelParams, { gateway: { id: gatewayId } });
+}
 
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string | null): Promise<void> {
+  const key = clipKey(params.project, params.shot_id);
   const existing = await env.R2_RENDERS.get(key);
   if (existing) {
     await writeState(env, params.job_id, {
@@ -191,7 +196,6 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   }
 
   // Non-ZDR fallback: xAI still hosted a URL.
-  const url = parseVideoUrl(result);
   if (!url) throw new Error("model completed but wrote no object to upload_url and returned no video URL");
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
@@ -216,8 +220,10 @@ export class CfGrokVideoWorkflow extends WorkflowEntrypoint<Env, WorkflowParams>
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => parseVideoUrl(raw),
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
