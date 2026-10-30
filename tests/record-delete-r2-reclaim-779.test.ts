@@ -505,3 +505,20 @@ describe("reclaimRenderRows: a listing that says there is more", () => {
     expect([...store].sort()).toEqual(before);
   });
 });
+
+describe("parseJobDocKeys and job-scoped stills (cf#1059)", () => {
+  const own = "renders/p/keyframes/kf-1/shot_01.png";
+  const flat = "renders/p/keyframes/shot_01.png";
+
+  it("names a full film's job-scoped still, because no row names it", () => {
+    expect(parseJobDocKeys({ keyframes: [{ shot_id: "shot_01", keyframe_key: own }] })).toContain(own);
+  });
+
+  it("does not name a flat shared still", () => {
+    expect(parseJobDocKeys({ keyframes: [{ shot_id: "shot_01", keyframe_key: flat }] })).toEqual([]);
+  });
+
+  it("a from-keyframes child names none of its parent's stills", () => {
+    expect(parseJobDocKeys({ derive_mode: "finalized", keyframes: [{ shot_id: "shot_01", keyframe_key: own }] })).toEqual([]);
+  });
+});
