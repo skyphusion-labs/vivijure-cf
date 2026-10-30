@@ -346,7 +346,7 @@ describe("reclaimRenderRows: the leak direction and the over-delete direction", 
     expect(left).toContain("renders/heist/clips/film-bbb/s1_finished.mp4");
   });
 
-  describe("a clip another film reused through the pointer (vivijure-core#379)", () => {
+  describe("a clip in another film's folder (vivijure-core#379)", () => {
     const REUSED = "renders/heist/clips/film-aaa/s1_finished.mp4";
     const world = () => {
       const r2 = scene();
@@ -388,17 +388,17 @@ describe("reclaimRenderRows: the leak direction and the over-delete direction", 
       expect([...r2.store]).toContain(REUSED);
     });
 
-    // THE GUARD ON WHY CORE COPIES. A finish step records its clip only in the job doc, and this gate does
-    // not read a survivor's job doc, so a film must never name a clip in another film's folder. If this
-    // starts passing the other way, the gate learned to read docs and core's copy can be reconsidered.
-    it("is freed when only the reusing film's job doc names it, which is why core copies on reuse", async () => {
+    // THE GUARD ON WHY A FILM NEVER READS ANOTHER FILM'S FOLDER. A finish step records its clip only in the
+    // job doc, and this gate does not read a survivor's job doc. So core must never record a clip in another
+    // film's folder. If this starts passing the other way, the gate learned to read docs.
+    it("is freed when only another film's job doc names it, which is why core never records one", async () => {
       const { r2, doomed, survivor } = world();
       const { db } = makeDB({ renders: [doomed, survivor], shots: shots() });
       await reclaim({ DB: db, R2_RENDERS: r2.binding } as unknown as never, [doomed]);
       expect([...r2.store]).not.toContain(REUSED);
     });
 
-    it("a copy in the reusing film's own folder survives, which is what core records", async () => {
+    it("a clip in a surviving film's own folder survives", async () => {
       const { r2, doomed, survivor } = world();
       const own = "renders/heist/clips/film-bbb/s1_finished.mp4";
       r2.store.add(own);
