@@ -47,6 +47,7 @@ import {
   type MusicGenerateConfig,
 } from "./music-gen";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
+import { NOT_STORED_AUDIO_ERROR, runPaidGeneration } from "../../_shared/paid-generation";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer | string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
@@ -151,24 +152,17 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** The actual generation: blocking env.AI.run -> store audio in R2 -> write the `done` R2 state. Runs
- *  inside a Workflow step (unlimited wall, retried, survives recycle). THROWS on failure so the step
- *  retries; the workflow's run() writes the terminal `failed` state once retries are exhausted. */
-async function runGeneration(
-  env: Env,
-  jobId: string,
-  input: ScoreInput,
-  config: MusicGenerateConfig,
-): Promise<void> {
-  const format = config.format ?? "mp3";
-  const applied = appliedTags(format, config);
+/** The provider call, and nothing after it. THROWS only when no track was returned, so it may retry. */
+async function generateTrack(env: Env, input: ScoreInput, config: MusicGenerateConfig): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
-  const prompt = promptFromScoreInput(input, config);
-  const params = buildMusicParams(prompt, config);
-  const result = await env.AI.run(MODEL, params, { gateway: { id: gatewayId } });
-  const url = parseAudioUrl(result);
-  if (!url) throw new Error("model completed but returned no audio URL");
+  const params = buildMusicParams(promptFromScoreInput(input, config), config);
+  return await env.AI.run(MODEL, params, { gateway: { id: gatewayId } });
+}
+
+/** Download the bought track, write it, and write the `done` state. Never reaches the provider (cf#1107). */
+async function storeTrack(env: Env, jobId: string, input: ScoreInput, config: MusicGenerateConfig, url: string): Promise<void> {
+  const format = config.format ?? "mp3";
   const aresp = await fetch(url);
   if (!aresp.ok) throw new Error(`audio fetch ${aresp.status}`);
   const mime = aresp.headers.get("content-type")?.split(";")[0]?.trim() || mimeForFormat(format);
@@ -180,7 +174,7 @@ async function runGeneration(
     film_key: input.film_key,
     audio_key: key,
     mime,
-    applied: [...applied, `audio:${key}`],
+    applied: [...appliedTags(format, config), `audio:${key}`],
   });
 }
 
@@ -197,9 +191,15 @@ export class MusicGenWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
     const { job_id, input, config } = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, job_id, input, config);
-      });
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateTrack(this.env, input, config),
+        parse: (raw) => {
+          const url = parseAudioUrl(raw);
+          if (!url) throw new Error("model completed but returned no audio URL");
+          return url;
+        },
+        store: (url) => storeTrack(this.env, job_id, input, config, url),
+      }, { notStoredError: NOT_STORED_AUDIO_ERROR });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await writeState(this.env, job_id, {
