@@ -23,10 +23,10 @@ import { INVOKE_FAILURE_REASONS } from "@skyphusion-labs/vivijure-core/modules/t
 //   * a hand-edited copy FAILS, including a near-miss spelling like `not_configured`
 //   * the failure message PRINTS the exact expected block, so the fix is a paste and not a puzzle
 //
-// WHY ONLY 34 OF THE 64 IDENTICAL `| { ok: false; error: string };` ARMS CARRY `reason`.
+// WHY ONLY 35 OF THE 67 IDENTICAL `| { ok: false; error: string };` ARMS CARRY `reason`.
 //
-// That string appears 64 times across the 34 contracts and serves THREE different types:
-// `InvokeResponse` 34, `PollResponse` 29, `CancelResponse` 2. (Was 63/33/28 until cf#1073, 61/32/27 until cf#1072
+// That string appears 67 times across the 35 contracts and serves THREE different types:
+// `InvokeResponse` 35, `PollResponse` 30, `CancelResponse` 2. (Was 65/34/29 until cf#1074, 63/33/28 until cf#1073, 61/32/27 until cf#1072
 // added cf-p-video-avatar, 63/33/28 until cf#1057, 65/34/29 until cf#921
 // retired modules/kling, which took one InvokeResponse arm and one PollResponse arm with it.) The string cannot tell you which; only
 // the enclosing declaration can, so a global replace would widen the contract in 31 places.
@@ -39,7 +39,7 @@ import { INVOKE_FAILURE_REASONS } from "@skyphusion-labs/vivijure-core/modules/t
 // other -- which would render identically to a human reading the row. A shared spelling is not a
 // shared meaning. `CancelResponse` is excluded for the same reason: it is not an invoke result.
 //
-// The counts are asserted below so that exclusion stays visible. Anyone reading 34-of-64 as a partial
+// The counts are asserted below so that exclusion stays visible. Anyone reading 35-of-67 as a partial
 // migration should read this block and the `PollResponse` assertion instead.
 
 const MODULES_DIR = join(__dirname, "..", "modules");
@@ -81,9 +81,9 @@ const CANONICAL_ARM = "  | { ok: false; error: string; reason?: InvokeFailureRea
 /** What PollResponse and CancelResponse must still say: bare, no `reason`. */
 const BARE_ARM = "  | { ok: false; error: string };";
 
-describe("cf#846: the vendored InvokeFailureReason block is byte-identical in all 34 contracts", () => {
-  it("there are 34 module contracts (denominator, so a shrinking sweep cannot pass)", () => {
-    expect(contractPaths().length).toBe(34);
+describe("cf#846: the vendored InvokeFailureReason block is byte-identical in all 35 contracts", () => {
+  it("there are 35 module contracts (denominator, so a shrinking sweep cannot pass)", () => {
+    expect(contractPaths().length).toBe(35);
   });
 
   it("every contract carries the canonical block EXACTLY, derived from core", () => {
@@ -137,7 +137,7 @@ describe("cf#846: a near-miss spelling cannot pass as a member", () => {
 });
 
 describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asserted not assumed", () => {
-  // Without these rows, 34-of-64 reads as an incomplete migration. See the header for core#306's
+  // Without these rows, 35-of-67 reads as an incomplete migration. See the header for core#306's
   // reason: PollResponse already carries its own closed `outcome` set, and two closed unions on one
   // object sharing `backend-error` and `cancelled` would render identically while meaning different
   // things.
@@ -165,10 +165,10 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
     // If a global replace had been done, zero bare arms would remain and this row would fail.
     //
     // TWO COUNTS, ON PURPOSE, because they differ and the difference is a trap I walked into while
-    // writing this test. 31 arms are OWNED by PollResponse (29) and CancelResponse (2), but only 30
+    // writing this test. 32 arms are OWNED by PollResponse (30) and CancelResponse (2), but only 31
     // of them are a standalone `  | { ok: false; error: string };` LINE: one CancelResponse is
     // declared inline as `export type CancelResponse = { ok: true } | { ok: false; error: string };`.
-    // Asserting 31 against a line-matcher fails, and the number that is "wrong" depends entirely on
+    // Asserting 32 against a line-matcher fails, and the number that is "wrong" depends entirely on
     // which instrument you used. So both are pinned and named.
     let standalone = 0;
     let inlineCancel = 0;
@@ -179,8 +179,8 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
         (l) => l.startsWith("export type CancelResponse") && l.includes("ok: false; error: string"),
       ).length;
     }
-    expect(standalone).toBe(30);
+    expect(standalone).toBe(31);
     expect(inlineCancel).toBe(1);
-    expect(standalone + inlineCancel).toBe(31); // == PollResponse 29 + CancelResponse 2
+    expect(standalone + inlineCancel).toBe(32); // == PollResponse 30 + CancelResponse 2
   });
 });

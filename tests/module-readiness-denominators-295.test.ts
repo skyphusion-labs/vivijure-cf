@@ -157,7 +157,8 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
     // cf#1057 retires kling-o1-r2v and cf#1072 adds cf-p-video-avatar, so the tree stays 33.
     // cf#1073: 33 -> 34.
-    expect(ENTRIES.length).toBe(34);
+    // cf#1074: 34 -> 35.
+    expect(ENTRIES.length).toBe(35);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the

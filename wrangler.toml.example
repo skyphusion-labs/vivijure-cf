@@ -577,6 +577,10 @@ service = "vivijure-module-cf-p-video-avatar"
 binding = "MODULE_CF_KLING_V4"
 service = "vivijure-module-cf-kling-v4"
 
+[[services]]
+binding = "MODULE_CF_MINIMAX_H3"
+service = "vivijure-module-cf-minimax-h3"
+
 
 # Subtitle (film.finish): burns a time-synced SRT via the video-finish container (POST /subtitle).
 # ADDED in v0.3.0; depends on the video-finish container rebuild (runbook 1.0).
