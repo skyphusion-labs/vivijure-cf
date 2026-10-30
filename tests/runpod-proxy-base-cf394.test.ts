@@ -440,11 +440,11 @@ describe("DENOMINATOR: every RunPod-reaching module routes through the shared he
 
   it("POSITIVE-EVIDENCE FLOOR: the census is not empty (a broken matcher reads as a clean sweep)", () => {
     // Measured 2026-08-03 at vivijure-cf@83ea481: 26 modules carry src/index.ts and 14 of them
-    // reach RunPod (8 hard-coding a public model slug, 6 reading RUNPOD_ENDPOINT_ID). Asserted as a
-    // FLOOR rather than as equality: a new non-RunPod module is normal and must not turn this red,
-    // while a matcher that has stopped matching must.
+    // reach RunPod. cf#1075 retired three of those RunPod doors, so the floor is 11.
+    // Asserted as a FLOOR rather than as equality: a new non-RunPod module is normal and must
+    // not turn this red, while a matcher that has stopped matching must.
     expect(modules.length).toBeGreaterThanOrEqual(26);
-    expect(runpodModules.length).toBeGreaterThanOrEqual(14);
+    expect(runpodModules.length).toBeGreaterThanOrEqual(11);
   });
 
   it("every RunPod-reaching module imports the shared route helper", () => {

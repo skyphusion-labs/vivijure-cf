@@ -12,12 +12,12 @@ the modules, that test fails.
 
 | # | Population | Size | Where it is defined |
 |---|---|---|---|
-| 1 | Modules in this repo | **32** | `modules/*/src/index.ts` (excluding `_shared`) |
-| 2 | Modules that WRITE `runpod_job_log` rows | **13** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
-| 3 | Modules PUBLISHED as tenant bundles by a studio release | **22** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
+| 1 | Modules in this repo | **30** | `modules/*/src/index.ts` (excluding `_shared`) |
+| 2 | Modules that WRITE `runpod_job_log` rows | **10** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
+| 3 | Modules PUBLISHED as tenant bundles by a studio release | **19** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
 | 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **16** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **16 of 32**.
+Population 4 is the one an operator actually sees, and it is **16 of 30**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -27,7 +27,7 @@ existed the copy lived as a literal inside the test that asserted its length, so
 compared the copy against itself: the catalog went 6 to 7 to 15 and nothing ever failed. **If you
 are correcting this page, correct the mirror in the same commit; the test asserts they agree.**
 
-**Populations 3 and 4 are seven modules apart, and the gap is the point.** They were briefly equal
+**Populations 3 and 4 are no longer a nested pair.** cf#1075 removed `seedance`, `google-veo`, and `vidu-q3` from this tree and from the publish list. The plane catalog still names them, so the mirror still names them, and a release of this sha cannot upload those three bundles. They were briefly equal
 -- 7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane could not add a
 single further module without a studio release first. cf#394 published nine more (the eight
 cost-door modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine,
@@ -80,6 +80,7 @@ The seven in the gap are published-not-catalogued **for four different reasons, 
 | cf-hh1-r2v | yes | no | no | **yes** | **yes** |
 | cf-seedance | yes | no | no | **yes** | **yes** |
 | cf-veo | yes | no | no | no | no |
+| cf-vidu-q3-turbo | yes | no | no | no | no |
 | chatterbox | yes | no | no | no | no |
 | cloud-keyframe | yes | no | no | no | no |
 | dialogue-gen | yes | no | no | **yes** | no |
@@ -87,7 +88,6 @@ The seven in the gap are published-not-catalogued **for four different reasons, 
 | finish-blender | yes | yes | yes | no | no |
 | finish-rife | yes | yes | yes | yes | yes |
 | finish-upscale | yes | yes | yes | yes | yes |
-| google-veo | yes | yes | yes | **yes** | **yes** |
 | image-generate | yes | no | no | **yes** | no |
 | infinitetalk | yes | yes | yes | no | no |
 | keyframe | yes | yes | yes | yes | yes |
@@ -98,9 +98,7 @@ The seven in the gap are published-not-catalogued **for four different reasons, 
 | notify-email | yes | no | no | no | no |
 | own-gpu | yes | yes | yes | yes | yes |
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
-| seedance | yes | yes | yes | **yes** | **yes** |
 | subtitle | yes | no | no | **yes** | no |
-| vidu-q3 | yes | yes | yes | **yes** | **yes** |
 
 ## The two asymmetries, and why each is fine
 
@@ -123,14 +121,14 @@ result, not a fault.** It is excluded from `records_unproven` because its catalo
 ## What cf#295 found, and what changed
 
 cf#295 measured 6 of 26 modules implementing `/ready`, so a sweep could not tell "not ready" from
-"no endpoint exists". **That is fixed: all 32 now implement it** (the invariant is every
-module, not a frozen count; the tree grew with the four CF AI i2v modules on top of main's own
-cf#470 growth), and `tests/module-ready-coverage-291.test.ts`
+"no endpoint exists". **That is fixed: all 30 now implement it** (the invariant is every
+module, not a frozen count; cf#1075 retired three RunPod doors and added
+`cf-vidu-q3-turbo`), and `tests/module-ready-coverage-291.test.ts`
 holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, 16 of 32. A route
+`module-readiness` looks complete while speaking for population 4, 16 of 30. A route
 that reports a subset without saying so is the same defect one layer up, which is why the
 denominator is published here rather than left to be re-derived.
 
@@ -142,12 +140,14 @@ maintained by hand here.
 
 ## What a green `module-readiness` does NOT tell you
 
-- **Anything about the other 16 modules** (32 minus the 16 in population 4). They are not
+- **Anything about the other 17 modules** (the modules in this repo that are not in population 4). They are not
   provisioned to tenants, so a tenant provision does not reach them. **This does not include the
   GPUless cost door**: every cost-door module catalogued by cp#317 is still there and a tenant
-  reaches them through the plane-side proxy. The 16
+  reaches them through the plane-side proxy, except the three RunPod doors retired in cf#1075
+  (seedance, google-veo, vidu-q3), which the plane catalog still names and this repo no longer ships.
+  The 17
   are `audio-master`, `beat-sync`, `cast-image`,
-  `cf-hailuo`, `cf-veo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
+  `cf-hailuo`, `cf-veo`, `cf-vidu-q3-turbo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
   `finish-blender`, `image-generate`, `infinitetalk`, `local-gpu`,
   `music-gen`, `notify-email`, `subtitle`.
 > The door that used to sit in this list and no longer does is the retired Kling 2.1 i2v module

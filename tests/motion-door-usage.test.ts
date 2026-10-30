@@ -9,12 +9,10 @@ import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
-import googleVeoWorker from "../modules/google-veo/src/index";
+import cfViduQ3TurboWorker from "../modules/cf-vidu-q3-turbo/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
-import seedanceWorker from "../modules/seedance/src/index";
-import viduQ3Worker from "../modules/vidu-q3/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -60,27 +58,11 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     },
   },
   {
-    name: "seedance",
-    worker: seedanceWorker as unknown as Worker,
-    usage: {
-      native_audio: true, voice: "seed_and_prompt", scatter_native_audio: false,
-      min_seconds: 4, max_seconds: 12, first_last: true, seed: true,
-    },
-  },
-  {
-    name: "google-veo",
-    worker: googleVeoWorker as unknown as Worker,
+    name: "cf-vidu-q3-turbo",
+    worker: cfViduQ3TurboWorker as unknown as Worker,
     usage: {
       native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
-      min_seconds: 4, max_seconds: 8, duration_steps: [4, 6, 8], first_last: false, seed: false,
-    },
-  },
-  {
-    name: "vidu-q3",
-    worker: viduQ3Worker as unknown as Worker,
-    usage: {
-      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
-      min_seconds: 3, max_seconds: 10,
+      min_seconds: 1, max_seconds: 16, first_last: true, seed: false,
     },
   },
   {

@@ -120,10 +120,10 @@ describe("cf#919 talkingVoiceHonorFor: the voice-honor table is projected before
   });
 
   it("keeps the honor verdict intact for a row it does keep", () => {
-    const rows = talkingVoiceHonorFor([door("cf-seedance", { talks: true }), door("google-veo", { talks: true })]);
+    const rows = talkingVoiceHonorFor([door("cf-seedance", { talks: true }), door("cf-vidu-q3-turbo", { talks: true })]);
     const seedance = rows.find((r) => r.name === "cf-seedance");
     expect(seedance?.honor).toBe("exact");
-    expect(rows.find((r) => r.name === "google-veo")?.honor).toBe("neighborhood");
+    expect(rows.find((r) => r.name === "cf-vidu-q3-turbo")?.honor).toBe("neighborhood");
   });
 
   it("serves nothing when no motion door is installed", () => {

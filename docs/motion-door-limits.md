@@ -58,41 +58,19 @@ Fast talking clips. Uses the sample you kept.
 | First+last? | Yes. The next shot's start still is the end frame when we have one. |
 | Cannot | Invent a different speaker. Hosted does not add mouths in finish. |
 
-## seedance (Seedance talking, hosted speed default)
+## cf-vidu-q3-turbo (Vidu Q3 Turbo talking)
 
-Same idea as `cf-seedance`. This is the hosted speed default. 4-12 seconds.
-
-| | |
-|---|---|
-| Duration | 4-12 seconds |
-| Talks? | Yes. |
-| Voice lock | `seed_and_prompt`. Same seed and same voice lock. |
-| First+last? | Declared yes (last still is the next start). Visual last-frame wiring on this door is the same intent as `cf-seedance`. |
-| Cannot | Lock the voice from a previous clip. No audio-reference field on the door we call. |
-
-## google-veo (Veo talking)
-
-Photoreal talking clips. Slow and spendy.
+Talking clips from a still. Replaces RunPod `vidu-q3` (cf#1075).
 
 | | |
 |---|---|
-| Duration | Only 4, 6, or 8 seconds |
-| Talks? | Yes. |
-| Voice lock | `prompt_lock`. Same voice lock on every shot. Seed is hardcoded, not a pin. |
-| First+last? | No. We do not pass a last frame. |
-| Cannot | Arbitrary lengths. First+last stills. Pin a seed from the voice lock. |
-
-## vidu-q3 (Vidu talking)
-
-Talking clips when you have several stills.
-
-| | |
-|---|---|
-| Duration | 3-10 seconds |
-| Talks? | Yes. |
+| Duration | 1-16 seconds (any integer; schema min 1, max 16) |
+| Talks? | Yes, when talking audio is on. |
 | Voice lock | `prompt_lock`. |
-| First+last? | No. |
-| Cannot | Hear the previous clip. Pin a seed from the voice lock. |
+| First+last? | Yes. The next shot's start still is `end_image` when we have one. |
+| Cannot | Lock the Cast voice sample. Pin a seed. Set aspect ratio on an image-to-video call (the schema says that field is text-to-video only, so we do not send it). |
+
+RunPod `seedance`, `google-veo`, and `vidu-q3` are retired (cf#1075). Veo on Cloudflare is `cf-veo`. The hosted spoken selector is InfiniteTalk when that door is installed (`hostedSpokenDoor`). It does not name RunPod Seedance.
 
 ## cf-grok-video (Grok talking drafts)
 
@@ -220,6 +198,6 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 | `usage.voice` | What the filmmaker gets |
 |---|---|
 | `prompt_lock` | Same speaker description in every motion prompt. No speaker id on the door. |
-| `seed_and_prompt` | Same seed **and** the same prompt lock. Seedance. |
+| `seed_and_prompt` | Same seed and the same prompt lock. Cloudflare Seedance (`cf-seedance`). |
 | `cast_tts` | Speaking voice is the Cast voice (TTS). Driving-audio doors (InfiniteTalk, Wan) consume that LINE file at motion time. Post-hoc mouth-replace is GONE (cf#783). A silent door declares this value too, and takes no spoken line: submit refuses the board. |
 | `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Not wired yet. |

@@ -389,10 +389,8 @@ service = "vivijure-module-own-gpu"
 # block back in this file.
 # <<< LOCAL-GPU: local-gpu
 
-[[services]]
-binding = "MODULE_SEEDANCE"
-service = "vivijure-module-seedance"
-
+# RunPod seedance (modules/seedance) was RETIRED cf#1075. RunPod marks
+# seedance-v1-5-pro-i2v Deprecated. hostedMotionFallback does not select it.
 # Kling 2.1 (modules/kling) was RETIRED 2026-09-27, cf#921: its RunPod slug
 # kling-v2-1-i2v-pro returns 404 and no live Kling endpoint does plain i2v.
 # kling-o1-r2v is retired too (cf#1057): its provider requires a reference video this hook cannot supply.
@@ -513,13 +511,8 @@ service = "vivijure-module-dialogue-gen"
 binding = "MODULE_MINIMAX_HAILUO"
 service = "vivijure-module-minimax-hailuo"
 
-[[services]]
-binding = "MODULE_GOOGLE_VEO"
-service = "vivijure-module-google-veo"
-
-[[services]]
-binding = "MODULE_VIDU_Q3"
-service = "vivijure-module-vidu-q3"
+# google-veo and vidu-q3 (RunPod) were RETIRED cf#1075. Veo on Cloudflare is
+# cf-veo. Vidu Q3 Turbo on Cloudflare is cf-vidu-q3-turbo.
 
 [[services]]
 binding = "MODULE_ALIBABA_WAN"
@@ -532,6 +525,10 @@ service = "vivijure-module-cf-hailuo"
 [[services]]
 binding = "MODULE_CF_VEO"
 service = "vivijure-module-cf-veo"
+
+[[services]]
+binding = "MODULE_CF_VIDU_Q3_TURBO"
+service = "vivijure-module-cf-vidu-q3-turbo"
 
 # alibaba-wan-lora: Wan 2.2 i2v 720p on the RunPod PUBLIC managed endpoint wan-2-2-t2v-720-lora, with
 # CUSTOM operator LoRAs (the controllable, GPU-rental-free i2v lane; pairs with the cloud-keyframe

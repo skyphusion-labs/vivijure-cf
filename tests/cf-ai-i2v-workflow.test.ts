@@ -6,6 +6,7 @@ import hh1 from "../modules/cf-hh1-r2v/src/index";
 import seedance from "../modules/cf-seedance/src/index";
 import grok from "../modules/cf-grok-video/src/index";
 import flux from "../modules/cf-flux-3-video/src/index";
+import vidu from "../modules/cf-vidu-q3-turbo/src/index";
 
 type Worker = {
   fetch(request: Request, env: never, ctx: never): Promise<Response>;
@@ -16,6 +17,7 @@ const WORKERS: { name: string; worker: Worker; statePrefix: string }[] = [
   { name: "cf-seedance", worker: seedance as unknown as Worker, statePrefix: "cf-seedance" },
   { name: "cf-grok-video", worker: grok as unknown as Worker, statePrefix: "cf-grok-video" },
   { name: "cf-flux-3-video", worker: flux as unknown as Worker, statePrefix: "cf-flux-3-video" },
+  { name: "cf-vidu-q3-turbo", worker: vidu as unknown as Worker, statePrefix: "cf-vidu-q3-turbo" },
 ];
 
 function fakeEnv(opts: { workflowStatus?: string; createThrows?: boolean } = {}) {

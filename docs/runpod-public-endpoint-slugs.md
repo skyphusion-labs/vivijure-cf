@@ -87,9 +87,10 @@ that the upstream model does. See the section below.
 | `alibaba-wan-lora` | `wan-2-2-t2v-720-lora` | 401 | exists (control) |
 | *(negative)* | `definitely-not-a-slug-xyz` | 404 | not found (control) |
 
-Scope: the table and the probe's `DEFAULT_SLUGS` cover the #267 **motion** cost-door set only. Two
-other modules also called RunPod public-endpoint slugs and were not probed by default: `kling-o1-r2v`
-(`ENDPOINT_ID = "kling-video-o1-r2v"`, retired in cf#1057) and `narration-gen`
+Scope: the table and the probe's `DEFAULT_SLUGS` cover the #267 **motion** cost-door set only.
+Modules that also called a public slug outside that default probe: `kling-o1-r2v`
+(`ENDPOINT_ID = "kling-video-o1-r2v"`, retired in cf#1057), `seedance`, `google-veo`, and `vidu-q3`
+(retired in cf#1075), and `narration-gen`
 (`ENDPOINT_ID = MODEL = "minimax-speech-02-hd"`).
 
 ## These readings have a shelf life

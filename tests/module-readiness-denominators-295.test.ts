@@ -26,6 +26,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseTransitions } from "../scripts/check-capability-matrix.mjs";
 
 const ROOT = join(import.meta.dirname, "..");
 const MODULES_DIR = join(ROOT, "modules");
@@ -92,6 +93,15 @@ function tenantCatalog(): string[] {
 
 const CATALOG = tenantCatalog();
 
+/** Catalog names this repo has declared `retiring` and has not yet dropped from the mirror. */
+function retiringStillCatalogued(): string[] {
+  const text = readFileSync(join(ROOT, "scripts/matrix-transition.txt"), "utf8");
+  const parsed = parseTransitions(text);
+  if (parsed.errors.length > 0) throw new Error(parsed.errors.join("; "));
+  const retiring = new Set(parsed.transitions.filter((t) => t.direction === "retiring").map((t) => t.name));
+  return CATALOG.filter((m) => retiring.has(m)).sort();
+}
+
 describe("the readiness denominator is published and does not drift (cf#295)", () => {
   it("the scan read the tree (positive control)", () => {
     // Every assertion below is shaped so that a scan reading NOTHING would produce empty sets and
@@ -143,10 +153,14 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // census of the table showed six healthy lanes and could not mention the other eight.
     // cf#783: 17 -> 16 with finish-lipsync removed (MuseTalk ruled out permanently).
     // cf#786: 16 -> 15 with speech-upscale removed (endpoint dead, no trigger, purpose retired).
-    expect(WRITES_JOB_LOG.length).toBe(13);
+    expect(WRITES_JOB_LOG.length).toBe(10);
     // cf#921: `kling` left this roster by being RETIRED, not by stopping recording.
-    for (const m of ["seedance", "vidu-q3", "google-veo", "minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "infinitetalk"]) {
+    // cf#1075: seedance, vidu-q3, and google-veo left the same way.
+    for (const m of ["minimax-hailuo", "alibaba-wan", "alibaba-wan-lora", "narration-gen", "infinitetalk"]) {
       expect(WRITES_JOB_LOG, "cost-door module not recording: " + m).toContain(m);
+    }
+    for (const m of ["seedance", "vidu-q3", "google-veo"]) {
+      expect(WRITES_JOB_LOG, m).not.toContain(m);
     }
   });
 
@@ -154,12 +168,12 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // Tree size. Was 37 with cf-wan-27; that module is gone (CF schema cannot take our
     // line as audio). Recount from modules/*/src/index.ts, not from a running sum.
     // cf#783: 36 -> 35 with finish-lipsync removed. cf#786: 35 -> 34 with speech-upscale removed.
-    expect(ENTRIES.length).toBe(32);
+    expect(ENTRIES.length).toBe(30);
     // main already corrected this 14 -> 15 (cf#470 / cf#305: the eight cost-door submitters).
     // The four new i2v modules are CF AI Gateway backed, not RunPod: none call recordRunpodJob
     // or report telemetry.job_log (verified against the merged module sources), so the
     // population this counts is unchanged by this PR and 15 stands. cf#783: 16. cf#786: 15.
-    expect(WRITES_JOB_LOG.length).toBe(13);
+    expect(WRITES_JOB_LOG.length).toBe(10);
     // cf#394 moved this from 7 to 16: the 8 cost-door modules and image-generate now publish a
     // tenant bundle. cf#396 moved it 16 -> 20 with the four own-iron finishing modules
     // (audio-master, beat-sync, film-titles, subtitle). A bundle with no catalog row uploads
@@ -168,7 +182,7 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // cf#786: 23 -> 22 (speech-upscale). cp#524: 22 -> 23 (dialogue-gen), the first `dialogue`
     // provider published to tenants -- a hosted tenant has had no way to synthesize a spoken line
     // at all, which is the first missing link in the hosted lip-sync chain.
-    expect(publishedToTenants().length).toBe(22);
+    expect(publishedToTenants().length).toBe(19);
     // NO `expect(CATALOG.length).toBe(N)` HERE, DELIBERATELY (cf#470). CATALOG is now read from
     // the mirror, so any number asserted against it is asserted against the same file -- the
     // tautology this issue is about, reintroduced under a new name. The mirror's contents are
@@ -227,9 +241,13 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
       "image-generate",
       "subtitle",
     ]);
+    // cf#1075: these three are retired in this tree and unpublished. The plane catalog
+    // still names them, so the mirror still names them. A release cannot upload a bundle
+    // that is not in the tree. The names stay until the plane drops the rows.
     for (const m of ["seedance", "vidu-q3", "google-veo"]) {
-      expect(publishedToTenants(), m).toContain(m);
+      expect(publishedToTenants(), m).not.toContain(m);
       expect(CATALOG, m).toContain(m);
+      expect(ENTRIES.map((e) => e.name), m).not.toContain(m);
     }
   });
 
@@ -239,8 +257,12 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // if the catalog exceeded the whole tree. Replaced with the containment it was gesturing at,
     // which names the offender when it breaks.
     const names = new Set(ENTRIES.map((e) => e.name));
-    const notInRepo = CATALOG.filter((m) => !names.has(m));
-    expect(notInRepo, "catalogued module(s) this repo does not ship").toEqual([]);
+    const notInRepo = CATALOG.filter((m) => !names.has(m)).sort();
+    // A catalog name with no module is a defect, except a name this repo has declared
+    // `retiring` while the plane still lists it. The declaration is the expiry: when the
+    // mirror drops the name, it leaves this set.
+    const retiring = retiringStillCatalogued();
+    expect(notInRepo, "catalogued module(s) this repo does not ship").toEqual(retiring);
     // The old `toBeLessThan` is NOT kept alongside it. Describing an assertion as incapable of
     // failing and then leaving it in place is the same defect wearing a disclaimer.
 
@@ -257,8 +279,10 @@ describe("the readiness denominator is published and does not drift (cf#295)", (
     // where the bundle list actually lives, so the ordering error is visible on the PR that
     // introduces it rather than at the next tenant.
     const published = new Set(publishedToTenants());
-    const unpublished = CATALOG.filter((m) => !published.has(m));
-    expect(unpublished, "provisioned module(s) with no published tenant bundle").toEqual([]);
+    const unpublished = CATALOG.filter((m) => !published.has(m)).sort();
+    // Same window as notInRepo above. A catalog row with no bundle fails modules_upload.
+    // The only rows in that state are the cf#1075 retirements still named by the plane.
+    expect(unpublished, "provisioned module(s) with no published tenant bundle").toEqual(retiringStillCatalogued());
   });
 
   it("the published table matches the modules, row for row", () => {

@@ -80,9 +80,9 @@ const CANONICAL_ARM = "  | { ok: false; error: string; reason?: InvokeFailureRea
 /** What PollResponse and CancelResponse must still say: bare, no `reason`. */
 const BARE_ARM = "  | { ok: false; error: string };";
 
-describe("cf#846: the vendored InvokeFailureReason block is byte-identical in all 32 contracts", () => {
-  it("there are 32 module contracts (denominator, so a shrinking sweep cannot pass)", () => {
-    expect(contractPaths().length).toBe(32);
+describe("cf#846: the vendored InvokeFailureReason block is byte-identical in every module contract", () => {
+  it("the contract count is the module count (denominator, so a shrinking sweep cannot pass)", () => {
+    expect(contractPaths().length).toBe(30);
   });
 
   it("every contract carries the canonical block EXACTLY, derived from core", () => {
@@ -164,11 +164,10 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
     // If a global replace had been done, zero bare arms would remain and this row would fail.
     //
     // TWO COUNTS, ON PURPOSE, because they differ and the difference is a trap I walked into while
-    // writing this test. 29 arms are OWNED by PollResponse (27) and CancelResponse (2), but only 28
-    // of them are a standalone `  | { ok: false; error: string };` LINE: one CancelResponse is
-    // declared inline as `export type CancelResponse = { ok: true } | { ok: false; error: string };`.
-    // Asserting 30 against a line-matcher fails, and the number that is "wrong" depends entirely on
-    // which instrument you used. So both are pinned and named.
+    // writing this test. One CancelResponse is declared inline as
+    // `export type CancelResponse = { ok: true } | { ok: false; error: string };` and is not a
+    // standalone bare-arm line. cf#1075 removed three contracts and added one, so the pins moved
+    // with the tree: 26 standalone lines plus that 1 inline cancel.
     let standalone = 0;
     let inlineCancel = 0;
     for (const p of contractPaths()) {
@@ -178,8 +177,8 @@ describe("cf#846: PollResponse and CancelResponse are EXCLUDED, and that is asse
         (l) => l.startsWith("export type CancelResponse") && l.includes("ok: false; error: string"),
       ).length;
     }
-    expect(standalone).toBe(28);
+    expect(standalone).toBe(26);
     expect(inlineCancel).toBe(1);
-    expect(standalone + inlineCancel).toBe(29); // == PollResponse 27 + CancelResponse 2
+    expect(standalone + inlineCancel).toBe(27);
   });
 });

@@ -32,17 +32,7 @@ export const TALKING_VOICE_HONOR = [
     label: "Uses the sample you kept. Same voice on every shot.",
   },
   {
-    name: "seedance",
-    honor: "none" as const,
-    label: "RunPod 1.5 cannot lock the sample. Use Cloudflare Seedance.",
-  },
-  {
     name: "cf-veo",
-    honor: "neighborhood" as const,
-    label: "Cannot lock the sample you heard. Same description, not the same take.",
-  },
-  {
-    name: "google-veo",
     honor: "neighborhood" as const,
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
@@ -57,7 +47,7 @@ export const TALKING_VOICE_HONOR = [
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
   {
-    name: "vidu-q3",
+    name: "cf-vidu-q3-turbo",
     honor: "neighborhood" as const,
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
@@ -82,11 +72,8 @@ export const TALKING_VOICE_HONOR = [
  *  deploy mode over, except the authority here is the live registry rather than a mode flag.
  *
  *  A door installed WITHOUT a row here still gets no row: the honest gap is silence, not invented copy.
- *  MEASURED 2026-09-27 against the 17 motion.backend modules in `modules/`, reading each manifest's
- *  `usage` BLOCK (not a file-wide grep, which reports three silent doors as talking): the 9 rows here
- *  are exactly the 9 doors `doorCanSpeakLines` accepts, so today there is no gap in either direction.
- *  The table was never wrong about WHICH doors talk; it was wrong to ship all 9 to a deploy that
- *  installs fewer. */
+ *  cf#1075 dropped the RunPod seedance, google-veo, and vidu-q3 rows and added
+ *  cf-vidu-q3-turbo. A door installed without a row here still gets no row. */
 export function talkingVoiceHonorFor(modules: RegisteredModule[]): typeof TALKING_VOICE_HONOR {
   const installed = new Set(servingForHook(modules, "motion.backend").map((m) => m.name));
   return TALKING_VOICE_HONOR.filter((d) => installed.has(d.name));
