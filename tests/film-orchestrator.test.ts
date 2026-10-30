@@ -1313,7 +1313,8 @@ function clipsRecoveryEnv(job: FilmJob, clipJob: ClipJobLike, clipKeys: string[]
         else if (key === clipDoc) clipStored = body;
       },
       list: async ({ prefix }: { prefix: string }) => ({
-        objects: clipKeys.filter((k) => k.startsWith(prefix)).map((k) => ({ key: k, uploaded: new Date() })),
+        // Settled and from this run: older than core's 5 minute UNSTAMPED_SETTLE_MS, newer than created_at.
+        objects: clipKeys.filter((k) => k.startsWith(prefix)).map((k) => ({ key: k, uploaded: new Date(Date.now() - 6 * 60_000) })),
         truncated: false,
       }),
     },
@@ -1350,7 +1351,7 @@ describe("advanceFilmJob clips stall recovery (#139)", () => {
       { shot_id: "shot_02", status: "done", clip_key: "renders/neon/clips/shot_02_i2v.mp4" },
       { shot_id: "shot_03", status: "pending", poll: "phantom-3" },
     ],
-    created_at: Date.now(),
+    created_at: Date.now() - 7 * 60_000,
   });
   // clips_only so the recovered completion shortcuts to done (no finish modules bound in the test env).
   const stalledFilm = (over: Partial<FilmJob> = {}): FilmJob => ({
@@ -1418,7 +1419,7 @@ describe("advanceFilmJob clips stall recovery (#139)", () => {
         { shot_id: "shot_02", status: "done", clip_key: "renders/neon/clips/shot_02_i2v.mp4" },
         { shot_id: "shot_03", status: "failed", error: "own-gpu job not found on RunPod (#141)" },
       ],
-      created_at: Date.now(),
+      created_at: Date.now() - 7 * 60_000,
     };
     const { env, readClip } = clipsRecoveryEnv(stalledFilm(), failedJob, [
       "renders/neon/clips/shot_01_i2v.mp4",
@@ -1474,7 +1475,7 @@ describe("advanceFilmJob clips stall recovery (#139)", () => {
         { shot_id: "shot_02", status: "pending", poll: "phantom-2" },
         { shot_id: "shot_03", status: "pending", poll: "phantom-3" },
       ],
-      created_at: Date.now(),
+      created_at: Date.now() - 7 * 60_000,
     };
     // module FAST-FAILS every poll (#142), but every clip is in R2.
     const { env, readClip, readFilm } = clipsRecoveryEnv(fresh, allPending, [
@@ -1761,7 +1762,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
     phase: "mux" as const,
     silent_film_key: "renders/film-finish-obs/film-silent.mp4",
-    audio_key: "renders/film-finish-obs/audio.mp4",
+    audio_key: "renders/film-finish-obs/audio.mp4", beats_read: true,
     mux_output_key: "renders/film-finish-obs/film-audio.mp4",
     film_titles: { title: { text: "NEON HALFLIFE" } },
     created_at: 0,
@@ -1848,7 +1849,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     const job = {
       film_id: filmId, project: "p", scenes: [{ shot_id: "s1", prompt: "x", seconds: 3 }],
       phase: "mux" as const, silent_film_key: "renders/" + filmId + "/film-silent.mp4",
-      audio_key: "renders/" + filmId + "/audio.mp4", mux_output_key: assembled,
+      audio_key: "renders/" + filmId + "/audio.mp4", beats_read: true, mux_output_key: assembled,
       film_titles: { title: { text: "NEON" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -1914,7 +1915,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
       scenes: [{ shot_id: "s1", prompt: "x", seconds: 3 }, { shot_id: "s2", prompt: "y", seconds: 2 }],
       dialogue_lines: [{ shot_id: "s1", text: "Hello there" }, { shot_id: "s2", text: "Goodbye" }],
       phase: "mux" as const, silent_film_key: `renders/${filmId}/film-silent.mp4`,
-      audio_key: `renders/${filmId}/audio.mp4`, mux_output_key: assembled,
+      audio_key: `renders/${filmId}/audio.mp4`, beats_read: true, mux_output_key: assembled,
       film_titles: { title: { text: "NEON HALFLIFE" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -1982,7 +1983,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
       scenes: [{ shot_id: "s1", prompt: "x", seconds: 3 }],
       dialogue_lines: [{ shot_id: "s1", text: "Hello there" }],
       phase: "mux" as const, silent_film_key: `renders/${filmId}/film-silent.mp4`,
-      audio_key: `renders/${filmId}/audio.mp4`, mux_output_key: assembled,
+      audio_key: `renders/${filmId}/audio.mp4`, beats_read: true, mux_output_key: assembled,
       film_titles: { credits: { lines: ["directed by you"] } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -2073,7 +2074,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
     const job = {
       film_id: FILM_ID, project: "p", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
       phase: "mux" as const, silent_film_key: `renders/${FILM_ID}/film-silent.mp4`,
-      audio_key: `renders/${FILM_ID}/audio.mp4`, mux_output_key: MUX_KEY,
+      audio_key: `renders/${FILM_ID}/audio.mp4`, beats_read: true, mux_output_key: MUX_KEY,
       film_titles: { title: { text: "NEON HALFLIFE" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -2136,7 +2137,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
     const job = {
       film_id: FILM_ID, project: "p", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
       phase: "mux" as const, silent_film_key: `renders/${FILM_ID}/film-silent.mp4`,
-      audio_key: `renders/${FILM_ID}/audio.mp4`, mux_output_key: MUX_KEY,
+      audio_key: `renders/${FILM_ID}/audio.mp4`, beats_read: true, mux_output_key: MUX_KEY,
       film_titles: { title: { text: "NEON HALFLIFE" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -2377,7 +2378,7 @@ const masterJob = (): FilmJob => ({
   motion_backend: "own-gpu", motion_config: {}, finish_config: {},
   keyframe_binding: null, phase: "master",
   silent_film_key: "renders/film-master/film.mp4",
-  audio_key: "renders/neon/audio/bed.wav",
+  audio_key: "renders/neon/audio/bed.wav", beats_read: true,
   master: { chain: ["MODULE_AUDIO_MASTER"], idx: 0, applied: [], degraded: [] },
   created_at: Date.now(),
 });
@@ -2877,7 +2878,8 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob };
   }
 
-  const asmJob = (over: object = {}) => ({
+  // Partial<FilmJob>, not object, so a field core removes is a compile error at the next repin (cf#1027).
+  const asmJob = (over: Partial<FilmJob> = {}) => ({
     film_id: "film-519-asm",
     project: "p",
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }, { shot_id: "shot_02", prompt: "y", seconds: 3 }],
@@ -2896,7 +2898,7 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
     phase: "mux" as const,
     silent_film_key: "renders/film-519-mux/film-silent.mp4",
-    audio_key: "renders/film-519-mux/audio.mp4",
+    audio_key: "renders/film-519-mux/audio.mp4", beats_read: true,
     created_at: 0,
     ...over,
   });
@@ -2919,29 +2921,32 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     }).catch((e) => { spy.mockRestore(); throw e; });
   }
 
-  it("assemble + VIDEO_FINISH_URL unset -> COMPLETED delivering the per-shot clips, loud status + event", async () => {
+  it("assemble + VIDEO_FINISH_URL unset -> FAILED, per-shot clips retained, loud status + event", async () => {
     const { env, read } = degradeEnv(asmJob()); // no VIDEO_FINISH_URL
     const { result: r, event } = await captureEvent(() => advanceFilmJob(orch(env), "film-519-asm"));
-    expect(r?.job.phase).toBe("done"); // NOT failed -- the clips are delivered
+    expect(r?.job.phase).toBe("failed"); // core 1.26.0: the join did not run, so this is not a film
     expect(r?.job.finish_unavailable?.at).toBe("assemble");
-    expect(r?.job.finish_unavailable?.delivered).toBe("clips");
+    expect(r?.job.finish_unavailable?.retained).toBe("clips");
+    expect(r?.job.finish_unavailable?.delivered).toBeUndefined();
     expect(r?.job.finish_unavailable?.clips?.map((c) => c.shot_id)).toEqual(["shot_01", "shot_02"]);
     expect(r?.job.film_key).toBeUndefined(); // there is no single assembled film
     // the degrade is a persisted, observable state (not a silent green)
     expect(read().finish_unavailable?.at).toBe("assemble");
     // and a loud structured event on the observability channel
     expect(event?.at).toBe("assemble");
-    expect(event?.delivered).toBe("clips");
+    expect(event?.retained).toBe("clips");
     expect(event?.clips).toBe(2);
   });
 
-  it("assemble + container UNREACHABLE after the bounded retry -> same complete-with-clips degrade", async () => {
-    // assemble_attempts at the cap-1 so this tick exhausts (502 is a transient gateway status, no backoff).
-    const { env } = degradeEnv(asmJob({ assemble_attempts: 5 }), { door: { status: 502 } });
+  it("assemble + a refused submit -> FAILED on the first tick, with no attempt counter", async () => {
+    // core 1.26.0 removed the attempt counters, so there is no cap to sit below. vfAsyncDoor answers
+    // this fixture's submit with a 500 carrying the text "502", so this is the refusal path. The
+    // gateway path, with clips retained, is tested in core.
+    const { env } = degradeEnv(asmJob(), { door: { status: 502 } });
     const r = await advanceFilmJob(orch(env), "film-519-asm");
-    // Async submit that never returns a jobId is a failed assemble in core 1.21.2.
     expect(r?.job.phase).toBe("failed");
     expect(r?.job.error).toMatch(/async submit|502/);
+    expect(r?.job.finish_unavailable).toBeUndefined();
   });
 
   it("assemble + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
@@ -2952,16 +2957,18 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     expect(r?.job.finish_unavailable).toBeUndefined();
   });
 
-  it("mux + VIDEO_FINISH_URL unset -> COMPLETED shipping the SILENT film, loud status + event", async () => {
+  it("mux + VIDEO_FINISH_URL unset + a staged song -> FAILED, silent cut retained, loud status + event", async () => {
     const { env, read } = degradeEnv(muxJob()); // no VIDEO_FINISH_URL, no film.finish/notify modules
     const { result: r, event } = await captureEvent(() => advanceFilmJob(orch(env), "film-519-mux"));
-    expect(r?.job.phase).toBe("done"); // NOT failed -- the silent film ships
+    expect(r?.job.phase).toBe("failed"); // core 1.26.0: the song was not attached, so this is not done
     expect(r?.job.finish_unavailable?.at).toBe("mux");
-    expect(r?.job.finish_unavailable?.delivered).toBe("silent_film");
-    expect(r?.job.film_key).toBe("renders/film-519-mux/film-silent.mp4"); // the delivered (silent) film
+    expect(r?.job.finish_unavailable?.retained).toBe("silent_film");
+    expect(r?.job.finish_unavailable?.delivered).toBeUndefined();
+    expect(r?.job.film_key).toBeUndefined();
+    expect(read().silent_film_key).toBe("renders/film-519-mux/film-silent.mp4");
     expect(read().finish_unavailable?.at).toBe("mux");
     expect(event?.at).toBe("mux");
-    expect(event?.delivered).toBe("silent_film");
+    expect(event?.retained).toBe("silent_film");
   });
 
   it("mux + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
@@ -3045,7 +3052,7 @@ describe("#521 discovery threaded once per tick (no per-leg module.json fan-out)
       scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
       phase: "mux" as const,
       silent_film_key: "renders/film-521-tick/silent.mp4",
-      audio_key: "renders/film-521-tick/audio.mp4",
+      audio_key: "renders/film-521-tick/audio.mp4", beats_read: true,
       film_titles: { title: { text: "NEON" } },
       created_at: 0,
     };

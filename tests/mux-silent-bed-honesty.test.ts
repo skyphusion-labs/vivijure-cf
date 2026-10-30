@@ -57,20 +57,22 @@ const muxJob = (over: object = {}) => ({
   silent_film_key: SILENT,
   audio_key: "renders/film-mux-honesty/bed_mastered.wav",
   mux_output_key: OUT,
+  beats_read: true, // core >= 1.26.0 reads a staged song before mux; this file is about the mux door
   created_at: 0,
   ...over,
 });
 
 describe("mux honesty: a dropped bed is an OBSERVABLE degrade, never a silent green (F2)", () => {
-  it("hasAudio:false -> finish_unavailable at mux, ships the silent film, phase done", async () => {
+  it("hasAudio:false with a staged song fails the film; the silent cut is not called done", async () => {
     const { env, read } = muxEnv(muxJob(), { ok: true, key: OUT, hasAudio: false });
     const r = await advanceFilmJob(env, "film-mux-honesty");
-    expect(r?.job.phase).toBe("done");
+    expect(r?.job.phase).toBe("failed");
     expect(r?.job.finish_unavailable?.at).toBe("mux");
-    expect(r?.job.finish_unavailable?.delivered).toBe("silent_film");
+    expect(r?.job.finish_unavailable?.retained).toBe("silent_film");
+    expect(r?.job.finish_unavailable?.delivered).toBeUndefined();
     expect(r?.job.finish_unavailable?.reason).toMatch(/could not attach the audio bed/i);
-    // the honest silent film (the assembled silent key), NOT the track-less muxed key dressed up as done
-    expect(r?.job.film_key).toBe(SILENT);
+    expect(r?.job.film_key).toBeUndefined();
+    expect(read().silent_film_key).toBe(SILENT);
     expect(read().finish_unavailable?.at).toBe("mux"); // persisted
   });
 
