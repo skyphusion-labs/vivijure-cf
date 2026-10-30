@@ -106,6 +106,19 @@ cid="$(docker run -d --pull=never \
   die 3 "docker run failed, so the image is not even startable"
 }
 
+# BEFORE ANY VERDICT. A container can die before its publish is visible (cf#1052), so a citation
+# placed after the port read is skipped on that path, and whether it appears depends on a race.
+# CITE THE ARTIFACT, NOT THE NAME. A tag is mutable and says nothing about which bytes ran, so a
+# report that quotes only "video-finish:ci" cannot be checked later and cannot distinguish a broken
+# image from its fix. The id is read off the CONTAINER (`.Image`), i.e. the image this run actually
+# used, rather than by resolving the tag a second time. RepoDigests exists only for an image that has
+# been pushed or pulled: a locally built one legitimately has none, and saying so is better than
+# printing an empty field that reads like a missing value.
+image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || echo unknown)"
+repo_digests="$(docker image inspect --format '{{if .RepoDigests}}{{join .RepoDigests ","}}{{else}}(none: locally built, never pushed){{end}}' "$IMAGE" 2>/dev/null || echo unknown)"
+echo "container-smoke: image id ${image_id}"
+echo "container-smoke: repo digests ${repo_digests}"
+
 mapped="$(docker port "$cid" "${PORT}"/tcp 2>/dev/null | head -1 | sed 's/.*://')"
 # NOT "did you EXPOSE it?": `-p` publishes regardless of EXPOSE, so an empty mapping here means the
 # daemon reported no binding for the port at all. Blaming EXPOSE would send the next reader to a
@@ -124,17 +137,6 @@ if [ -z "${mapped:-}" ]; then
 fi
 url="http://127.0.0.1:${mapped}${PATH_}"
 echo "container-smoke: container ${cid} mapped ${PORT} -> 127.0.0.1:${mapped}, probing ${url}"
-
-# CITE THE ARTIFACT, NOT THE NAME. A tag is mutable and says nothing about which bytes ran, so a
-# report that quotes only "video-finish:ci" cannot be checked later and cannot distinguish a broken
-# image from its fix. The id is read off the CONTAINER (`.Image`), i.e. the image this run actually
-# used, rather than by resolving the tag a second time. RepoDigests exists only for an image that has
-# been pushed or pulled: a locally built one legitimately has none, and saying so is better than
-# printing an empty field that reads like a missing value.
-image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || echo unknown)"
-repo_digests="$(docker image inspect --format '{{if .RepoDigests}}{{join .RepoDigests ","}}{{else}}(none: locally built, never pushed){{end}}' "$IMAGE" 2>/dev/null || echo unknown)"
-echo "container-smoke: image id ${image_id}"
-echo "container-smoke: repo digests ${repo_digests}"
 
 # ELAPSED WALL TIME, not an attempt count. The first version counted iterations and reported "within
 # ${TIMEOUT}s", but each iteration can burn the curl -m 5 budget plus a sleep, so the message was
