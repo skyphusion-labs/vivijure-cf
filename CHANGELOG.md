@@ -5,6 +5,12 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.42.2 -- 2026-10-31
+
+### chore(deps): vivijure-core 1.28.4
+
+A finish retry that succeeds no longer reads as degraded. Archived clip takes are bounded at 3 per clip: a render copies only the clip its door replaces, and older copies go when that shot next renders.
+
 ## v1.42.1 -- 2026-10-30
 
 ### fix(modules): a failure after a track or line is bought no longer buys it again (#1107)
