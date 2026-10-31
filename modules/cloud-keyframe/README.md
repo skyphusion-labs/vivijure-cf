@@ -61,6 +61,16 @@ A consistency **probe** across 4 different shots (varied pose / setting / framin
 one character's face, hair, freckles, and wardrobe on **both** models; nano-banana-pro is the quality
 leader, FLUX-2 klein-9b the cost/speed leader.
 
+## Flip-safe character design
+
+Reference images hold a character's overall look. They do not hold left and right.
+
+- **A one-sided mark is not reliable on this route.** An eye patch or a single armband can land on either side from shot to shot.
+- **Use marks that read the same when mirrored.** Use a centered mark, or a matched pair: goggles centered on the forehead, or an armband on each arm. This removes the wrong-side failure.
+- **Make marks bold.** A fine line such as a thin scar can drop out, mostly when the face turns.
+
+This does not promise drift-free output. A shot can still add a prop, draw an extra hand, or move a mark, so check every still before you animate it.
+
 ## Configuration
 
 Config options (the planner-projected `config_schema`; the core clamps each against it):
