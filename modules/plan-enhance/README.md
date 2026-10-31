@@ -50,8 +50,17 @@ Opus): `GATEWAY_ID`, `CF_AIG_TOKEN`. Optional var `ENHANCE_MODEL` overrides the 
 
 ## Soft-degrade
 
-A failure is **data**, never an exception. No model available, or an unparseable reply, returns the
-storyboard passed through unchanged with an honest note rather than failing pre-production.
+A failure is **data**, never an exception. On the director pass, no model available, or an
+unparseable or truncated reply, returns the storyboard passed through unchanged with an honest note
+rather than failing pre-production. The `plan` and `refine` modes have no plan to pass through, so
+the same miss returns `ok: false` with the true reason.
+
+## Output budget
+
+`plan`, `refine` and the director pass send `max_tokens` 21000; `chat` sends 4096. Thinking tokens
+count against it. The module does not stream, and 21000 is the largest round value under the
+non-streaming ceiling the Anthropic SDK enforces (21333). A reply cut off at the limit is reported
+with `stop_reason max_tokens`, never parsed. `plan` and `refine` skip the AI Gateway cache.
 
 ## License
 

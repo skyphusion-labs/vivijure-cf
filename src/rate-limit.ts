@@ -60,7 +60,7 @@ export const SPEND_RETRY_AFTER_SECONDS = 60;
 //
 // cf#256: the PLANNER entry points are spend routes in exactly the sense this list means, and were
 // missing. Every route below that dispatches the plan.enhance hook runs an operator-billed frontier
-// model (the module model enum defaults to Opus, 4096 max_tokens per call, keyless on Unified
+// model (the module model enum defaults to Opus, up to 21000 max_tokens per call, keyless on Unified
 // Billing) with a caller-supplied system_message + message. Unmetered, that is a general-purpose AI
 // proxy for anyone holding a studio token. The file claimed this surface was auditable in one
 // place; until now that claim was false.
