@@ -28,7 +28,7 @@ export function buildKlingBody(input: MotionBackendInput, cfg: Record<string, un
       // RunPod DOCUMENTS the parameter as required with both values valid, and prices 720p at double,
       // so do not re-add the enum from their docs: the docs are wrong and the knob costs the user money.
       size: "480p",
-      enable_safety_checker: cfg.enable_safety_checker === true,
+      enable_safety_checker: true,
     },
   };
 }

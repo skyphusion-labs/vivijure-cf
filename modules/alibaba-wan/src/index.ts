@@ -43,7 +43,7 @@ const ENDPOINT_ID = "wan-2-6-i2v";
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
@@ -53,7 +53,6 @@ const MANIFEST: ModuleManifest = {
     // $0.15/s against $0.10/s at 720p, so this knob costs real money and 720p stays the default.
     size: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "output size" },
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
-    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",

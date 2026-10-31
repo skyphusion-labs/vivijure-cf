@@ -50,7 +50,7 @@ export function buildWanBody(input: MotionBackendInput, cfg: Record<string, unkn
     shot_type: "single",
     seed: -1,
     enable_prompt_expansion: cfg.enable_prompt_expansion === true,
-    enable_safety_checker: cfg.enable_safety_checker === true,
+    enable_safety_checker: true,
   };
   // Driving audio is the shot LINE (WAV/MP3), never the Cast sample.
   if (typeof input.audio_url === "string" && input.audio_url) {

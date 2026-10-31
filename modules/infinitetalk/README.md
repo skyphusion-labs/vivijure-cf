@@ -4,7 +4,7 @@ A **`motion.backend`** module (vivijure-module/2): the **Kuaishou Kling V2.1 Pro
 image-to-video backend, run on RunPod (`infinitetalk`). It turns one shot's start keyframe
 into a clip. Distinctive trait: Kling accepts only a **discrete duration enum {5, 10} seconds** (not
 a continuous range), and exposes generation knobs other backends don't -- a guidance scale, a
-negative prompt, and a safety checker.
+and a negative prompt. The provider safety filter is always on.
 
 ## Where it fits
 
@@ -51,8 +51,6 @@ Selecting a different model means binding a different `motion.backend` module, n
 schema):
 - `guidance_scale` (float, `0`--`1`, default `0.5`) -- prompt-adherence strength.
 - `negative_prompt` (string, default `""`) -- content to steer away from.
-- `enable_safety_checker` (bool, default `false`) -- provider safety filter (off: we already refuse
-  CSAM); becomes `true` only when explicitly set.
 - Per-shot `seconds` snaps **up** to the nearest of **{5, 10}** in code (not a knob).
 
 ## Contract
@@ -61,8 +59,8 @@ schema):
   (cloud i2v)"), `ui { section: "motion", order: 20 }`.
 - **Input** (`MotionBackendInput`): `shot_id`, `keyframe_url` (a presigned, fetchable URL of the
   start keyframe), `prompt`, `seconds`.
-- **Config** (`config_schema`): `guidance_scale` (0--1, default 0.5), `negative_prompt`,
-  `enable_safety_checker` (default off). Per-shot `seconds` snaps **up** to the nearest allowed
+- **Config** (`config_schema`): `guidance_scale` (0--1, default 0.5), `negative_prompt`. The provider safety filter is always on and is not
+  configurable. Per-shot `seconds` snaps **up** to the nearest allowed
   duration in **{5, 10}** (never shorter than the shot, which would clip the dialogue).
 - **Output** (`MotionBackendOutput`): `shot_id`, `clip_key` (the stored clip), `fps` (24), `frames`.
 - **Async**: cloud i2v takes minutes, longer than a Worker request can hold. `POST /invoke` submits

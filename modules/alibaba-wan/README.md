@@ -60,6 +60,7 @@ schema):
 - **Input** (`MotionBackendInput`): `shot_id`, `keyframe_url` (a presigned, fetchable URL of the
   start keyframe), `prompt`, `seconds`.
 - **Config** (`config_schema`): `enable_prompt_expansion` (default off -- the prompt is sent as-is).
+  The provider safety filter is always on and is not configurable.
   Output size is **720p**; per-shot `seconds` snaps **up** to the nearest allowed duration in **{5,
   10, 15}** (never shorter than the shot, which would clip the dialogue).
 - **Output** (`MotionBackendOutput`): `shot_id`, `clip_key` (the stored clip), `fps` (24), `frames`.

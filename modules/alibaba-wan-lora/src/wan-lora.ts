@@ -69,7 +69,7 @@ export function parseLoras(raw: unknown): LoraRef[] {
 
 /** The RunPod /run body for `wan-2-2-t2v-720-lora`, mapped from the hook input + the clamped module
  *  config. Only documented fields are sent. LoRA arrays are included ONLY when non-empty (empty =
- *  plain Wan i2v); seed defaults to -1 (random); the safety checker defaults on. */
+ *  plain Wan i2v); seed defaults to -1 (random); the safety checker is always on. */
 export function buildWanLoraBody(input: MotionBackendInput, cfg: Record<string, unknown>): {
   input: Record<string, unknown>;
 } {
@@ -82,7 +82,7 @@ export function buildWanLoraBody(input: MotionBackendInput, cfg: Record<string, 
     image: input.keyframe_url, // THE KEYFRAME: the presigned start-image URL the core hands us
     duration: clampDuration(input.seconds),
     seed,
-    enable_safety_checker: cfg.enable_safety_checker === true,
+    enable_safety_checker: true,
   };
   if (high.length) body.high_noise_loras = high;
   if (low.length) body.low_noise_loras = low;

@@ -42,7 +42,7 @@ const ENDPOINT_ID = "infinitetalk";
 
 const MANIFEST: ModuleManifest = {
   name: "infinitetalk",
-  version: "0.2.0",
+  version: "0.2.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (InfiniteTalk)" }],
@@ -50,7 +50,6 @@ const MANIFEST: ModuleManifest = {
   // deliver 832x464 -- so offering the choice charged the user a published $0.50 against $0.25 for
   // byte-identical pixels. Removing a published config field is a breaking contract change: 0.1.1 -> 0.2.0.
   config_schema: {
-    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",

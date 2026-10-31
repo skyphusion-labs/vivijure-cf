@@ -39,12 +39,11 @@ describe("infinitetalk: the size knob is gone and must stay gone (cf#935)", () =
   it("carries the breaking version bump that removing a published config field requires", async () => {
     const res = await worker.fetch(new Request("https://m/module.json"), {} as never);
     const manifest = (await res.json()) as { version: string };
-    expect(manifest.version).toBe("0.2.0");
+    expect(manifest.version).toBe("0.2.1");
   });
 
   it("still honours the rest of the config surface, so this is a targeted removal", () => {
-    expect(buildKlingBody(INPUT, { enable_safety_checker: true }).input.enable_safety_checker).toBe(true);
-    expect(buildKlingBody(INPUT, {}).input.enable_safety_checker).toBe(false);
+    expect(buildKlingBody(INPUT, {}).input.enable_safety_checker).toBe(true);
   });
 });
 

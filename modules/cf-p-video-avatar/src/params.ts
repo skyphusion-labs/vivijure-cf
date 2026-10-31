@@ -57,7 +57,7 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
     voice_prompt: DEFAULT_VOICE_PROMPT,
     negative_prompt: "",
     strength_negative_prompt: 0.5,
-    disable_safety_filter: true,
+    disable_safety_filter: false,
     disable_prompt_upsampling: false,
   };
 }
