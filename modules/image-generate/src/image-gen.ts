@@ -92,8 +92,14 @@ export function proxiedParams(model: string, prompt: string, imageInputs: string
 }
 
 export function extractProxiedImageUrl(result: unknown): string | null {
-  const r = result as Record<string, unknown> | null;
-  if (!r || typeof r !== "object") return null;
+  const outer = result as Record<string, unknown> | null;
+  if (!outer || typeof outer !== "object") return null;
+  // AI.run can wrap the provider's output in `{ state, result }`. cloud-keyframe and cast-image have
+  // always read this shape, and this module did not (vivijure-cf#1141).
+  const inner = outer.result;
+  const r = (inner && typeof inner === "object" && !Array.isArray(inner) ? inner : outer) as Record<string, unknown>;
+  // schema-output.json 2026-10-31: google, xai, recraft and openai publish `image`; seedream `images`.
+  if (typeof r.image === "string" && r.image.length > 0) return r.image;
   const direct = r.url ?? r.image_url ?? r.output_url;
   if (typeof direct === "string") return direct;
   const arr = (r.data ?? r.images ?? r.output) as unknown;
