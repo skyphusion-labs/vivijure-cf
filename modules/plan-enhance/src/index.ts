@@ -27,8 +27,7 @@ import {
   parsePlanStoryboard,
   scenePrompts,
   type ChatMessage,
-  type Intensity,
-} from "./enhance";
+  type Intensity, capEnhanced, MAX_SHOT_WORDS } from "./enhance";
 import { plannerAiMockEnabled, mockPlannerRaw } from "./mock";
 import {
   pickProvider,
@@ -263,11 +262,14 @@ async function runEnhance(
     };
   }
 
+  const { prompts: capped, kept } = capEnhanced(enhanced, prompts);
+  const notes = [`enhanced ${enhanced.length - kept} shot(s) at ${intensity} intensity via ${model}`];
+  if (kept > 0) notes.push(`kept the original prompt on ${kept} shot(s): the rewrite was over ${MAX_SHOT_WORDS} words`);
   return {
     ok: true,
     output: {
-      storyboard: mergeEnhanced(storyboard, enhanced),
-      notes: [`enhanced ${enhanced.length} shot(s) at ${intensity} intensity via ${model}`],
+      storyboard: mergeEnhanced(storyboard, capped),
+      notes,
     },
   };
 }
