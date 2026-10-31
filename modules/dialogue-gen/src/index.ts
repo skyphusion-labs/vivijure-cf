@@ -84,7 +84,7 @@ const MANIFEST: ModuleManifest = {
   provides: [{ id: "aura1", label: "Dialogue voices (Deepgram Aura-1)" }],
   // No user-facing knobs: the voice is the speaking cast member's assigned voice_id (resolved by the
   // core), and the line is the shot's dialogue. Both are authored upstream, not module config.
-  ui: { section: "dialogue", icon: "mic", order: 10 },
+  ui: { section: "dialogue", icon: "mic", order: 5 },
 };
 
 function json(body: unknown, status = 200): Response {
