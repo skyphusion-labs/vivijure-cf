@@ -54,6 +54,8 @@ export interface AnimateFromPreviewArgs {
   castLoras?: Record<string, string>;
   /** cf#528: panel-supplied submit key. Forwarded into startFilmFromKeyframes. */
   idempotency_key?: string;
+  /** cf#1166: keep lines, clips and finish steps whose inputs are proven identical. Retry only. */
+  reuse_finished?: boolean;
 }
 
 function resolveCloudModel(requested: string | undefined, allowed: string[]): string | undefined {
@@ -339,6 +341,7 @@ export async function animateFromPreview(
       dialogue_lines,
       voice_ref_keys,
       idempotency_key: readIdempotencyKey({ idempotency_key: args.idempotency_key }),
+      reuse_finished: args.reuse_finished === true,
     } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] },
     modules,
   );

@@ -10,12 +10,13 @@ import { describe, it, expect, vi } from "vitest";
 // the keyframe-burning submit paths (hStartFilm, hSubmitRender). Scatter submit is retired.
 
 // ---- handler-wiring stubs (same pattern as motion-backend-preflight.test.ts) ---------------------
-const h = vi.hoisted(() => ({ started: 0 }));
+const h = vi.hoisted(() => ({ lastArgs: {} as Record<string, unknown>, started: 0 }));
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
     ...actual,
     startFilmJob: vi.fn(async (_env: unknown, args: { scenes?: unknown }) => {
+      h.lastArgs = args;
       h.started++;
       return { film_id: "film-577-test", project: "p", phase: "keyframe", scenes: args.scenes, created_at: 0 };
     }),
@@ -194,4 +195,24 @@ describe("hSubmitRender motion override-config preflight (#577 handler)", () => 
     expect(res.status).toBe(201);
     expect(h.started).toBe(1);
   });
+});
+
+describe("hStartFilm reuse_finished (cf#1166)", () => {
+  for (const [label, value, expected] of [
+    ["exact true turns it on", true, true],
+    ["omitted stays off", undefined, false],
+    ["the string true stays off", "true", false],
+    ["the number 1 stays off", 1, false],
+  ] as const) {
+    it(label, async () => {
+      h.started = 0;
+      const res = await worker.fetch(
+        post("/api/render/film", { bundle_key: "bundles/verify.tar.gz", scenes: SCENES, motion_backend: "seedance", reuse_finished: value }),
+        env(), ctx,
+      );
+      expect(res.status).toBe(201);
+      expect(h.started).toBe(1);
+      expect(h.lastArgs.reuse_finished).toBe(expected);
+    });
+  }
 });

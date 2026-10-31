@@ -5,6 +5,10 @@ for new features). Newest first.
 
 ## Unreleased
 
+### fix(retry): a retry keeps what it already paid for (#1166)
+
+Retry now asks core to keep each line, clip and finish step whose inputs are proven identical, and buys only the rest. `POST /api/render/film` takes the same choice as `reuse_finished: true`. The default on that door stays off. Needs core at `39c6a25` or later.
+
 ## v1.42.2 -- 2026-10-31
 
 ### fix(finish): title cards, captions, mux and frames take a film over 256 MB (#1129)

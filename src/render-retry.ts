@@ -139,6 +139,7 @@ export async function retryFailedRender(
       // name lets animateFromPreview pick the hosted spoken or silent door.
       motionBackend: rawMotion,
       idempotency_key,
+      reuse_finished: true, // cf#1166, same as the full retry below.
     });
     if (!r.ok) return { ok: false, error: r.error, status: r.status ?? 400 };
     return { ok: true, view: r.view as RunpodJobView, mode: row.mode };
@@ -205,6 +206,10 @@ export async function retryFailedRender(
       keyframes_only: keyframesOnly,
       dialogue_lines,
       idempotency_key,
+      // cf#1166: a retry re-runs a film that already paid for its lines, clips and finish steps.
+      // Core keeps each one only when its inputs are proven identical, so a changed input still
+      // rebuys. Off on every door except this one and an explicit submit.
+      reuse_finished: true,
     },
     modules,
   );
