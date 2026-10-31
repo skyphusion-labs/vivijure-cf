@@ -135,7 +135,7 @@ describe("cloud-keyframe pure logic", () => {
 
   it("composePrompt handles a character-less shot (no style) cleanly", () => {
     const p = composePrompt("", "empty landscape, no one", [], {});
-    expect(p).toBe("empty landscape, no one");
+    expect(p).toBe("empty landscape, no one No written words, captions, subtitles or speech bubbles in the image.");
   });
 
   it("clampStyle keeps photoreal unless the value is anime", () => {
@@ -145,9 +145,9 @@ describe("cloud-keyframe pure logic", () => {
 
   it("composePrompt prepends an anime lead only on the anime path", () => {
     const photo = composePrompt("", "empty landscape, no one", [], {}, "photoreal");
-    expect(photo).toBe("empty landscape, no one");
+    expect(photo).toBe("empty landscape, no one No written words, captions, subtitles or speech bubbles in the image.");
     const anime = composePrompt("", "empty landscape, no one", [], {}, "anime");
-    expect(anime).toBe("anime illustration, cel-shaded, clean linework. empty landscape, no one");
+    expect(anime).toBe("anime illustration, cel-shaded, clean linework. empty landscape, no one No written words, captions, subtitles or speech bubbles in the image.");
   });
 
   it("composeEditPrompt names an anime still on the anime path", () => {
@@ -635,7 +635,7 @@ describe("cloud-keyframe plate-then-edit", () => {
     expect(done.ok, done.error).toBe(true);
     expect(genCalls.length).toBe(2);
     expect(genCalls[0].refCount).toBe(0);
-    expect(genCalls[0].prompt).toBe("diner booth at night");
+    expect(genCalls[0].prompt).toBe("diner booth at night No written words, captions, subtitles or speech bubbles in the image.");
     expect(genCalls[0].prompt).not.toMatch(/Featuring/);
     expect(genCalls[1].refCount).toBe(2); // plate + face
     expect(genCalls[1].prompt).toMatch(/location in the first image/);
@@ -749,5 +749,15 @@ describe("cloud-keyframe film-wide reference (cp#32, pure logic)", () => {
     // when the film key IS one of the shot char keys (cast:A on a shot featuring A), it is not doubled.
     const dup = { A: ["kA"], [FILM_REF_SLOT]: ["kA"] };
     expect(planShotRefs(dup, ["A"], 4)).toEqual({ charKeys: ["kA"], filmKeys: [] });
+  });
+});
+
+describe("cloud-keyframe forbids drawn text (cf#1155)", () => {
+  it("in the plate prompt", () => {
+    expect(composePrompt("", "Wren speaks on a pier", [], {})).toContain("No written words, captions, subtitles or speech bubbles");
+  });
+  it("in the edit prompt, on both looks", () => {
+    expect(composeEditPrompt("Wren speaks on a pier")).toContain("No written words, captions, subtitles or speech bubbles");
+    expect(composeEditPrompt("Wren speaks on a pier", "anime")).toContain("No written words, captions, subtitles or speech bubbles");
   });
 });

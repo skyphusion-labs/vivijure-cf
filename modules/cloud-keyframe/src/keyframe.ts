@@ -46,6 +46,10 @@ export function clampStyle(v: unknown): KeyframeStyle {
 
 const ANIME_LEAD = "anime illustration, cel-shaded, clean linework. ";
 
+/** Neither model path has a negative prompt, and a still of someone speaking invites a caption or a speech
+ *  bubble. A still's text stays on screen for the whole clip, beside the film's own captions (cf#1155). */
+export const NO_TEXT_CLAUSE = "No written words, captions, subtitles or speech bubbles in the image.";
+
 /** Compose one shot's gen prompt: the project style_prefix (when set) + the scene prompt + the
  *  identity text of each character in the shot (name + bible, capped). The reference PORTRAIT carries
  *  identity; this text reinforces it, the way cast-image folds the character bible into its prompts. */
@@ -69,7 +73,7 @@ export function composePrompt(
     if (piece) ids.push(piece);
   }
   const idText = ids.length ? ` Featuring ${ids.join("; ")}.` : "";
-  return `${lookLead}${lead}${scenePrompt.trim()}${idText}`;
+  return `${lookLead}${lead}${scenePrompt.trim()}${idText} ${NO_TEXT_CLAUSE}`;
 }
 
 /** Edit pass for Workers AI nano-banana-2: the first image is the scene plate, later
@@ -85,6 +89,7 @@ export function composeEditPrompt(scenePrompt: string, style?: unknown): string 
     + "Keep their faces, hair, skin, and wardrobe. "
     + "Do not move them onto a studio backdrop or grey paper. "
     + "Do not copy the reference framing. "
+    + NO_TEXT_CLAUSE + " "
     + scene
   );
 }
