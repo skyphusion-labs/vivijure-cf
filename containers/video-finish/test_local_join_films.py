@@ -13,8 +13,9 @@ than its video, which is the shape a real film has. In the join, each film's off
 The flash time is a decoded frame's timestamp. The tone time is its SAMPLE COUNT from the start of the audio, with
 no filter, which is what a player that plays samples in order hears.
 
-DO NOT MEASURE THIS WITH silencedetect OR ANY OTHER TIMESTAMP READING. A plain stream copy joins with overlapping
-audio packets: their timestamps stay right and the join carries more samples than they imply. silencedetect reads
+DO NOT MEASURE THIS WITH silencedetect OR ANY OTHER TIMESTAMP READING. A plain stream copy leaves audio packets
+at the joins with a shortened timestamp step and a full 1024 samples, so the join carries more samples than its
+timestamps imply. silencedetect reads
 0 ms on that file. Counted in samples, the same file runs late at every join. The plain copy is the control here.
 It must measure worse, or this test cannot tell the two apart.
 """

@@ -1840,8 +1840,8 @@ async def frames(req):
 # POST /async/join-films: join finished films, in order, into one film.
 #
 # The video is stream-copied, so a join costs no picture quality and little CPU. The audio is decoded and
-# encoded once across the whole join. A plain `-c copy` leaves overlapping audio packets at each join, so the join
-# holds more samples than its timestamps imply. Measured on 25 parts: 796 ms late at the last part when counted in
+# encoded once across the whole join. A plain `-c copy` leaves audio packets at the joins whose timestamp step is cut short while
+# they still decode to a full 1024 samples, so the join holds more samples than its timestamps imply. Measured on 25 parts: 796 ms late at the last part when counted in
 # samples, which is what a player playing samples in order hears, and 0 ms when read from timestamps. One audio
 # encode held the spread at or under 8.3 ms. test_local_join_films.py measures this by sample count. Keep it that way.
 #
