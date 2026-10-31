@@ -68,11 +68,17 @@ export function buildRunPodBody(
       project,
       shot_id: input.shot_id,
       clip_key: input.clip_key,
-      output_key: blenderKey(input.clip_key),
+      // The key the core presigned, when it sent one, so the door reports the object it actually wrote.
+      output_key: input.output_key ?? blenderKey(input.clip_key),
       job_type: cfg.job_type,
       preset: cfg.preset,
       strength: cfg.strength,
       ...(input.output_hash ? { output_hash: input.output_hash } : {}),
+      // cf#312: the credentialless path, as finish-upscale and finish-rife send it. Without these the
+      // door could only use R2 mode, and a door with no R2 env failed every shot (cf#1146).
+      ...(input.video_url ? { video_url: input.video_url } : {}),
+      ...(input.output_url ? { output_url: input.output_url } : {}),
+      ...(input.hash_url ? { hash_url: input.hash_url } : {}),
     },
   };
 }
