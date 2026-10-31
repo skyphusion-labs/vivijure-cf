@@ -16,7 +16,9 @@ talks to the GPUs. You do not open RunPod or Cloudflare.
    storyboard: scenes, shots, and who is in them.
 3. **Cast.** Add the people (or creatures) who appear. Give each one a
    still picture. If you train a look for a face, wait until that job
-   finishes before you render.
+   finishes before you render. For cloud keyframes, design marks that
+   read the same when mirrored, and make them bold. See
+   [Flip-safe character design](../modules/cloud-keyframe/README.md#flip-safe-character-design).
 4. **Audio (optional).** Add music, talking, or both. Talking doors
    either use the sample you kept (Seedance) or speak the line in the
    Cast voice (Wan / InfiniteTalk). Hosted does not add mouths in finish.
