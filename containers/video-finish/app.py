@@ -27,7 +27,7 @@ import uuid
 from aiohttp import ClientSession, ClientTimeout, web
 
 from bearer import bearer_middleware, require_bearer_config
-from ffmpeg_run import FFPROBE_TIMEOUT, FfmpegTimeout, _run
+from ffmpeg_run import FFMPEG_TIMEOUT, FFPROBE_TIMEOUT, FfmpegTimeout, _run
 from concat_guard import assert_no_dropped_parts
 import frame_text
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
@@ -38,6 +38,21 @@ PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
 UPLOAD_TIMEOUT_S = 120
 MAX_CLIP_BYTES = 256 * 1024 * 1024   # 256 MB per clip
+# cf#1129: a route that takes a WHOLE film takes a film-sized input. This is what assemble admits, core's
+# assembleFilmByteCeiling: 20 GB of disk, less the batch working set, the audio bed and the image reserve,
+# over the two full-length copies at finalize. tests/film-byte-cap-1129.test.ts holds the two equal.
+#
+# PEAK DISK AT THIS CAP, for a film F. /subtitle: source + burn, 2F. /film-titles: source + normalized, then the
+# source goes and it is normalized + output, so 2F plus the cards. Mux: source + bed + output, 2F + 256 MB. Frames:
+# F plus stills. F is at most 6.85 GB, so 2F is 13.7 GB, about 16 GB with the 2 GB image reserve, against 20 GB.
+# That assumes a re-encode at crf 18 is about the size of its source. An assembled film is already at those settings.
+MAX_FILM_BYTES = 6_852_516_352
+# A film transfer is bounded by its size, not by the 120 s that suits a clip. sock_read stops a dead connection.
+FILM_TRANSFER_TIMEOUT_S = 1800
+FILM_TRANSFER_STALL_S = 120
+# An encode is bounded by the film's length. FFMPEG_TIMEOUT stays the floor. The factor is a budget, not a
+# measurement on standard-4: x264 medium at 1080p is expected to run about real time on 4 vCPU.
+ENCODE_SECONDS_PER_FILM_SECOND = 3
 MAX_AUDIO_BYTES = 256 * 1024 * 1024   # 256 MB: match the per-clip bound. A lossless film-length bed
 # shares a clip's size envelope, and the bed is ALWAYS trimmed to the video duration downstream
 # (_assemble / _remux_audio_only, `-t vdur`), so a long source yields a film-length track, not a bloated one.
@@ -89,6 +104,15 @@ MAX_KEYFRAME_BYTES = 32 * 1024 * 1024   # keyframe PNG for content-inspect (#523
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-finish")
+
+
+def _film_timeout() -> ClientTimeout:
+    return ClientTimeout(total=FILM_TRANSFER_TIMEOUT_S, sock_read=FILM_TRANSFER_STALL_S)
+
+
+def _film_encode_timeout(path):
+    """The wall-clock bound for re-encoding this whole film. Never below FFMPEG_TIMEOUT."""
+    return max(FFMPEG_TIMEOUT, int(_probe_duration(path) * ENCODE_SECONDS_PER_FILM_SECOND))
 
 
 def _elapsed_ms(t0: float) -> int:
@@ -378,7 +402,7 @@ async def _finish_chunked(body, partial_urls, t0):
                 log.exception("ffmpeg failed")
                 raise _JobError(500, f"ffmpeg failed: {e}")
 
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+        async with ClientSession(timeout=_film_timeout()) as s:
             size = await _put_file(s, output_url, out_path)
 
         return {
@@ -447,13 +471,16 @@ async def _finish_work(body):
     work = tempfile.mkdtemp(prefix="vfinish-")
     try:
         srcs = []
-        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+        # A remux's one input is the whole film.
+        input_timeout = _film_timeout() if remux_audio_only else ClientTimeout(total=DOWNLOAD_TIMEOUT_S)
+        input_cap = MAX_FILM_BYTES if remux_audio_only else MAX_CLIP_BYTES
+        async with ClientSession(timeout=input_timeout) as s:
             for i, c in enumerate(clips):
                 url = c.get("url") if isinstance(c, dict) else None
                 if not url:
                     raise _JobError(400, f"clips[{i}].url missing")
                 p = os.path.join(work, f"clip_{i:03d}.mp4")
-                ok, info = await _download(s, url, p, MAX_CLIP_BYTES)
+                ok, info = await _download(s, url, p, input_cap)
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(status, f"clips[{i}] {info}")
@@ -498,7 +525,7 @@ async def _finish_work(body):
         # cf#784: stream the upload. This previously read the ENTIRE finished film into memory
         # before PUTting it, which on a Cloudflare Container (no swap) OOMs the instance at
         # exactly the film sizes chunked assemble exists to make possible.
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+        async with ClientSession(timeout=_film_timeout()) as s:
             out_size = await _put_file(s, output_url, out_path)
 
         return {
@@ -632,7 +659,7 @@ def _probe_audio(path):
     return True, sample_rate, layout
 
 
-def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=False, ensure_audio=False):
+def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=False, ensure_audio=False, timeout=None):
     """Scale/pad/fps-normalize src to dst.
     keep_audio=False (default): strip audio (-an). Used by _assemble's silent path
     and the silent-film path of _assemble_film_titles.
@@ -670,7 +697,7 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
     elif synth_silence:
         cmd += ["-shortest"]  # bound the infinite anullsrc track to the video length
     cmd.append(dst)
-    _run(cmd)
+    _run(cmd, timeout=timeout)
 
 
 def _concat_hard(norms, out):
@@ -1127,7 +1154,10 @@ def _assemble_film_titles(work, film_path, title_spec, credits_spec,
 
     film_norm = os.path.join(work, "film_norm.mp4")
     _normalize(film_path, film_norm, width=width, height=height, fps=fps,
-               crf=crf, preset=preset, cap=None, keep_audio=has_audio)
+               crf=crf, preset=preset, cap=None, keep_audio=has_audio,
+               timeout=_film_encode_timeout(film_path))
+    # cf#1129: without this the output joins a third full copy, which a large film cannot fit on the disk.
+    os.remove(film_path)
     segments.append(film_norm)
 
     if credits_spec:
@@ -1182,9 +1212,9 @@ async def _film_titles_work(body):
 
     work = tempfile.mkdtemp(prefix="vftitles-")
     try:
-        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+        async with ClientSession(timeout=_film_timeout()) as s:
             film_path = os.path.join(work, "film.mp4")
-            ok, info = await _download(s, video_url, film_path, MAX_CLIP_BYTES)
+            ok, info = await _download(s, video_url, film_path, MAX_FILM_BYTES)
             if not ok:
                 sc = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                 raise _JobError(sc, f"film {info}")
@@ -1211,7 +1241,7 @@ async def _film_titles_work(body):
         await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=secs,
                                 prepend_seconds=(title_spec or {}).get("seconds"))
 
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+        async with ClientSession(timeout=_film_timeout()) as s:
             out_size = await _put_file(s, output_url, out_path)
 
         log.info("/film-titles ok key=%s bytes=%d dur=%.3f", safe_log_value(output_key), out_size, secs)  # codeql[py/log-injection]
@@ -1342,7 +1372,7 @@ def _burn_subtitles(src, dst, vf_filter, crf=18, preset="medium"):
         "-movflags", "+faststart",
         dst,
     ]
-    _run(cmd)
+    _run(cmd, timeout=_film_encode_timeout(src))
 
 
 def _selftest():
@@ -1463,9 +1493,9 @@ async def _subtitle_work(body):
         burned = False
         out_secs = 0.0
         if want_burn:
-            async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+            async with ClientSession(timeout=_film_timeout()) as s:
                 film_path = os.path.join(work, "film.mp4")
-                ok, info = await _download(s, video_url, film_path, MAX_CLIP_BYTES)
+                ok, info = await _download(s, video_url, film_path, MAX_FILM_BYTES)
                 if not ok:
                     sc = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(sc, f"film {info}")
@@ -1492,7 +1522,7 @@ async def _subtitle_work(body):
             # BEFORE the artifact, deliberately: the core adopts on the ARTIFACT's presence, so a
             # sidecar written after would leave a window where a poll adopts and finds nothing (#130).
             await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=out_secs)
-            async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+            async with ClientSession(timeout=_film_timeout()) as s:
                 await _put_file(s, output_url, out_path)
             burned = True
 
@@ -1721,8 +1751,8 @@ async def frames(req):
     work = tempfile.mkdtemp(prefix="frames-")
     try:
         clip_path = os.path.join(work, "clip.mp4")
-        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
-            dok, info = await _download(s, video_url, clip_path, MAX_CLIP_BYTES)
+        async with ClientSession(timeout=_film_timeout()) as s:
+            dok, info = await _download(s, video_url, clip_path, MAX_FILM_BYTES)
             if not dok:
                 sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
                 return web.json_response({"ok": False, "error": "clip %s" % info}, status=sc)
