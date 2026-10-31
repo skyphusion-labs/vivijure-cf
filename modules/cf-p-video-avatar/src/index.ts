@@ -45,6 +45,8 @@ interface R2Bucket {
 
 interface AiRun {
   run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
+  // Set by the binding after a gateway call. Absent on a stub or an unrouted call.
+  aiGatewayLogId?: string | null;
 }
 
 interface WorkflowInstance {
@@ -139,11 +141,19 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
 }
 
 /** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
-async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
+export async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  return env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+  try {
+    return await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+  } catch (e) {
+    // cf#1154: a provider 7003 carries no detail, and the request body is in the gateway log. The log id
+    // holds no content, so it is safe to carry. Same object, so nothing downstream of the throw changes.
+    const logId = env.AI.aiGatewayLogId;
+    if (e instanceof Error && logId) e.message = `${e.message} (gateway log ${logId})`;
+    throw e;
+  }
 }
 
 /** Download and write. Retries on its own step, and never reaches the provider. */
