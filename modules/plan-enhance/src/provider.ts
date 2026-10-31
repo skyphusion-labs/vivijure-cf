@@ -138,22 +138,60 @@ export function aigMetadata(env: ProviderEnv): string | null {
   return JSON.stringify(meta);
 }
 
+/** Output budget for plan, refine and the director pass, which all scale with the shot count.
+ *  Thinking tokens count against it. Every model in the catalog allows 128K synchronously, but this
+ *  call does not stream: Anthropic advises against a large max_tokens without streaming, and the
+ *  official SDK refuses a non-streaming request above 3600 s * max_tokens / 128000 = 600 s, which
+ *  is 21333 tokens. This is the largest round value under that line. */
+export const LONG_OUTPUT_MAX_TOKENS = 21000;
+/** Output budget for the one-line chat helpers. */
+export const CHAT_MAX_TOKENS = 4096;
+
+/** The model stopped and running the same request on another provider would be wrong: the reply was
+ *  cut off, or the model refused. direct() does not fall back on this, because a weaker model must
+ *  not answer what a refusal declined, and a fallback would bury the true reason. */
+export class ModelStoppedError extends Error {}
+
+/** Why a 200 reply is not usable, from its stop_reason, or null when it is. Only enumerated values
+ *  and numbers reach the message, never reply text (cf#223). Pure. */
+export function stopFailure(raw: unknown, maxTokens: number): string | null {
+  const r = raw as {
+    stop_reason?: unknown;
+    usage?: { output_tokens_details?: { thinking_tokens?: unknown } };
+  } | null;
+  if (r?.stop_reason === "refusal") return "anthropic refused the request (stop_reason refusal)";
+  if (r?.stop_reason !== "max_tokens") return null;
+  const thinking = r.usage?.output_tokens_details?.thinking_tokens;
+  const spent = typeof thinking === "number" ? `, ${thinking} thinking tokens` : "";
+  return `anthropic reply was cut off (stop_reason max_tokens, limit ${maxTokens} output tokens${spent}); ask for fewer shots`;
+}
+
+export interface OpusCallOptions {
+  /** Defaults to CHAT_MAX_TOKENS. */
+  maxTokens?: number;
+  /** Do not answer from the AI Gateway cache. */
+  skipCache?: boolean;
+}
+
 /** Call Opus through the AI Gateway (Unified Billing: cf-aig-authorization only, never x-api-key).
- *  Throws on a missing token, a non-2xx, or an empty reply, so the caller can fall back. */
+ *  Throws on a missing token, a non-2xx, or an empty reply, so the caller can fall back, and throws
+ *  ModelStoppedError on a truncated or refused reply, which the caller must not fall back on. */
 export async function callOpus(
   env: ProviderEnv,
   messages: ChatMessage[],
   modelOverride?: string,
+  opts: OpusCallOptions = {},
 ): Promise<string> {
   if (!env.GATEWAY_ID || !env.CF_AIG_TOKEN) {
     throw new Error("opus requires GATEWAY_ID and CF_AIG_TOKEN");
   }
   const baseUrl = await env.AI.gateway(env.GATEWAY_ID).getUrl("anthropic");
   const { system, messages: aMessages } = toAnthropic(messages);
+  const maxTokens = opts.maxTokens ?? CHAT_MAX_TOKENS;
 
   const body: Record<string, unknown> = {
     model: opusModel(env, modelOverride),
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     messages: aMessages,
   };
   if (system) body.system = system;
@@ -168,6 +206,7 @@ export async function callOpus(
   // sent empty, so a self-hoster emits exactly the request they emitted before this existed.
   const metadata = aigMetadata(env);
   if (metadata) headers["cf-aig-metadata"] = metadata;
+  if (opts.skipCache) headers["cf-aig-skip-cache"] = "true";
 
   const resp = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
@@ -188,7 +227,10 @@ export async function callOpus(
     } catch { /* non-JSON error body; status alone is enough */ }
     throw new Error(`anthropic ${resp.status}${detail}`);
   }
-  const text = extractAnthropicText(await resp.json());
+  const raw: unknown = await resp.json();
+  const stopped = stopFailure(raw, maxTokens);
+  if (stopped) throw new ModelStoppedError(stopped);
+  const text = extractAnthropicText(raw);
   if (!text) throw new Error("anthropic returned no text content");
   return text;
 }

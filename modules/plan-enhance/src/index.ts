@@ -7,9 +7,10 @@
 //
 // The director pass runs on Opus through the AI Gateway when an Opus token is configured, and
 // degrades to the free Workers AI local model otherwise (or when Opus errors). A failure is DATA,
-// never an exception across the wire: a bad request returns { ok:false }, and a soft miss (no model
-// available, or an unparseable reply) degrades to passing the storyboard through unchanged with a
-// note, so the core's chain never breaks on this stage.
+// never an exception across the wire: a bad request returns { ok:false }, and a soft miss on the
+// director pass (no model available, or an unparseable reply) degrades to passing the storyboard
+// through unchanged with a note, so the core's chain never breaks on this stage. The plan and
+// refine modes have no plan to pass through, so a miss there is { ok:false } with the true reason.
 
 import {
   MODULE_API,
@@ -35,6 +36,9 @@ import {
   callOpus,
   callLocal,
   LOCAL_MODEL,
+  LONG_OUTPUT_MAX_TOKENS,
+  ModelStoppedError,
+  type OpusCallOptions,
   type ProviderEnv,
 } from "./provider";
 
@@ -72,7 +76,7 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
 
 const MANIFEST: ModuleManifest = {
   name: "plan-enhance",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["plan.enhance"],
   provides: [{ id: "auto-direction", label: "Opus auto-direction" }],
@@ -111,25 +115,33 @@ function json(body: unknown, status = 200): Response {
 }
 
 // Run the director pass, returning the model's raw reply plus a label of the model that produced it
-// (for an honest note). Opus first when configured; on any Opus error, degrade to the free local
-// model. Either provider erroring throws to the caller, which degrades to passthrough.
+// (for an honest note). Opus first when configured; on an Opus error, degrade to the free local
+// model, keeping the Opus reason in the label or the thrown message. A ModelStoppedError does not
+// degrade. Anything thrown is the caller's to report.
 async function direct(
   env: Env,
   messages: ChatMessage[],
   modelId?: string,
+  opts: OpusCallOptions = {},
 ): Promise<{ reply: string | string[] | undefined; model: string }> {
   // A "@cf/..." catalog id names a Workers AI model directly; anything else rides the local default
   // when we degrade off Opus.
   const localModel = modelId?.trim().startsWith("@cf/") ? modelId.trim() : LOCAL_MODEL;
   if (pickProvider(env, modelId) === "opus") {
     try {
-      return { reply: await callOpus(env, messages, modelId), model: opusModel(env, modelId) };
-    } catch {
+      return { reply: await callOpus(env, messages, modelId, opts), model: opusModel(env, modelId) };
+    } catch (e) {
+      if (e instanceof ModelStoppedError) throw e;
       // Opus unavailable -> fall through to the free local model rather than failing the stage.
-      return {
-        reply: await callLocal(env, messages, localModel),
-        model: `${localModel} (opus fell back)`,
-      };
+      const opusReason = (e as Error).message;
+      try {
+        return {
+          reply: await callLocal(env, messages, localModel),
+          model: `${localModel} (opus fell back: ${opusReason})`,
+        };
+      } catch (localError) {
+        throw new Error(`${opusReason}; local fallback failed: ${(localError as Error).message}`);
+      }
     }
   }
   return { reply: await callLocal(env, messages, localModel), model: localModel };
@@ -163,10 +175,16 @@ async function runEnhance(
   const userMessage = typeof req.config?.message === "string" ? req.config.message.trim() : "";
 
   if (mode === "plan" || mode === "refine") {
-    // Malformed I/O fails loud; only a model MISS degrades.
     if (!userMessage) {
       return { ok: false, error: `plan.enhance: config.message required for mode ${mode}` };
     }
+    // cf#1134: a miss here is a real failure. Passing the input through would hand the studio an
+    // empty storyboard to reject (plan) or an unchanged one that reads as a success (refine), and
+    // the reason would be lost either way.
+    const failed = (reason: string): InvokeResponse<PlanEnhanceOutput> => ({
+      ok: false,
+      error: `plan.enhance ${mode} failed: ${reason}`,
+    });
     let reply: string | string[] | undefined;
     let modelLabel: string;
     if (plannerAiMockEnabled(env)) {
@@ -175,15 +193,7 @@ async function runEnhance(
       reply = mockPlannerRaw(userMessage);
       modelLabel = "dev-mock";
       const mocked = parsePlanStoryboard(reply);
-      if (!mocked) {
-        return {
-          ok: true,
-          output: {
-            storyboard,
-            notes: [`${mode} skipped: ${modelLabel} reply was not valid storyboard JSON`],
-          },
-        };
-      }
+      if (!mocked) return failed(`${modelLabel} reply was not valid storyboard JSON`);
       return { ok: true, output: { storyboard: mocked, notes: [`${mode} via ${modelLabel}`] } };
     }
     try {
@@ -191,27 +201,17 @@ async function runEnhance(
         env,
         planMessages(systemMessage, userMessage),
         modelId,
+        // The gateway caches a truncated 200 like any other, and a retry is an identical request,
+        // so reading the cache here would replay the failure.
+        { maxTokens: LONG_OUTPUT_MAX_TOKENS, skipCache: true },
       ));
     } catch (e) {
-      return {
-        ok: true,
-        output: { storyboard, notes: [`${mode} skipped: model error (${(e as Error).message})`] },
-      };
+      return failed((e as Error).message);
     }
-    if (reply == null) {
-      return { ok: true, output: { storyboard, notes: [`${mode} skipped: no model reply`] } };
-    }
+    if (reply == null) return failed(`${modelLabel} returned no reply`);
     const raw = Array.isArray(reply) ? JSON.stringify(reply) : reply;
     const planned = parsePlanStoryboard(raw);
-    if (!planned) {
-      return {
-        ok: true,
-        output: {
-          storyboard,
-          notes: [`${mode} skipped: ${modelLabel} reply was not valid storyboard JSON`],
-        },
-      };
-    }
+    if (!planned) return failed(`${modelLabel} reply was not valid storyboard JSON`);
     return { ok: true, output: { storyboard: planned, notes: [`${mode} via ${modelLabel}`] } };
   }
 
@@ -244,7 +244,9 @@ async function runEnhance(
   let reply: string | string[] | undefined;
   let model: string;
   try {
-    ({ reply, model } = await direct(env, buildMessages(prompts, intensity), modelId));
+    ({ reply, model } = await direct(env, buildMessages(prompts, intensity), modelId, {
+      maxTokens: LONG_OUTPUT_MAX_TOKENS,
+    }));
   } catch (e) {
     // Soft degrade: no model available -> pass the storyboard through unchanged.
     return {

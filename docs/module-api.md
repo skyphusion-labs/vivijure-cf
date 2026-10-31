@@ -295,9 +295,16 @@ planner routes do not poll: a planning module must answer inline (`ok: true, out
 (see above), so they arrive even though the module does not declare them.
 
 `config.system_message` carries the system prompt for the generative modes. A model MISS on
-`plan`/`refine` must degrade honestly (`ok: true`, the input storyboard passed through unchanged, and
-a `notes` entry naming what was skipped and why) rather than failing the chain; malformed I/O (a
-missing `config.message`) fails loud with `ok: false`.
+`plan`/`refine` (a model error, a reply cut off at its output limit, or a reply that does not parse)
+returns `ok: false` with an `error` stating the true reason, and the studio returns that reason to
+the caller. There is no plan to pass through: an `ok: true` passthrough would give the studio an empty
+storyboard to reject in `plan`, and an unchanged one that reads as a success in `refine`. The error
+must not carry model or upstream body text (cf#223). The default director pass still degrades
+honestly (`ok: true`, the input storyboard unchanged, and a `notes` entry naming the reason).
+
+`plan-enhance` sends `plan` and `refine` with `cf-aig-skip-cache: true`, so a retry cannot replay a
+failed reply from the AI Gateway cache. A truncated or refused Anthropic reply is not retried on the
+local fallback model.
 
 ### `image.generate` model catalog
 
