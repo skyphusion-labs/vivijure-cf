@@ -30,7 +30,7 @@ function tinyMp4(timescale: number, duration: number): Uint8Array {
 }
 
 describe("infinitetalk", () => {
-  it("requires audio and defaults safety off; size is a constant the caller cannot move (cf#935)", () => {
+  it("requires audio and sends the safety filter on; size is a constant the caller cannot move (cf#935)", () => {
     // cf#935: this assertion used to expect "720p" back, which read as proof the knob worked. It was
     // not -- the provider ignores the field and returns 832x464 either way, so the door now sends a
     // constant and the enum is gone from config_schema. A caller asking for 720p gets 480p.
@@ -39,7 +39,7 @@ describe("infinitetalk", () => {
       image: "https://r2/x.png",
       audio: "https://r2/line.wav",
       size: "480p",
-      enable_safety_checker: false,
+      enable_safety_checker: true,
     });
     expect(clampTalk(20)).toBe(15);
   });

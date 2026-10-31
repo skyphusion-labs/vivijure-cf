@@ -2,7 +2,7 @@
 
 A first-class **`cast.image`**-hook module (vivijure-module/2). It generates a character's LoRA
 **training reference set** from a portrait + bible, via the studio's image models (FLUX 2 Klein / Nano
-Banana Pro) with a safety-flag fallback.
+Banana Pro).
 
 This is a **pre-render side hook**: it runs at casting time, before any shot is rendered, so the cast
 member has a trained look the keyframe stage can lock onto.
@@ -38,8 +38,8 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | `num_images` | int (4..number of training prompts) | `10` | size of the training reference set |
 
 `model` values: `@cf/black-forest-labs/flux-2-klein-9b`, `google/nano-banana-pro`,
-`@cf/black-forest-labs/flux-2-klein-4b`, `@cf/black-forest-labs/flux-2-dev`. A safety-flagged
-generation auto-falls back to the configured fallback model mid-run.
+`@cf/black-forest-labs/flux-2-klein-4b`, `@cf/black-forest-labs/flux-2-dev`. A provider safety
+flag ends the run as a plain failure with the provider's reason. The model is never changed mid-run.
 
 To self-host (service `vivijure-module-cast-image`, bound into the core as `MODULE_CAST_IMAGE`):
 
@@ -48,8 +48,8 @@ To self-host (service `vivijure-module-cast-image`, bound into the core as `MODU
   models via the gateway), `IMAGES` (Cloudflare Images; downscales refs to <=512px, FLUX-2's input
   cap; optional in code but recommended in prod), and `R2_RENDERS` -> R2 bucket `vivijure` (run state +
   generated refs).
-- **Secret** (`wrangler secret put`, after deploy): `GATEWAY_ID` (your AI Gateway slug; needed for the
-  nano-banana fallback path).
+- **Secret** (`wrangler secret put`, after deploy): `GATEWAY_ID` (your AI Gateway slug; needed for
+  nano-banana and other gateway models).
 - **Provision**: no RunPod. You need a Cloudflare account with Workers AI, an AI Gateway, and (for
   prod) Cloudflare Images.
 
@@ -61,10 +61,10 @@ To self-host (service `vivijure-module-cast-image`, bound into the core as `MODU
 - **Output** (`CastImageOutput`): `cast_id`, `images[]` (`key`, `mime`), `applied`.
 - **Async**: `POST /invoke` composes the prompt set and persists run state to R2, returning a stable
   poll pointer; `POST /poll` renders the next prompt(s) (a few per cycle) and returns pending until the
-  queue drains. A safety-flagged model auto-falls back to the configured fallback model mid-run.
+  queue drains.
 - **R2 transport**: run state and generated refs land in the shared `vivijure` bucket.
 
-This is a producer stage: a real generation failure (post-fallback) is an honest `ok:false`, not a
+This is a producer stage: a generation failure, including a provider safety flag, is an honest `ok:false`, not a
 fake-success tag.
 
 ## License

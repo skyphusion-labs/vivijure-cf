@@ -17,6 +17,7 @@ until a real render.
 - **Hook**: `motion.backend` (`pick_one`).
 - **Input**: `shot_id`, `keyframe_url`, `prompt`, `audio_url`.
 - **Output**: `shot_id`, `clip_key`, and `fps` / `frames` read from the file.
+- **Safety**: the provider safety filter is always on and is not configurable.
 - **Bindings**: `AI`, `GATEWAY_ID`, `R2_RENDERS`, `I2V_WORKFLOW`.
 - **Service**: `vivijure-module-cf-p-video-avatar` bound as `MODULE_CF_P_VIDEO_AVATAR`.
 

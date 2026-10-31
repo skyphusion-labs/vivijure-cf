@@ -1,8 +1,8 @@
 // Image generation for the cast-image module. Two shapes:
 //   @cf FLUX-2 : multipart FormData (prompt + input_image_0..3 reference blobs), gateway-BYPASSED,
 //                returns { image: base64 } -> PNG bytes. The reference-conditioned path (the portrait).
-//   proxied    : env.AI.run THROUGH the gateway, returns a URL (the nano-banana fallback). Reference
-//                images go in image_input[] (<=3, base64 data URIs) so the fallback keeps character
+//   proxied    : env.AI.run THROUGH the gateway, returns a URL (e.g. nano-banana). Reference
+//                images go in image_input[] (<=3, base64 data URIs) so these models keep character
 //                identity instead of being prompt-only.
 // `generateImage` does I/O (fetches/downscales the refs + fetches the result URL); the small helpers
 // below are pure + unit-tested.
@@ -95,7 +95,7 @@ export function extractProxiedImageUrl(result: unknown): string | null {
 
 /** Params per proxied provider (ported from proxied-image-params.buildProxiedImageParams), now with
  *  reference images: google (nano-banana) takes image_input[] (<=3); openai takes images[] (<=16);
- *  recraft has no documented ref input. cast-image only uses the google fallback today, but keep the
+ *  recraft has no documented ref input. Keep the
  *  shape faithful + provider-keyed so the other proxied models drop in cleanly. imageInputs are
  *  base64 data URIs (the form the image-edit models accept). */
 export function proxiedParams(model: string, prompt: string, imageInputs: string[] = []): Record<string, unknown> {
@@ -148,8 +148,7 @@ async function downscaleRef(images: ImagesBinding | undefined, blob: Blob): Prom
 
 /** Generate ONE image. FLUX-2: multipart-multiref (refs downscaled to <=512px), gateway-bypassed,
  *  base64 result. Proxied: refs as image_input[] base64 data URIs, through the gateway, URL result.
- *  Returns image bytes + mime. Throws on no-image / a flagged generation so the caller can retry /
- *  fall back. */
+ *  Returns image bytes + mime. Throws on no-image / a flagged generation; the caller ends the run. */
 export async function generateImage(
   ai: AiRun,
   images: ImagesBinding | undefined,
@@ -185,7 +184,7 @@ export async function generateImage(
     const bytes = base64ToBytes(b64).buffer as ArrayBuffer;
     return { bytes, mime: sniffImageMime(bytes).mime };
   }
-  // proxied (e.g. the nano-banana fallback): reference-condition via image_input[], through the gateway.
+  // proxied (e.g. nano-banana): reference-condition via image_input[], through the gateway.
   const cap = model === "black-forest-labs/flux-3-image-klein" ? 10
     : model.startsWith("openai/") ? 16
     : PROXIED_MAX_REFS;

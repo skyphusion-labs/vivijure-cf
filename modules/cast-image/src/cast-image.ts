@@ -20,17 +20,6 @@ export const TRAINING_PROMPTS: readonly string[] = [
   "close-up portrait, slight head tilt, looking up at the camera, soft natural window light, plain background",
 ];
 
-// The image-gen model that over-flags least on stylized characters; the generator falls back to it
-// once when the primary model exhausts its safety-flag retries (lifted from cast.js FLAG_FALLBACK_MODEL).
-export const FLAG_FALLBACK_MODEL = "google/nano-banana-pro";
-
-/** A safety-flag error from the image model (vs a real failure) -- worth a retry / fallback, not an
- *  abort. Lifted from cast.js isFlaggedError. */
-export function isFlaggedError(msg: unknown): boolean {
-  const s = String(msg || "").toLowerCase();
-  return s.includes("3030") || s.includes("has been flagged") || s.includes("choose another prompt");
-}
-
 /** Build one training prompt: an explicit art-style lead (when set) + the pose template + the bible
  *  (capped so the joined prompt stays under the gateway limit). Lifted verbatim from cast.js
  *  composeTrainingPrompt -- stating the style outright is what makes a stylized portrait yield
@@ -69,7 +58,6 @@ export function refKey(castId: number, index: number, ext: string): string {
 export interface CastImageState {
   cast_id: number;
   model: string;
-  fallback_used: boolean;
   prompts: string[];                        // composed prompts still to render
   done: { key: string; mime: string }[];    // images rendered + stored so far
   total: number;                            // how many were requested (for progress)
@@ -111,7 +99,7 @@ export function buildState(
   const n = clampNumImages(num);
   const prompts = TRAINING_PROMPTS.slice(0, n).map((t) => composeTrainingPrompt(t, input.bible, input.art_style));
   const ref_urls = [input.portrait_url, ...(input.source_urls || [])].filter(Boolean);
-  return { cast_id: input.cast_id, model, fallback_used: false, prompts, done: [], total: n, ref_urls };
+  return { cast_id: input.cast_id, model, prompts, done: [], total: n, ref_urls };
 }
 
 /** Map a finished run's state into the hook's CastImageOutput. */
@@ -120,7 +108,7 @@ export function readOutput(state: CastImageState): CastImageOutput {
     cast_id: state.cast_id,
     images: state.done,
     applied: [
-      `model:${state.model}${state.fallback_used ? "+nano-banana-fallback" : ""}`,
+      `model:${state.model}`,
       `generated:${state.done.length}`,
     ],
   };

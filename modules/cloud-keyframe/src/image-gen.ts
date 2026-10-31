@@ -149,8 +149,7 @@ export function proxiedParams(
   return { prompt };
 }
 
-/** Bounded retries for a flaky FLUX 3030 ("Your output has been flagged"). Same class as
- *  cast-image isFlaggedError: the flag is per-call nondeterministic on borderline-but-fine
+/** Bounded retries for a flaky FLUX 3030 ("Your output has been flagged"). The flag is per-call nondeterministic on borderline-but-fine
  *  storyboard stills. A persistent 3030 is still a HARD FAIL. CSAM refusals are never retried. */
 export const FLAG_RETRY_ATTEMPTS = 3;
 
