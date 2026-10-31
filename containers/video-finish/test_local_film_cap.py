@@ -73,16 +73,20 @@ async def main(work):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=5", "-c:a", "aac", bed], check=True)
 
     received = {}
+    OUTPUTS = {name: os.path.join(work, "out_" + name) for name in ("titles", "subs", "mux", "frames")}
 
     async def get_film(req):
         return web.FileResponse(film if req.match_info["name"] == "film" else bed)
 
     async def put(req):
-        path = os.path.join(work, "out_" + req.match_info["name"])
+        name = req.match_info["name"]
+        if name not in OUTPUTS:
+            return web.Response(status=404)
+        path = OUTPUTS[name]
         with open(path, "wb") as f:
             async for chunk in req.content.iter_chunked(1024 * 1024):
                 f.write(chunk)
-        received[req.match_info["name"]] = path
+        received[name] = path
         return web.Response(status=200)
 
     origin = web.Application(client_max_size=1024 ** 4)
