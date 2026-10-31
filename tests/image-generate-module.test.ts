@@ -1,3 +1,4 @@
+import { extractProxiedImageUrl } from "../modules/image-generate/src/image-gen";
 // The image-generate module: conformance + dispatch behaviour (cf#129 phase 2).
 //
 // The binding acceptance criterion, same as plan-enhance's: the module must honor the typed hook
@@ -247,5 +248,25 @@ describe("image.generate invoke", () => {
     expect(calls[0].steps).toBeUndefined();
     expect(calls[1].steps).toBe(4);
     expect(calls[1].negative_prompt).toBeUndefined();
+  });
+});
+
+describe("extractProxiedImageUrl reads every published output shape (cf#1141)", () => {
+  it("reads image, bare and wrapped (google, xai, recraft, openai)", () => {
+    expect(extractProxiedImageUrl({ image: "https://cdn/a.png" })).toBe("https://cdn/a.png");
+    expect(extractProxiedImageUrl({ state: "Completed", result: { image: "https://cdn/b.png" } })).toBe("https://cdn/b.png");
+  });
+  it("reads images, bare and wrapped (seedream)", () => {
+    expect(extractProxiedImageUrl({ images: ["https://cdn/c.png"] })).toBe("https://cdn/c.png");
+    expect(extractProxiedImageUrl({ result: { images: ["https://cdn/d.png"] } })).toBe("https://cdn/d.png");
+  });
+  it("still reads the older shapes", () => {
+    expect(extractProxiedImageUrl({ url: "https://cdn/e.png" })).toBe("https://cdn/e.png");
+    expect(extractProxiedImageUrl({ data: [{ url: "https://cdn/f.png" }] })).toBe("https://cdn/f.png");
+  });
+  it("returns null with nothing to read, so the caller fails loud", () => {
+    expect(extractProxiedImageUrl({ result: {} })).toBeNull();
+    expect(extractProxiedImageUrl({ image: "" })).toBeNull();
+    expect(extractProxiedImageUrl(null)).toBeNull();
   });
 });
