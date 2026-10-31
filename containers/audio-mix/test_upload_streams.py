@@ -199,6 +199,11 @@ for _label, _body in PLANTS.items():
           "the scan catches %s," % _label,
           "read delta %d, put delta %d" % (_dr, _dp))
 
+# vivijure-cf#1158: the dialogue track is the assembled film, and a 137 MB film was refused.
+check(app.track_cap("dialogue") > 137_457_166, "the dialogue track can be a whole film")
+check(app.track_cap("music") == app.MAX_TRACK_BYTES, "a music track keeps the audio cap")
+check(app.track_cap("sfx") == app.MAX_TRACK_BYTES, "an sfx track keeps the audio cap")
+
 print("\n%d failures" % len(failures))
 for f in failures:
     print("  " + f)

@@ -32,6 +32,10 @@ PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
 UPLOAD_TIMEOUT_S = 120
 MAX_TRACK_BYTES = 128 * 1024 * 1024   # 128 MB per track
+# The dialogue track is the assembled film, because ffmpeg takes its audio from there. An upscaled film of
+# about 2 minutes passes 128 MB, and that used to cost the film its voices (vivijure-cf#1158). A larger film
+# is still refused, and the studio then keeps its voices and drops the bed.
+MAX_DIALOGUE_TRACK_BYTES = 3 * 1024 * 1024 * 1024
 MAX_TRACKS = 16
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -46,6 +50,11 @@ def _elapsed_ms(t0: float) -> int:
 async def health(_req):
     # Cheap readiness probe; does not shell out to ffmpeg.
     return web.json_response({"ok": True})
+
+
+def track_cap(role):
+    """Bytes allowed for a track. Only dialogue may be a whole film."""
+    return MAX_DIALOGUE_TRACK_BYTES if role == "dialogue" else MAX_TRACK_BYTES
 
 
 async def _download(session, url, path, cap):
@@ -157,7 +166,7 @@ async def mix(req):
         async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
             for i, t in enumerate(parsed):
                 p = os.path.join(work, f"track_{i:02d}.bin")
-                ok, info = await _download(s, t["url"], p, MAX_TRACK_BYTES)
+                ok, info = await _download(s, t["url"], p, track_cap(t["role"]))
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     return web.json_response({"ok": False, "error": f"tracks[{i}] {info}"}, status=status)
