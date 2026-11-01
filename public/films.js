@@ -438,8 +438,7 @@
     $("film-error").hidden = !film.error;
     $("film-error").textContent = film.error || "";
 
-    // No tick for 3 minutes looks exactly like a slow film, so say it. Resume only restores the marker
-    // on a film that can act, so it asks nothing and costs nothing.
+    // No tick for 3 minutes looks exactly like a slow film, so say it.
     const stale = !!(film.cron && film.cron.stale) && stillMoving(film);
     $("film-cron").hidden = !stale;
     const retaking = (film.parts || []).some((p) => Array.isArray(p.retake_shots) && p.retake_shots.length);
@@ -466,7 +465,8 @@
   }
 
   function stillMoving(film) {
-    if ((film.parts || []).some((p) => p.status === "running" || (Array.isArray(p.retake_shots) && p.retake_shots.length))) return true;
+    // A failed retake waits for a person, so it is not moving, even with shots still listed.
+    if ((film.parts || []).some((p) => p.status === "running" || (p.status === "pending" && Array.isArray(p.retake_shots) && p.retake_shots.length))) return true;
     return film.phase === "planned" || film.phase === "running" || film.phase === "join";
   }
 
@@ -551,11 +551,14 @@
       note.textContent = subject + " did not change: " + (out.error || "the studio answered " + res.status);
       return;
     }
+    const out = await res.json().catch(() => ({}));
     note.textContent = "";
     await load();
-    // These routes write state, and the next cron tick acts on it.
+    // These routes write state, and the next cron tick acts on it. Only promise that if a tick is due.
     const done = $("film-action-note");
-    done.textContent = doing + ": saved. It takes effect within about a minute.";
+    const alive = latest && latest.cron && !latest.cron.stale;
+    done.textContent = doing + ": saved." + (alive ? " It takes effect within about a minute." : "")
+      + (typeof out.note === "string" && out.note ? " " + out.note : "");
     clearTimeout(actionNoteTimer);
     actionNoteTimer = setTimeout(() => { done.textContent = ""; }, 90000);
   }
@@ -574,7 +577,6 @@
         post("/shots/" + encodeURIComponent(shot.shot_id) + "/retake", retakeBody(shot), "New take of shot " + (shot.index + 1), "Shot " + (shot.index + 1));
       }
     });
-    $("film-wake").addEventListener("click", () => post("/resume", {}, "Waking the film", "The film"));
     $("film-find").addEventListener("submit", (event) => {
       event.preventDefault();
       const number = Number($("film-find-number").value);

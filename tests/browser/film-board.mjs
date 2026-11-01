@@ -76,7 +76,7 @@ async function open(state, url = "/films?id=feature-1") {
       seen.retakes.push({ shot: decodeURIComponent(retake[1]), body: JSON.parse(r.request().postData()) });
       if (state.retakeRefuse) return json({ error: state.retakeRefuse }, 400);
       if (state.afterRetake) state.film = state.afterRetake;
-      return json({ ok: true });
+      return json({ ok: true, ...(state.retakeNote ? { note: state.retakeNote } : {}) });
     }
     if (/^\/api\/film\/feature-1\/parts\/\d+\/retake\/cancel$/.test(pathname)) {
       seen.cancels++;
@@ -123,7 +123,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
   check("watch builds a player", true);
   await page.evaluate(() => { window.__v = document.querySelector(".films-part video"); });
   const before = seen.gets;
-  await page.waitForFunction(() => false, null, { timeout: 17000 }).catch(() => {});
+  await page.waitForFunction(() => false, null, { timeout: 21000 }).catch(() => {});
   check("a running film keeps polling", seen.gets > before, `${before} ${seen.gets}`);
   check("a poll keeps the playing video", await page.evaluate(() => window.__v.isConnected));
   check("no page errors", seen.errors.length === 0, seen.errors.join("; "));
@@ -150,7 +150,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
   await page.waitForTimeout(200);
   check("go back does not retry", seen.retries.length === 0);
   const gets = seen.gets;
-  await page.waitForFunction(() => false, null, { timeout: 17000 }).catch(() => {});
+  await page.waitForFunction(() => false, null, { timeout: 21000 }).catch(() => {});
   check("stopped with a running part keeps polling", seen.gets > gets);
   await page.getByRole("button", { name: "Retry failed shots" }).click();
   await page.waitForSelector("#film-retry-dialog[open]");
@@ -181,7 +181,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
   check("hold: resume is visible", await page.locator("#film-resume").isVisible());
   check("hold: spend and basis shown", (await text(page, "#film-spend")).includes("Committed $48.00 of a $500.00 ceiling") && (await text(page, "#film-basis")).includes("counts retries"));
   const gets = seen.gets;
-  await page.waitForFunction(() => false, null, { timeout: 17000 }).catch(() => {});
+  await page.waitForFunction(() => false, null, { timeout: 21000 }).catch(() => {});
   check("nothing moving means no polling", seen.gets === gets, `${gets} ${seen.gets}`);
   await page.click("#film-resume");
   await page.waitForSelector("#film-retry-dialog[open]");
@@ -325,7 +325,7 @@ for (const [name, extra] of [
   const shot = (i, extra = {}) => ({ shot_id: `s${i + 1}`, index: i, status: "done", seconds: 6, delivered_seconds: 5.9, keyframe_key: `renders/k/${i}.png`, clip_key: `renders/c/${i}.mp4`, prompt: `Prompt ${i + 1}`, line: i === 30 ? "Hello." : null, error: null, attempts: 1, retake_status: null, ...extra });
   const shots = (n) => Array.from({ length: 30 }, (_, k) => shot(n * 30 + k));
   const donefilm = film({ phase: "done", shots_done: 90, output_key: "renders/f/film.mp4", parts: [part(0, "done"), part(1, "done"), part(2, "done")] });
-  const pendingRetake = film({ phase: "running", output_key: "renders/f/film.mp4", parts: [part(0, "done"), part(1, "pending", { retake_shots: ["s31"] }), part(2, "done")] });
+  const pendingRetake = film({ phase: "running", cron: { last_tick_at: 1, stale: false }, output_key: "renders/f/film.mp4", parts: [part(0, "done"), part(1, "pending", { retake_shots: ["s31"] }), part(2, "done")] });
   const state = { film: donefilm, shots, afterRetake: pendingRetake, afterCancel: donefilm };
   const { ctx, page, seen } = await open(state);
   await page.waitForSelector(".films-part");
@@ -368,7 +368,7 @@ for (const [name, extra] of [
   const { ctx, page, seen } = await open({ film: film({ phase: "stopped", parts: [part(0, "done"), part(1, "pending", { retake_shots: ["s31"] })] }) });
   await page.waitForSelector(".films-part");
   const gets = seen.gets;
-  await page.waitForFunction(() => false, null, { timeout: 17000 }).catch(() => {});
+  await page.waitForFunction(() => false, null, { timeout: 21000 }).catch(() => {});
   check("a waiting retake keeps polling", seen.gets > gets, `${gets} ${seen.gets}`);
   await ctx.close();
 }
@@ -380,7 +380,7 @@ for (const [name, extra] of [
   await page.locator(".films-part button[aria-expanded]").click();
   await page.getByRole("button", { name: "New take", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#film-retake-voice")?.options.length > 1);
-  check("new still is off by default and labelled", !(await page.locator("#film-retake-still").isChecked()) && (await text(page, "#film-retake-dialog")).includes("costs a little more"));
+  check("new still is off by default and labelled", !(await page.locator("#film-retake-still").isChecked()) && (await text(page, "#film-retake-dialog")).includes("one shot's estimate against the ceiling"));
   await page.check("#film-retake-still");
   await page.click('#film-retake-dialog button[value="go"]');
   await page.waitForFunction(() => document.querySelector("#film-action-note")?.textContent.includes("saved"));
@@ -388,13 +388,39 @@ for (const [name, extra] of [
   await ctx.close();
 }
 {
+  // The promise of a minute needs a live scheduler. The server's note is shown as it came.
+  const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: null, clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
+  for (const [name, cron, promise] of [["alive", { last_tick_at: 1, stale: false }, true], ["stale", { last_tick_at: 1, stale: true }, false], ["absent", undefined, false]]) {
+    const f = film({ phase: "done", cron, parts: [part(0, "done")], output_key: "renders/f/film.mp4" });
+    const { ctx, page } = await open({ film: f, shots: () => [shot], afterRetake: f, retakeNote: "The shot before keeps its old end frame." });
+    await page.waitForSelector(".films-part");
+    await page.locator(".films-part button[aria-expanded]").click();
+    await page.getByRole("button", { name: "New take", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector("#film-retake-voice")?.options.length > 1);
+    await page.click('#film-retake-dialog button[value="go"]');
+    await page.waitForFunction(() => document.querySelector("#film-action-note")?.textContent.includes("saved"));
+    const note = await text(page, "#film-action-note");
+    check(`cron ${name}: minute promise ${promise}`, note.includes("within about a minute") === promise, note);
+    check(`cron ${name}: server note shown`, note.includes("keeps its old end frame"), note);
+    await ctx.close();
+  }
+}
+{
+  // A failed retake waits for a person. Polling it would only hide that.
+  const { ctx, page, seen } = await open({ film: film({ phase: "stopped", parts: [part(0, "failed", { retake_shots: ["s1"] }), part(1, "done")] }) });
+  await page.waitForSelector(".films-part");
+  const gets = seen.gets;
+  await page.waitForFunction(() => false, null, { timeout: 21000 }).catch(() => {});
+  check("a failed retake stops polling", seen.gets === gets, `${gets} ${seen.gets}`);
+  check("a failed retake can be cancelled", (await page.getByRole("button", { name: "Cancel the new take" }).count()) === 1);
+  await ctx.close();
+}
+{
   // A dead scheduler is said out loud, and waking asks nothing because it costs nothing.
   const { ctx, page, seen } = await open({ film: film({ cron: { last_tick_at: 1, stale: true } }) });
   await page.waitForSelector(".films-part");
   check("stale scheduler is shown", await page.locator("#film-cron").isVisible());
-  await page.click("#film-wake");
-  await page.waitForFunction(() => document.querySelector("#film-action-note")?.textContent.includes("saved"));
-  check("wake posts resume with no dialog", seen.resumes === 1);
+  check("stale offers no button that could release a hold", (await page.locator("#film-cron button").count()) === 0);
   await ctx.close();
   const ok = await open({ film: film({ cron: { last_tick_at: 1, stale: false } }) });
   await ok.page.waitForSelector(".films-part");
