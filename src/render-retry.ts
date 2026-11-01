@@ -28,6 +28,11 @@ import { readIdempotencyKey } from "./film-idempotency";
 
 const RETRYABLE = new Set(["FAILED", "CANCELLED", "TIMED_OUT"]);
 
+/** The one statement of which rows can be retried, for both retry paths. */
+export function retryStatusRefusal(status: string): string | null {
+  return RETRYABLE.has(status) ? null : `only FAILED / CANCELLED / TIMED_OUT rows can be retried (status is ${status})`;
+}
+
 export type RetryResult =
   // fc#2250: `degraded` is set when the retry could not be a faithful replay of the original
   // submit. It is ABSENT, never empty-string, when the retry is faithful, so "no degrade" and
@@ -57,7 +62,7 @@ const FULL_RETRY_NOT_PRESERVED = [
   "processShotIds",
 ];
 
-const FULL_RETRY_DEGRADE =
+export const FULL_RETRY_DEGRADE =
   "re-derived from the stored bundle and render_overrides, not replayed: the renders row does not "
   + "persist the submit-time inputs, so this job drops "
   + FULL_RETRY_NOT_PRESERVED.join(", ")
@@ -84,10 +89,11 @@ export async function retryFailedRender(
   opts?: { idempotency_key?: string },
 ): Promise<RetryResult> {
   const idempotency_key = readIdempotencyKey({ idempotency_key: opts?.idempotency_key });
-  if (!RETRYABLE.has(row.status)) {
+  const statusRefusal = retryStatusRefusal(row.status);
+  if (statusRefusal) {
     return {
       ok: false,
-      error: `only FAILED / CANCELLED / TIMED_OUT rows can be retried (status is ${row.status})`,
+      error: statusRefusal,
       status: 400,
     };
   }

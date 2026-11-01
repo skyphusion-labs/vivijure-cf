@@ -372,7 +372,7 @@ describe("cf#392 wan_lora_projection surface", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { output?: Record<string, unknown> };
     expect(body.output?.[WAN_LORA_PROJECTION_FIELD]).toBeUndefined();
-    expect(cap.filmDocs).toHaveLength(0);
+    expect(cap.filmDocs.filter((d) => !d.key.endsWith("submit-args.json"))).toHaveLength(0);
   });
 
   it("FILM: 201 summary carries wan_lora_projection when a Wan cast projected", async () => {

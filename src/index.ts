@@ -14,7 +14,7 @@ import {
 } from "./film-render-bridge";
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
-import { retryFailedRender } from "./render-retry";
+import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
 import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
@@ -869,10 +869,31 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
   const row = await getRenderByIdForUser(env, renderId);
   if (!row) throw notFound("render");
   let idempotency_key: string | undefined;
+  let acceptRederive = false;
   try {
-    const b = await readBody<{ idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
+    const b = await readBody<{ idempotency_key?: unknown; idempotencyKey?: unknown; accept_rederive?: unknown }>(req);
     idempotency_key = readIdempotencyKey(b);
+    acceptRederive = b.accept_rederive === true;
   } catch { /* empty body ok (pre-cf#528 clients) */ }
+  // cf#1177: a full retry replays the original request, or does not start. Finalize has its own path, from its
+  // parent preview.
+  if (row.mode !== "finalized" && row.mode !== "cloud-finalized") {
+    const refusal = retryStatusRefusal(row.status);
+    if (refusal) return json({ ok: false, error: refusal }, 400);
+    const stored = await loadSubmitArgs(env, row.job_id);
+    if (stored) {
+      const body = { ...stored.body, reuse_finished: true, ...(idempotency_key ? { idempotency_key } : {}) };
+      delete (body as { idempotencyKey?: unknown }).idempotencyKey;
+      if (!idempotency_key) delete (body as { idempotency_key?: unknown }).idempotency_key;
+      const door = stored.door === "film" ? hStartFilm : hSubmitRender;
+      const r = await doorJson(() => door(internalRequest("/api/storyboard/renders/retry", body), env, _c, {}));
+      if (r.status !== 201) return json({ ok: false, error: String(r.body.error ?? "retry submit failed") }, r.status);
+      return json({ ok: true, ...r.body, jobId: r.body.jobId ?? r.body.film_id }, 201);
+    }
+    if (!acceptRederive) {
+      return json({ ok: false, error: `this render has no stored request, so a retry cannot repeat it: it would be ${FULL_RETRY_DEGRADE} Send accept_rederive: true to run it anyway.` }, 409);
+    }
+  }
   const r = await retryFailedRender(env, row, { idempotency_key });
   if (!r.ok) return json({ ok: false, error: r.error }, r.status);
   const view = r.view;
@@ -959,6 +980,7 @@ const hAnimateHybrid: Handler = async (req, env, _c, p) => {
 // --- render submission / lifecycle ---------------------------------------
 
 const hSubmitRender: Handler = async (req, env) => {
+  const submitted = await req.clone().text();
   const b = await readBody<{
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; keyframesOnly?: boolean; audioKey?: string;
@@ -1102,6 +1124,8 @@ const hSubmitRender: Handler = async (req, env) => {
     voice_lock: typeof b.voice_lock === "string" ? b.voice_lock : undefined,
     voice_ref_keys: panelClip.voiceRefs,
     idempotency_key: readIdempotencyKey(b),
+    // cf#1177: exact boolean, as on the film door. A retry replays this door with it set.
+    reuse_finished: (b as { reuse_finished?: unknown }).reuse_finished === true,
   } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -1120,6 +1144,7 @@ const hSubmitRender: Handler = async (req, env) => {
     motionBackend: motionBackend ?? null,
     keyframeBackend: mapped.keyframe_backend ?? null,
   } as NewRenderRow;
+  await storeSubmitArgs(env, job.film_id, "render", submitted);
   await insertRenderBestEffort(env, row);
   return json(view, 201);
 };
@@ -1673,6 +1698,27 @@ async function withFilmDownloadUrl(env: StudioEnv, summary: FilmSummary): Promis
 // greppably, never propagated. hPollFilm insert-if-missing heals the history row on the next poll tick
 // (it did exactly that during the S31 proof). hPollFilm itself stays throwing: a poll is idempotent and
 // naturally retried, so a 5xx there costs nothing.
+// cf#1177: the request as sent, beside the film, so a retry replays it. The renders row keeps none of cast,
+// voices, bed or titles. Best effort: the film is out by now, and a row with no copy refuses a retry honestly.
+type SubmitDoor = "render" | "film";
+const submitArgsKey = (jobId: string) => `renders/${jobId}/submit-args.json`;
+
+async function storeSubmitArgs(env: StudioEnv, jobId: string, door: SubmitDoor, body: string): Promise<void> {
+  try {
+    await env.R2_RENDERS.put(submitArgsKey(jobId), JSON.stringify({ door, body }), { httpMetadata: { contentType: "application/json" } });
+  } catch (e) {
+    console.warn(`film ${jobId}: submit args not stored, so a retry will refuse: ${String(e)}`);
+  }
+}
+
+async function loadSubmitArgs(env: StudioEnv, jobId: string | null | undefined): Promise<{ door: SubmitDoor; body: Record<string, unknown> } | null> {
+  if (!jobId) return null;
+  const object = await env.R2_RENDERS.get(submitArgsKey(jobId));
+  if (!object) return null;
+  const stored = (await object.json()) as { door: SubmitDoor; body: string };
+  return { door: stored.door, body: JSON.parse(stored.body) as Record<string, unknown> };
+}
+
 async function insertRenderBestEffort(env: StudioEnv, row: NewRenderRow): Promise<void> {
   try {
     await insertRender(env, row);
@@ -1716,6 +1762,7 @@ function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: 
 }
 
 const hStartFilm: Handler = async (req, env) => {
+  const submitted = await req.clone().text();
   const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
@@ -1891,6 +1938,7 @@ const hStartFilm: Handler = async (req, env) => {
   // Write a renders-table row so this film shows in the history panel (#164), the same way
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
+  await storeSubmitArgs(env, job.film_id, "film", submitted);
   await insertRenderBestEffort(env, filmRowFromJob(job));
   return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))) }, 201);
 };
