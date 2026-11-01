@@ -527,6 +527,33 @@ describe("the cron heartbeat", () => {
   });
 });
 
+describe("a film start that says nothing was invoked", () => {
+  it("leaves the part waiting, with no claim and nothing counted", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new core.FilmNotStartedError("R2 read"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await tick(e);
+    vi.restoreAllMocks();
+    const view = (await (await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx)).json()) as { spend_committed_est: number; parts: Array<{ status: string; error: string }> };
+    expect(view.parts[0].status).toBe("pending");
+    expect(view.parts[0].error).toMatch(/503/);
+    expect(view.spend_committed_est).toBe(0);
+  });
+
+  it("any other throw keeps the claim, because work may be out", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new Error("job write failed"));
+    await tick(e);
+    const view = (await (await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx)).json()) as { parts: Array<{ status: string; error: string }> };
+    expect(view.parts[0].status, "running is how a claim reads").toBe("running");
+    expect(view.parts[0].error).toMatch(/outcome unknown so far/);
+  });
+});
+
 describe("the cron list", () => {
   it("a repeat create does not put a finished film back", async () => {
     const e = env();
