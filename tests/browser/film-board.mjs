@@ -392,7 +392,7 @@ for (const [name, extra] of [
   const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: null, clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
   for (const [name, cron, promise] of [["alive", { last_tick_at: 1, stale: false }, true], ["stale", { last_tick_at: 1, stale: true }, false], ["absent", undefined, false]]) {
     const f = film({ phase: "done", cron, parts: [part(0, "done")], output_key: "renders/f/film.mp4" });
-    const { ctx, page } = await open({ film: f, shots: () => [shot], afterRetake: f, retakeNote: "The shot before keeps its old end frame." });
+    const { ctx, page } = await open({ film: f, shots: () => [shot], afterRetake: f, retakeNote: "On a door that uses end frames, the shot before keeps its old end frame, so it is not bought again. A cut hides that. rebuy_previous: true buys it too." });
     await page.waitForSelector(".films-part");
     await page.locator(".films-part button[aria-expanded]").click();
     await page.getByRole("button", { name: "New take", exact: true }).click();
@@ -401,7 +401,8 @@ for (const [name, extra] of [
     await page.waitForFunction(() => document.querySelector("#film-action-note")?.textContent.includes("saved"));
     const note = await text(page, "#film-action-note");
     check(`cron ${name}: minute promise ${promise}`, note.includes("within about a minute") === promise, note);
-    check(`cron ${name}: server note shown`, note.includes("keeps its old end frame"), note);
+    check(`cron ${name}: server note shown`, note.includes("keeps its old end frame") && note.includes("A cut hides that."), note);
+    check(`cron ${name}: no API wording on the page`, !note.includes("rebuy_previous"), note);
     await ctx.close();
   }
 }
@@ -477,6 +478,56 @@ for (const [name, extra] of [
   await none.page.locator(".films-part button[aria-expanded]").click();
   await none.page.waitForFunction(() => document.querySelector(".films-shots")?.textContent.includes("Could not load"));
   check("unread shots say so", true);
+  await none.ctx.close();
+}
+
+// ---- the contact sheet.
+{
+  const shot = (i, extra = {}) => ({ shot_id: `s${i + 1}`, index: i, status: "done", seconds: 6, keyframe_key: `renders/k/${i}.png`, clip_key: null, prompt: `Prompt ${i + 1}`, line: null, error: null, retake_status: null, ...extra });
+  const state = { film: film({ phase: "done", output_key: "renders/f/film.mp4", sidecar_key: "renders/f/film.srt", parts: [part(0, "done"), part(1, "done"), part(2, "pending")] }), shots: (n) => [shot(n * 30), shot(n * 30 + 1, { keyframe_key: null }), shot(n * 30 + 2)] };
+  const { ctx, page, seen } = await open(state);
+  await page.waitForSelector(".films-part");
+  check("sheet not read until asked", seen.shotReads.length === 0);
+  const whole = page.locator('#film-output a[download="Harbor.mp4"]');
+  check("whole film download points at the film", (await whole.getAttribute("href")) === "/api/artifact/renders/f/film.mp4");
+  check("captions download points at the sidecar", (await page.locator('#film-output a[download="Harbor.srt"]').getAttribute("href")) === "/api/artifact/renders/f/film.srt");
+  await page.locator('[data-part-index="1"] .films-sheet-toggle').click();
+  await page.waitForSelector('[data-part-index="1"] .films-sheet-tile');
+  check("sheet reads the right part", seen.shotReads.join() === "1", seen.shotReads.join());
+  check("a tile per shot", (await page.locator('[data-part-index="1"] .films-sheet-tile').count()) === 3);
+  check("tiles show master numbers", (await text(page, '[data-part-index="1"] .films-sheet-grid')).includes("31"));
+  check("a missing still is said", (await text(page, '[data-part-index="1"] .films-sheet')).includes("1 of 3 shots have no still"));
+  check("stills load lazily", (await page.locator('[data-part-index="1"] .films-sheet-tile img').first().getAttribute("loading")) === "lazy");
+  const cols = await page.evaluate(() => getComputedStyle(document.querySelector(".films-sheet-grid")).gridTemplateColumns.split(" ").length);
+  check("at least three across on a phone", cols >= 3, String(cols));
+  check("sheet fits a phone", await noOverflow(page));
+  await page.locator('[data-part-index="1"] .films-sheet-tile').first().click();
+  await page.waitForSelector("#film-still-dialog[open]");
+  check("tap opens it large with its number", (await text(page, "#film-still-title")).includes("Shot 31") && (await page.getAttribute("#film-still-img", "src")).endsWith("/30.png"));
+  check("first has no previous", await page.locator("#film-still-prev").isDisabled());
+  await page.click("#film-still-next");
+  check("next moves on", (await text(page, "#film-still-title")).includes("Shot 32"));
+  check("a shot with no still shows no image", !(await page.locator("#film-still-img").isVisible()));
+  await page.click("#film-still-next");
+  check("last has no next", await page.locator("#film-still-next").isDisabled());
+  check("still fits a phone", await page.evaluate(() => { const r = document.querySelector("#film-still-dialog").getBoundingClientRect(); return r.right <= innerWidth && r.left >= 0; }));
+  await page.click("#film-still-retake");
+  await page.waitForSelector("#film-retake-dialog[open]");
+  check("new take from the sheet is for that shot", (await text(page, "#film-retake-title")).includes("shot 33") && (await page.inputValue("#film-retake-prompt")) === "Prompt 33");
+  await page.click('#film-retake-dialog button[value="cancel"]');
+  await page.locator('[data-part-index="2"] .films-sheet-toggle').click();
+  await page.waitForSelector('[data-part-index="2"] .films-sheet-tile');
+  await page.locator('[data-part-index="2"] .films-sheet-tile').first().click();
+  check("no new take where the part does not allow it", !(await page.locator("#film-still-retake").isVisible()));
+  await page.click("#film-still-close");
+  await page.locator('[data-part-index="1"] .films-sheet-toggle').click();
+  check("hide clears the sheet", (await page.locator('[data-part-index="1"] .films-sheet-tile').count()) === 0);
+  await ctx.close();
+  const none = await open({ film: film({ parts: [part(0, "done")] }) });
+  await none.page.waitForSelector(".films-part");
+  await none.page.locator(".films-sheet-toggle").click();
+  await none.page.waitForFunction(() => document.querySelector(".films-sheet")?.textContent.includes("Could not load"));
+  check("sheet says when it cannot load", true);
   await none.ctx.close();
 }
 
