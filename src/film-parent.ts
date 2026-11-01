@@ -572,8 +572,10 @@ async function submitPart(doc: ParentDoc, index: number, deps: ParentDeps, now: 
   claim.claimed_at = now;
   const retake = claim.retake;
   const drawing = !!retake && stillsToDraw(retake);
+  // A draw counts at the per-shot estimate, on its own: a draw that is cancelled or fails has still spent.
+  const drawCost = drawing && retake ? stillsDrawCount(retake) * doc.cost_usd_per_shot_est : 0;
   if (drawing) {
-    // The still is part of the shot's estimate, which counts when the clip is claimed.
+    claim.retake_est += drawCost;
   } else if (retake) {
     claim.retakes += 1;
     claim.retake_est += retake.shots.length * doc.cost_usd_per_shot_est;
@@ -615,7 +617,7 @@ async function submitPart(doc: ParentDoc, index: number, deps: ParentDeps, now: 
       if (e instanceof SubmitNotStarted) {
         // Spent nothing, so it counts for nothing and no person is needed.
         Object.assign(outcome, { status: "pending", error: e.message, claimed_at: null, not_before: now + NOT_STARTED_BACKOFF_MS });
-        if (drawing) { /* Nothing was counted. */ }
+        if (drawing) outcome.retake_est = claim.retake_est - drawCost;
         else if (!retake) outcome.attempts = claim.attempts - 1;
         else Object.assign(outcome, { retakes: claim.retakes - 1, retake_est: claim.retake_est - retake.shots.length * doc.cost_usd_per_shot_est });
       } else if (!(e instanceof SubmitRefused)) {
@@ -792,9 +794,7 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
     // From the doc each time: a submit can reload it, and another tick may have taken this part.
     const part = doc.parts[index];
     if (part.status !== "pending") continue;
-    const cost = part.retake
-      ? (stillsToDraw(part.retake) ? 0 : part.retake.shots.length * doc.cost_usd_per_shot_est)
-      : part.cost_est;
+    const cost = part.retake ? retakeNextCost(part.retake, doc.cost_usd_per_shot_est) : part.cost_est;
     if (committedEstimate(doc) + cost > doc.spend_ceiling_usd) {
       doc.stop_reason = "spend ceiling";
       if (!doc.parts.some(isLive)) doc.phase = "stopped";
@@ -841,6 +841,7 @@ export interface RetakeEdits {
   voice_id?: unknown;
   new_still?: unknown;
   seed?: unknown;
+  rebuy_previous?: unknown;
 }
 
 export interface StillInputs {
@@ -851,8 +852,26 @@ export interface StillInputs {
   idempotency_key: string;
 }
 
-const stillsToDraw = (r: PartRetake): boolean =>
-  !!r.still_shots?.some((s) => !r.stills?.[s]);
+const stillsDrawCount = (r: PartRetake): number => (r.still_shots ?? []).filter((s) => !r.stills?.[s]).length;
+const stillsToDraw = (r: PartRetake): boolean => stillsDrawCount(r) > 0;
+
+/** The next cost of a retake: its draw if one is owed, or its clips. */
+const retakeNextCost = (r: PartRetake, perShot: number): number =>
+  (stillsToDraw(r) ? stillsDrawCount(r) : r.shots.length) * perShot;
+
+/** The shot before a new still keeps its old end frame, so its clip's proof holds and it is not bought again.
+ *  Not one that is itself in the retake: it is being bought, and should end on the new still. */
+export function heldEndFrames(
+  keyframes: Array<{ shot_id: string; keyframe_key: string }>,
+  retake: PartRetake,
+): Record<string, string> {
+  const held: Record<string, string> = {};
+  keyframes.forEach((k, i) => {
+    const next = keyframes[i + 1];
+    if (next && retake.stills?.[next.shot_id] && !retake.shots.includes(k.shot_id)) held[k.shot_id] = next.keyframe_key;
+  });
+  return held;
+}
 
 /** Marks one shot of a finished part for a new take, and reopens the film. Nothing already delivered moves
  *  until the new join is done. Several shots of one part can wait together. */
@@ -868,6 +887,9 @@ export function markRetake(doc: ParentDoc, shotId: string, edits: RetakeEdits, n
   if (edits.new_still !== undefined && typeof edits.new_still !== "boolean") refuse("new_still must be true or false");
   if (edits.seed !== undefined && (!Number.isInteger(edits.seed) || (edits.seed as number) < 0)) refuse("seed must be a whole number");
   if (edits.seed !== undefined && edits.new_still !== true) refuse("seed goes with new_still");
+  if (edits.rebuy_previous !== undefined && (typeof edits.rebuy_previous !== "boolean" || edits.new_still !== true)) {
+    refuse("rebuy_previous must be true or false, and goes with new_still");
+  }
   const local = `shot_${String(index - part.shot_from + 1).padStart(2, "0")}`;
   const retake: PartRetake = part.retake ?? {
     from_film_id: part.child_film_id as string, shots: [], prompts: {}, lines: {}, undo: { prompts: {}, lines: {} },
@@ -884,6 +906,17 @@ export function markRetake(doc: ParentDoc, shotId: string, edits: RetakeEdits, n
     // A shot asked for again gets another draw.
     if (retake.stills) delete retake.stills[local];
     retake.still_seed = typeof edits.seed === "number" ? edits.seed : now % 2_147_483_647;
+    // Buys the shot before as well, so it ends on the new still. It counts as a second shot.
+    if (edits.rebuy_previous === true && index > part.shot_from) {
+      const before = `shot_${String(index - part.shot_from).padStart(2, "0")}`;
+      if (!retake.shots.includes(before)) retake.shots.push(before);
+      const beforeId = sceneId(doc.storyboard.scenes[index - 1]) as string;
+      if (!(beforeId in retake.undo.prompts)) {
+        retake.undo.prompts[beforeId] = doc.storyboard.scenes[index - 1].prompt;
+        const had = doc.dialogue_lines.find((l) => l.shot_id === beforeId);
+        retake.undo.lines[beforeId] = had ? { ...had } : null;
+      }
+    }
   }
   // The master board follows, so a later plain retry renders what was last asked for.
   if (typeof edits.prompt === "string") {

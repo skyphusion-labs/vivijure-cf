@@ -740,6 +740,16 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect(h.fromKeyframes).toHaveLength(1);
     expect(h.fromKeyframes[0].keyframes).toEqual([{ shot_id: "shot_01", keyframe_key: "k1" }, { shot_id: "shot_02", keyframe_key: "new-kf" }]);
     expect(h.fromKeyframes[0].retake_shots).toEqual(["shot_02"]);
+    expect(h.fromKeyframes[0].held_end_frames, "shot 1 keeps the old still as its end frame").toEqual({ shot_01: "k2" });
+  });
+
+  it("new_still says what it holds, and rebuy_previous does not", async () => {
+    const e = await doneFilm();
+    const a = (await (await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 1 }), e as never, ctx)).json()) as { note?: string };
+    expect(a.note).toMatch(/old end frame/);
+    const f = await doneFilm();
+    const b = (await (await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 1, rebuy_previous: true }), f as never, ctx)).json()) as { note?: string };
+    expect(b.note).toBeUndefined();
   });
 
   it("a job with no stills fails the part and buys nothing", async () => {

@@ -15,7 +15,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
-import { advanceParent, buildParentDoc, cancelRetake, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
 import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
@@ -2018,6 +2018,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         scenes,
         // New stills in place of the old, by shot. Every other still keeps its key, so its clip's proof holds.
         keyframes: job.keyframes.map((k) => ({ ...k, keyframe_key: retake.stills?.[k.shot_id] ?? k.keyframe_key })),
+        held_end_frames: heldEndFrames(job.keyframes, retake),
         motion_backend: job.motion_backend ?? undefined,
         motion_config: job.motion_config,
         finish_config: job.finish_config,
@@ -2205,7 +2206,13 @@ const hRetakeParentShot: Handler = async (req, env, _ctx, p) => {
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
   // State only. The cron is the one place that submits.
-  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
+  return json({
+    ok: true,
+    ...parentView(loaded.doc, Date.now()),
+    ...(a.new_still === true && a.rebuy_previous !== true
+      ? { note: "On a door that uses end frames, the shot before keeps its old end frame, so it is not bought again. A cut hides that. rebuy_previous: true buys it too." }
+      : {}),
+  });
 };
 
 const hResumeParent: Handler = async (_req, env, _ctx, p) => {

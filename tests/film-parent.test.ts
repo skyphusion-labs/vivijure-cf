@@ -3,6 +3,7 @@ import {
   advanceParent,
   buildParentDoc,
   cancelRetake,
+  heldEndFrames,
   keyframeBackendForStyle,
   markRetake,
   MAX_PARTS,
@@ -960,7 +961,7 @@ describe("a retake of one shot", () => {
       expect(scenes.find((s) => s.id === "shot_02")?.prompt, "the backend reads the prompt from the bundle").toBe("better");
       expect(h.retakes).toEqual([]);
       expect([doc.parts[1].status, doc.parts[1].phase]).toEqual(["running", "still"]);
-      expect(parentView(doc, 6).spend_committed_est, "counted when the clip is claimed, once").toBe(4);
+      expect(parentView(doc, 6).spend_committed_est, "a draw counts on its own").toBe(5);
     });
 
     it("then buys the clip, with the new still in place and the others kept", async () => {
@@ -972,7 +973,7 @@ describe("a retake of one shot", () => {
       expect(h.retakes).toHaveLength(1);
       expect(h.retakes[0][0]).toMatchObject({ shots: ["shot_02"], stills: { shot_02: "new-kf" }, still_film_id: null });
       expect(h.stillStarts, "not drawn twice").toHaveLength(1);
-      expect(parentView(doc, 8).spend_committed_est).toBe(5);
+      expect(parentView(doc, 8).spend_committed_est, "the draw, then the clip").toBe(6);
       h.children.set("film-retake-1", done("k2b"));
       h.join = { status: "pending" };
       await advanceParent(doc, deps, 9);
@@ -1012,16 +1013,74 @@ describe("a retake of one shot", () => {
       expect(doc.parts[1].child_film_id, "the part still has its film").toBe("film-2");
     });
 
-    it("a draw is not stopped by the ceiling, and the clip after it is", async () => {
+    it("a draw with no room does not start", async () => {
       const { h, deps, doc } = await finished();
       doc.spend_ceiling_usd = 4;
       markRetake(doc, "s3", { new_still: true, seed: 7 });
       await advanceParent(doc, deps, 5);
-      expect(h.stillStarts, "the estimate counts at the clip").toHaveLength(1);
+      expect(h.stillStarts).toEqual([]);
+      expect(doc.stop_reason).toBe("spend ceiling");
+    });
+
+    it("repeated draws cannot pass the ceiling, whether cancelled or failed", async () => {
+      const { h, deps, doc } = await finished();
+      doc.spend_ceiling_usd = 6;
+      for (let i = 0; i < 5; i++) {
+        markRetake(doc, "s3", { new_still: true, seed: i });
+        await advanceParent(doc, deps, 5 + i);
+        if (doc.parts[1].status === "running") {
+          h.stillJobs.set(`film-still-${h.stillStarts.length}`, { phase: "failed", keyframes: [], error: "x" });
+          await advanceParent(doc, deps, 5 + i);
+        }
+        cancelRetake(doc, 1, 5 + i);
+      }
+      expect(h.stillStarts, "$4 used, $2 of room, $1 a draw").toHaveLength(2);
+      expect(parentView(doc, 20).spend_committed_est).toBe(6);
+    });
+
+    it("a new still, a failed clip and a retry draw nothing and start nothing plain", async () => {
+      const { h, deps, doc } = await drawn();
       h.stillJobs.set("film-still-1", { phase: "done", keyframes: [{ shot_id: "shot_02", keyframe_key: "n" }], error: null });
       await advanceParent(doc, deps, 6);
-      expect(h.retakes).toEqual([]);
-      expect(doc.stop_reason).toBe("spend ceiling");
+      h.children.set("film-retake-1", { phase: "failed", shots_done: 0, output_key: null, sidecar_key: null, error: "boom" });
+      await advanceParent(doc, deps, 7);
+      const starts = h.starts.length;
+      retryPart(doc, 1);
+      await advanceParent(doc, deps, 8);
+      expect(h.starts).toHaveLength(starts);
+      expect(h.stillStarts, "the still is kept").toHaveLength(1);
+      expect(h.retakes).toHaveLength(2);
+      expect(h.retakes[1][0].stills).toEqual({ shot_02: "n" });
+      h.children.set("film-retake-2", done("k2c"));
+      await advanceParent(doc, deps, 9);
+      expect(() => retryPart(doc, 1), "a finished part has no plain retry").toThrow(/not failed/);
+    });
+
+    it("the shot before keeps its old end frame, unless it is in the retake", () => {
+      const keyframes = [{ shot_id: "shot_01", keyframe_key: "k1" }, { shot_id: "shot_02", keyframe_key: "k2" }, { shot_id: "shot_03", keyframe_key: "k3" }];
+      const base = { from_film_id: "f", prompts: {}, lines: {}, undo: { prompts: {}, lines: {} } };
+      expect(heldEndFrames(keyframes, { ...base, shots: ["shot_02"], stills: { shot_02: "n" } })).toEqual({ shot_01: "k2" });
+      expect(heldEndFrames(keyframes, { ...base, shots: ["shot_01", "shot_02"], stills: { shot_02: "n" } })).toEqual({});
+      expect(heldEndFrames(keyframes, { ...base, shots: ["shot_01"], stills: { shot_01: "n" } }), "the first shot has none before it").toEqual({});
+      expect(heldEndFrames(keyframes, { ...base, shots: ["shot_02"] }), "no new still").toEqual({});
+    });
+
+    it("rebuy_previous buys and counts the shot before, within the part", async () => {
+      const { h, deps, doc } = await finished();
+      markRetake(doc, "s3", { new_still: true, seed: 7, rebuy_previous: true });
+      expect(doc.parts[1].retake?.shots.sort()).toEqual(["shot_01", "shot_02"]);
+      expect(parentView(doc, 5).parts[1].retake_shots.sort()).toEqual(["s2", "s3"]);
+      await advanceParent(doc, deps, 5);
+      h.stillJobs.set("film-still-1", { phase: "done", keyframes: [{ shot_id: "shot_02", keyframe_key: "n" }], error: null });
+      await advanceParent(doc, deps, 6);
+      expect(parentView(doc, 7).spend_committed_est, "$4, a draw, and two clips").toBe(7);
+    });
+
+    it("rebuy_previous on a part's first shot adds nothing, and goes only with new_still", async () => {
+      const { doc } = await finished();
+      markRetake(doc, "s2", { new_still: true, seed: 7, rebuy_previous: true });
+      expect(doc.parts[1].retake?.shots).toEqual(["shot_01"]);
+      expect(() => markRetake(doc, "s3", { rebuy_previous: true })).toThrow(/goes with new_still/);
     });
 
     it("a door that could not start the draw waits and counts nothing", async () => {
@@ -1029,7 +1088,7 @@ describe("a retake of one shot", () => {
       markRetake(doc, "s3", { new_still: true, seed: 7 });
       deps.startStills = async () => { throw new SubmitNotStarted("busy"); };
       await advanceParent(doc, deps, 5);
-      expect([doc.parts[1].status, doc.parts[1].retakes, doc.parts[1].not_before]).toEqual(["pending", 0, 5 + NOT_STARTED_BACKOFF_MS]);
+      expect([doc.parts[1].status, doc.parts[1].retakes, doc.parts[1].not_before, doc.parts[1].retake_est]).toEqual(["pending", 0, 5 + NOT_STARTED_BACKOFF_MS, 0]);
       expect(h.stillStarts).toEqual([]);
     });
 
