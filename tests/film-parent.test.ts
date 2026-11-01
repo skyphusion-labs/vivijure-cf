@@ -16,6 +16,7 @@ import {
   ONE_UPLOAD_BYTES,
   requestFingerprint,
   resumeParent,
+  parentListRow,
   parentView,
   partInputs,
   planPartRanges,
@@ -23,6 +24,7 @@ import {
   retakeScenesAndLines,
   retryPart,
   STALE_CLAIM_MS,
+  stopCode,
   SubmitNotStarted,
   SubmitRefused,
   type ChildRead,
@@ -970,6 +972,32 @@ describe("the spend ceiling counts retries and can be raised", () => {
     const view = parentView(buildParentDoc("f", body(4), 0), 0);
     expect(view.spend_ceiling_basis).toMatch(/estimate/);
     expect(view.spend_ceiling_basis).toMatch(/retries/);
+  });
+});
+
+describe("stop_code", () => {
+  const code = (reason: string | null) => {
+    const doc = buildParentDoc("f", body(4), 0);
+    doc.stop_reason = reason;
+    return [stopCode(doc), "stop_code" in parentView(doc, 0), parentListRow(doc).stop_code];
+  };
+  it("gives a stable key for each stop, and none when not stopped", () => {
+    expect(code(null)).toEqual([undefined, false, undefined]);
+    expect(code("spend ceiling")).toEqual(["spend_ceiling", true, "spend_ceiling"]);
+    expect(code("part 3 failed")[0]).toBe("part_failed");
+    expect(code("rate limited: too many")[0]).toBe("gate_held");
+  });
+  it("names the real hold, from a real stop", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(4, { pause_after_first_part: undefined }), 0));
+    await advanceParent(doc, deps, 1);
+    h.children.set("film-1", done("k1"));
+    await advanceParent(doc, deps, 2);
+    expect(stopCode(doc)).toBe("first_part_hold");
+  });
+  it("a list row carries no parts or board", () => {
+    const row = parentListRow(buildParentDoc("f", body(4), 0));
+    expect(Object.keys(row).sort()).toEqual(["created_at", "film_id", "phase", "project", "shots_done", "shots_total", "stop_reason"]);
+    expect(row.shots_total).toBe(4);
   });
 });
 

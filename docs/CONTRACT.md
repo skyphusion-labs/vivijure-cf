@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**97 route entries** (distinct `method` + `pattern`) over **79 distinct path patterns**. Those two
+**98 route entries** (distinct `method` + `pattern`) over **79 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -371,6 +371,7 @@ unchanged.
 | 46f | POST | `/api/film/:id/resume` | 2.22a |
 | 46g | POST | `/api/film/:id/shots/:shot/retake` | 2.22a |
 | 46h | POST | `/api/film/:id/parts/:n/retake/cancel` | 2.22a |
+| 46i | GET | `/api/film` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1429,11 +1430,13 @@ Limits are on `GET /api/modules` under `render`: `max_scenes_per_part`, `max_par
 
 Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The cron or the first `GET` starts the film. Errors: `400` naming the field, including a board predicted over the 5,363,466,240 bytes one upload carries. `409` for a repeat key with a different request. `429` and the storage refusal as on `POST /api/render/film`.
 
+**`GET /api/film`** lists films, newest first, at most 50: `{ok, films:[{film_id, project, phase, stop_reason, stop_code?, created_at, shots_done, shots_total}]}`. It advances nothing.
+
 **`GET /api/film/:id`** advances the parent one tick and returns it:
 
-`{ok, film_id, project, phase, stop_reason, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, spend_ceiling_usd, spend_committed_est, spend_ceiling_basis, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
+`{ok, film_id, project, phase, stop_reason, stop_code?, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, spend_ceiling_usd, spend_committed_est, spend_ceiling_basis, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
 
-`phase` is `planned`, `running`, `stopped`, `join`, `done` or `failed`. Each `parts[]` row is `{part_id, index, shot_from, shot_to, status, phase, shots_done, shots_total, cost_est, cost_actual, output_key, error}`. `shot_from` and `shot_to` index the master board. `status` is `pending`, `running`, `done` or `failed`.
+`phase` is `planned`, `running`, `stopped`, `join`, `done` or `failed`. `stop_reason` is text for a person. `stop_code` is the stable key: `part_failed`, `spend_ceiling`, `first_part_hold` or `gate_held` (the spend or storage checks are holding a part). Absent means no stop. Each `parts[]` row is `{part_id, index, shot_from, shot_to, status, phase, shots_done, shots_total, cost_est, cost_actual, output_key, error}`. `shot_from` and `shot_to` index the master board. `status` is `pending`, `running`, `done` or `failed`.
 
 `cost_est` is an estimate of one run of every part. `spend_committed_est` is what the ceiling compares: every submit in full, retries included. A retry keeps proven work, so this reads high. Both are estimates, as `spend_ceiling_basis` says. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
 
