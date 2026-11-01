@@ -1456,6 +1456,8 @@ Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The next cro
 
 The spend limit, daily ceiling and storage quota also run at each part's submit. A refusal holds that part: it stays `pending`, `stop_reason` says why, and the next tick asks again.
 
+A part whose film cannot be read this tick stays as it is, siblings carry on, and the row shows `read_failed_since` and `error`. After 90 minutes it fails.
+
 A part whose submit the door answered with a 5xx started nothing, so it stays `pending`, costs nothing, shows the answer in `error`, and is asked again after 5 minutes. A submit that was interrupted or that threw is never sent again by itself. After 15 minutes the parent looks for a film in that part's project submitted since the claim, and adopts it. If it finds none, the part reads `failed` with `submit outcome unknown`. Check its project before retrying, because a retry can buy it twice.
 
 A join that fails for good ends the film in `failed` with every part kept, and `resume` joins again. `404 "film"` if unknown.
