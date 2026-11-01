@@ -73,6 +73,19 @@ export interface ParentPart {
   bundle_key: string | null;
   output_key: string | null;
   sidecar_key: string | null;
+  /** A retake waiting to run, against the finished film it replaces. */
+  retake: PartRetake | null;
+  /** Estimate of every retake so far, on top of cost_est x attempts. */
+  retake_est: number;
+  retakes: number;
+}
+
+/** Local shot ids, because a part is its own film. */
+export interface PartRetake {
+  from_film_id: string;
+  shots: string[];
+  prompts: Record<string, string>;
+  lines: Record<string, { text: string; voice_id?: string }>;
 }
 
 export interface ParentDoc {
@@ -94,6 +107,8 @@ export interface ParentDoc {
   parts: ParentPart[];
   join_job_id: string | null;
   join_attempts: number;
+  /** Starts at 1. A re-join writes a new key, so the film already delivered stays readable. */
+  join_version: number;
   output_key: string | null;
   sidecar_key: string | null;
   bytes: number | null;
@@ -237,9 +252,13 @@ export function buildParentDoc(filmId: string, body: CreateParentBody, now: numb
       bundle_key: null,
       output_key: null,
       sidecar_key: null,
+      retake: null,
+      retake_est: 0,
+      retakes: 0,
     })),
     join_job_id: null,
     join_attempts: 0,
+    join_version: 1,
     output_key: null,
     sidecar_key: null,
     bytes: null,
@@ -326,6 +345,8 @@ export interface ParentDeps {
   readChild(filmId: string): Promise<ChildRead | null>;
   /** The newest film in a part's own project, for a claim left by a crash. */
   findChild(project: string): Promise<string | null>;
+  /** Starts a part again from its finished film's stills, so their bytes, and every clip's proof, hold. */
+  startRetake(retake: PartRetake, idempotencyKey: string): Promise<string>;
   submitJoin(doc: ParentDoc, filmKeys: string[], outputKey: string): Promise<string>;
   readJoin(doc: ParentDoc, jobId: string): Promise<JoinRead>;
   readText(key: string): Promise<string | null>;
@@ -363,7 +384,7 @@ const isLive = (p: ParentPart) => p.status === "running" || p.status === "submit
 /** Every submit counts in full, retries included. A retry keeps proven work, so this reads high: the safe
  *  direction for a ceiling. It is still an estimate, never a meter. */
 export function committedEstimate(doc: ParentDoc): number {
-  return doc.parts.reduce((sum, p) => sum + p.cost_est * p.attempts, 0);
+  return doc.parts.reduce((sum, p) => sum + p.cost_est * p.attempts + p.retake_est, 0);
 }
 
 async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
@@ -386,6 +407,8 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
         part.error = "the part finished with no film";
       } else {
         part.status = "done";
+        // Held until now, so a retake that fails retries as a retake, not as a full re-render.
+        part.retake = null;
         part.shots_done = part.shots_total;
         part.output_key = child.output_key;
         part.sidecar_key = child.sidecar_key;
@@ -396,16 +419,27 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
 
 /** Claim, then submit. Returns false when another tick owns the doc. */
 async function submitPart(doc: ParentDoc, part: ParentPart, deps: ParentDeps, now: number): Promise<boolean> {
+  const retake = part.retake;
   part.status = "submitting";
   part.claimed_at = now;
-  part.attempts += 1;
+  if (retake) {
+    part.retakes += 1;
+    part.retake_est += retake.shots.length * doc.cost_usd_per_shot_est;
+  } else {
+    part.attempts += 1;
+  }
   if (!(await deps.save(doc))) return false;
   try {
-    const { bundleArgs, submit } = partInputs(doc, part);
-    part.bundle_key = await deps.bundle(bundleArgs);
-    part.child_film_id = await deps.start({ ...submit, bundle_key: part.bundle_key });
+    if (retake) {
+      part.child_film_id = await deps.startRetake(retake, `${part.part_id}-r${part.retakes}`);
+      part.phase = "clips";
+    } else {
+      const { bundleArgs, submit } = partInputs(doc, part);
+      part.bundle_key = await deps.bundle(bundleArgs);
+      part.child_film_id = await deps.start({ ...submit, bundle_key: part.bundle_key });
+      part.phase = "keyframe";
+    }
     part.status = "running";
-    part.phase = "keyframe";
     part.error = null;
   } catch (e) {
     part.status = "failed";
@@ -429,11 +463,15 @@ async function recoverStaleClaims(doc: ParentDoc, deps: ParentDeps, now: number)
   }
 }
 
+const joinOutputKey = (doc: ParentDoc) =>
+  doc.join_version === 1 ? `renders/${doc.film_id}/film.mp4` : `renders/${doc.film_id}/film-v${doc.join_version}.mp4`;
+
 async function advanceJoin(doc: ParentDoc, deps: ParentDeps, now: number): Promise<void> {
   if (doc.join_job_id) {
     const r = await deps.readJoin(doc, doc.join_job_id);
     if (r.status === "pending") return;
     if (r.status === "completed") {
+      doc.output_key = joinOutputKey(doc);
       doc.bytes = r.bytes;
       doc.duration_seconds = r.durationSeconds;
       await mergeCaptions(doc, r.filmOffsetsSeconds, deps);
@@ -450,10 +488,9 @@ async function advanceJoin(doc: ParentDoc, deps: ParentDeps, now: number): Promi
     return;
   }
   doc.join_attempts += 1;
-  // Fixed key, so a re-submit reaches the same container job, which hashes object paths.
-  doc.output_key = `renders/${doc.film_id}/film.mp4`;
+  // Fixed per version, so a re-submit reaches the same container job, which hashes object paths.
   try {
-    doc.join_job_id = await deps.submitJoin(doc, doc.parts.map((p) => p.output_key as string), doc.output_key);
+    doc.join_job_id = await deps.submitJoin(doc, doc.parts.map((p) => p.output_key as string), joinOutputKey(doc));
     doc.error = null;
   } catch (e) {
     doc.error = e instanceof Error ? e.message : String(e);
@@ -479,7 +516,7 @@ async function mergeCaptions(doc: ParentDoc, offsets: number[], deps: ParentDeps
     }
     texts.push({ text, offsetSeconds: offsets[part.index] });
   }
-  const key = `renders/${doc.film_id}/film.srt`;
+  const key = joinOutputKey(doc).replace(/\.mp4$/, ".srt");
   await deps.writeText(key, mergeSrt(texts));
   doc.sidecar_key = key;
   if (missing.length) doc.degraded = `captions are missing for parts ${missing.join(", ")}`;
@@ -518,12 +555,13 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
   const next = doc.parts.filter((p) => p.status === "pending").slice(0, Math.max(0, room));
   let spend = committed;
   for (const part of next) {
-    if (spend + part.cost_est > doc.spend_ceiling_usd) {
+    const cost = part.retake ? part.retake.shots.length * doc.cost_usd_per_shot_est : part.cost_est;
+    if (spend + cost > doc.spend_ceiling_usd) {
       doc.stop_reason = "spend ceiling";
       if (!doc.parts.some(isLive)) doc.phase = "stopped";
       break;
     }
-    spend += part.cost_est;
+    spend += cost;
     if (!(await submitPart(doc, part, deps, now))) return doc;
   }
   await deps.save(doc);
@@ -542,6 +580,75 @@ export function retryPart(doc: ParentDoc, index: number): void {
   part.shots_done = 0;
   doc.stop_reason = null;
   if (doc.phase === "stopped") doc.phase = "running";
+}
+
+export interface RetakeEdits {
+  prompt?: unknown;
+  line?: unknown;
+  voice_id?: unknown;
+}
+
+/** Marks one shot of a finished part for a new take, and reopens the film. Nothing already delivered moves
+ *  until the new join is done. Several shots of one part can wait together. */
+export function markRetake(doc: ParentDoc, shotId: string, edits: RetakeEdits): void {
+  const index = doc.storyboard.scenes.findIndex((s) => s.shot_id === shotId);
+  if (index < 0) refuse(`no shot ${shotId}`);
+  const part = doc.parts.find((p) => index >= p.shot_from && index <= p.shot_to) as ParentPart;
+  const waiting = part.status === "pending" && part.retake !== null;
+  if (part.status !== "done" && !waiting) refuse(`part ${part.index} is ${part.status}; a retake needs a finished part`);
+  if (edits.prompt !== undefined && (typeof edits.prompt !== "string" || !edits.prompt.trim())) refuse("prompt must be text");
+  if (edits.line !== undefined && (typeof edits.line !== "string" || !edits.line.trim())) refuse("line must be text");
+  if (edits.voice_id !== undefined && (typeof edits.voice_id !== "string" || !edits.voice_id.trim())) refuse("voice_id must be text");
+  const local = `shot_${String(index - part.shot_from + 1).padStart(2, "0")}`;
+  const retake: PartRetake = part.retake ?? { from_film_id: part.child_film_id as string, shots: [], prompts: {}, lines: {} };
+  if (!retake.shots.includes(local)) retake.shots.push(local);
+  // The master board follows, so a later plain retry renders what was last asked for.
+  if (typeof edits.prompt === "string") {
+    retake.prompts[local] = edits.prompt;
+    doc.storyboard.scenes[index].prompt = edits.prompt;
+  }
+  const existing = doc.dialogue_lines.find((l) => l.shot_id === shotId);
+  if (typeof edits.line === "string" || typeof edits.voice_id === "string") {
+    const text = typeof edits.line === "string" ? edits.line : existing?.text;
+    if (!text) refuse(`shot ${shotId} has no line to give a voice`);
+    const voice_id = typeof edits.voice_id === "string" ? edits.voice_id : existing?.voice_id;
+    retake.lines[local] = { text, ...(voice_id ? { voice_id } : {}) };
+    if (existing) {
+      existing.text = text;
+      if (voice_id) existing.voice_id = voice_id;
+    } else {
+      doc.dialogue_lines.push({ shot_id: shotId, text, ...(voice_id ? { voice_id } : {}) });
+    }
+  }
+  part.retake = retake;
+  part.status = "pending";
+  part.phase = null;
+  part.error = null;
+  if (doc.phase === "done" || doc.phase === "join") {
+    doc.join_version += 1;
+    doc.join_job_id = null;
+    doc.join_attempts = 0;
+    doc.finished_at = null;
+    doc.degraded = null;
+  }
+  doc.phase = "running";
+  doc.stop_reason = null;
+}
+
+/** Scenes and lines for the re-run. Everything not named here comes from the old job unchanged, or the
+ *  proof of every other shot would fail. */
+export function retakeScenesAndLines<
+  S extends { shot_id: string; prompt?: string },
+  L extends { shot_id: string; text: string; voice_id?: string },
+>(job: { scenes: S[]; dialogue_lines?: L[] }, retake: PartRetake): { scenes: S[]; dialogue_lines: L[] | undefined } {
+  const scenes = job.scenes.map((s) => (retake.prompts[s.shot_id] ? { ...s, prompt: retake.prompts[s.shot_id] } : s));
+  const lines = [...(job.dialogue_lines ?? [])];
+  for (const [shot_id, line] of Object.entries(retake.lines)) {
+    const at = lines.findIndex((l) => l.shot_id === shot_id);
+    if (at >= 0) lines[at] = { ...lines[at], ...line };
+    else lines.push({ shot_id, ...line } as L);
+  }
+  return { scenes, dialogue_lines: lines.length ? lines : undefined };
 }
 
 /** Raises the ceiling and lets a film stopped by it carry on. A failed part still stops it on the next tick. */
@@ -591,7 +698,8 @@ export function parentView(doc: ParentDoc, now: number) {
       output_key: p.output_key,
       error: p.error,
     })),
-    output_key: doc.phase === "done" ? doc.output_key : null,
+    // Set only when a join finishes, so during a re-join this is still the film delivered last.
+    output_key: doc.output_key,
     sidecar_key: doc.sidecar_key,
     bytes: doc.bytes,
     duration_seconds: doc.duration_seconds,

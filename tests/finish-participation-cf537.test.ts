@@ -229,7 +229,7 @@ describe("cf#537 door sweep: every site that hands a finish_config to a mint als
     }
     // DENOMINATOR. A zero here means the sweep matched nothing and every row above is vacuous --
     // which is exactly how a guard stops guarding after a rename, silently and in the green direction.
-    expect(mints, `${mints} finish_config mint arguments found across ${FILES.length} files`).toBe(4);
+    expect(mints, `${mints} finish_config mint arguments found across ${FILES.length} files`).toBe(5); // 5th: the parent film's retake, src/index.ts
   });
 
   it("the AGENT door validates rather than trusts its body field", () => {

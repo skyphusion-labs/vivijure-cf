@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**94 route entries** (distinct `method` + `pattern`) over **76 distinct path patterns**. Those two
+**95 route entries** (distinct `method` + `pattern`) over **77 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -368,6 +368,7 @@ unchanged.
 | 46c | GET | `/api/film/:id` | 2.22a |
 | 46d | POST | `/api/film/:id/parts/:n/retry` | 2.22a |
 | 46e | POST | `/api/film/:id/ceiling` | 2.22a |
+| 46f | POST | `/api/film/:id/shots/:shot/retake` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1436,6 +1437,8 @@ Returns `201 {ok, film_id, phase, parts, created}`. Errors: `400` naming the fie
 `stopped` means no new part is submitted, because a part failed or the ceiling was reached. Parts already running carry on. The first part runs alone, and then at most 3 at once. The cron advances a parent, so polling is not required. `404 "film"` if unknown.
 
 **`POST /api/film/:id/parts/:n/retry`** with `{"shots":"failed"}` puts a failed part back in line and advances. The part is re-submitted with its stored inputs and `reuse_finished: true`. `400` if the part has not failed. `409` if the film changed during the call. A retry that would cross the ceiling leaves the part pending and stops the film.
+
+**`POST /api/film/:id/shots/:shot/retake`** with `{prompt?, line?, voice_id?}` marks one shot of a finished part for a new take. `:shot` is the master `shot_id`. The part runs again from its existing stills with `reuse_finished` and `retake_shots`, so it buys that shot's clip and finish, plus its line if the line or voice changed, and keeps the rest. Then the film joins again to a new key. `output_key` stays the last finished film until the new join is done, and then changes. Several shots of a waiting part add to one retake. The estimate adds one shot per retaken shot. `new_still` is refused: not built yet. `400` if the shot is unknown or its part is not finished. `409` if the film changed during the call.
 
 **`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 

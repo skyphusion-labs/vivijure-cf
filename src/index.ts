@@ -15,7 +15,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, retryPart, type CreateParentBody } from "./film-parent";
+import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, retakeScenesAndLines, retryPart, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
@@ -1937,6 +1937,42 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       }
       return r.body.film_id;
     },
+    async startRetake(retake, idempotency_key) {
+      const old = await advanceFilmJob(env, retake.from_film_id);
+      if (!old) throw new Error("the part's finished film job is gone");
+      const job = old.job;
+      if (!job.keyframes?.length) throw new Error("the part's finished film has no stills to re-use");
+      const { scenes, dialogue_lines } = retakeScenesAndLines(job, retake);
+      const started = await startFilmFromKeyframes(env, {
+        project: job.project,
+        bundle_key: job.bundle_key,
+        scenes,
+        keyframes: job.keyframes,
+        motion_backend: job.motion_backend ?? undefined,
+        motion_config: job.motion_config,
+        finish_config: job.finish_config,
+        finish_select: job.finish_select,
+        speech_config: job.speech_config,
+        film_finish_config: job.film_finish_config,
+        master_config: job.master_config,
+        derive_mode: "finalized",
+        audio_key: job.audio_key,
+        dialogue_lines,
+        style_prefix: job.style_prefix,
+        voice_lock: job.voice_lock,
+        voice_ref_keys: job.voice_ref_keys,
+        delivery_width: job.delivery_width,
+        delivery_height: job.delivery_height,
+        delivery_fps: job.delivery_fps,
+        film_titles: job.film_titles,
+        cast_loras: job.cast_loras,
+        reuse_finished: true,
+        retake_shots: retake.shots,
+        idempotency_key,
+      });
+      if (started.phase === "failed") throw new Error(started.error || "the retake did not start");
+      return started.film_id;
+    },
     async pollFilm(filmId) {
       const r = await doorJson(() => hPollFilm(new Request(`https://studio.internal/api/render/film/${filmId}`), env, ctx, { id: filmId }));
       return r.status === 200 ? r.body : null;
@@ -1982,6 +2018,22 @@ const hRetryParentPart: Handler = async (req, env, ctx, p) => {
   if (!loaded) throw notFound("film");
   try {
     retryPart(loaded.doc, Number(p.n));
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRetakeParentShot: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<RetakeEdits & { new_still?: unknown }>(req);
+  if (a.new_still !== undefined) throw badRequest("new_still is not built yet: a retake re-uses the shot's still");
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    markRetake(loaded.doc, p.shot, a);
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
@@ -2386,6 +2438,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
+  { method: "POST",   pattern: "/api/film/:id/shots/:shot/retake",      scope: "consumer",    handler: hRetakeParentShot },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
