@@ -3,6 +3,7 @@
 import { FINISH_AFFINITY_HEADER } from "./video-finish-binding";
 import { presignR2Get, presignR2Put, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { mediaFinishHeaders, videoFinishFetch } from "@skyphusion-labs/vivijure-core";
+import { JoinTransient } from "./film-parent";
 import type { StudioEnv } from "./orchestrator-env";
 import {
   FILM_PARENT_ACTIVE_PREFIX,
@@ -29,13 +30,14 @@ export async function loadParent(env: StudioEnv, id: string): Promise<LoadedPare
 
 /** Writes only if the doc is new. False means this id already exists. */
 export async function insertParent(env: StudioEnv, doc: ParentDoc): Promise<boolean> {
+  // The marker first: a crash between the two leaves a marker with no doc, which a sweep skips, and never a
+  // parent the cron cannot see.
+  await env.R2_RENDERS.put(activeKey(doc.film_id), "");
   const written = await env.R2_RENDERS.put(docKey(doc.film_id), JSON.stringify(doc), {
     onlyIf: { etagDoesNotMatch: "*" },
     httpMetadata: { contentType: "application/json" },
   });
-  if (!written) return false;
-  await env.R2_RENDERS.put(activeKey(doc.film_id), "");
-  return true;
+  return !!written;
 }
 
 /** Writes if nobody wrote since `loaded` was read, and moves `loaded.etag` on. A parent that can act
@@ -65,6 +67,7 @@ export interface ParentDoors {
   bundle(args: { storyboard: Record<string, unknown>; characterRefs: Record<string, unknown> }): Promise<string>;
   start(body: Record<string, unknown>): Promise<string>;
   startRetake: ParentDeps["startRetake"];
+  admitSubmit(): Promise<string | null>;
   pollFilm(filmId: string): Promise<Record<string, unknown> | null>;
 }
 
@@ -86,18 +89,19 @@ const JOIN_URL_TTL_SECONDS = FILM_DOWNLOAD_TTL_SECONDS;
 export function parentDeps(env: StudioEnv, loaded: LoadedParent, doors: ParentDoors): ParentDeps {
   return {
     save: () => saveParent(env, loaded),
+    async reload() {
+      const fresh = await loadParent(env, loaded.doc.film_id);
+      if (!fresh) return null;
+      loaded.etag = fresh.etag;
+      return fresh.doc;
+    },
+    admitSubmit: doors.admitSubmit,
     bundle: doors.bundle,
     start: doors.start,
     startRetake: doors.startRetake,
     async readChild(filmId) {
       const poll = await doors.pollFilm(filmId);
       return poll ? childFromPoll(poll) : null;
-    },
-    async findChild(project) {
-      const row = await env.DB.prepare(
-        "SELECT job_id FROM renders WHERE project = ? AND job_id LIKE 'film-%' ORDER BY submitted_at DESC LIMIT 1",
-      ).bind(project).first<{ job_id: string }>();
-      return row?.job_id ?? null;
     },
     async submitJoin(doc, filmKeys, outputKey) {
       const films = await Promise.all(filmKeys.map(async (key) => ({
@@ -109,10 +113,13 @@ export function parentDeps(env: StudioEnv, loaded: LoadedParent, doors: ParentDo
         headers: { ...(await mediaFinishHeaders(env)), [FINISH_AFFINITY_HEADER]: doc.film_id },
         body: JSON.stringify({ films, outputUrl, outputKey }),
       });
-      if (!resp) throw new Error("the video-finish door is not reachable");
+      if (!resp) throw new JoinTransient("the video-finish door is not reachable");
       const body = (await resp.json().catch(() => null)) as { jobId?: string; error?: string } | null;
       if (resp.status !== 202 || !body?.jobId) {
-        throw new Error(`join refused (${resp.status}): ${body?.error ?? "no job id"}`);
+        const message = `join refused (${resp.status}): ${body?.error ?? "no job id"}`;
+        // A full door's 429 is the one answer a caller may wait on, and a 5xx is the door and not the films.
+        if (resp.status === 429 || resp.status >= 500) throw new JoinTransient(message);
+        throw new Error(message);
       }
       return body.jobId;
     },
@@ -124,6 +131,8 @@ export function parentDeps(env: StudioEnv, loaded: LoadedParent, doors: ParentDo
         return { status: "pending" };
       }
       if (resp.status === 404) return { status: "missing" };
+      // A wrong token never clears by waiting.
+      if (resp.status === 401 || resp.status === 403) return { status: "error", error: `join status refused (${resp.status})` };
       const body = (await resp.json().catch(() => null)) as {
         status?: string; error?: string;
         result?: { bytes?: number; durationSeconds?: number; filmOffsetsSeconds?: number[] };

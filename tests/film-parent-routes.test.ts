@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   bundled: [] as unknown[],
   fromKeyframes: [] as Array<Record<string, unknown>>,
   jobs: new Map<string, Record<string, unknown>>(),
+  quotaFull: false,
 }));
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
@@ -24,6 +25,14 @@ vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
       h.started.push(args);
       return { film_id: `film-${h.started.length}`, project: args.project, phase: "keyframe", scenes: args.scenes, created_at: 0 };
     }),
+  };
+});
+vi.mock("@skyphusion-labs/vivijure-core/storage-quota", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/storage-quota")>();
+  return {
+    ...actual,
+    checkStorageQuota: vi.fn(async (...a: Parameters<typeof actual.checkStorageQuota>) =>
+      h.quotaFull ? { ok: false, status: 507, message: "storage is full" } : actual.checkStorageQuota(...a)),
   };
 });
 vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
@@ -125,11 +134,14 @@ describe("POST /api/film", () => {
     expect(res.status).toBe(201);
     const json = (await res.json()) as { film_id: string; parts: number };
     expect(json.parts).toBe(2);
+    expect(h.started, "create only writes: a submit must not run where it can be cut off").toHaveLength(0);
+    await worker.fetch(new Request(`https://studio.example/api/film/${json.film_id}`), e as never, ctx);
     expect(h.started).toHaveLength(1);
-    expect(h.started[0].project).toBe("Long_p00");
+    const tag = json.film_id.slice("feature-".length, "feature-".length + 8);
+    expect(h.started[0].project).toBe(`Long_${tag}_p00`);
     // The real assembler made this key, and the door took the project from it. Same project for every
     // part would make the parts overwrite each other's clips.
-    expect(String(h.started[0].bundle_key)).toMatch(/^bundles\/Long_p00-[0-9a-f]{16}\.tar\.gz$/);
+    expect(String(h.started[0].bundle_key)).toMatch(new RegExp(`^bundles/Long_${tag}_p00-[0-9a-f]{16}\\.tar\\.gz$`));
     expect([h.started[0].delivery_width, h.started[0].delivery_height, h.started[0].reuse_finished]).toEqual([832, 464, true]);
     expect(e.bucket.store.has(`film-parents/active/${json.film_id}`)).toBe(true);
   });
@@ -143,7 +155,9 @@ describe("POST /api/film", () => {
     await settle();
     expect(res.status).toBe(200);
     expect(((await res.json()) as { film_id: string }).film_id).toBe(first.film_id);
-    expect(h.started).toHaveLength(1);
+    expect(h.started).toHaveLength(0);
+    const changed = await worker.fetch(post("/api/film", { ...BODY, spend_ceiling_usd: 99 }), e as never, ctx);
+    expect(changed.status, "the same key with a different body is refused").toBe(409);
   });
 
   it("refuses with no key, and with a bad body, before writing anything", async () => {
@@ -151,6 +165,55 @@ describe("POST /api/film", () => {
     expect((await worker.fetch(post("/api/film", { ...BODY, idempotency_key: undefined }), e as never, ctx)).status).toBe(400);
     expect((await worker.fetch(post("/api/film", { ...BODY, spend_ceiling_usd: 0 }), e as never, ctx)).status).toBe(400);
     expect(e.bucket.store.size).toBe(0);
+  });
+});
+
+describe("the router's spend checks reach a part", () => {
+  const limiter = (ok: boolean) => ({ limit: async () => ({ success: ok }) });
+
+  it("the routes are on both lists, and a poll is not", async () => {
+    const { isSpendRoute } = await import("../src/rate-limit");
+    const { isPanelStorageSubmitRoute } = await import("../src/storage-submit-routes");
+    for (const p of ["/api/film", "/api/film/x/parts/0/retry", "/api/film/x/resume"]) {
+      expect(isSpendRoute("POST", p), p).toBe(true);
+      expect(isPanelStorageSubmitRoute("POST", p), p).toBe(true);
+    }
+    expect(isSpendRoute("POST", "/api/film/x/ceiling")).toBe(true);
+    expect(isSpendRoute("GET", "/api/film/x")).toBe(false);
+  });
+
+  it("a limiter refusal stops the create at the door", async () => {
+    h.started = [];
+    const e = env();
+    (e as Record<string, unknown>).SPEND_RATE_LIMITER = limiter(false);
+    expect((await worker.fetch(post("/api/film", BODY), e as never, ctx)).status).toBe(429);
+    expect(e.bucket.store.size).toBe(0);
+  });
+
+  it("a part started by a GET is held by the limiter, not bought", async () => {
+    h.started = [];
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    (e as Record<string, unknown>).SPEND_RATE_LIMITER = limiter(false);
+    const view = (await (await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx)).json()) as { stop_reason: string; parts: Array<{ status: string }> };
+    expect(h.started).toEqual([]);
+    expect(view.stop_reason).toMatch(/rate limited/);
+    expect(view.parts[0].status).toBe("pending");
+  });
+});
+
+describe("the storage quota reaches a part", () => {
+  it("a part started by a GET is held when storage is full", async () => {
+    h.started = [];
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    h.quotaFull = true;
+    const read = await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx);
+    h.quotaFull = false;
+    const view = (await read.json()) as { stop_reason: string; parts: Array<{ status: string }> };
+    expect(h.started).toEqual([]);
+    expect(view.stop_reason).toBe("storage is full");
+    expect(view.parts[0].status).toBe("pending");
   });
 });
 

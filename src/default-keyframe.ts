@@ -36,3 +36,8 @@ export function defaultKeyframeBackendName(
   if ((motionBackend ?? "").trim() === "local-gpu") return keyframeBackend;
   return defaultStillsName(modules) ?? keyframeBackend;
 }
+
+/** cloud-keyframe draws from reference stills and takes no LoRA, so an untrained character is fine there. */
+export function keyframeDoorUsesCastLora(keyframeBackend: string | undefined): boolean {
+  return (keyframeBackend ?? "").trim() !== "cloud-keyframe";
+}

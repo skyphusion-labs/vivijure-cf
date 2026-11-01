@@ -89,6 +89,7 @@ const MANIFEST: ModuleManifest = {
     order: 58,
     locality: "cloud",
     cost: "$0.04/s at 540p, $0.06/s at 720p, $0.07/s at 1080p",
+    cost_usd_per_second: [0.04, 0.07],
     blurb: "Talking clips from a still. 1 to 16 seconds. The next still can close the shot.",
     limits: [
       "1 to 16 second clips",

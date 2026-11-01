@@ -33,13 +33,6 @@
         <div class="account-prefs" role="group" aria-label="Preferences">
           <div class="account-prefs-head">Preferences</div>
           <label class="account-pref">
-            <input type="checkbox" id="pref-email-notifications" />
-            <span class="account-pref-text">
-              <span class="account-name">Email me when a render finishes</span>
-              <span class="account-sub" id="pref-email-status">No emails when renders finish</span>
-            </span>
-          </label>
-          <label class="account-pref">
             <input type="checkbox" id="pref-operator-tools" />
             <span class="account-pref-text">
               <span class="account-name">Operator tools</span>
@@ -394,6 +387,10 @@
              Wire values stay draft/standard/final; labels are Preview / Share / Best (cf#646). -->
         <select id="planner-quality-tier"></select>
       </label>
+      <label class="planner-field" id="planner-look-wrap" hidden>
+        <span>look</span>
+        <select id="planner-look"></select>
+      </label>
       </div>
       <!-- Module render config: projected from GET /api/modules. The hook set comes from the live
            `catalog` (keyframe, motion.backend, speech, finish, master, film.finish render here;
@@ -402,7 +399,7 @@
       <div id="planner-motion-backend-wrap" class="planner-overrides-common"></div>
       <div id="planner-finish-picks" class="planner-finish-picks" hidden>
         <p class="planner-finish-picks-lede">Finish this film</p>
-        <p class="planner-finish-picks-note">Motion already talks when the model can. Each shot animates toward the next still.</p>
+        <p class="planner-finish-picks-note">Motion already talks when the model can. Some doors animate toward the next still; each door card says if it does.</p>
         <!-- cf#780: one checkbox per INSTALLED finish module that declares
              participation: "opt_in", projected from GET /api/modules by
              planner-render-config.js renderFinishPicks(). Each control's label is the
@@ -418,8 +415,20 @@
         <span>Lock the speaking voice</span>
         <textarea id="planner-voice-lock" rows="2" placeholder="Same speaker every shot: low alto, calm, slight Texas accent. Never a new voice."></textarea>
       </label>
-      <p class="planner-overrides-hint" id="planner-voice-lock-note">Voice is chosen once on Cast for each person. We fill this lock from that so every shot is the same speaker. Edit only if you need a tighter description.</p>
+      <p class="planner-overrides-hint" id="planner-voice-lock-note">Voice is chosen once on Cast for each person. Doors that cannot use Cast audio get this description instead, so the speaker can vary. Edit only if you need a tighter description.</p>
       <p id="planner-render-spend" class="planner-render-spend" role="status"></p>
+      <dialog id="planner-spend-confirm" class="planner-spend-confirm">
+        <form method="dialog">
+          <h3>Start this film?</h3>
+          <p id="planner-spend-what"></p>
+          <p id="planner-spend-total"></p>
+          <p class="planner-overrides-hint">Stills, voices, music and finish steps cost extra and are not in this total.</p>
+          <div class="planner-actions">
+            <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+            <button type="submit" value="start" class="planner-primary">Start the film</button>
+          </div>
+        </form>
+      </dialog>
       <div class="planner-actions">
         <button id="planner-render-btn" type="button" class="planner-primary">Render this film</button>
         <span id="planner-render-reason" class="planner-status planner-render-reason" hidden></span>

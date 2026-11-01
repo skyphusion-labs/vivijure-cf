@@ -46,6 +46,9 @@ const planState = {
   activeProjectId: null,
 };
 
+// Top-level const is not a window property. planner-render-config.js reads it through its IIFE global.
+if (typeof window !== "undefined") window.planState = planState;
+
 const bundleState = {
   // perSlotUploads[slot] = [{filename, size, mime, key, status, error}]
   perSlotUploads: {},

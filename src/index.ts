@@ -15,7 +15,8 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, retakeScenesAndLines, retryPart, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
 import { insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
@@ -1901,8 +1902,10 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
 };
 
-// A long film as parts under one parent (film-parent.ts). A part goes through the same doors as any
-// film, called directly, so it cannot skip a check an outside caller would hit.
+// A long film as parts under one parent (film-parent.ts). A part goes through the same door handlers as
+// any film, called directly. That passes the door's checks but not the router's, so admitSubmit runs the
+// spend limit, daily ceiling and storage quota at each part: later parts come from a poll or the cron,
+// with no spend route in front of them.
 function internalRequest(path: string, body: unknown): Request {
   return new Request(`https://studio.internal${path}`, {
     method: "POST",
@@ -1973,6 +1976,12 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       if (started.phase === "failed") throw new Error(started.error || "the retake did not start");
       return started.film_id;
     },
+    async admitSubmit() {
+      const spend = await enforceSpendLimit(internalRequest("/api/render/film", {}), env);
+      if (!spend.ok) return spend.message;
+      const quota = await checkStorageQuota(env);
+      return quota.ok ? null : quota.message;
+    },
     async pollFilm(filmId) {
       const r = await doorJson(() => hPollFilm(new Request(`https://studio.internal/api/render/film/${filmId}`), env, ctx, { id: filmId }));
       return r.status === 200 ? r.body : null;
@@ -1993,15 +2002,29 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${String(a.project)}\n${key}`));
   const hex = [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
   const filmId = `feature-${hex}`;
+  const fingerprint = requestFingerprint(a);
   let doc;
   try {
-    doc = buildParentDoc(filmId, a, Date.now());
+    doc = buildParentDoc(
+      filmId, a, Date.now(),
+      (width, height, seconds) => predictNormalizedBytes(width, height, CONTAINER_DEFAULT_FPS, seconds),
+      fingerprint,
+    );
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
   }
+  // No tick here: a submit in waitUntil can be cut off after the response, and that leaves a claim nobody can
+  // resolve. The cron or the first GET starts the film.
   const created = await insertParent(env, doc);
-  if (created) ctx.waitUntil(tickParent(env, ctx, filmId).catch((e) => console.warn(`film parent ${filmId}: ${String(e)}`)));
+  if (!created) {
+    const stored = await loadParent(env, filmId);
+    if (!stored) return json({ ok: false, error: "the film could not be read; try again" }, 503);
+    if (stored.doc.request_hash !== fingerprint) {
+      return json({ ok: false, error: "this idempotency_key was used with a different request" }, 409);
+    }
+    doc = stored.doc;
+  }
   return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
 };
 
@@ -2034,6 +2057,20 @@ const hRetakeParentShot: Handler = async (req, env, ctx, p) => {
   if (!loaded) throw notFound("film");
   try {
     markRetake(loaded.doc, p.shot, a);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hResumeParent: Handler = async (_req, env, ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    resumeParent(loaded.doc);
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
@@ -2439,6 +2476,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
   { method: "POST",   pattern: "/api/film/:id/shots/:shot/retake",      scope: "consumer",    handler: hRetakeParentShot },
+  { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
@@ -2481,8 +2519,8 @@ const WELCOME_REDIRECT_TARGET = "https://vivijure.com/";
 const STUDIO_PAGE_ASSETS: Record<string, string> = {
   // index.html was a byte-identical copy of modules.html (removed in the 2026-07 truth pass);
   // the modules/pipeline page IS the landing page, served from the single source file.
-  "/": "/modules.html",
-  "/index.html": "/modules.html",
+  "/": "/planner.html",
+  "/index.html": "/planner.html",
   "/planner": "/planner.html",
   "/planner/": "/planner.html",
   "/cast": "/cast.html",

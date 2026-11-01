@@ -41,6 +41,11 @@ import { isStorageSubmitRoute } from "@skyphusion-labs/vivijure-core/storage-quo
  * pins that so an unanchored regex cannot quietly widen this.
  */
 export const PANEL_STORAGE_SUBMIT_PATTERNS: RegExp[] = [
+  // A long film's parts, which write films. Each part also checks at submit.
+  /^\/api\/film$/,
+  /^\/api\/film\/[^/]+\/parts\/[^/]+\/retry$/,
+  /^\/api\/film\/[^/]+\/resume$/,
+  /^\/api\/film\/[^/]+\/shots\/[^/]+\/retake$/,
   // A finish retry writes a whole new film beside the old one, and only deletes the old one if it finishes.
   /^\/api\/render\/film\/[^/]+\/finish-retry$/,
   // Re-submits a stored row through startFilmJob: a full film of keyframes and clips, which is the

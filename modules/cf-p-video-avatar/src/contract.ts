@@ -20,6 +20,8 @@ export interface ModuleUi {
   order?: number;
   locality?: "local" | "byo" | "cloud";
   cost?: string;
+  /** Lowest and highest clip rate in USD per second. Lets the planner state a total. */
+  cost_usd_per_second?: [number, number];
   blurb?: string;
   limits?: string[];
 }

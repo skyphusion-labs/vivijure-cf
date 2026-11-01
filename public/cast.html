@@ -31,13 +31,6 @@
         </button>
         <div class="account-prefs" role="group" aria-label="Preferences">
           <div class="account-prefs-head">Preferences</div>
-          <label class="account-pref">
-            <input type="checkbox" id="pref-email-notifications" />
-            <span class="account-pref-text">
-              <span class="account-name">Email me when a render finishes</span>
-              <span class="account-sub" id="pref-email-status">No emails when renders finish</span>
-            </span>
-          </label>
         </div>
       </div>
     </div>
@@ -45,7 +38,7 @@
   <main class="cast-layout">
     <header class="cast-header">
       <h1>Cast</h1>
-      <p class="lede">Create the people in your film. A name and a face photo are enough. Training is optional if you want them consistent across shots.</p>
+      <p class="lede">Create the people in your film. Start with a name and a face photo. A photoreal film also needs a trained look for each person. An Anime film uses the photo.</p>
     </header>
 
     <div class="cast-workspace">
@@ -90,7 +83,7 @@
         <select id="cast-voice" class="cast-voice-select">
           <option value="">no voice (silent)</option>
         </select>
-        <small class="cast-field-hint">One Aura-1 voice for this character. Hear one line below. That voice is the one the film uses. There is no separate voice clip.</small>
+        <small class="cast-field-hint">One Aura-1 voice for this character. Hear one line below. Doors that speak from Cast audio use this voice. Other talking doors make a voice from a description, and each door card says which it is.</small>
       </label>
 
       <section class="cast-field" id="cast-voice-line-pane">
@@ -230,7 +223,7 @@
         </div>
       </section>
 
-      <details class="cast-lora-pane cast-gen-block">
+      <details id="cast-wan-lora-pane" class="cast-lora-pane cast-gen-block" hidden>
         <summary>Wan LoRA (optional, slow)</summary>
         <p class="cast-section-hint">Not needed for keyframes or Seedance talking films. Only the Wan motion doors (alibaba-wan-lora, studio GPU) load these adapters. Dual Wan 2.2 experts, same portrait + refs, ~35-45 minutes GPU plus a cold-worker start, about $2-$4 per run.</p>
         <div id="cast-wan-lora-status-row" class="cast-lora-status-row">
@@ -250,7 +243,7 @@
     </section>
 
     <section id="cast-editor-empty" class="cast-editor-empty">
-      <p>pick a character on the left, or create a new one.</p>
+      <p>pick a character, or create a new one.</p>
     </section>
     </div>
 
