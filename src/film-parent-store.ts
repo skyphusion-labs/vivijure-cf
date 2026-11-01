@@ -169,12 +169,21 @@ export interface ParentDoors {
   pollFilm(filmId: string): Promise<Record<string, unknown> | null>;
 }
 
+/** A poll's answer as a read. Only a 404 means the film is gone. Anything else means it could not be read this
+ *  time, and throwing leaves the part as it is for the next tick, where null would fail it for good. */
+export function childPollBody(status: number, body: Record<string, unknown>): Record<string, unknown> | null {
+  if (status === 200) return body;
+  if (status === 404) return null;
+  throw new Error(`film poll -> ${status}`);
+}
+
 export function childFromPoll(poll: Record<string, unknown>): ChildRead {
   const clips = poll.clips as { done?: number } | undefined;
   const finish = poll.film_finish as { sidecar_key?: string } | undefined;
   const shotFinish = poll.finish as { degraded?: number; reasons?: string[] } | undefined;
   return {
     phase: String(poll.phase ?? ""),
+    clips_started: typeof poll.clip_job_id === "string",
     shots_done: typeof clips?.done === "number" ? clips.done : 0,
     finish_degraded: typeof shotFinish?.degraded === "number" ? shotFinish.degraded : 0,
     finish_reasons: Array.isArray(shotFinish?.reasons) ? shotFinish.reasons.filter((r) => typeof r === "string") : [],

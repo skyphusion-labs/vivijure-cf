@@ -84,11 +84,15 @@ export interface ParentPart {
   shots_total: number;
   cost_est: number;
   error: string | null;
-  /** Shots of this part that a finish step soft-degraded, and why. Read from its film each tick. */
+  /** Shots of the delivered output that a finish step soft-degraded, and why. Set when a part's film finishes. */
   finish_degraded?: number;
   finish_reasons?: string[];
-  /** Submits made, for the ceiling. */
+  /** Submits made. */
   attempts: number;
+  /** Retries of this part that the ceiling does not count, because the run before them failed before its clips. */
+  free_retries?: number;
+  /** The part failed with no clip job on its film. Its stills are kept, and the retry's own estimate covers them. */
+  failed_before_clips?: boolean;
   /** Moves only on a deliberate retry, so a repeat of the same request carries the same key. */
   generation: number;
   claimed_at: number | null;
@@ -429,6 +433,8 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
 
 export interface ChildRead {
   phase: string;
+  /** The film holds a clip job. false only when the film said so. */
+  clips_started?: boolean;
   shots_done: number;
   /** Shots whose finish chain did no work, and why. A finished part can still have lost its upscale. */
   finish_degraded?: number;
@@ -509,10 +515,23 @@ export function mergeSrt(parts: Array<{ text: string; offsetSeconds: number }>):
 
 const isLive = (p: ParentPart) => p.status === "running" || p.status === "submitting";
 
-/** Every submit counts in full, retries included. A retry keeps proven work, so this reads high: the safe
- *  direction for a ceiling. It is still an estimate, never a meter. */
+/** A retry after a failure before clips is free this many times per part. From the next one, each counts in full. */
+export const FREE_RETRIES_PER_PART = 2;
+
+/** Submits the ceiling counts. A part that has run counts at least once, whatever was forgiven. */
+function countedAttempts(attempts: number, freeRetries: number | undefined): number {
+  return attempts > 0 ? Math.max(1, attempts - (freeRetries ?? 0)) : 0;
+}
+
+/** Every submit counts in full, except up to FREE_RETRIES_PER_PART retries of a part that failed before its clips.
+ *  A retry keeps proven work, so this reads high: the safe direction for a ceiling. An estimate, never a meter. */
 export function committedEstimate(doc: ParentDoc): number {
-  return doc.parts.reduce((sum, p) => sum + p.cost_est * p.attempts + p.retake_est, 0);
+  return doc.parts.reduce((sum, p) => sum + p.cost_est * countedAttempts(p.attempts, p.free_retries) + p.retake_est, 0);
+}
+
+/** What one more plain submit of this part adds to the committed estimate. */
+function nextSubmitCost(part: ParentPart): number {
+  return part.cost_est * (countedAttempts(part.attempts + 1, part.free_retries) - countedAttempts(part.attempts, part.free_retries));
 }
 
 /** Stills first, then the clip. A finished draw puts the part back in line for the retake itself. */
@@ -553,9 +572,14 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
     }
     part.phase = child.phase;
     part.shots_done = child.shots_done;
-    part.finish_degraded = child.finish_degraded ?? 0;
-    part.finish_reasons = child.finish_reasons ?? [];
+    // With the delivered output: a retake that fails leaves the old film, and its limit, in place.
+    if (child.phase === "done") {
+      part.finish_degraded = child.finish_degraded ?? 0;
+      part.finish_reasons = child.finish_reasons ?? [];
+    }
     if (child.phase === "failed") {
+      // The film's own word, not this doc's last view: a storage problem can stretch that across a paid clip run.
+      part.failed_before_clips = child.clips_started === false && child.shots_done === 0;
       part.status = "failed";
       part.error = child.error ?? "the part failed";
     } else if (child.phase === "done") {
@@ -807,7 +831,7 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
     // From the doc each time: a submit can reload it, and another tick may have taken this part.
     const part = doc.parts[index];
     if (part.status !== "pending") continue;
-    const cost = part.retake ? retakeNextCost(part.retake, doc.cost_usd_per_shot_est) : part.cost_est;
+    const cost = part.retake ? retakeNextCost(part.retake, doc.cost_usd_per_shot_est) : nextSubmitCost(part);
     if (committedEstimate(doc) + cost > doc.spend_ceiling_usd) {
       doc.stop_reason = "spend ceiling";
       if (!doc.parts.some(isLive)) doc.phase = "stopped";
@@ -838,6 +862,18 @@ export function retryPart(doc: ParentDoc, index: number): void {
   const part = doc.parts[index];
   if (!part) refuse("no such part");
   if (part.status !== "failed") refuse(`part ${index} is ${part.status}, not failed`);
+  // cf#1214: what the failed run bought was stills, which the retry keeps. One full estimate still covers the
+  // part, so the retry does not add a second one and trip the ceiling with nothing spent on clips. Only so many:
+  // each failed run also paid for GPU time, and a loop must reach the ceiling.
+  if (part.failed_before_clips && !part.retake && (part.free_retries ?? 0) < FREE_RETRIES_PER_PART) {
+    part.free_retries = (part.free_retries ?? 0) + 1;
+  }
+  part.failed_before_clips = false;
+  // A plain retry has no delivered output, so nothing to report on. A retake keeps the film it may replace.
+  if (!part.retake) {
+    part.finish_degraded = 0;
+    part.finish_reasons = [];
+  }
   part.status = "pending";
   part.generation += 1;
   part.error = null;
@@ -1123,7 +1159,7 @@ export function raiseCeiling(doc: ParentDoc, value: unknown): void {
   }
 }
 
-const CEILING_BASIS = "estimate: every submit counts in full, including retries. Not a meter.";
+const CEILING_BASIS = "estimate: every submit counts in full, except the first 2 retries per part of a run that failed before its clips. Not a meter.";
 
 export type StopCode = "part_failed" | "spend_ceiling" | "first_part_hold" | "gate_held";
 
