@@ -103,7 +103,6 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "1-15 second clips",
       "Same voice lock on every shot",
-      "One film, no scatter",
       "Cannot lock the Cast voice sample. Same description, not the same take.",
     ],
   },

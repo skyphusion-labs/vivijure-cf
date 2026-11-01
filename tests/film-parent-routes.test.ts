@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   fromKeyframes: [] as Array<Record<string, unknown>>,
   jobs: new Map<string, Record<string, unknown>>(),
   quotaFull: false,
+  cast: null as never,
 }));
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
@@ -33,6 +34,13 @@ vi.mock("@skyphusion-labs/vivijure-core/storage-quota", async (orig) => {
     ...actual,
     checkStorageQuota: vi.fn(async (...a: Parameters<typeof actual.checkStorageQuota>) =>
       h.quotaFull ? { ok: false, status: 507, message: "storage is full" } : actual.checkStorageQuota(...a)),
+  };
+});
+vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/cast-loras")>();
+  return {
+    ...actual,
+    resolveCastLoras: vi.fn(async (...a: Parameters<typeof actual.resolveCastLoras>) => h.cast ?? actual.resolveCastLoras(...a)),
   };
 });
 vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
@@ -552,6 +560,68 @@ describe("the cron heartbeat", () => {
   });
 });
 
+describe("a film start that says nothing was invoked", () => {
+  it("leaves the part waiting, with no claim and nothing counted", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new core.FilmNotStartedError("R2 read"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await tick(e);
+    vi.restoreAllMocks();
+    const view = (await (await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx)).json()) as { spend_committed_est: number; parts: Array<{ status: string; error: string }> };
+    expect(view.parts[0].status).toBe("pending");
+    expect(view.parts[0].error).toMatch(/503/);
+    expect(view.spend_committed_est).toBe(0);
+  });
+
+  it("a retake that invoked nothing waits too, counting nothing", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const doc = buildParentDoc("feature-n", { ...BODY, part_size: 4 }, 0);
+    Object.assign(doc.parts[0], { status: "done", child_film_id: "film-old", output_key: "o", attempts: 1 });
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    h.jobs.set("film-old", { film_id: "film-old", project: "p", bundle_key: "b", phase: "done", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], keyframes: [{ shot_id: "shot_01", keyframe_key: "k" }], motion_config: {}, finish_config: {} });
+    await worker.fetch(post("/api/film/feature-n/shots/s1/retake", {}), e as never, ctx);
+    vi.mocked(core.startFilmFromKeyframes).mockRejectedValueOnce(new core.FilmNotStartedError("R2 read"));
+    await tick(e);
+    const stored = (await loadParent(e as never, "feature-n"))!.doc;
+    expect(stored.parts[0].status).toBe("pending");
+    expect(stored.parts[0].claimed_at).toBeNull();
+    expect([stored.parts[0].retakes, stored.parts[0].retake_est]).toEqual([0, 0]);
+    expect(stored.parts[0].retake, "still waiting").not.toBeNull();
+    expect(stored.parts[0].not_before).not.toBeNull();
+  });
+
+  it("a retake's other throw keeps the claim", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const doc = buildParentDoc("feature-m", { ...BODY, part_size: 4 }, 0);
+    Object.assign(doc.parts[0], { status: "done", child_film_id: "film-old", output_key: "o", attempts: 1 });
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    h.jobs.set("film-old", { film_id: "film-old", project: "p", bundle_key: "b", phase: "done", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], keyframes: [{ shot_id: "shot_01", keyframe_key: "k" }], motion_config: {}, finish_config: {} });
+    await worker.fetch(post("/api/film/feature-m/shots/s1/retake", {}), e as never, ctx);
+    vi.mocked(core.startFilmFromKeyframes).mockRejectedValueOnce(new Error("job write failed"));
+    await tick(e);
+    const stored = (await loadParent(e as never, "feature-m"))!.doc;
+    expect(stored.parts[0].status).toBe("submitting");
+    expect(stored.parts[0].error).toMatch(/outcome unknown so far/);
+  });
+
+  it("any other throw keeps the claim, because work may be out", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new Error("job write failed"));
+    await tick(e);
+    const view = (await (await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx)).json()) as { parts: Array<{ status: string; error: string }> };
+    expect(view.parts[0].status, "running is how a claim reads").toBe("running");
+    expect(view.parts[0].error).toMatch(/outcome unknown so far/);
+  });
+});
+
 describe("the cron list", () => {
   it("a repeat create does not put a finished film back", async () => {
     const e = env();
@@ -710,11 +780,91 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect((await worker.fetch(post("/api/film/feature-x/parts/0/retake/cancel", {}), e as never, ctx)).status).toBe(400);
   });
 
-  it("refuses new_still, and an unknown shot, starting nothing", async () => {
+  it("refuses an unknown shot, starting nothing", async () => {
     const e = await doneFilm();
-    expect((await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true }), e as never, ctx)).status).toBe(400);
     expect((await worker.fetch(post("/api/film/feature-x/shots/nope/retake", {}), e as never, ctx)).status).toBe(400);
     expect(h.fromKeyframes).toEqual([]);
+  });
+
+  it("new_still: a keyframes-only job of that shot alone, with its seed, and no clip yet", async () => {
+    const e = await doneFilm();
+    h.started = [];
+    const res = await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5, prompt: "better" }), e as never, ctx);
+    expect(res.status).toBe(200);
+    expect(h.started, "the tick starts it").toEqual([]);
+    await tick(e);
+    expect(h.started).toHaveLength(1);
+    const a = h.started[0];
+    expect(a.keyframes_only).toBe(true);
+    expect((a.scenes as Array<{ shot_id: string; prompt: string }>).map((s) => [s.shot_id, s.prompt])).toEqual([["shot_02", "better"]]);
+    expect((a.keyframe_config as { seed: number }).seed).toBe(5);
+    expect(String(a.bundle_key)).toMatch(/^bundles\/Long_x_p00-/);
+    expect(h.fromKeyframes).toEqual([]);
+  });
+
+  it("new_still: a draw that invoked nothing waits, counting nothing, and any other throw keeps its claim", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = await doneFilm();
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), e as never, ctx);
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new core.FilmNotStartedError("R2 read"));
+    await tick(e);
+    let part = (await loadParent(e as never, "feature-x"))!.doc.parts[0];
+    expect([part.status, part.claimed_at, part.retake_est]).toEqual(["pending", null, 0]);
+    expect(part.not_before).not.toBeNull();
+    expect(part.retake?.still_film_id ?? null).toBeNull();
+
+    const f = await doneFilm();
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), f as never, ctx);
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new Error("job write failed"));
+    await tick(f);
+    part = (await loadParent(f as never, "feature-x"))!.doc.parts[0];
+    expect(part.status).toBe("submitting");
+    expect(part.error).toMatch(/outcome unknown so far/);
+  });
+
+  it("new_still: resolves the cast, because a job does not store its adapters", async () => {
+    const e = await doneFilm();
+    const stored = await loadParent(e as never, "feature-x");
+    stored!.doc.shared.cast_loras = { A: "public-id" };
+    await saveParent(e as never, stored!);
+    h.started = [];
+    h.cast = { pretrained: { A: "loras/a" }, wanPretrained: {}, castIds: { A: 18 }, voices: {}, voiceRefs: {}, speakerNames: {}, skipped: [], skippedDetail: [] } as never;
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), e as never, ctx);
+    await tick(e);
+    h.cast = null as never;
+    expect(h.started).toHaveLength(1);
+    expect(h.started[0].pretrained_loras, "without this the redraw loses the face").toEqual({ A: "loras/a" });
+    expect(h.started[0].cast_loras).toEqual({ A: 18 });
+  });
+
+  it("new_still: the finished still replaces only that shot's key", async () => {
+    const e = await doneFilm();
+    h.started = [];
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), e as never, ctx);
+    await tick(e);
+    h.jobs.set("film-1", { film_id: "film-1", phase: "done", keyframes: [{ shot_id: "shot_02", keyframe_key: "new-kf" }] });
+    await tick(e);
+    expect(h.fromKeyframes).toHaveLength(1);
+    expect(h.fromKeyframes[0].keyframes).toEqual([{ shot_id: "shot_01", keyframe_key: "k1" }, { shot_id: "shot_02", keyframe_key: "new-kf" }]);
+    expect(h.fromKeyframes[0].retake_shots).toEqual(["shot_02"]);
+    expect(h.fromKeyframes[0].held_end_frames, "shot 1 keeps the old still as its end frame").toEqual({ shot_01: "k2" });
+  });
+
+  it("a retake of a film that already holds a frame keeps that hold", async () => {
+    const e = await doneFilm();
+    h.jobs.set("film-old", { ...OLD_JOB, held_end_frames: { shot_00: "older" } });
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    await tick(e);
+    expect(h.fromKeyframes[0].held_end_frames).toEqual({ shot_00: "older" });
+  });
+
+  it("new_still says what it holds, and rebuy_previous does not", async () => {
+    const e = await doneFilm();
+    const a = (await (await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 1 }), e as never, ctx)).json()) as { note?: string };
+    expect(a.note).toMatch(/old end frame/);
+    const f = await doneFilm();
+    const b = (await (await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 1, rebuy_previous: true }), f as never, ctx)).json()) as { note?: string };
+    expect(b.note).toBeUndefined();
   });
 
   it("a job with no stills fails the part and buys nothing", async () => {

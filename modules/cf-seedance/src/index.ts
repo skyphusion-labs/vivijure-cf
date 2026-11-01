@@ -109,7 +109,6 @@ const MANIFEST: ModuleManifest = {
       "4-12 second clips on 2.0, Fast, and Mini. Up to 30 seconds on 2.5.",
       "Same seed and same voice lock",
       "Last still is the next start",
-      "One film, no scatter",
       "Same description and seed on every shot. The voice can still vary.",
       "1080p and 4k are Seedance 2.0 only. 2.5, Fast, and Mini stay at 480p or 720p.",
       "9:21 is not on 2.5. With a first and last still, 2.5 uses adaptive ratio: a vertical clip needs a 9:16 keyframe.",

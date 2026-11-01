@@ -7,7 +7,7 @@ import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledMo
 import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { FilmNotStartedError, startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
@@ -17,7 +17,7 @@ import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyfram
 import { isParentPartProject } from "./film-parent";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
-import { advanceParent, buildParentDoc, cancelRetake, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
 import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
@@ -2006,9 +2006,23 @@ async function doorJson(run: () => Promise<Response>): Promise<{ status: number;
     return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
   } catch (e) {
     if (e instanceof HttpError) return { status: e.status, body: { error: e.message } };
+    // core#421: nothing was invoked, so this is a door that could not start and not a submit of unknown outcome.
+    if (e instanceof FilmNotStartedError) return { status: 503, body: { error: e.message } };
     throw e;
   }
 }
+
+/** core#421: a throw that says nothing was invoked is a wait, not a submit of unknown outcome. */
+async function holdIfNotStarted<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof FilmNotStartedError) throw new SubmitNotStarted(e.message);
+    throw e;
+  }
+}
+const startFromKeyframesOrHold: typeof startFilmFromKeyframes = (...a) => holdIfNotStarted(() => startFilmFromKeyframes(...a));
+const startFilmJobOrHold: typeof startFilmJob = (...a) => holdIfNotStarted(() => startFilmJob(...a));
 
 function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
   return {
@@ -2036,11 +2050,13 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       const job = old.job;
       if (!job.keyframes?.length) throw new SubmitRefused("the part's finished film has no stills to re-use");
       const { scenes, dialogue_lines } = retakeScenesAndLines(job, retake);
-      const started = await startFilmFromKeyframes(env, {
+      const started = await startFromKeyframesOrHold(env, {
         project: job.project,
         bundle_key: job.bundle_key,
         scenes,
-        keyframes: job.keyframes,
+        // New stills in place of the old, by shot. Every other still keeps its key, so its clip's proof holds.
+        keyframes: job.keyframes.map((k) => ({ ...k, keyframe_key: retake.stills?.[k.shot_id] ?? k.keyframe_key })),
+        held_end_frames: heldEndFrames(job.keyframes, retake, job.held_end_frames),
         motion_backend: job.motion_backend ?? undefined,
         motion_config: job.motion_config,
         finish_config: job.finish_config,
@@ -2074,6 +2090,54 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       if (!spend.ok) return spend.message;
       const quota = await checkStorageQuota(env);
       return quota.ok ? null : quota.message;
+    },
+    async startStills({ bundleArgs, submit, shots, seed, idempotency_key }) {
+      const bundled = await doorJson(() => hBundle(internalRequest("/api/storyboard/bundle", bundleArgs), env, ctx, {}));
+      if (bundled.status !== 201 || typeof bundled.body.bundleKey !== "string") {
+        throw new SubmitRefused(`bundle refused: ${JSON.stringify(bundled.body.errors ?? bundled.body.error ?? bundled.status)}`);
+      }
+      const modules = await discoverModules(env as unknown as Record<string, unknown>);
+      // No motion leg. The cast must be resolved here, because a job does not store its trained adapters, and a
+      // redraw without them loses the face.
+      const profile: RenderDoorProfile = {
+        door: "film retake still",
+        bundleKeyField: "bundleKey",
+        scenesRequiredMessage: "scenes required",
+        scenesInBody: true,
+        hasMotionLeg: false,
+        requireExplicitMotionBackend: false,
+        checkLocalGpuPairing: false,
+        requireKeyframeModule: true,
+      };
+      const pre = await preflightRenderModules(productionRenderDoorDeps, env, {
+        modules,
+        keyframeBackend: submit.keyframe_backend as string,
+        castLoras: submit.cast_loras as Record<string, string> | undefined,
+      }, profile);
+      if (!pre.ok) {
+        if (pre.refusal.status >= 500) throw new SubmitNotStarted(pre.refusal.message);
+        throw new SubmitRefused(pre.refusal.message);
+      }
+      const castIds = Object.keys(pre.cast.castIds).length ? pre.cast.castIds : undefined;
+      const job = await startFilmJobOrHold(env, {
+        project: submit.project as string,
+        bundle_key: bundled.body.bundleKey,
+        scenes: (submit.scenes as FilmScene[]).filter((s) => shots.includes(s.shot_id)),
+        keyframe_backend: submit.keyframe_backend as string,
+        keyframe_config: { ...(submit.keyframe_config as Record<string, unknown>), seed },
+        keyframes_only: true,
+        cast_loras: castIds,
+        pretrained_loras: Object.keys(pre.cast.pretrained).length ? pre.cast.pretrained : undefined,
+        idempotency_key,
+      }, modules);
+      if (job.phase === "failed") throw new SubmitRefused(job.error || "the new still did not start");
+      await insertRenderBestEffort(env, filmRowFromJob(job));
+      return job.film_id;
+    },
+    async readStills(filmId) {
+      const r = await advanceFilmJob(env, filmId);
+      if (!r) return null;
+      return { phase: r.job.phase, keyframes: r.job.keyframes ?? [], error: r.job.error ?? null };
     },
     async pollFilm(filmId) {
       const r = await doorJson(() => hPollFilm(new Request(`https://studio.internal/api/render/film/${filmId}`), env, ctx, { id: filmId }));
@@ -2169,19 +2233,24 @@ const hRetryParentPart: Handler = async (req, env, _ctx, p) => {
 };
 
 const hRetakeParentShot: Handler = async (req, env, _ctx, p) => {
-  const a = await readBody<RetakeEdits & { new_still?: unknown }>(req);
-  if (a.new_still !== undefined) throw badRequest("new_still is not built yet: a retake re-uses the shot's still");
+  const a = await readBody<RetakeEdits>(req);
   const loaded = await loadParent(env, p.id);
   if (!loaded) throw notFound("film");
   try {
-    markRetake(loaded.doc, p.shot, a);
+    markRetake(loaded.doc, p.shot, a, Date.now());
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
   // State only. The cron is the one place that submits.
-  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
+  return json({
+    ok: true,
+    ...parentView(loaded.doc, Date.now()),
+    ...(a.new_still === true && a.rebuy_previous !== true
+      ? { note: "On a door that uses end frames, the shot before keeps its old end frame, so it is not bought again. A cut hides that. rebuy_previous: true buys it too." }
+      : {}),
+  });
 };
 
 const hResumeParent: Handler = async (_req, env, _ctx, p) => {
