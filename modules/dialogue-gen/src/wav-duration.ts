@@ -111,33 +111,90 @@ export interface NormalizedLineWav {
   seconds: number;
   padded: boolean;
   trimmed: boolean;
+  /** Gain applied to the line, in dB. 0 when nothing was changed. */
+  gain_db: number;
 }
 
-/** Pad PCM under 3.0s with silence; trim above 15.0s. Returns null when the buffer is not PCM WAV. */
+// Aura's level varies by about 20 dB from line to line, and short lines come back quietest, so one speaker can
+// be hard to hear beside another. Each line is brought to one speech level. Measured on speech only, in 20 ms
+// blocks above the gate, so the pauses in a line and the pad after it do not count.
+//
+// Noise must not come out at speech level. Full gain applies down to LINE_FULL_GAIN_DBFS, the quietest of 40 real
+// lines measured -34.8, and the gain fades to nothing at the gate. So output only falls as input falls, with no
+// step at either end, and a faint line stays faint.
+export const LINE_TARGET_DBFS = -20;
+export const LINE_PEAK_LIMIT_DBFS = -1;
+export const LINE_GATE_DBFS = -50;
+export const LINE_FULL_GAIN_DBFS = -40;
+const FULL_SCALE = 32768;
+const toDb = (x: number) => 20 * Math.log10(x);
+
+/** The gain to apply to 16-bit PCM, in dB: to the target, faded for a faint line, no more than the peak limit allows. */
+export function lineGainDb(samples: Int16Array, blockSamples: number): number {
+  const gate = 10 ** (LINE_GATE_DBFS / 20) * FULL_SCALE;
+  let sum = 0;
+  let count = 0;
+  let peak = 0;
+  for (let start = 0; start < samples.length; start += blockSamples) {
+    const end = Math.min(start + blockSamples, samples.length);
+    let block = 0;
+    for (let i = start; i < end; i++) {
+      block += samples[i] * samples[i];
+      peak = Math.max(peak, Math.abs(samples[i]));
+    }
+    if (Math.sqrt(block / (end - start)) >= gate) {
+      sum += block;
+      count += end - start;
+    }
+  }
+  if (count === 0) return 0; // Nothing but silence: nothing to level.
+  const level = toDb(Math.sqrt(sum / count) / FULL_SCALE);
+  const room = LINE_PEAK_LIMIT_DBFS - toDb(peak / FULL_SCALE);
+  const wanted = LINE_TARGET_DBFS - level;
+  const fade = (level - LINE_GATE_DBFS) / (LINE_FULL_GAIN_DBFS - LINE_GATE_DBFS);
+  return Math.min(wanted > 0 ? wanted * Math.max(0, Math.min(1, fade)) : wanted, room);
+}
+
+/** A leveled copy of PCM, and the gain used. Only 16-bit PCM is leveled; other depths come back as they were. */
+function levelPcm(pcm: Uint8Array, format: WavFormat): { pcm: Uint8Array; gain_db: number } {
+  if (format.bitsPerSample !== 16 || pcm.length < 2) return { pcm, gain_db: 0 };
+  // A copy, since the source may not be aligned for 16-bit reads.
+  const copy = new Uint8Array(pcm.length - (pcm.length % 2));
+  copy.set(pcm.subarray(0, copy.length));
+  const samples = new Int16Array(copy.buffer);
+  const gain_db = lineGainDb(samples, Math.max(1, Math.round(format.sampleRate * format.channels * 0.02)));
+  if (gain_db === 0) return { pcm, gain_db: 0 };
+  const factor = 10 ** (gain_db / 20);
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * factor)));
+  }
+  return { pcm: copy, gain_db };
+}
+
+/** Level the line, pad PCM under 3.0s with silence, trim above 15.0s. Returns null when the buffer is not PCM WAV. */
 export function normalizeLineWav(bytes: Uint8Array): NormalizedLineWav | null {
   const parsed = parseWav(bytes);
   if (!parsed) return null;
   const { format } = parsed;
   const minBytes = pcmBytesFor(LINE_WAV_MIN_SECONDS, format);
   const maxBytes = pcmBytesFor(LINE_WAV_MAX_SECONDS, format);
-  const pcm = bytes.subarray(format.dataOffset, format.dataOffset + format.dataSize);
+  const whole = bytes.subarray(format.dataOffset, format.dataOffset + format.dataSize);
+  // Trim first: a click in audio that is thrown away must not set the gain of what is kept.
+  const trimmed = whole.length > maxBytes;
+  const { pcm, gain_db } = levelPcm(trimmed ? whole.subarray(0, maxBytes) : whole, format);
   let next = pcm;
   let padded = false;
-  let trimmed = false;
   if (pcm.length < minBytes) {
     const grown = new Uint8Array(minBytes);
     grown.set(pcm);
     next = grown;
     padded = true;
-  } else if (pcm.length > maxBytes) {
-    next = pcm.subarray(0, maxBytes);
-    trimmed = true;
   }
-  if (!padded && !trimmed) {
-    return { bytes, seconds: parsed.seconds, padded: false, trimmed: false };
+  if (!padded && !trimmed && gain_db === 0) {
+    return { bytes, seconds: parsed.seconds, padded: false, trimmed: false, gain_db: 0 };
   }
   const out = writeWav(format, next);
-  return { bytes: out, seconds: next.length / format.byteRate, padded, trimmed };
+  return { bytes: out, seconds: next.length / format.byteRate, padded, trimmed, gain_db };
 }
 
 /** 3s (or `seconds`) of linear16 silence. Same encoding Aura writes. */

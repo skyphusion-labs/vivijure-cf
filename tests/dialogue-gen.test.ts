@@ -16,6 +16,9 @@ import {
   parseWavDurationSeconds,
   LINE_WAV_MIN_SECONDS,
   LINE_WAV_MAX_SECONDS,
+  LINE_TARGET_DBFS,
+  LINE_PEAK_LIMIT_DBFS,
+  LINE_FULL_GAIN_DBFS,
 } from "../modules/dialogue-gen/src/wav-duration";
 
 // ---- pure helpers ----------------------------------------------------------
@@ -275,3 +278,182 @@ describe("DialogueGenWorkflow.run synthesizes one WAV per shot", () => {
     expect(state.error).toMatch(/model down/);
   });
 });
+
+describe("dialogue-gen: each line is brought to one level", () => {
+  const RATE = 24000;
+  /** A linear16 WAV from segments of [seconds, sine amplitude in dBFS or null for silence]. */
+  function wav(segments: Array<[number, number | null]>, bits = 16, spike?: number, channels = 1): Uint8Array {
+    const samples: number[] = [];
+    for (const [sec, db] of segments) {
+      const amp = db === null ? 0 : 10 ** (db / 20) * 32767;
+      for (let i = 0; i < Math.round(sec * RATE); i++) {
+        for (let c = 0; c < channels; c++) samples.push(Math.round(amp * Math.sin((i * 2 * Math.PI * 220) / RATE)));
+      }
+    }
+    if (spike !== undefined) samples[100] = Math.round(Math.sign(spike) * 10 ** (-Math.abs(spike) / 20) * 32767);
+    const blockAlign = (bits / 8) * channels;
+    const pcm = new Uint8Array((samples.length * bits) / 8);
+    const pv = new DataView(pcm.buffer);
+    samples.forEach((s, i) => { if (bits === 16) pv.setInt16(i * 2, s, true); else pv.setUint8(i, 128); });
+    const out = new Uint8Array(44 + pcm.length);
+    const v = new DataView(out.buffer);
+    const put = (o: number, x: string) => { for (let i = 0; i < x.length; i++) out[o + i] = x.charCodeAt(i); };
+    put(0, "RIFF"); v.setUint32(4, 36 + pcm.length, true); put(8, "WAVE"); put(12, "fmt "); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, channels, true); v.setUint32(24, RATE, true); v.setUint32(28, RATE * blockAlign, true);
+    v.setUint16(32, blockAlign, true); v.setUint16(34, bits, true); put(36, "data"); v.setUint32(40, pcm.length, true);
+    out.set(pcm, 44);
+    return out;
+  }
+  function rmsDb(bytes: Uint8Array, seconds?: number): number {
+    const body = bytes.subarray(44);
+    const copy = new Uint8Array(body.length); copy.set(body);
+    const s = new Int16Array(copy.buffer);
+    const n = seconds === undefined ? s.length : Math.round(seconds * RATE);
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += s[i] * s[i];
+    return 20 * Math.log10(Math.sqrt(sum / n) / 32768);
+  }
+  const peakDb = (bytes: Uint8Array) => {
+    const body = bytes.subarray(44);
+    const copy = new Uint8Array(body.length); copy.set(body);
+    let p = 0;
+    for (const x of new Int16Array(copy.buffer)) p = Math.max(p, Math.abs(x));
+    return 20 * Math.log10(p / 32768);
+  };
+
+  it("two lines 20 dB apart come out at the same level", () => {
+    const a = normalizeLineWav(wav([[4, -36]]))!;
+    const b = normalizeLineWav(wav([[4, -16]]))!;
+    expect(rmsDb(a.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+    expect(rmsDb(b.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+    expect(a.gain_db).toBeGreaterThan(15);
+  });
+
+  it("turns a loud line down too", () => {
+    const r = normalizeLineWav(wav([[4, -10]]))!;
+    expect(r.gain_db).toBeLessThan(-5);
+    expect(rmsDb(r.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+
+  it("pauses and the pad after the line do not count as quiet", () => {
+    const short = normalizeLineWav(wav([[0.5, -30], [0.5, null], [0.5, -30]]))!;
+    const long = normalizeLineWav(wav([[4, -30]]))!;
+    expect(short.gain_db).toBeCloseTo(long.gain_db, 0);
+    expect(short.padded).toBe(true);
+    expect(short.seconds).toBe(LINE_WAV_MIN_SECONDS);
+    expect(rmsDb(short.bytes, 0.5)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+
+  it("stops at the peak limit, so a loud click does not clip", () => {
+    const r = normalizeLineWav(wav([[4, -36]], 16, 3))!;
+    expect(peakDb(r.bytes)).toBeLessThanOrEqual(LINE_PEAK_LIMIT_DBFS + 0.1);
+    expect(peakDb(r.bytes)).toBeGreaterThan(LINE_PEAK_LIMIT_DBFS - 0.5);
+    expect(r.gain_db).toBeLessThan(5);
+  });
+
+  it("a faint line stays faint: noise is not made into speech", () => {
+    // Sines, so level is 3 dB under peak.
+    const out = (peak: number) => rmsDb(normalizeLineWav(wav([[4, peak]]))!.bytes);
+    expect(out(-46)).toBeLessThan(LINE_TARGET_DBFS - 15);
+    expect(out(-46)).toBeLessThan(out(-42));
+    expect(out(-42)).toBeLessThan(out(-37) + 0.01);
+    expect(out(-37)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+
+  it("has no step anywhere from the gate to full gain", () => {
+    let last = -Infinity;
+    for (let peak = -60; peak <= -20; peak += 1) {
+      const level = rmsDb(normalizeLineWav(wav([[4, peak]]))!.bytes);
+      expect(level, `at ${peak}`).toBeGreaterThanOrEqual(last - 0.05);
+      if (peak > -60) expect(level - last, `step at ${peak}`).toBeLessThan(5);
+      last = level;
+    }
+    expect(LINE_FULL_GAIN_DBFS).toBeGreaterThan(-50);
+  });
+
+  it("a negative click is the peak too", () => {
+    const r = normalizeLineWav(wav([[4, -36]], 16, -1.5))!;
+    expect(r.gain_db).toBeCloseTo(0.5, 0);
+  });
+
+  it("levels several channels the same as one", () => {
+    const mono = normalizeLineWav(wav([[4, -30]]))!;
+    const stereo = normalizeLineWav(wav([[4, -30]], 16, undefined, 2))!;
+    expect(stereo.gain_db).toBeCloseTo(mono.gain_db, 1);
+    expect(rmsDb(stereo.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+
+  it("a block is 20 ms however many channels: short bursts gate the same", () => {
+    const bursts: Array<[number, number | null]> = [];
+    for (let i = 0; i < 100; i++) bursts.push([0.015, -30], [0.015, null]);
+    const mono = normalizeLineWav(wav(bursts))!;
+    const stereo = normalizeLineWav(wav(bursts, 16, undefined, 2))!;
+    expect(stereo.gain_db).toBeCloseTo(mono.gain_db, 1);
+  });
+
+  it("the gain can be read back from the line and from the module's output", async () => {
+    const puts: Array<{ key: string; meta?: Record<string, string> }> = [];
+    const store = new Map<string, string>();
+    const env = {
+      GATEWAY_ID: "gw",
+      AI: { run: async () => wav([[4, -36]]) },
+      R2_RENDERS: {
+        async put(key: string, v: unknown, o?: { customMetadata?: Record<string, string> }) {
+          puts.push({ key, meta: o?.customMetadata });
+          store.set(key, typeof v === "string" ? v : "bytes");
+        },
+        async get(key: string) { const s = store.get(key); return s ? { text: async () => s } : null; },
+      },
+      DIALOGUE_WORKFLOW: {} as never,
+    };
+    const step = { do: async (_n: string, _c: unknown, fn: () => Promise<unknown>) => fn() };
+    await new DialogueGenWorkflow(null as never, env as never).run(
+      { payload: { job_id: "j", project: "f", lines: [{ shot_id: "shot_01", text: "Hi.", voice: "orion" }] } } as never,
+      step as never,
+    );
+    const put = puts.find((p) => p.key.endsWith(".wav"))!;
+    const state = JSON.parse(store.get("dialogue-gen/j.state.json")!) as { audio: Array<{ gain_db: number }> };
+    expect(state.audio[0].gain_db).toBeGreaterThan(15);
+    expect(put.meta?.gain_db).toBe(state.audio[0].gain_db.toFixed(2));
+  });
+
+  it("a click in audio that is trimmed away does not set the gain", () => {
+    const w = wav([[15, -36], [2, -36]]);
+    const copy = new Uint8Array(w);
+    new DataView(copy.buffer).setInt16(44 + 16 * RATE * 2, 32000, true);
+    const r = normalizeLineWav(copy)!;
+    expect(r.trimmed).toBe(true);
+    expect(rmsDb(r.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+
+  it("below the gate there is no speech, and a silent line stays as it was", () => {
+    const silent = wav([[4, null]]);
+    const r = normalizeLineWav(silent)!;
+    expect(r.gain_db).toBe(0);
+    expect(r.bytes).toBe(silent);
+    expect(normalizeLineWav(wav([[4, -60]]))!.gain_db).toBe(0);
+  });
+
+  it("leaves a depth it cannot level alone", () => {
+    const eight = wav([[4, -20]], 8);
+    const r = normalizeLineWav(eight)!;
+    expect(r.gain_db).toBe(0);
+    expect(r.bytes).toBe(eight);
+  });
+
+  it("reads a WAV that is not aligned in its buffer", () => {
+    const w = wav([[4, -36]]);
+    const shifted = new Uint8Array(w.length + 1);
+    shifted.set(w, 1);
+    const r = normalizeLineWav(shifted.subarray(1))!;
+    expect(rmsDb(r.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+
+  it("a line over the cap is still trimmed, and leveled", () => {
+    const r = normalizeLineWav(wav([[16, -36]]))!;
+    expect(r.trimmed).toBe(true);
+    expect(r.seconds).toBe(LINE_WAV_MAX_SECONDS);
+    expect(rmsDb(r.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
+  });
+});
+
