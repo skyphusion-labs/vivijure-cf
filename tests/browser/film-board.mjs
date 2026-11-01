@@ -1,4 +1,5 @@
 // The film board in real Chrome at phone width. Serves public/ as files and stubs /api/*.
+import { writeSync } from "node:fs";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
@@ -21,12 +22,13 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const B = `http://127.0.0.1:${server.address().port}`;
 
+const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 let bad = 0;
 const check = (name, ok, detail = "") => {
   if (!ok) bad++;
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : ` ${detail}`}`);
 };
-process.on("uncaughtException", (e) => { console.log("HARNESS", String(e).split("\n")[0]); process.exit(2); });
+process.on("uncaughtException", (e) => { writeSync(1, "HARNESS " + String(e).split("\n")[0] + "\n"); process.exit(2); });
 
 const part = (index, status, extra = {}) => ({
   part_id: `p${index}`, index, shot_from: index * 30, shot_to: index * 30 + 29, status, phase: status === "running" ? "keyframe" : null,
@@ -49,7 +51,7 @@ async function open(state, url = "/films?id=feature-1") {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await ctx.addInitScript(() => { try { localStorage.setItem("vivijure_api_token", "test"); } catch {} });
   const page = await ctx.newPage();
-  const seen = { retries: [], films: [], gets: 0, errors: [], resumes: 0, ceilings: [], shotReads: [], retakes: [], cancels: 0 };
+  const seen = { retries: [], films: [], gets: 0, errors: [], resumes: 0, ceilings: [], shotReads: [], retakes: [], cancels: 0, thumbs: [], artifacts: [] };
   page.on("pageerror", (e) => seen.errors.push(String(e)));
   page.on("request", (r) => { if (/\.mp4/.test(r.url())) seen.films.push(r.url()); });
   await page.route("**/api/**", (r) => {
@@ -68,6 +70,7 @@ async function open(state, url = "/films?id=feature-1") {
     const shotsRoute = /^\/api\/film\/feature-1\/parts\/(\d+)\/shots$/.exec(pathname);
     if (shotsRoute) {
       seen.shotReads.push(Number(shotsRoute[1]));
+      if (state.holdShots) return state.holdShots.then(() => json({ ok: true, shots: state.shots(Number(shotsRoute[1])) }));
       return state.shots ? json({ ok: true, shots: state.shots(Number(shotsRoute[1])) }) : json({ error: "part" }, 404);
     }
     if (pathname === "/api/voices") return json({ voices: [{ id: "athena", label: "Athena" }] });
@@ -95,7 +98,16 @@ async function open(state, url = "/films?id=feature-1") {
       state.film = film({ spend_ceiling_usd: 900 });
       return json({ ok: true });
     }
-    if (pathname.startsWith("/api/artifact/")) return r.fulfill({ status: 404, body: "" });
+    if (pathname.startsWith("/api/thumb/")) {
+      seen.thumbs.push(pathname);
+      if (state.thumbDown) return json({ error: "no images", original: "x" }, 503);
+      return r.fulfill({ status: 200, contentType: "image/png", body: PIXEL });
+    }
+    if (pathname.startsWith("/api/artifact/")) {
+      seen.artifacts.push(pathname);
+      if (state.artifactOk) return r.fulfill({ status: 200, contentType: "image/png", body: PIXEL });
+      return r.fulfill({ status: 404, body: "" });
+    }
     return json({});
   });
   await page.goto(B + url);
@@ -481,6 +493,102 @@ for (const [name, extra] of [
   await none.ctx.close();
 }
 
+// ---- no lookbehind: older Safari cannot parse one, and a parse error stops the whole script.
+{
+  const { readdir } = await import("node:fs/promises");
+  const scripts = (await readdir(ROOT)).filter((f) => f.endsWith(".js"));
+  const found = [];
+  for (const f of scripts) if (/\(\?<[=!]/.test(await readFile(join(ROOT, f), "utf8"))) found.push(f);
+  check(`no regex lookbehind in ${scripts.length} page scripts`, scripts.length > 5 && found.length === 0, found.join());
+}
+
+// ---- hiding the sheet before the shots answer.
+{
+  let release;
+  const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: "renders/k/held.png", clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
+  const state = { film: film({ phase: "done", parts: [part(0, "done")] }), shots: () => [shot], holdShots: new Promise((r) => { release = r; }) };
+  const { ctx, page } = await open(state);
+  const stills = [];
+  page.on("request", (r) => { if (r.url().includes("held.png")) stills.push(r.url()); });
+  await page.waitForSelector(".films-part");
+  await page.locator(".films-sheet-toggle").click();
+  await page.waitForTimeout(100);
+  await page.locator(".films-sheet-toggle").click();
+  release();
+  await page.waitForTimeout(500);
+  check("hidden before the answer: no tiles", (await page.locator(".films-sheet-tile").count()) === 0);
+  check("hidden before the answer: no stills fetched", stills.length === 0, stills.join());
+  await ctx.close();
+}
+
+// ---- an open sheet survives polls, and reloads when the part changes stage.
+{
+  const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: "renders/k/0.png", clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
+  const state = { film: film({ parts: [part(0, "running", { shots_done: 1 })] }), shots: () => [shot] };
+  const { ctx, page, seen } = await open(state);
+  await page.waitForSelector(".films-part");
+  await page.locator(".films-sheet-toggle").click();
+  await page.waitForSelector(".films-sheet-tile");
+  await page.evaluate(() => { window.__tile = document.querySelector(".films-sheet-tile"); });
+  state.film = film({ parts: [part(0, "running", { shots_done: 2 })] });
+  const gets = seen.gets;
+  await page.waitForFunction(() => /2 of 30 shots/.test(document.querySelector(".films-part")?.textContent ?? ""), null, { timeout: 25000 });
+  check("a poll changed the part", seen.gets > gets);
+  check("a poll does not reread the sheet", seen.shotReads.length === 1, seen.shotReads.join());
+  check("a poll keeps the tiles", await page.evaluate(() => window.__tile.isConnected));
+  check("toggle stays right after a rebuild", (await text(page, ".films-sheet-toggle")) === "Hide contact sheet");
+  state.film = film({ parts: [part(0, "done", { shots_done: 30 })] });
+  await page.waitForFunction(() => /Done/.test(document.querySelector(".films-part")?.textContent ?? ""), null, { timeout: 25000 });
+  await page.waitForTimeout(300);
+  check("a new stage rereads the sheet", seen.shotReads.length === 2, seen.shotReads.join());
+  check("the sheet stays filled", (await page.locator(".films-sheet-tile").count()) === 1);
+  await ctx.close();
+}
+
+// ---- the viewer follows the part, not the snapshot it opened from.
+{
+  const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: "renders/k/0.png", clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
+  const state = { film: film({ parts: [part(0, "done"), part(1, "running")] }), shots: () => [shot] };
+  const { ctx, page } = await open(state);
+  await page.waitForSelector(".films-part");
+  await page.locator('[data-part-index="0"] .films-sheet-toggle').click();
+  await page.locator('[data-part-index="0"] .films-sheet-tile').click();
+  await page.waitForSelector("#film-still-dialog[open]");
+  check("viewer offers a take on a done part", await page.locator("#film-still-retake").isVisible());
+  state.film = film({ parts: [part(0, "running"), part(1, "running")] });
+  const gone = await page.waitForFunction(() => document.querySelector("#film-still-retake").hidden, null, { timeout: 25000 }).then(() => true, () => false);
+  check("viewer drops the take when the part starts running", gone);
+  await ctx.close();
+}
+
+// ---- thumbnails: small on the sheet, full in the viewer, one fallback, no loop.
+{
+  const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: "renders/k/a b.png", clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
+  const none = { ...shot, shot_id: "s2", index: 1, keyframe_key: null };
+  const state = { artifactOk: true, film: film({ phase: "done", parts: [part(0, "done")] }), shots: () => [shot, none] };
+  const { ctx, page, seen } = await open(state);
+  await page.waitForSelector(".films-part");
+  await page.locator(".films-sheet-toggle").click();
+  await page.waitForSelector(".films-sheet-tile img");
+  await page.waitForTimeout(300);
+  check("sheet asks for the thumb, encoded like an artifact", seen.thumbs.join() === "/api/thumb/renders/k/a%20b.png", seen.thumbs.join());
+  check("sheet does not fetch the full still", seen.artifacts.length === 0, seen.artifacts.join());
+  check("a shot with no still asks for nothing", seen.thumbs.length === 1 && (await page.locator(".films-sheet-empty").count()) === 1);
+  await page.locator(".films-sheet-tile").first().click();
+  await page.waitForSelector("#film-still-dialog[open]");
+  await page.waitForTimeout(300);
+  check("viewer shows the full still", seen.artifacts.join() === "/api/artifact/renders/k/a%20b.png", seen.artifacts.join());
+  await ctx.close();
+  const down = await open({ thumbDown: true, film: film({ phase: "done", parts: [part(0, "done")] }), shots: () => [shot] });
+  await down.page.waitForSelector(".films-part");
+  await down.page.locator(".films-sheet-toggle").click();
+  await down.page.waitForSelector(".films-sheet-tile img");
+  await down.page.waitForTimeout(600);
+  check("a failed thumb falls back to the full still once", down.seen.artifacts.length === 1 && down.seen.thumbs.length === 1, `${down.seen.thumbs.length} ${down.seen.artifacts.length}`);
+  check("a failed full still does not loop", await down.page.evaluate(() => document.querySelector(".films-sheet-tile img").onerror === null));
+  await down.ctx.close();
+}
+
 // ---- the contact sheet.
 {
   const shot = (i, extra = {}) => ({ shot_id: `s${i + 1}`, index: i, status: "done", seconds: 6, keyframe_key: `renders/k/${i}.png`, clip_key: null, prompt: `Prompt ${i + 1}`, line: null, error: null, retake_status: null, ...extra });
@@ -497,7 +605,6 @@ for (const [name, extra] of [
   check("a tile per shot", (await page.locator('[data-part-index="1"] .films-sheet-tile').count()) === 3);
   check("tiles show master numbers", (await text(page, '[data-part-index="1"] .films-sheet-grid')).includes("31"));
   check("a missing still is said", (await text(page, '[data-part-index="1"] .films-sheet')).includes("1 of 3 shots have no still"));
-  check("stills load lazily", (await page.locator('[data-part-index="1"] .films-sheet-tile img').first().getAttribute("loading")) === "lazy");
   const cols = await page.evaluate(() => getComputedStyle(document.querySelector(".films-sheet-grid")).gridTemplateColumns.split(" ").length);
   check("at least three across on a phone", cols >= 3, String(cols));
   check("sheet fits a phone", await noOverflow(page));

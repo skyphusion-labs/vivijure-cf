@@ -52,16 +52,24 @@ const M = [
   ["stale shown", '$("film-cron").hidden = !stale;', '$("film-cron").hidden = true;'],
   ["stale only while moving", "!!(film.cron && film.cron.stale) && stillMoving(film)", "!!(film.cron && film.cron.stale)"],
   ["sheet waits until asked", "if (openSheets.has(part.index)) paintSheet(true);", "paintSheet(true);"],
-  ["sheet reads its part", 'loadSheet(part, sheetBox);', "loadSheet({ index: 0 }, sheetBox);"],
+  ["sheet reads its part", "loadSheet(part, sheetBox, sig);", "loadSheet({ index: 0 }, sheetBox, sig);"],
   ["sheet master numbers", 'textContent: String(shot.index + 1) }));\n      tile.addEventListener', 'textContent: String(at + 1) }));\n      tile.addEventListener'],
   ["sheet says missing", 'if (missing) box.append(', 'if (false) box.append('],
-  ["sheet lazy", 'src: artifact(shot.keyframe_key), loading: "lazy", alt: "" }', 'src: artifact(shot.keyframe_key), alt: "" }'],
   ["viewer next", "viewer.at += 1;", ""],
   ["viewer bounds", '$("film-still-next").disabled = at === shots.length - 1;', ""],
   ["viewer hides no still", "img.hidden = !shot.keyframe_key;", ""],
-  ["viewer retake rule", '$("film-still-retake").hidden = !canRetake(part);', ""],
+  ["viewer retake rule", '$("film-still-retake").hidden = !part || !canRetake(part);', ""],
   ["viewer retake shot", "const shot = viewer.shots[viewer.at];", "const shot = viewer.shots[0];"],
   ["sheet failure said", 'box.textContent = "Could not load the stills of this part.";', ""],
+  ["hidden sheet stays hidden", "if (box.dataset.sig !== sig) return;", ""],
+  ["box survives a rebuild", "sheetBoxes.set(part.index, sheetBox);", ""],
+  ["same stage does not reread", "if (sheetBox.dataset.sig !== sig) {", "if (true) {"],
+  ["new stage rereads", 'return [part.status, part.phase, (part.retake_shots || []).join()].join("|");', 'return "same";'],
+  ["viewer follows the part", "if (viewer && $(\"film-still-dialog\").open) paintViewer();", ""],
+  ["note keeps sentences", 'const sentences = note.match(/[^.!?]+[.!?]*\\s*/g) || [];', "const sentences = [note];"],
+  ["sheet uses thumbs", 'src: "/api/thumb/" + String(key).split("/").map(encodeURIComponent).join("/"), loading', "src: artifact(key), loading"],
+  ["thumb falls back", "      img.src = artifact(key);\n", ""],
+  ["fallback cannot loop", "      img.onerror = null;\n", ""],
   ["basis shown", '$("film-basis").textContent = film.spend_ceiling_basis || "";', ""],
   ["stop reason shown", 'film.stop_reason || "No reason given."', '"Stopped."'],
   ["limit shown", "$(\"film-degraded\").hidden = !degraded;", "$(\"film-degraded\").hidden = true;"],
@@ -78,7 +86,7 @@ for (const [name, find, replace] of M) {
   writeFileSync(F, original.replace(find, () => replace));
   ran++;
   try {
-    const r = spawnSync("node", ["tests/browser/film-board.mjs"], { encoding: "utf8", timeout: 200000 });
+    const r = spawnSync("node", ["tests/browser/film-board.mjs"], { encoding: "utf8", timeout: 420000 });
     const fails = r.stdout.split("\n").filter((l) => /^(FAIL|HARNESS)/.test(l));
     const red = r.status !== 0 && fails.length > 0;
     console.log(`${red ? "RED     " : "SURVIVED"} ${name}: ${fails[0]?.slice(0, 90) ?? "status " + r.status}`);
