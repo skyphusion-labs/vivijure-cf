@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildKlingBody, clampDuration, clipKey, extractVideoUrl } from "../modules/infinitetalk/src/kling";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { buildKlingBody, clampDuration, clipKey, encodePoll, extractVideoUrl } from "../modules/infinitetalk/src/kling";
 import worker from "../modules/infinitetalk/src/index";
 
 const INPUT = { shot_id: "shot_01", keyframe_url: "https://r2/kf.png", prompt: "a portrait", seconds: 3 };
@@ -65,3 +65,55 @@ describe("infinitetalk: unchanged behaviour guarded alongside the cf#935 edit", 
     expect(extractVideoUrl({ output: { video_url: "https://cdn/x.mp4" } })).toBe("https://cdn/x.mp4");
   });
 });
+
+describe("infinitetalk: a stopped film can stop a clip job (cf#1221)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const env = { RUNPOD_API_KEY: "k" } as never;
+  const token = encodePoll({ jobId: "job-1", project: "p", shotId: "s", seconds: 4, submittedAt: 1 } as never);
+  const post = (body: unknown) => new Request("https://m/cancel", { method: "POST", body: JSON.stringify(body) });
+  function stub(status: number) {
+    const f = vi.fn(async () => new Response("{}", { status }));
+    vi.stubGlobal("fetch", f);
+    return f;
+  }
+
+  it("declares it", async () => {
+    const res = await worker.fetch(new Request("https://m/module.json"), {} as never);
+    expect(((await res.json()) as { cancelable?: boolean }).cancelable).toBe(true);
+  });
+
+  it("posts to the public endpoint's cancel with the key", async () => {
+    const f = stub(200);
+    const res = await worker.fetch(post({ poll: token }), env);
+    expect(await res.json()).toEqual({ ok: true });
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.runpod.ai/v2/infinitetalk/cancel/job-1");
+    expect(init.method).toBe("POST");
+    expect(JSON.stringify(init.headers)).toContain("k");
+  });
+
+  it("a job already gone is what was asked for", async () => {
+    stub(404);
+    expect(await (await worker.fetch(post({ poll: token }), env)).json()).toEqual({ ok: true });
+  });
+
+  it("any other answer is a failure, by name", async () => {
+    stub(500);
+    expect(await (await worker.fetch(post({ poll: token }), env)).json()).toEqual({ ok: false, error: "infinitetalk /cancel -> 500" });
+  });
+
+  it("a throw is a failure, not a crash", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("down"); }));
+    expect(await (await worker.fetch(post({ poll: token }), env)).json()).toEqual({ ok: false, error: "infinitetalk cancel failed: down" });
+  });
+
+  it("refuses a bad token, no token and no key, without calling out", async () => {
+    const f = stub(200);
+    expect(((await (await worker.fetch(post({ poll: "@@@" }), env)).json()) as { ok: boolean }).ok).toBe(false);
+    expect(((await (await worker.fetch(post({}), env)).json()) as { ok: boolean }).ok).toBe(false);
+    expect(((await (await worker.fetch(new Request("https://m/cancel", { method: "POST", body: "{" }), env)).json()) as { ok: boolean }).ok).toBe(false);
+    expect(((await (await worker.fetch(post({ poll: token }), {} as never)).json()) as { ok: boolean }).ok).toBe(false);
+    expect(f).not.toHaveBeenCalled();
+  });
+});
+

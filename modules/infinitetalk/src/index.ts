@@ -64,6 +64,9 @@ const MANIFEST: ModuleManifest = {
       "480p only (832x464). The provider ignores any other resolution request.",
     ],
   },
+  // Lets a stopped film stop its clip jobs. Whether RunPod still charges a job cancelled while running is not
+  // measured: the metered price is per clip.
+  cancelable: true,
   usage: {
     native_audio: false,
     voice: "cast_tts",
@@ -233,6 +236,21 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: timing.fps, frames: timing.frames } };
 }
 
+/** Stop the job named by this poll token. A 404 means it is already gone, which is what was asked for. */
+async function cancel(env: Env, poll: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const st = decodePoll(poll);
+  if (!st) return { ok: false, error: "infinitetalk: bad poll token" };
+  const route = await runpodRoute(env);
+  if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured" };
+  try {
+    const resp = await fetch(endpoint(route) + "/cancel/" + st.jobId, { method: "POST", headers: auth(route) });
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "infinitetalk /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "infinitetalk cancel failed: " + (e as Error).message };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     withRetryingR2(env);
@@ -284,6 +302,12 @@ export default {
       if (!body || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as PollResponse);
       return json(await poll(env, body));
     }
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      const body = (await request.json().catch(() => null)) as { poll?: unknown } | null;
+      if (!body || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" });
+      return json(await cancel(env, body.poll));
+    }
+
     return json({ ok: false, error: "not found" }, 404);
   },
 };
