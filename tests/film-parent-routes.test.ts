@@ -71,8 +71,10 @@ function r2() {
     async delete(key: string) {
       store.delete(key);
     },
-    async list({ prefix }: { prefix: string }) {
-      return { objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key, uploaded: uploadedAt.get(key) ?? new Date() })) };
+    async list({ prefix, limit }: { prefix: string; limit?: number }) {
+      // In key order, as R2 lists, with the limit applied.
+      const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).sort().slice(0, limit ?? 1000);
+      return { objects: keys.map((key) => ({ key, uploaded: uploadedAt.get(key) ?? new Date() })) };
     },
   };
 }
@@ -242,6 +244,35 @@ describe("a persist that throws after the film is out", () => {
     expect(res.status).toBe(201);
     expect(h.started).toHaveLength(1);
     expect(inserted.length, "the row is what the sweep and the adopt read").toBeGreaterThan(0);
+  });
+});
+
+describe("GET /api/film", () => {
+  it("lists newest first, includes finished films, skips markers, and starts nothing", async () => {
+    h.started = [];
+    const e = env();
+    const a = buildParentDoc("feature-old", BODY, 1000);
+    const b = buildParentDoc("feature-new", BODY, 2000);
+    await insertParent(e as never, a);
+    await insertParent(e as never, b);
+    const loaded = await loadParent(e as never, "feature-old");
+    loaded!.doc.phase = "done";
+    await saveParent(e as never, loaded!);
+    const res = await worker.fetch(new Request("https://studio.example/api/film"), e as never, ctx);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { films: Array<{ film_id: string; phase: string; parts?: unknown }> };
+    expect(json.films.map((f) => [f.film_id, f.phase])).toEqual([["feature-new", "planned"], ["feature-old", "done"]]);
+    expect(json.films[0].parts).toBeUndefined();
+    expect(h.started, "a list must not advance anything").toEqual([]);
+  });
+
+  it("the limit reaches the listing", async () => {
+    const { listParents } = await import("../src/film-parent-store");
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-a", BODY, 1));
+    await insertParent(e as never, buildParentDoc("feature-b", BODY, 2));
+    await insertParent(e as never, buildParentDoc("feature-c", BODY, 3));
+    expect((await listParents(e as never, 2)).map((d) => d.film_id)).toEqual(["feature-c", "feature-b"]);
   });
 });
 
