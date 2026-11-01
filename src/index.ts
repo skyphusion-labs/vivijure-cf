@@ -15,7 +15,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, retryPart, type CreateParentBody } from "./film-parent";
+import { advanceParent, buildParentDoc, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, retryPart, type CreateParentBody } from "./film-parent";
 import { insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
@@ -1991,6 +1991,21 @@ const hRetryParentPart: Handler = async (req, env, ctx, p) => {
   return json({ ok: true, ...parentView(doc, Date.now()) });
 };
 
+const hRaiseParentCeiling: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<{ spend_ceiling_usd?: unknown }>(req);
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    raiseCeiling(loaded.doc, a.spend_ceiling_usd);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
 async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
   for (const id of await listActiveParents(env, 50)) {
     try {
@@ -2370,6 +2385,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
   { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
+  { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },

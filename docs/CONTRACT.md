@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
+**94 route entries** (distinct `method` + `pattern`) over **76 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -367,6 +367,7 @@ unchanged.
 | 46b | POST | `/api/film` | 2.22a |
 | 46c | GET | `/api/film/:id` | 2.22a |
 | 46d | POST | `/api/film/:id/parts/:n/retry` | 2.22a |
+| 46e | POST | `/api/film/:id/ceiling` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1426,15 +1427,17 @@ Returns `201 {ok, film_id, phase, parts, created}`. Errors: `400` naming the fie
 
 **`GET /api/film/:id`** advances the parent one tick and returns it:
 
-`{ok, film_id, project, phase, stop_reason, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
+`{ok, film_id, project, phase, stop_reason, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, spend_ceiling_usd, spend_committed_est, spend_ceiling_basis, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
 
 `phase` is `planned`, `running`, `stopped`, `join`, `done` or `failed`. Each `parts[]` row is `{part_id, index, shot_from, shot_to, status, phase, shots_done, shots_total, cost_est, cost_actual, output_key, error}`. `shot_from` and `shot_to` index the master board. `status` is `pending`, `running`, `done` or `failed`.
 
-`cost_est` is an estimate. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
+`cost_est` is an estimate of one run of every part. `spend_committed_est` is what the ceiling compares: every submit in full, retries included. A retry keeps proven work, so this reads high. Both are estimates, as `spend_ceiling_basis` says. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
 
 `stopped` means no new part is submitted, because a part failed or the ceiling was reached. Parts already running carry on. The first part runs alone, and then at most 3 at once. The cron advances a parent, so polling is not required. `404 "film"` if unknown.
 
-**`POST /api/film/:id/parts/:n/retry`** with `{"shots":"failed"}` puts a failed part back in line and advances. The part is re-submitted with its stored inputs and `reuse_finished: true`. `400` if the part has not failed. `409` if the film changed during the call.
+**`POST /api/film/:id/parts/:n/retry`** with `{"shots":"failed"}` puts a failed part back in line and advances. The part is re-submitted with its stored inputs and `reuse_finished: true`. `400` if the part has not failed. `409` if the film changed during the call. A retry that would cross the ceiling leaves the part pending and stops the film.
+
+**`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 
 `POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0.
 

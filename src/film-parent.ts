@@ -360,6 +360,12 @@ export function mergeSrt(parts: Array<{ text: string; offsetSeconds: number }>):
 
 const isLive = (p: ParentPart) => p.status === "running" || p.status === "submitting";
 
+/** Every submit counts in full, retries included. A retry keeps proven work, so this reads high: the safe
+ *  direction for a ceiling. It is still an estimate, never a meter. */
+export function committedEstimate(doc: ParentDoc): number {
+  return doc.parts.reduce((sum, p) => sum + p.cost_est * p.attempts, 0);
+}
+
 async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
   for (const part of doc.parts) {
     if (part.status !== "running" || !part.child_film_id) continue;
@@ -508,7 +514,7 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
   // The first part runs alone: listen before spending on the rest.
   const firstDone = doc.parts[0].status === "done";
   const room = (firstDone ? MAX_PARTS_IN_FLIGHT : 1) - doc.parts.filter(isLive).length;
-  const committed = doc.parts.filter((p) => p.status !== "pending").reduce((sum, p) => sum + p.cost_est, 0);
+  const committed = committedEstimate(doc);
   const next = doc.parts.filter((p) => p.status === "pending").slice(0, Math.max(0, room));
   let spend = committed;
   for (const part of next) {
@@ -538,6 +544,21 @@ export function retryPart(doc: ParentDoc, index: number): void {
   if (doc.phase === "stopped") doc.phase = "running";
 }
 
+/** Raises the ceiling and lets a film stopped by it carry on. A failed part still stops it on the next tick. */
+export function raiseCeiling(doc: ParentDoc, value: unknown): void {
+  if (doc.phase === "done" || doc.phase === "failed") refuse(`the film is ${doc.phase}`);
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= doc.spend_ceiling_usd) {
+    refuse(`spend_ceiling_usd must be a number above the current ${doc.spend_ceiling_usd}`);
+  }
+  doc.spend_ceiling_usd = value;
+  if (doc.stop_reason === "spend ceiling") {
+    doc.stop_reason = null;
+    if (doc.phase === "stopped") doc.phase = "running";
+  }
+}
+
+const CEILING_BASIS = "estimate: every submit counts in full, including retries. Not a meter.";
+
 /** The status view. Constant size per part, and no shot lists. */
 export function parentView(doc: ParentDoc, now: number) {
   const started = doc.started_at;
@@ -553,6 +574,9 @@ export function parentView(doc: ParentDoc, now: number) {
     shots_total: doc.parts.reduce((n, p) => n + p.shots_total, 0),
     cost_est: Math.round(doc.parts.reduce((n, p) => n + p.cost_est, 0) * 100) / 100,
     cost_actual: null,
+    spend_ceiling_usd: doc.spend_ceiling_usd,
+    spend_committed_est: Math.round(committedEstimate(doc) * 100) / 100,
+    spend_ceiling_basis: CEILING_BASIS,
     parts: doc.parts.map((p) => ({
       part_id: p.part_id,
       index: p.index,

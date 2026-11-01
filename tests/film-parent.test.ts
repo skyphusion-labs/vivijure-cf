@@ -9,6 +9,7 @@ import {
   parentView,
   partInputs,
   planPartRanges,
+  raiseCeiling,
   retryPart,
   STALE_CLAIM_MS,
   type ChildRead,
@@ -344,6 +345,64 @@ describe("mergeSrt", () => {
     expect(out).toBe(
       "1\n00:00:01,000 --> 00:00:02,000\nfirst\n\n2\n00:00:03,000 --> 00:00:04,000\nsecond\nline\n\n3\n01:00:00,750 --> 01:00:01,250\nthird\n",
     );
+  });
+});
+
+describe("the spend ceiling counts retries and can be raised", () => {
+  async function failedSecond(ceiling: number) {
+    const t = harness(buildParentDoc("f", body(4, { spend_ceiling_usd: ceiling }), 0));
+    await advanceParent(t.doc, t.deps, 1);
+    t.h.children.set("film-1", done("k1"));
+    await advanceParent(t.doc, t.deps, 2);
+    t.h.children.set("film-2", { phase: "failed", shots_done: 0, output_key: null, sidecar_key: null, error: "boom" });
+    await advanceParent(t.doc, t.deps, 3);
+    return t;
+  }
+
+  it("a retry that would cross the ceiling does not submit", async () => {
+    const { h, deps, doc } = await failedSecond(4);
+    expect(parentView(doc, 4).spend_committed_est).toBe(4);
+    retryPart(doc, 1);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(2);
+    expect(doc.stop_reason).toBe("spend ceiling");
+    expect(doc.phase).toBe("stopped");
+    expect(doc.parts[1].status).toBe("pending");
+  });
+
+  it("raising the ceiling lets that retry run, and it then counts", async () => {
+    const { h, deps, doc } = await failedSecond(4);
+    retryPart(doc, 1);
+    await advanceParent(doc, deps, 4);
+    raiseCeiling(doc, 6);
+    expect([doc.phase, doc.stop_reason]).toEqual(["running", null]);
+    await advanceParent(doc, deps, 5);
+    expect(h.starts).toHaveLength(3);
+    expect(parentView(doc, 6).spend_committed_est).toBe(6);
+  });
+
+  it("raising does not clear a stop from a failed part", async () => {
+    const { h, deps, doc } = await failedSecond(10);
+    raiseCeiling(doc, 20);
+    expect(doc.stop_reason).toBe("part 1 failed");
+    await advanceParent(doc, deps, 4);
+    expect(doc.phase).toBe("stopped");
+    expect(h.starts).toHaveLength(2);
+  });
+
+  it("refuses a lower or equal value, a non-number, and a finished film", () => {
+    const doc = buildParentDoc("f", body(4), 0);
+    expect(() => raiseCeiling(doc, 1000)).toThrow(/above the current/);
+    expect(() => raiseCeiling(doc, 5)).toThrow(/above the current/);
+    expect(() => raiseCeiling(doc, "2000")).toThrow(/above the current/);
+    doc.phase = "done";
+    expect(() => raiseCeiling(doc, 2000)).toThrow(/the film is done/);
+  });
+
+  it("the view says the ceiling is an estimate that counts retries", () => {
+    const view = parentView(buildParentDoc("f", body(4), 0), 0);
+    expect(view.spend_ceiling_basis).toMatch(/estimate/);
+    expect(view.spend_ceiling_basis).toMatch(/retries/);
   });
 });
 

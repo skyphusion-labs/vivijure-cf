@@ -300,6 +300,7 @@ const NOT_DOORS = new Set<string>([
   // Parents of ordinary films. Each part goes through POST /api/render/film, which is the door.
   "/api/film",
   "/api/film/:id/parts/:n/retry",
+  "/api/film/:id/ceiling",
   "/api/storyboard/character-ref",
   "/api/storyboard/enhance",
   "/api/storyboard/markers",
