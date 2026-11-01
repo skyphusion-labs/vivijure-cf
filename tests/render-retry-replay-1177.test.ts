@@ -119,6 +119,29 @@ describe("cf#1177 a retry", () => {
     expect(h.started).toEqual([]);
   });
 
+  it("refuses a part of a long film, with a stored request or accept_rederive, and spends nothing", async () => {
+    h.started = [];
+    const e = env();
+    await worker.fetch(post("/api/render/film", ORIGINAL), e as never, ctx);
+    h.started = [];
+    rows.set("row", row({ project: "Long_3c5aae7e_p01" }));
+    const res = await retry(e);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/parts\/:n\/retry/);
+    expect((await retry(e, { accept_rederive: true })).status).toBe(409);
+    expect(h.started).toEqual([]);
+  });
+
+  it("the name test matches what a parent builds, and not an ordinary project", async () => {
+    const { buildParentDoc, isParentPartProject } = await import("../src/film-parent");
+    const doc = buildParentDoc("feature-3c5aae7e1234", {
+      project: "My_film_2", storyboard: { scenes: [{ id: "a", target_seconds: 3 }, { id: "b", target_seconds: 3 }] }, character_refs: {}, part_size: 1,
+      shared: { motion_backend: "m", style: "photoreal", delivery_width: 1, delivery_height: 1 }, spend_ceiling_usd: 1, cost_usd_per_shot_est: 0.1,
+    }, 0);
+    expect(doc.parts.map((p) => isParentPartProject(p.project))).toEqual([true, true]);
+    for (const p of ["Two_OClock", "film_p01", "abc_12345678", "x_123_p01"]) expect(isParentPartProject(p), p).toBe(false);
+  });
+
   it("refuses a running render before anything else, stored request or not", async () => {
     h.started = [];
     const e = env();
