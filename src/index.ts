@@ -15,6 +15,9 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
+import { advanceParent, buildParentDoc, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retryPart, SubmitRefused, type CreateParentBody } from "./film-parent";
+import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
+import { clearActiveMarker, insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -1704,8 +1707,16 @@ async function withFilmDownloadUrlBestEffort(
     return summary;
   }
 }
+function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: number; delivery_height?: number } {
+  if (width === undefined && height === undefined) return {};
+  if (!Number.isInteger(width) || !Number.isInteger(height) || (width as number) <= 0 || (height as number) <= 0) {
+    throw badRequest("delivery_width and delivery_height must both be whole numbers above 0");
+  }
+  return { delivery_width: width as number, delivery_height: height as number };
+}
+
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1866,6 +1877,9 @@ const hStartFilm: Handler = async (req, env) => {
     // cf#1166: opt-in on this door, exact boolean only. A resubmit keeps only what core proves
     // identical; anything else (a string "false" included) leaves the default, which rebuys.
     reuse_finished: a.reuse_finished === true,
+    // Both or neither, whole and positive. A part of a long film pins its frame here, because the join
+    // refuses films of different frames.
+    ...filmDeliveryFrame(a.delivery_width, a.delivery_height),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -1897,6 +1911,162 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   // cf#392: host summarize relays wan_lora_projection from the job doc when present.
   return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
 };
+
+// A long film as parts under one parent (film-parent.ts). A part goes through the same door handlers as
+// any film, called directly. That passes the door's checks but not the router's, so admitSubmit runs the
+// spend limit, daily ceiling and storage quota at each part: later parts come from a poll or the cron,
+// with no spend route in front of them.
+function internalRequest(path: string, body: unknown): Request {
+  return new Request(`https://studio.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function doorJson(run: () => Promise<Response>): Promise<{ status: number; body: Record<string, unknown> }> {
+  try {
+    const resp = await run();
+    return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
+  } catch (e) {
+    if (e instanceof HttpError) return { status: e.status, body: { error: e.message } };
+    throw e;
+  }
+}
+
+function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
+  return {
+    async bundle(args) {
+      const r = await doorJson(() => hBundle(internalRequest("/api/storyboard/bundle", args), env, ctx, {}));
+      if (r.status !== 201 || typeof r.body.bundleKey !== "string") {
+        throw new Error(`bundle refused: ${JSON.stringify(r.body.errors ?? r.body.error ?? r.status)}`);
+      }
+      return r.body.bundleKey;
+    },
+    async start(body) {
+      const r = await doorJson(() => hStartFilm(internalRequest("/api/render/film", body), env, ctx, {}));
+      if (r.status !== 201 || typeof r.body.film_id !== "string") {
+        const message = `submit refused (${r.status}): ${String(r.body.error ?? "no film id")}`;
+        if (r.status >= 400 && r.status < 500) throw new SubmitRefused(message);
+        throw new Error(message);
+      }
+      return r.body.film_id;
+    },
+    async admitSubmit() {
+      const spend = await enforceSpendLimit(internalRequest("/api/render/film", {}), env);
+      if (!spend.ok) return spend.message;
+      const quota = await checkStorageQuota(env);
+      return quota.ok ? null : quota.message;
+    },
+    async pollFilm(filmId) {
+      const r = await doorJson(() => hPollFilm(new Request(`https://studio.internal/api/render/film/${filmId}`), env, ctx, { id: filmId }));
+      return r.status === 200 ? r.body : null;
+    },
+  };
+}
+
+async function tickParent(env: StudioEnv, ctx: ExecutionContext, id: string) {
+  const loaded = await loadParent(env, id);
+  if (!loaded) return null;
+  return advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+}
+
+const hCreateParentFilm: Handler = async (req, env, ctx) => {
+  const a = await readBody<CreateParentBody>(req);
+  const key = readIdempotencyKey(a as { idempotency_key?: unknown });
+  if (!key) throw badRequest("idempotency_key is required: this route spends");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${String(a.project)}\n${key}`));
+  const hex = [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const filmId = `feature-${hex}`;
+  const fingerprint = requestFingerprint(a);
+  let doc;
+  try {
+    doc = buildParentDoc(
+      filmId, a, Date.now(),
+      (width, height, seconds) => predictNormalizedBytes(width, height, CONTAINER_DEFAULT_FPS, seconds),
+      fingerprint,
+    );
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  // No tick here: a submit in waitUntil can be cut off after the response, and that leaves a claim nobody can
+  // resolve. The cron or the first GET starts the film.
+  const created = await insertParent(env, doc);
+  if (!created) {
+    const stored = await loadParent(env, filmId);
+    if (!stored) return json({ ok: false, error: "the film could not be read; try again" }, 503);
+    if (stored.doc.request_hash !== fingerprint) {
+      return json({ ok: false, error: "this idempotency_key was used with a different request" }, 409);
+    }
+    doc = stored.doc;
+  }
+  return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
+};
+
+const hGetParentFilm: Handler = async (_req, env, ctx, p) => {
+  const doc = await tickParent(env, ctx, p.id);
+  if (!doc) throw notFound("film");
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRetryParentPart: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<{ shots?: unknown }>(req);
+  if (a.shots !== "failed") throw badRequest('shots must be "failed"');
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    retryPart(loaded.doc, Number(p.n));
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hResumeParent: Handler = async (_req, env, ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    resumeParent(loaded.doc);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRaiseParentCeiling: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<{ spend_ceiling_usd?: unknown }>(req);
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    raiseCeiling(loaded.doc, a.spend_ceiling_usd);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
+  for (const { id, markedAt } of await listActiveParents(env, 50)) {
+    try {
+      const doc = await tickParent(env, ctx, id);
+      // Left long enough that a create still between its two writes is not caught.
+      const orphan = !doc && Date.now() - markedAt > 10 * 60_000;
+      if (orphan || doc?.phase === "done" || doc?.phase === "failed") await clearActiveMarker(env, id);
+    } catch (e) {
+      console.warn(`film parent sweep ${id}: ${String(e)}`);
+    }
+  }
+}
 
 const hEnhance: Handler = async (req, env) => {
   const a = await readBody<{
@@ -2184,8 +2354,9 @@ const hModules: Handler = async (_req, env) => {
   // byte-identical registry. Spread AFTER modulesResponse so a future core field of the same name
   // cannot silently win; the host is the authority on its own release.
   const release = resolveStudioRelease(env);
+  const renderWithPartLimits = { ...renderConfigProjection(), max_scenes_per_part: MAX_SCENES_PER_PART, max_parts: MAX_PARTS };
   return json({
-    ...modulesResponse(modules, renderConfigProjection(), {
+    ...modulesResponse(modules, renderWithPartLimits, {
       dispatch: !!env.MODULE_DISPATCH,
       ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
       // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
@@ -2263,6 +2434,11 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
   { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
+  { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
+  { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
+  { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
+  { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
+  { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
@@ -2331,6 +2507,7 @@ export default {
   async scheduled(_event: ScheduledEvent, raw: Env, ctx: ExecutionContext): Promise<void> {
     const env = studioEnv(raw);
     ctx.waitUntil(sweepUnresolvedJobs(env, ctx));
+    ctx.waitUntil(sweepFilmParents(env, ctx));
   },
 };
 

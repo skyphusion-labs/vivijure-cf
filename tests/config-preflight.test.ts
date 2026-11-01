@@ -216,3 +216,28 @@ describe("hStartFilm reuse_finished (cf#1166)", () => {
     });
   }
 });
+
+describe("hStartFilm delivery frame", () => {
+  const submit = (extra: Record<string, unknown>) => worker.fetch(
+    post("/api/render/film", { bundle_key: "bundles/verify.tar.gz", scenes: SCENES, motion_backend: "seedance", ...extra }),
+    env(), ctx,
+  );
+  it("forwards both", async () => {
+    const res = await submit({ delivery_width: 1920, delivery_height: 1080 });
+    expect(res.status).toBe(201);
+    expect([h.lastArgs.delivery_width, h.lastArgs.delivery_height]).toEqual([1920, 1080]);
+  });
+  it("sends neither when omitted", async () => {
+    const res = await submit({});
+    expect(res.status).toBe(201);
+    expect("delivery_width" in h.lastArgs).toBe(false);
+  });
+  for (const bad of [{ delivery_width: 1920 }, { delivery_width: 0, delivery_height: 1080 }, { delivery_width: "1920", delivery_height: 1080 }]) {
+    it(`refuses ${JSON.stringify(bad)} before any job`, async () => {
+      h.started = 0;
+      const res = await submit(bad);
+      expect(res.status).toBe(400);
+      expect(h.started).toBe(0);
+    });
+  }
+});

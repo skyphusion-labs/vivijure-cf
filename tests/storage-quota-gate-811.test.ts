@@ -90,6 +90,9 @@ const PUB = "3f2a91d4-5c6b-4e10-9a77-2b8c4d1e6f03";
 
 /** Every panel-supplement route, with a concrete pathname for each pattern. */
 const PANEL_ROUTES: { name: string; path: string }[] = [
+  { name: "a long film", path: "/api/film" },
+  { name: "a long film part retry", path: "/api/film/x/parts/0/retry" },
+  { name: "a long film resume", path: "/api/film/x/resume" },
   { name: "POST /api/storyboard/renders/:id/retry", path: `/api/storyboard/renders/${PUB}/retry` },
   { name: "POST /api/cast/:id/voice-sample", path: `/api/cast/${PUB}/voice-sample` },
   { name: "POST /api/cast/:id/voice-sample/attach", path: `/api/cast/${PUB}/voice-sample/attach` },

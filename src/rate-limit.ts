@@ -72,6 +72,11 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/storyboard\/render$/,
   /^\/api\/render\/clips$/,
   /^\/api\/render\/film$/,
+  // A long film's parts. A part also passes these checks itself at submit, because a poll or the cron starts it.
+  /^\/api\/film$/,
+  /^\/api\/film\/[^/]+\/parts\/[^/]+\/retry$/,
+  /^\/api\/film\/[^/]+\/resume$/,
+  /^\/api\/film\/[^/]+\/ceiling$/,
 
   /^\/api\/storyboard\/render-from-keyframes$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-cloud$/,

@@ -18,6 +18,7 @@ describe("cf#353 the retry control is real (supersedes dead cf#331)", () => {
   it("the route is registered on the studio", () => {
     const retryRoutes = API_ROUTES.filter((r) => r.pattern.includes("/retry"));
     expect(retryRoutes.map((r) => `${r.method} ${r.pattern}`)).toEqual([
+      "POST /api/film/:id/parts/:n/retry",
       "POST /api/storyboard/renders/:id/retry",
     ]);
   });
