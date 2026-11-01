@@ -717,7 +717,10 @@ function updateRenderProgress(data) {
     data.status !== "SUBMITTED" &&
     renderState.startedAt === null
   ) {
-    renderState.startedAt = Date.now();
+    // The server knows how long the job has run. Without it, a second device or a late look at a long
+    // film starts the clock at zero and promises a finish in seconds.
+    const ran = typeof data.executionTimeMs === "number" && data.executionTimeMs > 0 ? data.executionTimeMs : 0;
+    renderState.startedAt = Date.now() - ran;
     savePersistedState();
   }
   // cf#303: IN_QUEUE used to skip the widget because startedAt stays null
