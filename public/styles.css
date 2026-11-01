@@ -1436,3 +1436,5 @@ body.filmmaker-surface #planner-render-advanced { display: none !important; }
 #films-new textarea { width: 100%; font: 12px/1.4 ui-monospace, monospace; }
 #films-new .planner-field { display: block; margin: 12px 0; }
 #films-new select, #films-new input.planner-input { width: 100%; }
+.films-warn { color: #ffd479; }
+.films-warn:empty, #new-confirm-overrides:empty { display: none; }
