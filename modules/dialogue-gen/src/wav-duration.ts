@@ -118,14 +118,18 @@ export interface NormalizedLineWav {
 // Aura's level varies by about 20 dB from line to line, and short lines come back quietest, so one speaker can
 // be hard to hear beside another. Each line is brought to one speech level. Measured on speech only, in 20 ms
 // blocks above the gate, so the pauses in a line and the pad after it do not count.
+//
+// Noise must not come out at speech level. Full gain applies down to LINE_FULL_GAIN_DBFS, the quietest of 40 real
+// lines measured -34.8, and the gain fades to nothing at the gate. So output only falls as input falls, with no
+// step at either end, and a faint line stays faint.
 export const LINE_TARGET_DBFS = -20;
 export const LINE_PEAK_LIMIT_DBFS = -1;
 export const LINE_GATE_DBFS = -50;
-export const LINE_MAX_GAIN_DB = 24;
+export const LINE_FULL_GAIN_DBFS = -40;
 const FULL_SCALE = 32768;
 const toDb = (x: number) => 20 * Math.log10(x);
 
-/** The gain to apply to 16-bit PCM, in dB: to the target, no more than the peak limit or the gain cap allow. */
+/** The gain to apply to 16-bit PCM, in dB: to the target, faded for a faint line, no more than the peak limit allows. */
 export function lineGainDb(samples: Int16Array, blockSamples: number): number {
   const gate = 10 ** (LINE_GATE_DBFS / 20) * FULL_SCALE;
   let sum = 0;
@@ -146,7 +150,9 @@ export function lineGainDb(samples: Int16Array, blockSamples: number): number {
   if (count === 0) return 0; // Nothing but silence: nothing to level.
   const level = toDb(Math.sqrt(sum / count) / FULL_SCALE);
   const room = LINE_PEAK_LIMIT_DBFS - toDb(peak / FULL_SCALE);
-  return Math.min(LINE_TARGET_DBFS - level, room, LINE_MAX_GAIN_DB);
+  const wanted = LINE_TARGET_DBFS - level;
+  const fade = (level - LINE_GATE_DBFS) / (LINE_FULL_GAIN_DBFS - LINE_GATE_DBFS);
+  return Math.min(wanted > 0 ? wanted * Math.max(0, Math.min(1, fade)) : wanted, room);
 }
 
 /** A leveled copy of PCM, and the gain used. Only 16-bit PCM is leveled; other depths come back as they were. */
@@ -172,18 +178,17 @@ export function normalizeLineWav(bytes: Uint8Array): NormalizedLineWav | null {
   const { format } = parsed;
   const minBytes = pcmBytesFor(LINE_WAV_MIN_SECONDS, format);
   const maxBytes = pcmBytesFor(LINE_WAV_MAX_SECONDS, format);
-  const { pcm, gain_db } = levelPcm(bytes.subarray(format.dataOffset, format.dataOffset + format.dataSize), format);
+  const whole = bytes.subarray(format.dataOffset, format.dataOffset + format.dataSize);
+  // Trim first: a click in audio that is thrown away must not set the gain of what is kept.
+  const trimmed = whole.length > maxBytes;
+  const { pcm, gain_db } = levelPcm(trimmed ? whole.subarray(0, maxBytes) : whole, format);
   let next = pcm;
   let padded = false;
-  let trimmed = false;
   if (pcm.length < minBytes) {
     const grown = new Uint8Array(minBytes);
     grown.set(pcm);
     next = grown;
     padded = true;
-  } else if (pcm.length > maxBytes) {
-    next = pcm.subarray(0, maxBytes);
-    trimmed = true;
   }
   if (!padded && !trimmed && gain_db === 0) {
     return { bytes, seconds: parsed.seconds, padded: false, trimmed: false, gain_db: 0 };
