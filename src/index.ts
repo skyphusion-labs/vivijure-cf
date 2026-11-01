@@ -15,9 +15,9 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
-import { insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
+import { clearActiveMarker, insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -1936,15 +1936,17 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
     async start(body) {
       const r = await doorJson(() => hStartFilm(internalRequest("/api/render/film", body), env, ctx, {}));
       if (r.status !== 201 || typeof r.body.film_id !== "string") {
-        throw new Error(`submit refused (${r.status}): ${String(r.body.error ?? "no film id")}`);
+        const message = `submit refused (${r.status}): ${String(r.body.error ?? "no film id")}`;
+        if (r.status >= 400 && r.status < 500) throw new SubmitRefused(message);
+        throw new Error(message);
       }
       return r.body.film_id;
     },
     async startRetake(retake, idempotency_key) {
       const old = await advanceFilmJob(env, retake.from_film_id);
-      if (!old) throw new Error("the part's finished film job is gone");
+      if (!old) throw new SubmitRefused("the part's finished film job is gone");
       const job = old.job;
-      if (!job.keyframes?.length) throw new Error("the part's finished film has no stills to re-use");
+      if (!job.keyframes?.length) throw new SubmitRefused("the part's finished film has no stills to re-use");
       const { scenes, dialogue_lines } = retakeScenesAndLines(job, retake);
       const started = await startFilmFromKeyframes(env, {
         project: job.project,
@@ -1973,7 +1975,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         retake_shots: retake.shots,
         idempotency_key,
       });
-      if (started.phase === "failed") throw new Error(started.error || "the retake did not start");
+      if (started.phase === "failed") throw new SubmitRefused(started.error || "the retake did not start");
       return started.film_id;
     },
     async admitSubmit() {
@@ -2096,9 +2098,12 @@ const hRaiseParentCeiling: Handler = async (req, env, ctx, p) => {
 };
 
 async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
-  for (const id of await listActiveParents(env, 50)) {
+  for (const { id, markedAt } of await listActiveParents(env, 50)) {
     try {
-      await tickParent(env, ctx, id);
+      const doc = await tickParent(env, ctx, id);
+      // Left long enough that a create still between its two writes is not caught.
+      const orphan = !doc && Date.now() - markedAt > 10 * 60_000;
+      if (orphan || doc?.phase === "done" || doc?.phase === "failed") await clearActiveMarker(env, id);
     } catch (e) {
       console.warn(`film parent sweep ${id}: ${String(e)}`);
     }

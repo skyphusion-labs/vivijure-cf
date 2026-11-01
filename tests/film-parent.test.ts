@@ -20,6 +20,7 @@ import {
   retakeScenesAndLines,
   retryPart,
   STALE_CLAIM_MS,
+  SubmitRefused,
   type ChildRead,
   type CreateParentBody,
   type JoinRead,
@@ -54,6 +55,8 @@ function harness(doc: ParentDoc) {
     starts: [] as Array<Record<string, unknown>>,
     children: new Map<string, ChildRead | null>(),
     held: null as string | null,
+    found: null as string | null,
+    foundSince: [] as number[],
     reloads: 0,
     joins: [] as string[][],
     join: { status: "pending" } as JoinRead,
@@ -69,6 +72,10 @@ function harness(doc: ParentDoc) {
     async reload() {
       h.reloads += 1;
       return JSON.parse(JSON.stringify(doc));
+    },
+    async findChild(_project, since) {
+      h.foundSince.push(since);
+      return h.found;
     },
     async admitSubmit() {
       return h.held;
@@ -139,9 +146,15 @@ describe("creating a parent refuses what would fail or spend blind", () => {
       expect(() => buildParentDoc("f", body(4, over), 0)).toThrow(re);
     });
   }
+  it("refuses a scene with no seconds, because size and spend come from them", () => {
+    const b = body(2, { dialogue_lines: [] });
+    (b.storyboard as { scenes: unknown[] }).scenes = [{ shot_id: "a", seconds: 4 }, { shot_id: "b" }];
+    expect(() => buildParentDoc("f", b, 0)).toThrow(/seconds above 0/);
+  });
+
   it("refuses a repeated shot id", () => {
     const b = body(2);
-    (b.storyboard as { scenes: unknown[] }).scenes = [{ shot_id: "a" }, { shot_id: "a" }];
+    (b.storyboard as { scenes: unknown[] }).scenes = [{ shot_id: "a", seconds: 4 }, { shot_id: "a", seconds: 4 }];
     expect(() => buildParentDoc("f", { ...b, dialogue_lines: [] }, 0)).toThrow(/own shot_id/);
   });
 });
@@ -243,7 +256,20 @@ describe("the order of work", () => {
     expect(doc.parts[0].output_key).toBe("k1");
   });
 
-  it("a stale claim never submits: it asks a person, naming the project", async () => {
+  it("a stale claim adopts a film in its project since the claim, and buys nothing", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
+    doc.parts[0].status = "submitting";
+    doc.parts[0].claimed_at = 1000;
+    h.found = "film-found";
+    await advanceParent(doc, deps, 1000 + STALE_CLAIM_MS);
+    expect(h.foundSince, "bounded by the claim, so an older film cannot match").toEqual([1000]);
+    expect(h.starts).toHaveLength(0);
+    expect(doc.parts[0].child_film_id).toBe("film-found");
+    expect(doc.parts[0].status).toBe("running");
+    expect(doc.parts[0].attempts, "the adopted film was already counted at its claim").toBe(0);
+  });
+
+  it("a stale claim with no film never submits: it asks a person, naming the project", async () => {
     const { h, deps, doc } = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
     doc.parts[0].status = "submitting";
     doc.parts[0].claimed_at = 0;
@@ -254,6 +280,110 @@ describe("the order of work", () => {
     await advanceParent(doc, deps, STALE_CLAIM_MS + 1);
     expect(doc.phase).toBe("stopped");
     expect(h.starts).toHaveLength(0);
+  });
+
+  it("a thrown or 5xx start keeps the claim, warns, and buys nothing more", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(4), 0));
+    deps.start = async () => { throw new Error("submit refused (500): boom"); };
+    await advanceParent(doc, deps, 1);
+    expect(doc.parts[0].status).toBe("submitting");
+    expect(doc.parts[0].claimed_at).toBe(1);
+    expect(doc.parts[0].error).toMatch(/outcome unknown so far.*500/);
+    await advanceParent(doc, deps, 2);
+    h.found = "film-late";
+    await advanceParent(doc, deps, 1 + STALE_CLAIM_MS);
+    expect(doc.parts[0].status).toBe("running");
+    expect(doc.parts[0].child_film_id).toBe("film-late");
+  });
+
+  it("a thrown bundle is a plain failure, because nothing was spent", async () => {
+    const { deps, doc } = harness(buildParentDoc("f", body(4), 0));
+    deps.bundle = async () => { throw new Error("bundle refused"); };
+    await advanceParent(doc, deps, 1);
+    expect(doc.parts[0].status).toBe("failed");
+    expect(doc.parts[0].error).toBe("bundle refused");
+  });
+
+  /** Etags like R2, so a write based on an old read loses. Only this can see a stale object being saved. */
+  function etagHarness(start: ParentDoc) {
+    const t = harness(start);
+    const store = { body: JSON.stringify(start), version: 0 };
+    let held = 0;
+    const seen: Array<{ part: number; status: string; attempts: number }> = [];
+    let writeDuringFirst = true;
+    t.deps.save = async (d) => {
+      if (held !== store.version) return false;
+      store.body = JSON.stringify(d);
+      store.version += 1;
+      held = store.version;
+      return true;
+    };
+    t.deps.reload = async () => {
+      held = store.version;
+      return JSON.parse(store.body) as ParentDoc;
+    };
+    t.deps.start = async (b) => {
+      const part = Number(/_p(\d+)$/.exec(String(b.project))?.[1]);
+      const stored = (JSON.parse(store.body) as ParentDoc).parts[part];
+      seen.push({ part, status: stored.status, attempts: stored.attempts });
+      if (writeDuringFirst) {
+        writeDuringFirst = false;
+        store.version += 1; // A poll wrote.
+      }
+      t.h.starts.push(b);
+      return `film-${t.h.starts.length}`;
+    };
+    return { ...t, store, seen };
+  }
+
+  it("B1: every part in a tick has its claim stored before its start, past a lost save", async () => {
+    const { h, deps, doc, store, seen } = etagHarness(buildParentDoc("f", body(8), 0));
+    doc.parts[0].status = "done";
+    doc.parts[0].output_key = "k0";
+    doc.parts[0].attempts = 1;
+    await advanceParent(doc, deps, 1);
+    expect(seen.map((s) => s.part)).toEqual([1, 2, 3]);
+    expect(seen.map((s) => s.status), "a claim must be on record at each start").toEqual(["submitting", "submitting", "submitting"]);
+    expect(seen.map((s) => s.attempts)).toEqual([1, 1, 1]);
+    const stored = JSON.parse(store.body) as ParentDoc;
+    expect(stored.parts.slice(1).map((p) => [p.status, p.child_film_id, p.attempts])).toEqual([["running", "film-1", 1], ["running", "film-2", 1], ["running", "film-3", 1]]);
+    expect(parentView(stored, 2).spend_committed_est, "the ceiling counts what was bought").toBe(8);
+    expect(h.starts).toHaveLength(3);
+  });
+
+  it("a part another tick took during a reload is not submitted again", async () => {
+    const { h, deps, doc, store } = etagHarness(buildParentDoc("f", body(6), 0));
+    doc.parts[0].status = "done";
+    doc.parts[0].output_key = "k0";
+    doc.parts[0].attempts = 1;
+    const start = deps.start;
+    let first = true;
+    deps.start = async (b) => {
+      const id = await start(b);
+      if (first) {
+        first = false;
+        const other = JSON.parse(store.body) as ParentDoc;
+        Object.assign(other.parts[2], { status: "running", child_film_id: "film-other", attempts: 1 });
+        store.body = JSON.stringify(other);
+      }
+      return id;
+    };
+    await advanceParent(doc, deps, 1);
+    expect(h.starts.map((b) => String(b.project))).toEqual(["Long_f_p01"]);
+    expect(doc.parts[2].child_film_id).toBe("film-other");
+  });
+
+  it("B3: a thrown save after a good start keeps the film id", async () => {
+    const { deps, doc, store } = etagHarness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
+    const save = deps.save;
+    let calls = 0;
+    deps.save = async (d) => {
+      calls += 1;
+      if (calls === 2) throw new Error("R2 500");
+      return save(d);
+    };
+    await advanceParent(doc, deps, 1);
+    expect((JSON.parse(store.body) as ParentDoc).parts[0].child_film_id).toBe("film-1");
   });
 
   it("a fresh claim is left alone", async () => {
@@ -344,7 +474,7 @@ describe("the order of work", () => {
 
   it("a refused submit fails the part and stops the film on the next tick", async () => {
     const { deps, doc } = harness(buildParentDoc("f", body(4), 0));
-    deps.start = async () => { throw new Error("submit refused (400): nope"); };
+    deps.start = async () => { throw new SubmitRefused("submit refused (400): nope"); };
     await advanceParent(doc, deps, 1);
     expect(doc.parts[0].status).toBe("failed");
     await advanceParent(doc, deps, 2);
@@ -552,6 +682,21 @@ describe("a retake of one shot", () => {
     expect(h.starts).toEqual([]);
     expect(h.bundles).toEqual([]);
     expect(h.retakes.map((r) => [r[0].from_film_id, r[1]])).toEqual([["film-2", "f-p01-r1"], ["film-2", "f-p01-r2"]]);
+  });
+
+  it("a retake whose start throws keeps its claim and warns, and a refusal fails plainly", async () => {
+    const a = await finished();
+    markRetake(a.doc, "s2", {});
+    a.deps.startRetake = async () => { throw new Error("R2 down"); };
+    await advanceParent(a.doc, a.deps, 5);
+    expect(a.doc.parts[1].status).toBe("submitting");
+    expect(a.doc.parts[1].error).toMatch(/outcome unknown so far/);
+    const b = await finished();
+    markRetake(b.doc, "s2", {});
+    b.deps.startRetake = async () => { throw new SubmitRefused("no stills"); };
+    await advanceParent(b.doc, b.deps, 5);
+    expect(b.doc.parts[1].status).toBe("failed");
+    expect(b.doc.parts[1].error).toBe("no stills");
   });
 
   it("a finished retake is cleared, so a later retake starts clean", async () => {
