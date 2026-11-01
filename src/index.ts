@@ -810,6 +810,8 @@ const hDeleteRender: Handler = async (_req, env, _c, p) => {
   // Read the key columns BEFORE the row goes: they are the only index of this render's objects.
   const rows = await renderKeyRowsByIds(env, [id]);
   if (rows.length === 0) throw notFound("render");
+  // A later join, retake or retry of the film needs this part, and the parent would not be told.
+  if (isParentPartProject(rows[0].project ?? "")) return partOfLongFilm();
   const reclaim = await reclaimRenderRows(env, rows);
   if (!reclaim.complete) return reclaimRefusal(reclaim);
   await deleteShotRecords(env, [rows[0].job_id]);
