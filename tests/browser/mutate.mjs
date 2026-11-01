@@ -13,6 +13,12 @@ const M = [
   ["refusal is hard", "public/planner-render.js", 'showLoraPreflightWarning(unready);\n  setRenderStatus(', 'return true;\n  setRenderStatus('],
   ["anime skips the LoRA gate", "public/planner-render.js", ' || keyframeDoorForSubmit() === "cloud-keyframe"', ""],
   ["counters cleared", "public/planner-render.js", '$("#planner-render-scene").hidden = true;\n    $("#planner-render-phase").hidden = true;', ""],
+  ["rows reused", "public/planner-history-list.js", "known && known.sig === sig ? known.li : buildHistoryRow(r, childrenByParent)", "buildHistoryRow(r, childrenByParent)"],
+  ["changed rows rebuilt", "public/planner-history-list.js", "known && known.sig === sig ? known.li", "known ? known.li"],
+  ["stale rows removed", "public/planner-history-list.js", "list.removeChild(stale);", ""],
+  ["player deferred", "public/planner-history-row.js", "if (isExpanded) li._fillPlayer();", "li._fillPlayer();"],
+  ["player built on expand", "public/planner-history-row.js", "if (liEl._fillPlayer) liEl._fillPlayer();", ""],
+  ["server clock", "public/planner-render.js", "renderState.startedAt = Date.now() - ran;", "renderState.startedAt = Date.now();"],
   ["raw output hidden", "public/styles.css", ".filmmaker-surface #planner-render-output { display: none; }", ""],
 ];
 const only = process.argv[2];

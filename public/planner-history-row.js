@@ -618,13 +618,18 @@ function buildHistoryRow(r, childrenByParent) {
   if (r.status === "COMPLETED" && r.output_key) {
     const playerWrap = document.createElement("div");
     playerWrap.className = "planner-history-player";
-    const video = document.createElement("video");
-    video.src = artifactUrl(r.output_key);
-    video.controls = true;
-    video.preload = "metadata";
-    video.playsInline = true;
-    video.className = "planner-history-player-video";
-    playerWrap.appendChild(video);
+    // Built on first expand. A collapsed row must not fetch metadata for its film.
+    li._fillPlayer = () => {
+      const video = document.createElement("video");
+      video.src = artifactUrl(r.output_key);
+      video.controls = true;
+      video.preload = "metadata";
+      video.playsInline = true;
+      video.className = "planner-history-player-video";
+      playerWrap.appendChild(video);
+      li._fillPlayer = null;
+    };
+    if (isExpanded) li._fillPlayer();
     li.appendChild(playerWrap);
   }
 
@@ -1842,6 +1847,7 @@ function toggleHistoryRowExpand(id, liEl) {
   if (next) {
     historyState.expandedIds.add(id);
     liEl.classList.remove("planner-history-item-collapsed");
+    if (liEl._fillPlayer) liEl._fillPlayer();
   } else {
     historyState.expandedIds.delete(id);
     liEl.classList.add("planner-history-item-collapsed");

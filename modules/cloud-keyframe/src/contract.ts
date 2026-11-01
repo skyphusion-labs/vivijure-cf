@@ -28,6 +28,8 @@ export interface ModuleManifest {
   /** #454: compact display token for the keyframe-stage backend/model (e.g. "SDXL"), which the planner
    *  projects inline. OPTIONAL/additive, mirrors src/modules/types.ts. */
   keyframe_label?: string;
+  /** This module serves POST /cancel. */
+  cancelable?: boolean;
 }
 
 export interface InvokeContext {

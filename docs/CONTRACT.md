@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**90 route entries** (distinct `method` + `pattern`) over **72 distinct path patterns**. Those two
+**98 route entries** (distinct `method` + `pattern`) over **79 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -364,6 +364,14 @@ unchanged.
 | 45 | POST | `/api/render/film` | 2.20 |
 | 46 | GET | `/api/render/film/:id` | 2.21 |
 | 46a | POST | `/api/render/film/:id/finish-retry` | 2.21 |
+| 46b | POST | `/api/film` | 2.22a |
+| 46c | GET | `/api/film/:id` | 2.22a |
+| 46d | POST | `/api/film/:id/parts/:n/retry` | 2.22a |
+| 46e | POST | `/api/film/:id/ceiling` | 2.22a |
+| 46f | POST | `/api/film/:id/resume` | 2.22a |
+| 46g | POST | `/api/film/:id/shots/:shot/retake` | 2.22a |
+| 46h | POST | `/api/film/:id/parts/:n/retake/cancel` | 2.22a |
+| 46i | GET | `/api/film` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1395,6 +1403,62 @@ Regenerate a single shot's keyframe from a COMPLETED render's bundle (keyframes-
 Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"`;
 `400 "render has no bundle_key"`; `400 "shot <id> not in bundle storyboard"`;
 `503 { ok:false, error: "no keyframe module installed ..." }`; `422 { ok:false, error }` on submit failure.
+
+### 2.22a Long films as parts: `/api/film`
+
+A long film is built as ordinary film jobs (parts) under one parent, joined at the end. Each part goes through `POST /api/storyboard/bundle` and `POST /api/render/film`, so it passes the same checks as any film.
+
+**`POST /api/film`** starts a parent. It spends.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `project` | string | yes | 1 to 48 letters, digits, `_` or `-`. Part `n` runs in project `<project>_pNN`. |
+| `idempotency_key` | string | yes | Alias `idempotencyKey`. The same project and key return the same film with `created: false` and `200`. |
+| `storyboard` | object | yes | The master board, as `POST /api/storyboard/bundle` takes it. Each scene needs its own `id` (or `shot_id`) and `target_seconds` (or `seconds`). |
+| `character_refs` | object | yes | As `characterRefs` on the bundle route. |
+| `dialogue_lines` | `[{shot_id,text,voice_id?}]` | no | By master `shot_id`. |
+| `part_size` or `breaks` | number or number[] | one of them | `breaks` are shot counts where a part ends. |
+| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `cast_loras`, `film_titles`, `qualityTier`. `audio_key` is refused: a bed on the joined film is not built. |
+| `part_overrides` | `[{index,cast_loras?,character_refs?,motion_backend?}]` | no | What differs for one part. |
+| `spend_ceiling_usd` | number | yes | No new part is submitted if its estimate would cross this. |
+| `cost_usd_per_shot_est` | number | yes | The caller's estimate per shot. The ceiling works from this, so it is only as good as this number. |
+| `pause_after_first_part` | boolean | no | Default `true`: after the first part the film stops until resumed, so a person can watch it. `false` carries on by itself. |
+
+`keyframe_backend`, if omitted, comes from `style`: `anime` uses `cloud-keyframe`, `photoreal` uses `keyframe`.
+
+Limits are on `GET /api/modules` under `render`: `max_scenes_per_part`, `max_parts`.
+
+Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The cron or the first `GET` starts the film. Errors: `400` naming the field, including a board predicted over the 5,363,466,240 bytes one upload carries. `409` for a repeat key with a different request. `429` and the storage refusal as on `POST /api/render/film`.
+
+**`GET /api/film`** lists films, newest first, at most 50: `{ok, films:[{film_id, project, phase, stop_reason, stop_code?, created_at, shots_done, shots_total}]}`. It advances nothing.
+
+**`GET /api/film/:id`** advances the parent one tick and returns it:
+
+`{ok, film_id, project, phase, stop_reason, stop_code?, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, spend_ceiling_usd, spend_committed_est, spend_ceiling_basis, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
+
+`phase` is `planned`, `running`, `stopped`, `join`, `done` or `failed`. `stop_reason` is text for a person. `stop_code` is the stable key: `part_failed`, `spend_ceiling`, `first_part_hold` or `gate_held` (the spend or storage checks are holding a part). Absent means no stop. Each `parts[]` row is `{part_id, index, shot_from, shot_to, status, phase, shots_done, shots_total, cost_est, cost_actual, output_key, error}`. `shot_from` and `shot_to` index the master board. `status` is `pending`, `running`, `done` or `failed`.
+
+`cost_est` is an estimate of one run of every part. `spend_committed_est` is what the ceiling compares: every submit in full, retries included. A retry keeps proven work, so this reads high. Both are estimates, as `spend_ceiling_basis` says. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
+
+`stopped` means no new part is submitted: a part failed, the ceiling was reached, or the film is holding after its first part. Parts already running carry on. The first part runs alone, and then at most 3 at once. The cron advances a parent, so polling is not required.
+
+The spend limit, daily ceiling and storage quota also run at each part's submit. A refusal holds that part: it stays `pending`, `stop_reason` says why, and the next tick asks again.
+
+A part whose submit the door answered with a 5xx started nothing, so it stays `pending`, costs nothing, shows the answer in `error`, and is asked again after 5 minutes. A submit that was interrupted or that threw is never sent again by itself. After 15 minutes the parent looks for a film in that part's project submitted since the claim, and adopts it. If it finds none, the part reads `failed` with `submit outcome unknown`. Check its project before retrying, because a retry can buy it twice.
+
+A join that fails for good ends the film in `failed` with every part kept, and `resume` joins again. `404 "film"` if unknown.
+
+**`POST /api/film/:id/parts/:n/retry`** with `{"shots":"failed"}` puts a failed part back in line and advances. The part is re-submitted with its stored inputs and `reuse_finished: true`. `400` if the part has not failed. `409` if the film changed during the call. A retry that would cross the ceiling leaves the part pending and stops the film.
+
+**`POST /api/film/:id/shots/:shot/retake`** with `{prompt?, line?, voice_id?}` marks one shot of a finished part for a new take. `:shot` is the master `shot_id`. The part runs again from its existing stills with `reuse_finished` and `retake_shots`, so it buys that shot's clip and finish, plus its line if the line or voice changed, and keeps the rest. Then the film joins again to a new key. `output_key` stays the last finished film until the new join is done, and then changes. Several shots of a waiting part add to one retake. The estimate adds one shot per retaken shot. `new_still` is refused: not built yet. `400` if the shot is unknown or its part is not finished. `409` if the film changed during the call.
+
+**`POST /api/film/:id/parts/:n/retake/cancel`** drops a retake that is waiting or failed, and puts the part's film, prompts and lines back. If the delivered film still matches every part, the film returns to `done` with no join. A take that already ran stays paid for. `400` if the part has no such retake. `409` if the film changed during the call.
+
+**`POST /api/film/:id/resume`** carries on past the hold after the first part, or joins again after a failed join. `400` if there is nothing to resume. `409` if the film changed during the call.
+
+**`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
+
+`POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0.
 
 ### 2.23 Scatter (retired)
 

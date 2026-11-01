@@ -15,6 +15,9 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
+import { advanceParent, buildParentDoc, cancelRetake, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
+import { clearActiveMarker, insertParent, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -582,8 +585,10 @@ export function safeArtifactContentType(contentType: string): string {
   return "application/octet-stream";
 }
 
-function artifactHeaders(contentType: string, key?: string): Headers {
+function artifactHeaders(contentType: string, key?: string, etag?: string): Headers {
   const h = new Headers();
+  // Without a validator a browser cannot safely resume a dropped download of a large film.
+  if (etag) h.set("etag", etag);
   h.set("content-type", safeArtifactContentType(contentType));
   h.set("cache-control", "private, max-age=300");
   h.set("accept-ranges", "bytes");
@@ -622,20 +627,28 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // For a HEAD or any ranged GET, resolve the object size up front via head(): an R2 get() with an
   // out-of-bounds range returns null, indistinguishable from not-found, so the range must be validated
   // against the real size before any bytes are fetched.
-  if (isHead || rangeHeader) {
+  const ifNoneMatch = req.headers.get("if-none-match");
+  if (isHead || rangeHeader || ifNoneMatch) {
     const meta = await env.R2_RENDERS.head(key);
     if (!meta) throw notFound("artifact");
     const ct = meta.httpMetadata?.contentType || "application/octet-stream";
-    const parsed = parseByteRange(rangeHeader, meta.size);
+    const etag = meta.httpEtag;
+    if (ifNoneMatch && etag && ifNoneMatch === etag && !rangeHeader) {
+      return new Response(null, { status: 304, headers: artifactHeaders(ct, key, etag) });
+    }
+    // If-Range: bytes from a resumed download only join up if the object is still the same one.
+    const ifRange = req.headers.get("if-range");
+    const usableRange = ifRange && ifRange !== etag ? null : rangeHeader;
+    const parsed = parseByteRange(usableRange, meta.size);
 
     if (parsed === "unsatisfiable") {
-      const h = artifactHeaders(ct, key);
+      const h = artifactHeaders(ct, key, etag);
       h.set("content-range", `bytes */${meta.size}`);
       return new Response(null, { status: 416, headers: h });
     }
     if (parsed) {
       // Satisfiable single range -> 206. HEAD carries the same headers with no body.
-      const h = artifactHeaders(ct, key);
+      const h = artifactHeaders(ct, key, etag);
       h.set("content-range", `bytes ${parsed.start}-${parsed.end}/${meta.size}`);
       h.set("content-length", String(parsed.length));
       if (isHead) return new Response(null, { status: 206, headers: h });
@@ -644,7 +657,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
       return new Response(obj.body, { status: 206, headers: h });
     }
     // No range (or one we ignore) -> full 200. HEAD carries the headers with no body.
-    const h = artifactHeaders(ct, key);
+    const h = artifactHeaders(ct, key, etag);
     h.set("content-length", String(meta.size));
     if (isHead) return new Response(null, { status: 200, headers: h });
     const obj = await env.R2_RENDERS.get(key);
@@ -655,7 +668,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // Plain GET, no Range: stream the full body and advertise range support for the next seek.
   const obj = await env.R2_RENDERS.get(key);
   if (!obj) throw notFound("artifact");
-  const h = artifactHeaders(obj.httpMetadata?.contentType || "application/octet-stream", key);
+  const h = artifactHeaders(obj.httpMetadata?.contentType || "application/octet-stream", key, obj.httpEtag);
   h.set("content-length", String(obj.size));
   return new Response(obj.body, { headers: h });
 };
@@ -1694,8 +1707,16 @@ async function withFilmDownloadUrlBestEffort(
     return summary;
   }
 }
+function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: number; delivery_height?: number } {
+  if (width === undefined && height === undefined) return {};
+  if (!Number.isInteger(width) || !Number.isInteger(height) || (width as number) <= 0 || (height as number) <= 0) {
+    throw badRequest("delivery_width and delivery_height must both be whole numbers above 0");
+  }
+  return { delivery_width: width as number, delivery_height: height as number };
+}
+
 const hStartFilm: Handler = async (req, env) => {
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -1856,10 +1877,17 @@ const hStartFilm: Handler = async (req, env) => {
     // cf#1166: opt-in on this door, exact boolean only. A resubmit keeps only what core proves
     // identical; anything else (a string "false" included) leaves the default, which rebuys.
     reuse_finished: a.reuse_finished === true,
+    // Both or neither, whole and positive. A part of a long film pins its frame here, because the join
+    // refuses films of different frames.
+    ...filmDeliveryFrame(a.delivery_width, a.delivery_height),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
-  await persistWanLoraProjectionOnFilm(env, job, filmWanProj);
+  // Best effort. The film is out by now, so a throw here would strand it with no history row, unseen by the
+  // sweep and by a parent film's adopt (cf#695's reasoning).
+  await persistWanLoraProjectionOnFilm(env, job, filmWanProj).catch((e) => {
+    console.warn(`film ${job.film_id}: wan lora projection not persisted: ${String(e)}`);
+  });
   // Write a renders-table row so this film shows in the history panel (#164), the same way
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
@@ -1887,6 +1915,239 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   // cf#392: host summarize relays wan_lora_projection from the job doc when present.
   return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
 };
+
+// A long film as parts under one parent (film-parent.ts). A part goes through the same door handlers as
+// any film, called directly. That passes the door's checks but not the router's, so admitSubmit runs the
+// spend limit, daily ceiling and storage quota at each part: later parts come from a poll or the cron,
+// with no spend route in front of them.
+function internalRequest(path: string, body: unknown): Request {
+  return new Request(`https://studio.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function doorJson(run: () => Promise<Response>): Promise<{ status: number; body: Record<string, unknown> }> {
+  try {
+    const resp = await run();
+    return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
+  } catch (e) {
+    if (e instanceof HttpError) return { status: e.status, body: { error: e.message } };
+    throw e;
+  }
+}
+
+function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
+  return {
+    async bundle(args) {
+      const r = await doorJson(() => hBundle(internalRequest("/api/storyboard/bundle", args), env, ctx, {}));
+      if (r.status !== 201 || typeof r.body.bundleKey !== "string") {
+        throw new Error(`bundle refused: ${JSON.stringify(r.body.errors ?? r.body.error ?? r.status)}`);
+      }
+      return r.body.bundleKey;
+    },
+    async start(body) {
+      const r = await doorJson(() => hStartFilm(internalRequest("/api/render/film", body), env, ctx, {}));
+      if (r.status !== 201 || typeof r.body.film_id !== "string") {
+        const message = `submit refused (${r.status}): ${String(r.body.error ?? "no film id")}`;
+        // The door answered, and everything after startFilmJob in it is best effort, so an answer that is not
+        // a 201 means nothing started. A 5xx here is its own checks being unable to run: try again later.
+        if (r.status >= 500) throw new SubmitNotStarted(message);
+        throw new SubmitRefused(message);
+      }
+      return r.body.film_id;
+    },
+    async startRetake(retake, idempotency_key) {
+      const old = await advanceFilmJob(env, retake.from_film_id);
+      if (!old) throw new SubmitRefused("the part's finished film job is gone");
+      const job = old.job;
+      if (!job.keyframes?.length) throw new SubmitRefused("the part's finished film has no stills to re-use");
+      const { scenes, dialogue_lines } = retakeScenesAndLines(job, retake);
+      const started = await startFilmFromKeyframes(env, {
+        project: job.project,
+        bundle_key: job.bundle_key,
+        scenes,
+        keyframes: job.keyframes,
+        motion_backend: job.motion_backend ?? undefined,
+        motion_config: job.motion_config,
+        finish_config: job.finish_config,
+        finish_select: job.finish_select,
+        speech_config: job.speech_config,
+        film_finish_config: job.film_finish_config,
+        master_config: job.master_config,
+        derive_mode: "finalized",
+        audio_key: job.audio_key,
+        dialogue_lines,
+        style_prefix: job.style_prefix,
+        voice_lock: job.voice_lock,
+        voice_ref_keys: job.voice_ref_keys,
+        delivery_width: job.delivery_width,
+        delivery_height: job.delivery_height,
+        delivery_fps: job.delivery_fps,
+        film_titles: job.film_titles,
+        cast_loras: job.cast_loras,
+        reuse_finished: true,
+        retake_shots: retake.shots,
+        idempotency_key,
+      });
+      if (started.phase === "failed") throw new SubmitRefused(started.error || "the retake did not start");
+      // A row now, like the film door: a tick killed before its save would otherwise leave a film the adopt
+      // cannot find. The tier is the old film's, since this path takes none.
+      await insertRenderBestEffort(env, filmRowFromJob({ ...started, quality_tier: job.quality_tier }));
+      return started.film_id;
+    },
+    async admitSubmit() {
+      const spend = await enforceSpendLimit(internalRequest("/api/render/film", {}), env);
+      if (!spend.ok) return spend.message;
+      const quota = await checkStorageQuota(env);
+      return quota.ok ? null : quota.message;
+    },
+    async pollFilm(filmId) {
+      const r = await doorJson(() => hPollFilm(new Request(`https://studio.internal/api/render/film/${filmId}`), env, ctx, { id: filmId }));
+      return r.status === 200 ? r.body : null;
+    },
+  };
+}
+
+async function tickParent(env: StudioEnv, ctx: ExecutionContext, id: string) {
+  const loaded = await loadParent(env, id);
+  if (!loaded) return null;
+  return advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+}
+
+const hCreateParentFilm: Handler = async (req, env, ctx) => {
+  const a = await readBody<CreateParentBody>(req);
+  const key = readIdempotencyKey(a as { idempotency_key?: unknown });
+  if (!key) throw badRequest("idempotency_key is required: this route spends");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${String(a.project)}\n${key}`));
+  const hex = [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const filmId = `feature-${hex}`;
+  const fingerprint = requestFingerprint(a);
+  let doc;
+  try {
+    doc = buildParentDoc(
+      filmId, a, Date.now(),
+      (width, height, seconds) => predictNormalizedBytes(width, height, CONTAINER_DEFAULT_FPS, seconds),
+      fingerprint,
+    );
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  // No tick here: a submit in waitUntil can be cut off after the response, and that leaves a claim nobody can
+  // resolve. The cron or the first GET starts the film.
+  const created = await insertParent(env, doc);
+  if (!created) {
+    const stored = await loadParent(env, filmId);
+    if (!stored) return json({ ok: false, error: "the film could not be read; try again" }, 503);
+    if (stored.doc.request_hash !== fingerprint) {
+      return json({ ok: false, error: "this idempotency_key was used with a different request" }, 409);
+    }
+    doc = stored.doc;
+    await repairListRow(env, doc);
+  }
+  return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
+};
+
+const hListParentFilms: Handler = async (_req, env) => {
+  const docs = await listParents(env, FILM_LIST_LIMIT);
+  return json({ ok: true, films: docs.map(parentListRow) });
+};
+
+const hGetParentFilm: Handler = async (_req, env, ctx, p) => {
+  const doc = await tickParent(env, ctx, p.id);
+  if (!doc) throw notFound("film");
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRetryParentPart: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<{ shots?: unknown }>(req);
+  if (a.shots !== "failed") throw badRequest('shots must be "failed"');
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    retryPart(loaded.doc, Number(p.n));
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRetakeParentShot: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<RetakeEdits & { new_still?: unknown }>(req);
+  if (a.new_still !== undefined) throw badRequest("new_still is not built yet: a retake re-uses the shot's still");
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    markRetake(loaded.doc, p.shot, a);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hResumeParent: Handler = async (_req, env, ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    resumeParent(loaded.doc);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hCancelParentRetake: Handler = async (_req, env, ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    cancelRetake(loaded.doc, Number(p.n), Date.now());
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRaiseParentCeiling: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<{ spend_ceiling_usd?: unknown }>(req);
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    raiseCeiling(loaded.doc, a.spend_ceiling_usd);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
+  for (const { id, markedAt } of await listActiveParents(env, 50)) {
+    try {
+      const doc = await tickParent(env, ctx, id);
+      // Left long enough that a create still between its two writes is not caught.
+      const orphan = !doc && Date.now() - markedAt > 10 * 60_000;
+      if (orphan || doc?.phase === "done" || doc?.phase === "failed") await clearActiveMarker(env, id);
+    } catch (e) {
+      console.warn(`film parent sweep ${id}: ${String(e)}`);
+    }
+  }
+}
 
 const hEnhance: Handler = async (req, env) => {
   const a = await readBody<{
@@ -2174,8 +2435,9 @@ const hModules: Handler = async (_req, env) => {
   // byte-identical registry. Spread AFTER modulesResponse so a future core field of the same name
   // cannot silently win; the host is the authority on its own release.
   const release = resolveStudioRelease(env);
+  const renderWithPartLimits = { ...renderConfigProjection(), max_scenes_per_part: MAX_SCENES_PER_PART, max_parts: MAX_PARTS };
   return json({
-    ...modulesResponse(modules, renderConfigProjection(), {
+    ...modulesResponse(modules, renderWithPartLimits, {
       dispatch: !!env.MODULE_DISPATCH,
       ...(anyHookUnavailable ? { hooks_unavailable: hooksUnavailable } : {}),
       // control-plane#130: where a reporter is sent for abuse of THIS studio. Absent unless an
@@ -2253,6 +2515,14 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
   { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
+  { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
+  { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
+  { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
+  { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
+  { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
+  { method: "POST",   pattern: "/api/film/:id/shots/:shot/retake",      scope: "consumer",    handler: hRetakeParentShot },
+  { method: "POST",   pattern: "/api/film/:id/parts/:n/retake/cancel",  scope: "consumer",    handler: hCancelParentRetake },
+  { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
   { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
@@ -2322,6 +2592,7 @@ export default {
   async scheduled(_event: ScheduledEvent, raw: Env, ctx: ExecutionContext): Promise<void> {
     const env = studioEnv(raw);
     ctx.waitUntil(sweepUnresolvedJobs(env, ctx));
+    ctx.waitUntil(sweepFilmParents(env, ctx));
   },
 };
 

@@ -70,7 +70,7 @@ on 2026-08-03. Item 1 of the ruling was already delivered before this audit bega
 | `audio-master` | no | n/a | no | AUDIO_MASTER_VPC |
 | `beat-sync` | no | n/a | no | AUDIO_BEAT_SYNC_VPC |
 | `cast-image` | no | n/a | no | R2_RENDERS IMAGES |
-| `cloud-keyframe` | no | n/a | no | R2_RENDERS IMAGES |
+| `cloud-keyframe` | no | n/a | no | R2_RENDERS IMAGES KEYFRAME_WORKFLOW |
 | `dialogue-gen` | no | n/a | no | R2_RENDERS DIALOGUE_WORKFLOW |
 | `film-titles` | no | n/a | no | VIDEO_FINISH_VPC |
 | `finish-lipsync` | yes | yes | YES | none |

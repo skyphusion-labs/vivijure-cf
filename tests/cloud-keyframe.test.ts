@@ -761,3 +761,84 @@ describe("cloud-keyframe forbids drawn text (cf#1155)", () => {
     expect(composeEditPrompt("Wren speaks on a pier", "anime")).toContain("No written words, captions, subtitles or speech bubbles");
   });
 });
+
+describe("cloud-keyframe /invoke with the drawing workflow bound", () => {
+  it("starts the workflow, draws nothing, and puts its id in the poll token", async () => {
+    restoreGenOk();
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const create = vi.fn(async () => ({ id: "wf-9" }));
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = { create };
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(atob(sub.poll!)).workflow_id).toBe("wf-9");
+    expect(genCalls).toHaveLength(0);
+  });
+
+  it("a re-submit for the same film and shots reaches the same run and plans nothing new", async () => {
+    const env = await makeKeyframeEnv();
+    const instance = { id: "kf-fixed" };
+    const ids: (string | undefined)[] = [];
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: vi.fn(async (o: { id?: string }) => {
+        ids.push(o.id);
+        if (ids.length > 1) throw new Error("(instance.already_exists)");
+        return instance;
+      }),
+      get: vi.fn(async () => instance),
+    };
+    const submit = async () => {
+      const req = new Request("http://m/invoke", {
+        method: "POST",
+        body: JSON.stringify({
+          hook: "keyframe",
+          input: { project: "neon", bundle_key: "bundles/neon.tar.gz" },
+          config: { film_ref: "none" },
+          context: { project: "neon", job_id: "film-abc" },
+        }),
+      });
+      return (await (await worker.fetch(req, env)).json()) as { ok: boolean; poll?: string; jobId?: string; error?: string };
+    };
+    const a = await submit();
+    const b = await submit();
+    expect(a.ok, a.error).toBe(true);
+    expect(b.ok, b.error).toBe(true);
+    expect(ids[0]).toBeTruthy();
+    expect(ids[1]).toBe(ids[0]);
+    expect(b.jobId).toBe(a.jobId);
+    expect(b.poll).toBe(a.poll);
+  });
+
+  it("a different shot set for the same film is a different run", async () => {
+    const env = await makeKeyframeEnv();
+    const ids: (string | undefined)[] = [];
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: vi.fn(async (o: { id?: string }) => { ids.push(o.id); return { id: o.id }; }),
+    };
+    for (const shot_ids of [["shot_01"], ["shot_02"]]) {
+      const req = new Request("http://m/invoke", {
+        method: "POST",
+        body: JSON.stringify({
+          hook: "keyframe",
+          input: { project: "neon", bundle_key: "bundles/neon.tar.gz", shot_ids },
+          config: { film_ref: "none" },
+          context: { project: "neon", job_id: "film-abc" },
+        }),
+      });
+      const r = (await (await worker.fetch(req, env)).json()) as { ok: boolean; error?: string };
+      expect(r.ok, r.error).toBe(true);
+    }
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("fails the submit when the workflow cannot start", async () => {
+    const env = await makeKeyframeEnv();
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: async () => { throw new Error("no quota"); },
+    };
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok).toBe(false);
+    expect(sub.error).toContain("no quota");
+  });
+});

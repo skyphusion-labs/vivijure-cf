@@ -297,6 +297,14 @@ const NOT_DOORS = new Set<string>([
   "/api/storage/reconcile",
   "/api/storyboard/audio-upload",
   "/api/storyboard/bundle",
+  // Parents of ordinary films. A part calls the POST /api/render/film handler, and admitSubmit runs the
+  // router's spend and storage checks at each part, because those do not live in the handler.
+  "/api/film",
+  "/api/film/:id/parts/:n/retry",
+  "/api/film/:id/ceiling",
+  "/api/film/:id/shots/:shot/retake",
+  "/api/film/:id/parts/:n/retake/cancel",
+  "/api/film/:id/resume",
   "/api/storyboard/character-ref",
   "/api/storyboard/enhance",
   "/api/storyboard/markers",

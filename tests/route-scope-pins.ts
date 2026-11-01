@@ -18,7 +18,7 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 90;
+export const PINNED_ROUTE_COUNT = 98;
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
 export const PINNED_OPERATOR_COUNT = 8;
@@ -135,6 +135,14 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "POST", pattern: "/api/render/film", scope: "consumer" },
   { method: "GET", pattern: "/api/render/film/:id", scope: "consumer" },
   { method: "POST", pattern: "/api/render/film/:id/finish-retry", scope: "consumer" },
+  { method: "POST", pattern: "/api/film", scope: "consumer" },
+  { method: "GET", pattern: "/api/film", scope: "consumer" },
+  { method: "GET", pattern: "/api/film/:id", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/parts/:n/retry", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/ceiling", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/shots/:shot/retake", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/parts/:n/retake/cancel", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/resume", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/render-from-keyframes", scope: "consumer" },
   { method: "GET", pattern: "/api/storyboard/render/:jobId", scope: "consumer" },
