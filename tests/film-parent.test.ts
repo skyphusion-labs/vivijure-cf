@@ -35,7 +35,10 @@ import {
   type JoinRead,
   type ParentDeps,
   type ParentDoc,
+  FREE_RETRIES_PER_PART,
+  READ_FAIL_LIMIT_MS,
 } from "../src/film-parent";
+import { childFromPoll, childPollBody } from "../src/film-parent-store";
 
 function body(shots: number, over: Partial<CreateParentBody> = {}): CreateParentBody {
   return {
@@ -1284,6 +1287,180 @@ describe("the status view", () => {
     expect(view.cost_actual).toBeNull();
     expect(view.parts[0].cost_actual).toBeNull();
     expect(JSON.stringify(view)).not.toContain("prompt");
-    expect(Object.keys(view.parts[0]).sort()).toEqual(["cost_actual", "cost_est", "error", "index", "output_key", "part_id", "phase", "retake_shots", "shot_from", "shot_to", "shots_done", "shots_total", "status"]);
+    expect(Object.keys(view.parts[0]).sort()).toEqual(["cost_actual", "cost_est", "error", "index", "output_key", "part_id", "phase", "read_failed_since", "retake_shots", "shot_from", "shot_to", "shots_done", "shots_total", "status"]);
+  });
+});
+
+describe("cf#1214 a retry of a part that failed before its clips", () => {
+  const read = (over: Partial<ChildRead>): ChildRead => ({ phase: "keyframe", shots_done: 0, output_key: null, sidecar_key: null, error: null, clips_started: false, ...over });
+  const failed = (over: Partial<ChildRead> = {}): ChildRead => read({ phase: "failed", error: "list: internal (10001)", ...over });
+
+  async function failOnce(over: Partial<ChildRead> = {}) {
+    const h0 = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [], spend_ceiling_usd: 1000 }), 0));
+    const est = h0.doc.parts[0].cost_est;
+    h0.doc.spend_ceiling_usd = est * 1.5;
+    await advanceParent(h0.doc, h0.deps, 1);
+    h0.h.children.set("film-1", failed(over));
+    await advanceParent(h0.doc, h0.deps, 3);
+    expect(h0.doc.parts[0].status).toBe("failed");
+    return { ...h0, est };
+  }
+
+  it("gets past a ceiling of one and a half estimates, and counts one", async () => {
+    const { h, deps, doc, est } = await failOnce();
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(2);
+    expect(doc.stop_reason).not.toBe("spend ceiling");
+    expect(parentView(doc, 4).spend_committed_est).toBe(est);
+  });
+
+  it("never reads zero for a part that ran, while it waits for its retry", async () => {
+    const { doc, est } = await failOnce();
+    retryPart(doc, 0);
+    expect(doc.parts[0].status).toBe("pending");
+    expect(parentView(doc, 4).spend_committed_est).toBe(est);
+  });
+
+  it("the third retry counts in full, so a loop reaches the ceiling", async () => {
+    const { h, deps, doc, est } = await failOnce();
+    doc.spend_ceiling_usd = est * 2;
+    const failAgain = async (n: number) => {
+      retryPart(doc, 0);
+      await advanceParent(doc, deps, n);
+      h.children.set(`film-${h.starts.length}`, failed());
+      await advanceParent(doc, deps, n + 1);
+    };
+    await failAgain(4);
+    await failAgain(6);
+    expect(parentView(doc, 8).spend_committed_est, "two free").toBe(est);
+    await failAgain(8);
+    expect(parentView(doc, 10).spend_committed_est, "the third counts").toBe(est * 2);
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 10);
+    expect(doc.stop_reason, "and the fourth is stopped").toBe("spend ceiling");
+    expect(FREE_RETRIES_PER_PART).toBe(2);
+  });
+
+  it("a film that holds a clip job counts in full, whatever this doc last saw", async () => {
+    const { h, deps, doc, est } = await failOnce({ clips_started: true });
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(1);
+    expect(doc.stop_reason).toBe("spend ceiling");
+    expect(parentView(doc, 4).spend_committed_est).toBe(est);
+  });
+
+  it("a film that did not say counts in full", async () => {
+    const { h, deps, doc } = await failOnce({ clips_started: undefined });
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("a finished shot means clips were bought", async () => {
+    const { h, deps, doc } = await failOnce({ shots_done: 1 });
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("a failure is forgiven once, even if the part reads failed again with nothing run", async () => {
+    const { doc } = await failOnce();
+    retryPart(doc, 0);
+    doc.parts[0].status = "failed";
+    retryPart(doc, 0);
+    expect(doc.parts[0].free_retries).toBe(1);
+  });
+
+  it("a retake that failed keeps its own count", async () => {
+    const { doc } = await failOnce();
+    doc.parts[0].retake = { shots: ["a"] } as never;
+    retryPart(doc, 0);
+    expect(doc.parts[0].free_retries ?? 0).toBe(0);
+  });
+
+  it("the view says what it counts", async () => {
+    const { doc } = await failOnce();
+    expect(parentView(doc, 4).spend_ceiling_basis).toMatch(/except the first 2 retries/);
+  });
+});
+
+describe("a film that cannot be read this tick is not gone", () => {
+  it("only a 404 is gone", () => {
+    expect(childPollBody(404, {})).toBeNull();
+    expect(childPollBody(200, { a: 1 })).toEqual({ a: 1 });
+    expect(() => childPollBody(500, {})).toThrow("film poll -> 500");
+  });
+
+  it("the store reads whether the film holds a clip job", () => {
+    expect(childFromPoll({ phase: "failed" }).clips_started).toBe(false);
+    expect(childFromPoll({ phase: "failed", clip_job_id: "clips-1" }).clips_started).toBe(true);
+  });
+
+  const reads = (t: ReturnType<typeof harness>, bad: string) => ({
+    ...t.deps,
+    readChild: async (id: string) => {
+      if (id === bad) throw new Error("film poll -> 500");
+      return t.deps.readChild(id);
+    },
+  });
+
+  async function twoRunning() {
+    const t = harness(buildParentDoc("f", body(6, { part_size: 2, dialogue_lines: [], pause_after_first_part: false }), 0));
+    await advanceParent(t.doc, t.deps, 1);
+    t.h.children.set("film-1", done("k1"));
+    await advanceParent(t.doc, t.deps, 2);
+    expect(t.doc.parts.map((p) => p.status).slice(0, 3)).toEqual(["done", "running", "running"]);
+    return t;
+  }
+
+  it("does not stop a sibling finishing, the next part or the save", async () => {
+    const t = await twoRunning();
+    t.h.children.set("film-3", done("k3"));
+    await advanceParent(t.doc, reads(t, "film-2"), 3);
+    expect(t.doc.parts[2].status, "the sibling").toBe("done");
+    expect(t.doc.parts[1].status).toBe("running");
+  });
+
+  it("says so on the part, from the first read that failed", async () => {
+    const t = await twoRunning();
+    await advanceParent(t.doc, reads(t, "film-2"), 3);
+    await advanceParent(t.doc, reads(t, "film-2"), 4);
+    const row = parentView(t.doc, 5).parts[1];
+    expect(row.read_failed_since).toBe(3);
+    expect(row.error).toMatch(/could not be read: film poll -> 500/);
+    expect(t.doc.stop_reason).toBeNull();
+  });
+
+  it("an unreadable still job does not stop the film either", async () => {
+    const t = await twoRunning();
+    t.doc.parts[1].retake = { still_film_id: "still-1", shots: [] } as never;
+    await advanceParent(t.doc, { ...t.deps, readStills: async () => { throw new Error("film poll -> 500"); } }, 3);
+    expect(t.doc.parts[1].read_failed_since).toBe(3);
+    await advanceParent(t.doc, { ...t.deps, readStills: async () => { throw new Error("film poll -> 500"); } }, 3 + READ_FAIL_LIMIT_MS);
+    expect(t.doc.parts[1].status).toBe("failed");
+    expect((t.doc.parts[1].retake as unknown as { still_film_id: unknown }).still_film_id).toBeNull();
+  });
+
+  it("a read that works again clears it", async () => {
+    const t = await twoRunning();
+    await advanceParent(t.doc, reads(t, "film-2"), 3);
+    t.h.children.set("film-2", { phase: "clips", shots_done: 1, output_key: null, sidecar_key: null, error: null });
+    await advanceParent(t.doc, t.deps, 4);
+    const row = parentView(t.doc, 5).parts[1];
+    expect(row.read_failed_since).toBeNull();
+    expect(row.error).toBeNull();
+  });
+
+  it("fails the part after the limit, and the film stops by name", async () => {
+    const t = await twoRunning();
+    await advanceParent(t.doc, reads(t, "film-2"), 3);
+    await advanceParent(t.doc, reads(t, "film-2"), 3 + READ_FAIL_LIMIT_MS - 1);
+    expect(t.doc.parts[1].status).toBe("running");
+    await advanceParent(t.doc, reads(t, "film-2"), 3 + READ_FAIL_LIMIT_MS);
+    expect(t.doc.parts[1].status).toBe("failed");
+    expect(t.doc.parts[1].error).toMatch(/for 90 minutes/);
+    expect(READ_FAIL_LIMIT_MS).toBe(5400000);
   });
 });

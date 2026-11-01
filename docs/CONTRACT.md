@@ -1450,11 +1450,13 @@ Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The next cro
 
 `phase` is `planned`, `running`, `stopped`, `join`, `done` or `failed`. `stop_reason` is text for a person. `stop_code` is the stable key: `part_failed`, `spend_ceiling`, `first_part_hold` or `gate_held` (the spend or storage checks are holding a part). Absent means no stop. Each `parts[]` row is `{part_id, index, shot_from, shot_to, status, phase, shots_done, shots_total, cost_est, cost_actual, output_key, error}`. `shot_from` and `shot_to` index the master board. `status` is `pending`, `running`, `done` or `failed`. `phase` and `shots_done` on a running part come from its job docs at read time; `status` moves only on a tick. `retake_shots` lists the board ids waiting or in progress, empty otherwise. Offer retake when `status` is `done`, or `pending` with a non-empty `retake_shots`. Offer cancel when `retake_shots` is non-empty and `status` is `pending` or `failed`.
 
-`cost_est` is an estimate of one run of every part. `spend_committed_est` is what the ceiling compares: every submit in full, retries included. A retry keeps proven work, so this reads high. Both are estimates, as `spend_ceiling_basis` says. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
+`cost_est` is an estimate of one run of every part. `spend_committed_est` is what the ceiling compares: every submit in full, except the first 2 retries per part of a run that failed with no clip job on its film. A part that has run always counts at least once. A retry keeps proven work, so this reads high. Both are estimates, as `spend_ceiling_basis` says. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
 
 `stopped` means no new part is submitted: a part failed, the ceiling was reached, or the film is holding after its first part. Parts already running carry on. The first part runs alone, and then at most 3 at once. The cron advances a parent, so polling is not required.
 
 The spend limit, daily ceiling and storage quota also run at each part's submit. A refusal holds that part: it stays `pending`, `stop_reason` says why, and the next tick asks again.
+
+A part whose film cannot be read this tick stays as it is, siblings carry on, and the row shows `read_failed_since` and `error`. After 90 minutes it fails.
 
 A part whose submit the door answered with a 5xx started nothing, so it stays `pending`, costs nothing, shows the answer in `error`, and is asked again after 5 minutes. A submit that was interrupted or that threw is never sent again by itself. After 15 minutes the parent looks for a film in that part's project submitted since the claim, and adopts it. If it finds none, the part reads `failed` with `submit outcome unknown`. Check its project before retrying, because a retry can buy it twice.
 
