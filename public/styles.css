@@ -1431,3 +1431,8 @@ body.filmmaker-surface #planner-render-advanced { display: none !important; }
 .films-link { display: inline-block; text-decoration: none; }
 .films-watch { margin-top: 8px; }
 .films-watch video { display: block; width: 100%; max-height: 60vh; border-radius: 8px; background: #000; }
+
+.films-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+#films-new textarea { width: 100%; font: 12px/1.4 ui-monospace, monospace; }
+#films-new .planner-field { display: block; margin: 12px 0; }
+#films-new select, #films-new input.planner-input { width: 100%; }
