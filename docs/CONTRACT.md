@@ -1408,13 +1408,13 @@ Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"
 
 A long film is built as ordinary film jobs (parts) under one parent, joined at the end. Each part goes through `POST /api/storyboard/bundle` and `POST /api/render/film`, so it passes the same checks as any film.
 
-**`POST /api/film`** starts a parent. It spends. Each scene needs `seconds` above 0.
+**`POST /api/film`** starts a parent. It spends.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `project` | string | yes | 1 to 48 letters, digits, `_` or `-`. Part `n` runs in project `<project>_pNN`. |
 | `idempotency_key` | string | yes | Alias `idempotencyKey`. The same project and key return the same film with `created: false` and `200`. |
-| `storyboard` | object | yes | The master board. Each scene needs its own `shot_id`. |
+| `storyboard` | object | yes | The master board, as `POST /api/storyboard/bundle` takes it. Each scene needs its own `id` (or `shot_id`) and `target_seconds` (or `seconds`). |
 | `character_refs` | object | yes | As `characterRefs` on the bundle route. |
 | `dialogue_lines` | `[{shot_id,text,voice_id?}]` | no | By master `shot_id`. |
 | `part_size` or `breaks` | number or number[] | one of them | `breaks` are shot counts where a part ends. |

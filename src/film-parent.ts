@@ -31,12 +31,18 @@ export const FILM_LIST_LIMIT = 50;
 export type ParentPhase = "planned" | "running" | "stopped" | "join" | "done" | "failed";
 export type PartStatus = "pending" | "submitting" | "running" | "done" | "failed";
 
+/** A scene as the storyboard validator takes it (id, target_seconds), or with the names a film submit uses. */
 export interface ParentScene {
+  id?: string;
   shot_id?: string;
   prompt?: string;
+  target_seconds?: number;
   seconds?: number;
   [key: string]: unknown;
 }
+
+export const sceneId = (s: ParentScene): string | undefined => s.shot_id ?? s.id;
+export const sceneSeconds = (s: ParentScene): number | undefined => s.seconds ?? s.target_seconds;
 
 export interface ParentLine {
   shot_id: string;
@@ -259,7 +265,7 @@ export function buildParentDoc(
   const scenes = body.storyboard.scenes as ParentScene[];
   const ranges = planPartRanges(scenes.length, body.part_size, body.breaks);
   if (predictBytes) {
-    const seconds = scenes.reduce((n, s) => n + (typeof s.seconds === "number" ? s.seconds : 0), 0);
+    const seconds = scenes.reduce((n, s) => n + (sceneSeconds(s) ?? 0), 0);
     const bytes = predictBytes(shared.delivery_width as number, shared.delivery_height as number, seconds);
     // Refused here, because after the spend the join would refuse it instead.
     if (bytes > ONE_UPLOAD_BYTES) {
@@ -269,10 +275,10 @@ export function buildParentDoc(
   const tag = filmId.replace(/^feature-/, "").slice(0, 8);
   const lines = body.dialogue_lines === undefined ? [] : body.dialogue_lines;
   if (!Array.isArray(lines)) refuse("dialogue_lines must be an array");
-  if (scenes.some((s) => typeof s.seconds !== "number" || !(s.seconds > 0))) {
+  if (scenes.some((s) => { const n = sceneSeconds(s); return typeof n !== "number" || !(n > 0); })) {
     refuse("every scene needs seconds above 0: size and spend are worked out from them");
   }
-  const known = new Set(scenes.map((s) => s.shot_id));
+  const known = new Set(scenes.map(sceneId));
   if (known.has(undefined) || known.size !== scenes.length) refuse("every scene needs its own shot_id");
   for (const line of lines as ParentLine[]) {
     if (!known.has(line?.shot_id)) refuse(`dialogue line names an unknown shot: ${String(line?.shot_id)}`);
@@ -353,8 +359,9 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
   const rename = new Map<string, string>();
   const scenes = master.map((scene, i) => {
     const shot_id = `shot_${String(i + 1).padStart(2, "0")}`;
-    rename.set(String(scene.shot_id), shot_id);
-    return { ...scene, shot_id };
+    rename.set(String(sceneId(scene)), shot_id);
+    // The validator reads id and target_seconds, and a positional id would hide a dropped one.
+    return { ...scene, id: shot_id, shot_id, target_seconds: sceneSeconds(scene) };
   });
   const dialogue_lines = doc.dialogue_lines
     .filter((l) => rename.has(l.shot_id))
@@ -377,7 +384,7 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
     },
     submit: {
       project: part.project,
-      scenes: scenes.map((sc) => ({ shot_id: sc.shot_id, prompt: sc.prompt, seconds: sc.seconds })),
+      scenes: scenes.map((sc) => ({ shot_id: sc.shot_id, prompt: sc.prompt, seconds: sc.target_seconds })),
       ...(dialogue_lines.length ? { dialogue_lines } : {}),
       motion_backend: override?.motion_backend ?? s.motion_backend,
       keyframe_backend: keyframeBackendForStyle(style, s.keyframe_backend),
@@ -646,7 +653,7 @@ async function advanceJoin(doc: ParentDoc, deps: ParentDeps, now: number): Promi
 
 async function mergeCaptions(doc: ParentDoc, offsets: number[], deps: ParentDeps): Promise<void> {
   const shots = (p: ParentPart) => new Set(
-    doc.storyboard.scenes.slice(p.shot_from, p.shot_to + 1).map((s) => s.shot_id));
+    doc.storyboard.scenes.slice(p.shot_from, p.shot_to + 1).map(sceneId));
   const speaking = doc.parts.filter((p) => doc.dialogue_lines.some((l) => shots(p).has(l.shot_id)));
   // This film's captions or none: the last film's would be out of step with a changed line.
   doc.sidecar_key = null;
@@ -765,7 +772,7 @@ export interface RetakeEdits {
 /** Marks one shot of a finished part for a new take, and reopens the film. Nothing already delivered moves
  *  until the new join is done. Several shots of one part can wait together. */
 export function markRetake(doc: ParentDoc, shotId: string, edits: RetakeEdits): void {
-  const index = doc.storyboard.scenes.findIndex((s) => s.shot_id === shotId);
+  const index = doc.storyboard.scenes.findIndex((s) => sceneId(s) === shotId);
   if (index < 0) refuse(`no shot ${shotId}`);
   const part = doc.parts.find((p) => index >= p.shot_from && index <= p.shot_to) as ParentPart;
   const waiting = part.status === "pending" && part.retake !== null;
@@ -829,7 +836,7 @@ export function cancelRetake(doc: ParentDoc, index: number, now: number): void {
   }
   const { undo, from_film_id } = part.retake;
   for (const [shotId, prompt] of Object.entries(undo.prompts)) {
-    const scene = doc.storyboard.scenes.find((s) => s.shot_id === shotId) as ParentScene;
+    const scene = doc.storyboard.scenes.find((s) => sceneId(s) === shotId) as ParentScene;
     scene.prompt = prompt as string | undefined;
   }
   for (const [shotId, line] of Object.entries(undo.lines)) {

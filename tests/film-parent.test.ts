@@ -196,6 +196,41 @@ describe("creating a parent refuses what would fail or spend blind", () => {
   });
 });
 
+describe("a board as the panel writes it, with id and target_seconds", () => {
+  const native = () => body(4, {
+    dialogue_lines: [{ shot_id: "a3", text: "line" }],
+    storyboard: { title: "t", scenes: ["a1", "a2", "a3", "a4"].map((id, i) => ({ id, prompt: `p${i}`, target_seconds: 3 + i })) },
+  });
+  it("is accepted, and a part carries ids and seconds both ways", () => {
+    const doc = buildParentDoc("f", native(), 0);
+    const { submit, bundleArgs } = partInputs(doc, doc.parts[1]);
+    expect(submit.scenes).toEqual([{ shot_id: "shot_01", prompt: "p2", seconds: 5 }, { shot_id: "shot_02", prompt: "p3", seconds: 6 }]);
+    expect(submit.dialogue_lines).toEqual([{ shot_id: "shot_01", text: "line" }]);
+    expect((bundleArgs.storyboard.scenes as Array<Record<string, unknown>>)[0]).toMatchObject({ id: "shot_01", target_seconds: 5 });
+  });
+  it("sizes from target_seconds", () => {
+    let seen = 0;
+    buildParentDoc("f", native(), 0, (_w, _h, s) => { seen = s; return 0; });
+    expect(seen).toBe(18);
+  });
+  it("can be retaken by its own id", () => {
+    const doc = buildParentDoc("f", native(), 0);
+    doc.parts[1].status = "done";
+    doc.parts[1].child_film_id = "c";
+    markRetake(doc, "a3", { prompt: "new" });
+    expect(doc.storyboard.scenes[2].prompt).toBe("new");
+    expect(doc.parts[1].retake?.shots).toEqual(["shot_01"]);
+  });
+  it("refuses a missing id and missing seconds", () => {
+    const b = native();
+    (b.storyboard as { scenes: Array<Record<string, unknown>> }).scenes[1] = { prompt: "x", target_seconds: 3 };
+    expect(() => buildParentDoc("f", b, 0)).toThrow(/own shot_id/);
+    const c = native();
+    (c.storyboard as { scenes: Array<Record<string, unknown>> }).scenes[1] = { id: "z", prompt: "x" };
+    expect(() => buildParentDoc("f", c, 0)).toThrow(/seconds above 0/);
+  });
+});
+
 describe("what a part submits", () => {
   const doc = buildParentDoc("f", body(5, {
     part_overrides: [{ index: 1, cast_loras: { A: "other" }, motion_backend: "cf-hailuo" }],

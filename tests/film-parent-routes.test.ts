@@ -284,9 +284,17 @@ describe("GET /api/film", () => {
     const rows = () => [...e.bucket.store.keys()].filter((k) => k.startsWith("film-parents/by-time/"));
     const [row] = rows();
     const docBefore = e.bucket.store.get(`film-parents/${created.film_id}.json`)!.etag;
+    const stored = await loadParent(e as never, created.film_id);
+    const exact = `film-parents/by-time/${String(9_999_999_999_999 - stored!.doc.created_at).padStart(13, "0")}-${created.film_id}`;
+    expect(row).toBe(exact);
     e.bucket.store.delete(row);
-    expect((await worker.fetch(post("/api/film", BODY), e as never, ctx)).status).toBe(200);
-    expect(rows(), "the same key, from the stored time").toEqual([row]);
+    // Time moves on, so a key worked out from the clock would differ from one worked out from the doc.
+    const later = stored!.doc.created_at + 60_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    const repeat = await worker.fetch(post("/api/film", BODY), e as never, ctx);
+    clock.mockRestore();
+    expect(repeat.status).toBe(200);
+    expect(rows(), "one row, at the exact key from the stored time").toEqual([exact]);
     expect(e.bucket.store.get(`film-parents/${created.film_id}.json`)!.etag).toBe(docBefore);
     const etag = e.bucket.store.get(row)!.etag;
     await worker.fetch(post("/api/film", BODY), e as never, ctx);
