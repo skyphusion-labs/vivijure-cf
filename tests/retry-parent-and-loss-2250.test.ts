@@ -76,6 +76,7 @@ vi.mock("@skyphusion-labs/vivijure-core/cast-loras", async (orig) => {
 });
 
 import { retryFailedRender } from "../src/render-retry";
+import { animateFromPreview } from "../src/finalize-from-keyframes";
 import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { RenderRow } from "@skyphusion-labs/vivijure-core/renders-db";
@@ -251,5 +252,28 @@ describe("fc#2250 item 6 half two -- a full retry declares what the stored row c
     expect(lines![0].text).toBe("We move now.");
     expect(h.film[0].motion_backend).toBe("infinitetalk");
     expect(h.film[0].voice_ref_keys).toBeUndefined();
+  });
+});
+
+describe("cf#1166 -- a retry keeps what it already paid for", () => {
+  it("a full retry asks core to reuse", async () => {
+    const r = await retryFailedRender(env, row({ id: 7, public_id: "pub-7", mode: "full", status: "FAILED" }));
+    expect(r.ok, r.ok ? "" : (r as { error: string }).error).toBe(true);
+    expect(h.film).toHaveLength(1);
+    expect(h.film[0].reuse_finished).toBe(true);
+  });
+
+  it("a finalize retry asks core to reuse", async () => {
+    const r = await retryFailedRender(env, row({ id: 2, public_id: "pub-2", mode: "finalized", status: "FAILED", parent_id: 1 }));
+    expect(r.ok, r.ok ? "" : (r as { error: string }).error).toBe(true);
+    expect(h.fromKeyframes).toHaveLength(1);
+    expect(h.fromKeyframes[0].reuse_finished).toBe(true);
+  });
+
+  it("a first finalize, which is not a retry, does not reuse", async () => {
+    const r = await animateFromPreview(env, { parent: PREVIEW, deriveMode: "finalized" });
+    expect(r.ok, r.ok ? "" : (r as { error: string }).error).toBe(true);
+    expect(h.fromKeyframes).toHaveLength(1);
+    expect(h.fromKeyframes[0].reuse_finished).toBe(false);
   });
 });
