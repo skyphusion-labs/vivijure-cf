@@ -155,6 +155,7 @@ describe("cf#1177 a retry", () => {
     e.store.set("renders/film-p/film-job.json", JSON.stringify({ project: "Long_3c5aae7e_p01" }));
     const res = await worker.fetch(post("/api/render/film/film-p/finish-retry", {}), e as never, ctx);
     expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error, "finish-retry answers 409 for its own reasons too").toMatch(/part of a long film/);
   });
 
   it("render-from-keyframes refuses a part's project", async () => {
