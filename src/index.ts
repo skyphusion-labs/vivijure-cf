@@ -2292,8 +2292,8 @@ const WELCOME_REDIRECT_TARGET = "https://vivijure.com/";
 const STUDIO_PAGE_ASSETS: Record<string, string> = {
   // index.html was a byte-identical copy of modules.html (removed in the 2026-07 truth pass);
   // the modules/pipeline page IS the landing page, served from the single source file.
-  "/": "/modules.html",
-  "/index.html": "/modules.html",
+  "/": "/planner.html",
+  "/index.html": "/planner.html",
   "/planner": "/planner.html",
   "/planner/": "/planner.html",
   "/cast": "/cast.html",

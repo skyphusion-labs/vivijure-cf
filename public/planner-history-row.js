@@ -515,7 +515,7 @@ function buildHistoryRow(r, childrenByParent) {
     retry.type = "button";
     retry.className = "planner-history-action planner-history-action-primary";
     retry.textContent = "retry";
-    retry.title = "re-submit this render with the same stored args (new history row; GPU may resume off volume)";
+    retry.title = "re-submit this render from its stored bundle (new history row; it may not keep everything)";
     retry.addEventListener("click", () => retryFailedRender(r, retry));
     actions.appendChild(retry);
     // cf#649: one next action on the collapsed row, without expanding.
@@ -753,7 +753,8 @@ function buildHistoryRow(r, childrenByParent) {
       if (delivery) {
         const planned = delivery.planned_seconds;
         const delivered = delivery.delivered_seconds;
-        const clamped = delivered < planned - 0.05;
+        // A normal clip lands a little short. Flag only a shortfall a viewer could notice.
+        const clamped = delivered < planned - Math.max(0.5, planned * 0.1);
         const fmt = (s) => (Math.round(s * 10) / 10) + "s";
         const dur = document.createElement("span");
         dur.className = "planner-history-keyframe-dur";
@@ -2015,10 +2016,9 @@ function formatRelative(unixSeconds) {
 async function retryFailedRender(row, btnEl) {
   const confirmMsg =
     "retry this render?\n\n"
-    + "the studio re-submits the row's stored args (project, bundle, tier, overrides). "
-    + "a NEW history row is created; this failed row stays for the audit trail. "
-    + "on the same GPU endpoint within the volume retention window, already-trained "
-    + "LoRAs and shots may be reused.\n\ncontinue?";
+    + "this starts a new job from the stored bundle and settings. it can cost money again, and it "
+    + "may not keep everything from the first try. the studio tells you if anything was dropped.\n\n"
+    + "this failed row stays in the list.\n\ncontinue?";
   if (!window.confirm(confirmMsg)) return;
 
   btnEl.disabled = true;
@@ -2050,5 +2050,6 @@ async function retryFailedRender(row, btnEl) {
     return;
   }
   btnEl.textContent = "retry submitted";
+  if (data.degraded) window.alert("retry started, with a limit:\n\n" + data.degraded);
   loadHistory();
 }

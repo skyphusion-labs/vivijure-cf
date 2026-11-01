@@ -1317,6 +1317,15 @@
     // v0.57.0: standalone LoRA training.
     const loraBtn = $("#cast-lora-train-btn");
     if (loraBtn) loraBtn.addEventListener("click", trainLora);
+    // Wan training only has a use where a door can take its result.
+    if (window.moduleRegistry) {
+      window.moduleRegistry.load().then((reg) => {
+        const pane = $("#cast-wan-lora-pane");
+        if (pane && reg && Array.isArray(reg.modules)) {
+          pane.hidden = !reg.modules.some((m) => m && m.name === "alibaba-wan-lora");
+        }
+      });
+    }
     const wanLoraBtn = $("#cast-wan-lora-train-btn");
     if (wanLoraBtn) wanLoraBtn.addEventListener("click", trainWanLora);
 

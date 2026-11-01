@@ -1373,3 +1373,29 @@ body.filmmaker-surface #planner-render-advanced { display: none !important; }
   opacity: 0.75;
 }
 .studio-foot a { color: inherit; }
+
+/* Raw job output is for operators, not filmmakers. */
+.filmmaker-surface #planner-render-output { display: none; }
+
+/* Controls that had no styling at all. */
+.planner-history-keyframe-regen,
+.planner-history-keyframe-lock,
+#cast-voice-hear {
+  padding: 6px 10px; min-height: 32px; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+}
+.planner-history-keyframe-regen:hover,
+.planner-history-keyframe-lock:hover,
+#cast-voice-hear:hover { border-color: var(--accent); }
+
+.planner-spend-confirm {
+  max-width: min(440px, calc(100vw - 32px)); padding: 20px; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+}
+.planner-spend-confirm::backdrop { background: rgba(0, 0, 0, 0.6); }
+.planner-spend-confirm h3 { margin: 0 0 12px; }
+
+#planner-faces-find {
+  padding: 10px 12px; font: inherit; color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px;
+}

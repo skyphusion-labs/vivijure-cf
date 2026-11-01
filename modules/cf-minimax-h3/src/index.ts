@@ -79,7 +79,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Clips with the model's own sound, no speech (start and end stills)" }],
+  provides: [{ id: "i2v-cloud", label: "MiniMax: clips with the model's own sound, no speech (start and end stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["768P", "2K"], default: "768P", label: "resolution" },
     ratio: {
@@ -94,6 +94,7 @@ const MANIFEST: ModuleManifest = {
     order: 96,
     locality: "cloud",
     cost: "$0.08/s at 768P, $0.13/s at 2K",
+    cost_usd_per_second: [0.08, 0.13],
     blurb: "Clips with the model's own sound, no speech, from your stills, 4 to 15 seconds. The next still can be the end frame.",
     limits: [
       "4 to 15 second clips. Whole seconds.",

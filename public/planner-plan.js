@@ -93,7 +93,7 @@ async function plan() {
     return;
   }
   if (!model) {
-    setStatus("planning models are still loading; try again in a moment, or open Advanced to pick one", "error");
+    setStatus("no planning model is ready. Wait a moment and try again. If this stays, this studio has none.", "error");
     return;
   }
 

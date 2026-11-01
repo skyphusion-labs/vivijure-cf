@@ -473,7 +473,15 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!dock || !tab) return;
   const closeBtn = document.getElementById("sw-dock-close");
   const refine = document.getElementById("planner-refine");
+  // The top bar wraps on a narrow screen, so its height is measured, not assumed. A fixed value hid
+  // the close button under the bar.
+  function syncDockTop() {
+    const bar = document.querySelector(".topbar");
+    if (bar) document.documentElement.style.setProperty("--sw-top", Math.ceil(bar.getBoundingClientRect().height) + "px");
+  }
+  window.addEventListener("resize", syncDockTop);
   function setOpen(open) {
+    if (open) syncDockTop();
     document.body.classList.toggle("sw-open", open);
     tab.setAttribute("aria-expanded", open ? "true" : "false");
     if (open && refine && !refine.hidden) {
@@ -488,7 +496,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (refine) {
     let autoOpened = false;
     const obs = new MutationObserver(function () {
-      if (!autoOpened && !refine.hidden) { autoOpened = true; setOpen(true); }
+      if (!autoOpened && !refine.hidden) {
+        autoOpened = true;
+        // On a narrow screen the dock covers the page, so it opens only when asked.
+        if (!window.matchMedia("(max-width: 900px)").matches) setOpen(true);
+      }
     });
     obs.observe(refine, { attributes: true, attributeFilter: ["hidden"] });
   }
