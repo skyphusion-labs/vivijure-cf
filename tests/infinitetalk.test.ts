@@ -92,6 +92,13 @@ describe("infinitetalk: a stopped film can stop a clip job (cf#1221)", () => {
     expect(JSON.stringify(init.headers)).toContain("k");
   });
 
+  it("a job id from a token cannot change the path", async () => {
+    const f = stub(200);
+    const odd = encodePoll({ jobId: "a/../../x?y", project: "p", shotId: "s", seconds: 4, submittedAt: 1 } as never);
+    await worker.fetch(post({ poll: odd }), env);
+    expect((f.mock.calls[0] as unknown as [string])[0]).toBe("https://api.runpod.ai/v2/infinitetalk/cancel/a%2F..%2F..%2Fx%3Fy");
+  });
+
   it("a job already gone is what was asked for", async () => {
     stub(404);
     expect(await (await worker.fetch(post({ poll: token }), env)).json()).toEqual({ ok: true });

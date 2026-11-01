@@ -243,7 +243,7 @@ async function cancel(env: Env, poll: string): Promise<{ ok: true } | { ok: fals
   const route = await runpodRoute(env);
   if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured" };
   try {
-    const resp = await fetch(endpoint(route) + "/cancel/" + st.jobId, { method: "POST", headers: auth(route) });
+    const resp = await fetch(endpoint(route) + "/cancel/" + encodeURIComponent(st.jobId), { method: "POST", headers: auth(route) });
     if (resp.ok || resp.status === 404) return { ok: true };
     return { ok: false, error: "infinitetalk /cancel -> " + resp.status };
   } catch (e) {
