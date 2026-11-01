@@ -14,7 +14,7 @@ without saying so is the defect, not the subset.
 | Population | Count | What it is |
 |---|---|---|
 | Studio API route entries | **99** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. `POST /api/cast/:id/voice-line` speaks one Aura-1 line. The voice-sample routes stay. |
-| Panel-reachable | **67** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (63) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. The cast page calls hear-one-line and no longer calls the voice-sample routes. |
+| Panel-reachable | **68** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (63) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. The cast page calls hear-one-line and no longer calls the voice-sample routes. |
 | MCP tools | **106** | The whole catalog, BOTH targets (`vivijure-mcp` v2.1.0). It splits **68 studio** (67 curated plus the `studio_request` hatch) and **38 control-plane** (37 `cp_*` operator tools plus the `control_plane_request` hatch). Only the studio figure may be measured against the route-relative rows below: a control-plane tool cannot reach a studio route. The split is derived from each tool's CALL TARGET, not its name -- 37 tools are named `cp_*` and 38 target the control plane, and the one that differs is `control_plane_request`. v2.0.0 is the first release to REMOVE tools (109 -> 105, 71 -> 67 studio): the four `/api/demo/*` tools went with the public demo door, all four targeted the studio, so the control-plane figure does not move. |
 | Reached by a CURATED tool | **67** | Route entries with a purpose-built tool. Rose from 41 with v1.3.0's **30 new studio tools** (module config, storage, prefs, clips, frames, identity). |
 | Reachable via `studio_request` | **96** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. Hear-one-line is JSON. |
@@ -158,7 +158,7 @@ are being reconciled in vivijure-cf#334. A curated submit tool with a blocked po
 capability, and 29 tools built on an unreconciled door would freeze the divergence. A test in
 `vivijure-mcp` asserts no curated tool aims at one, and is written to be deleted when #334 lands.
 
-The remaining 18 panel-reachable routes with no curated tool are, method-aware, **14**, which counts three film routes: the cast page
+The remaining 19 panel-reachable routes with no curated tool are, method-aware, **15**, which counts four film routes: the cast page
 dropped its five voice-sample calls and added `POST /api/cast/:id/voice-line`, which has no curated
 tool yet. The 19 routes deliberately left on `studio_request` (internal helpers, module
 config, session) stay on the hatch, and `POST /api/cast/:id/train-wan-lora` is still panel-reachable
@@ -172,7 +172,7 @@ Every measurement in this document can err in ONE direction, and a reader a year
 work that out from the number. Both instrument defects found while producing this revision ran in
 the flattering direction, which is exactly why they survived.
 
-- **Panel-reachable (67) can be too LOW.** Until cf#333 this was a path-only matcher published as
+- **Panel-reachable (68) can be too LOW.** Until cf#333 this was a path-only matcher published as
   **70**, and that number could only ever be too HIGH: it compared path segments and ignored METHOD,
   so a route entry inherited reachability from any panel call to its path. It is now derived from the
   panel's own call sites (`fetch`/`api` calls, `.href`/`.src` DOM assignments, one hop of variable
