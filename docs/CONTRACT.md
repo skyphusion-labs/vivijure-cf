@@ -1437,7 +1437,7 @@ Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The next cro
 
 **`GET /api/film/:id/parts/:n/shots`** lists a part's shots: `{ok, shots:[{shot_id, index, status, seconds, delivered_seconds?, keyframe_key, clip_key, prompt, line, error, attempts?, retake_status}]}`. `shot_id` is the board's own id. `retake_status` is `waiting`, `running` or `null`. It reads stored job docs only. During a retake, `status` and `clip_key` come from the part's latest film. `404` if the film or part is unknown.
 
-**`GET /api/film/:id`** reads the parent:
+**`GET /api/film/:id`** reads the parent. It also has `cron: {last_tick_at, stale}`: `stale` is true when the cron has not run for 3 minutes, which a board should show, because a dead cron otherwise reads as a slow film.
 
 `{ok, film_id, project, phase, stop_reason, stop_code?, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, spend_ceiling_usd, spend_committed_est, spend_ceiling_basis, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
 
@@ -1459,7 +1459,7 @@ A join that fails for good ends the film in `failed` with every part kept, and `
 
 **`POST /api/film/:id/parts/:n/retake/cancel`** drops a retake that is waiting or failed, and puts the part's film, prompts and lines back. If the delivered film still matches every part, the film returns to `done` with no join. A take that already ran stays paid for. `400` if the part has no such retake. `409` if the film changed during the call.
 
-**`POST /api/film/:id/resume`** carries on past the hold after the first part, or joins again after a failed join. `400` if there is nothing to resume. `409` if the film changed during the call.
+**`POST /api/film/:id/resume`** carries on past the hold after the first part, or joins again after a failed join. On a film that can already act it changes nothing but puts its cron marker back, so it also rescues a film whose marker was lost. Every 10 minutes the cron does the same for the 50 newest films. `400` if there is nothing to resume. `409` if the film changed during the call.
 
 **`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 

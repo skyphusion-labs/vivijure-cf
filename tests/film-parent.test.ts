@@ -23,6 +23,7 @@ import {
   planPartRanges,
   raiseCeiling,
   retakeScenesAndLines,
+  rotateFrom,
   retryPart,
   STALE_CLAIM_MS,
   stopCode,
@@ -236,7 +237,7 @@ describe("lines from a board's own scenes", () => {
   const withLines = () => body(2, {
     dialogue_lines: undefined,
     part_size: 2,
-    storyboard: { title: "t", scenes: [{ id: "a", prompt: "p", target_seconds: 3, dialogue: { slot: "A", text: "hello" } }, { id: "b", prompt: "q", target_seconds: 3, dialogue: { slot: "B", text: " " } }] },
+    storyboard: { title: "t", scenes: [{ id: "a", prompt: "p", target_seconds: 3, dialogue: { slot: "A", text: " hello " } }, { id: "b", prompt: "q", target_seconds: 3, dialogue: { slot: "B", text: " " } }] },
   });
   it("derives them at create, skipping an empty one", () => {
     expect(buildParentDoc("f", withLines(), 0).dialogue_lines).toEqual([{ shot_id: "a", text: "hello" }]);
@@ -262,6 +263,14 @@ describe("a refused first part stops in the same tick", () => {
     expect(doc.parts[0].status).toBe("failed");
     expect([doc.phase, doc.stop_reason, stopCode(doc)]).toEqual(["stopped", "part 0 failed", "part_failed"]);
     expect(h.starts).toEqual([]);
+  });
+});
+
+describe("rotateFrom", () => {
+  it("starts somewhere else each time and drops nothing", () => {
+    expect(rotateFrom([1, 2, 3], 0)).toEqual([1, 2, 3]);
+    expect(rotateFrom([1, 2, 3], 4)).toEqual([2, 3, 1]);
+    expect(rotateFrom([], 4)).toEqual([]);
   });
 });
 
@@ -724,7 +733,11 @@ describe("the join", () => {
   });
 
   it("nothing to resume is refused", () => {
-    expect(() => resumeParent(buildParentDoc("f", body(4), 0))).toThrow(/nothing to resume/);
+    const doc = buildParentDoc("f", body(4), 0);
+    expect(() => resumeParent(doc), "a film that can act only gets its marker back").not.toThrow();
+    expect(doc.phase).toBe("planned");
+    doc.phase = "done";
+    expect(() => resumeParent(doc)).toThrow(/nothing to resume/);
   });
 
   it("merges captions at the join's offsets, and names a part whose captions are missing", async () => {

@@ -15,9 +15,9 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, cancelRetake, partShotRows, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, cancelRetake, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
-import { clearActiveMarker, insertParent, overlayLiveProgress, readPartJobs, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
+import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -2061,7 +2061,14 @@ const hGetParentFilm: Handler = async (_req, env, _ctx, p) => {
   const loaded = await loadParent(env, p.id);
   if (!loaded) throw notFound("film");
   await overlayLiveProgress(env, loaded.doc);
-  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
+  const now = Date.now();
+  const lastTick = await readCronHeartbeat(env);
+  return json({
+    ok: true,
+    ...parentView(loaded.doc, now),
+    // Only the cron moves a film, so a dead cron must not read as a slow film.
+    cron: { last_tick_at: lastTick, stale: lastTick === null || now - lastTick > FILM_CRON_STALE_MS },
+  });
 };
 
 const hParentPartShots: Handler = async (_req, env, _ctx, p) => {
@@ -2148,17 +2155,42 @@ const hRaiseParentCeiling: Handler = async (req, env, _ctx, p) => {
   return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
+const FILM_SWEEP_LIMIT = 50;
+const FILM_RECONCILE_EVERY_MINUTES = 10;
+// Three times the cron's own minute, so one slow pass does not read as a dead cron.
+const FILM_CRON_STALE_MS = 3 * 60_000;
+
 async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
-  for (const { id, markedAt } of await listActiveParents(env, 50)) {
+  const started = Date.now();
+  const minute = Math.floor(started / 60_000);
+  await writeCronHeartbeat(env, started).catch((e) => console.warn(`film cron heartbeat: ${String(e)}`));
+  let restored = 0;
+  if (minute % FILM_RECONCILE_EVERY_MINUTES === 0) {
+    restored = await reconcileActiveMarkers(env, FILM_SWEEP_LIMIT).catch((e) => {
+      console.warn(`film cron reconcile: ${String(e)}`);
+      return 0;
+    });
+  }
+  // Rotated, so a slow first film does not always take the time the later ones need.
+  const active = rotateFrom(await listActiveParents(env, FILM_SWEEP_LIMIT), minute);
+  let reached = 0;
+  for (const { id, markedAt } of active) {
     try {
+      reached += 1;
       const doc = await tickParent(env, ctx, id);
-      // Left long enough that a create still between its two writes is not caught.
       const orphan = !doc && Date.now() - markedAt > 10 * 60_000;
-      if (orphan || doc?.phase === "done" || doc?.phase === "failed") await clearActiveMarker(env, id);
+      if (orphan) await clearActiveMarker(env, id);
+      else if (doc && !parentCanAct(doc)) {
+        // Read again right before the delete: what this tick saw may be old by now. The reconcile puts back
+        // a marker that a write still gets past this.
+        const fresh = await loadParent(env, id);
+        if (fresh && !parentCanAct(fresh.doc)) await clearActiveMarker(env, id);
+      }
     } catch (e) {
       console.warn(`film parent sweep ${id}: ${String(e)}`);
     }
   }
+  console.log(JSON.stringify({ ev: "film.cron_pass", active: active.length, reached, restored, ms: Date.now() - started }));
 }
 
 const hEnhance: Handler = async (req, env) => {

@@ -393,6 +393,140 @@ describe("only the cron submits", () => {
   });
 });
 
+describe("a film the cron cannot see", () => {
+  const marker = (id: string) => `film-parents/active/${id}`;
+  async function stopped(e: ReturnType<typeof env>, id = "feature-w") {
+    const doc = buildParentDoc(id, BODY, 0);
+    doc.parts[0].status = "failed";
+    doc.phase = "stopped";
+    await insertParent(e as never, doc);
+    await e.bucket.delete(marker(id));
+    h.started = [];
+  }
+
+  it("a marker write that throws leaves the doc unchanged, so the POST can be sent again", async () => {
+    const e = env();
+    await stopped(e);
+    const put = e.bucket.put.bind(e.bucket);
+    const failing = vi.spyOn(e.bucket, "put").mockImplementation(async (k: string, b: string, o?: Parameters<typeof e.bucket.put>[2]) => {
+      if (k.startsWith("film-parents/active/")) throw new Error("R2 500");
+      return put(k, b, o);
+    });
+    await expect(worker.fetch(post("/api/film/feature-w/parts/0/retry", { shots: "failed" }), e as never, ctx)).rejects.toThrow().catch(() => {});
+    failing.mockRestore();
+    const res = await worker.fetch(post("/api/film/feature-w/parts/0/retry", { shots: "failed" }), e as never, ctx);
+    expect(res.status, "the doc did not move, so it is still failed").toBe(200);
+    await tick(e);
+    expect(h.started).toHaveLength(1);
+  });
+
+  it("a late delete is put back by the reconcile, and the film starts", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-d", BODY, 0);
+    await insertParent(e as never, doc);
+    await e.bucket.delete(marker("feature-d"));
+    h.started = [];
+    const clock = vi.spyOn(Date, "now").mockReturnValue(7 * 60_000);
+    await tick(e);
+    expect(h.started, "minute 7 does not reconcile, and there is no marker").toEqual([]);
+    clock.mockReturnValue(10 * 60_000);
+    await tick(e);
+    clock.mockRestore();
+    expect(e.bucket.store.has(marker("feature-d"))).toBe(true);
+    expect(h.started, "the same pass that restored it ticks it").toHaveLength(1);
+  });
+
+  it("the reconcile does not put back a finished film", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-f", BODY, 0);
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    await e.bucket.delete(marker("feature-f"));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10 * 60_000);
+    const log = vi.spyOn(console, "log");
+    await tick(e);
+    const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("film.cron_pass")) as string;
+    log.mockRestore();
+    clock.mockRestore();
+    expect(e.bucket.store.has(marker("feature-f"))).toBe(false);
+    expect(JSON.parse(line).restored, "never restored, not restored then cleared").toBe(0);
+  });
+
+  it("resume puts a lost marker back on a film that can act", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-r", BODY, 0));
+    await e.bucket.delete(marker("feature-r"));
+    const res = await worker.fetch(post("/api/film/feature-r/resume", {}), e as never, ctx);
+    expect(res.status).toBe(200);
+    expect(e.bucket.store.has(marker("feature-r"))).toBe(true);
+  });
+
+  it("the sweep keeps a marker when a newer doc can act", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-g", BODY, 0);
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    await e.bucket.put(marker("feature-g"), "");
+    const get = e.bucket.get.bind(e.bucket);
+    let reads = 0;
+    const spy = vi.spyOn(e.bucket, "get").mockImplementation(async (k: string) => {
+      if (k === "film-parents/feature-g.json" && ++reads === 2) {
+        const fresh = buildParentDoc("feature-g", BODY, 0);
+        e.bucket.store.get(k)!.body = JSON.stringify(fresh);
+      }
+      return get(k);
+    });
+    await tick(e);
+    spy.mockRestore();
+    expect(e.bucket.store.has(marker("feature-g"))).toBe(true);
+  });
+});
+
+describe("a cron pass starts somewhere else each minute", () => {
+  it("so the same film does not always go first", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-1", { ...BODY, project: "One" }, 0));
+    await insertParent(e as never, buildParentDoc("feature-2", { ...BODY, project: "Two" }, 0));
+    const first = async (minute: number) => {
+      const copy = env();
+      for (const [k, v] of e.bucket.store) copy.bucket.store.set(k, { ...v });
+      h.started = [];
+      const clock = vi.spyOn(Date, "now").mockReturnValue(minute * 60_000 + 1);
+      await tick(copy);
+      clock.mockRestore();
+      return String(h.started[0]?.project);
+    };
+    expect([(await first(1)).slice(0, 3), (await first(2)).slice(0, 3)].sort()).toEqual(["One", "Two"]);
+  });
+});
+
+describe("the cron heartbeat", () => {
+  const read = (e: unknown) => worker.fetch(new Request("https://studio.example/api/film/feature-h"), e as never, ctx);
+  it("reads stale until the cron runs, fresh after, and stale once it stops", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-h", BODY, 0));
+    let view = (await (await read(e)).json()) as { cron: { last_tick_at: number | null; stale: boolean } };
+    expect(view.cron).toEqual({ last_tick_at: null, stale: true });
+    await tick(e);
+    view = (await (await read(e)).json()) as typeof view;
+    expect(view.cron.stale).toBe(false);
+    expect(view.cron.last_tick_at).toBeGreaterThan(0);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 4 * 60_000);
+    view = (await (await read(e)).json()) as typeof view;
+    clock.mockRestore();
+    expect(view.cron.stale).toBe(true);
+  });
+  it("logs each pass", async () => {
+    const e = env();
+    const log = vi.spyOn(console, "log");
+    await tick(e);
+    const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("film.cron_pass"));
+    log.mockRestore();
+    expect(line).toBeDefined();
+    expect(Object.keys(JSON.parse(line as string)).sort()).toEqual(["active", "ev", "ms", "reached", "restored"]);
+  });
+});
+
 describe("the cron list", () => {
   it("a repeat create does not put a finished film back", async () => {
     const e = env();

@@ -279,7 +279,7 @@ export function buildParentDoc(
   // parent could not tell a part that should have captions from one that need not.
   const lines = given.length ? given : scenes.flatMap((s) => {
     const text = (s.dialogue as { text?: unknown } | undefined)?.text;
-    return typeof text === "string" && text.trim() ? [{ shot_id: sceneId(s) as string, text }] : [];
+    return typeof text === "string" && text.trim() ? [{ shot_id: sceneId(s) as string, text: text.trim() }] : [];
   });
   if (scenes.some((s) => { const n = sceneSeconds(s); return typeof n !== "number" || !(n > 0); })) {
     refuse("every scene needs seconds above 0: size and spend are worked out from them");
@@ -889,6 +889,20 @@ export function retakeScenesAndLines<
   return { scenes, dialogue_lines: lines.length ? lines : undefined };
 }
 
+/** Whether a tick has anything to do for this film. The cron marker follows this. */
+export function parentCanAct(doc: ParentDoc): boolean {
+  if (doc.phase === "done" || doc.phase === "failed") return false;
+  if (doc.phase !== "stopped") return true;
+  return doc.parts.some((p) => p.status === "running" || p.status === "submitting");
+}
+
+/** Where a cron pass starts, so the same films do not always go first. */
+export function rotateFrom<T>(items: T[], start: number): T[] {
+  if (!items.length) return items;
+  const at = start % items.length;
+  return [...items.slice(at), ...items.slice(0, at)];
+}
+
 /** The stored shape of a part's jobs, as far as a status read needs it. */
 export interface PartJob {
   phase?: string;
@@ -938,6 +952,8 @@ export function partShotRows(doc: ParentDoc, part: ParentPart, job: PartJob | nu
 
 /** Carries on past the hold after the first part, or joins again after a join that failed. */
 export function resumeParent(doc: ParentDoc): void {
+  // A film that can act has nothing to resume, but its cron marker may be lost. Saving it puts that back.
+  if (parentCanAct(doc)) return;
   if (doc.phase === "failed" && doc.parts.every((p) => p.status === "done")) {
     doc.phase = "join";
     doc.finished_at = null;
