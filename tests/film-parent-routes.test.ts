@@ -567,6 +567,41 @@ describe("a film start that says nothing was invoked", () => {
     expect(view.spend_committed_est).toBe(0);
   });
 
+  it("a retake that invoked nothing waits too, counting nothing", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const doc = buildParentDoc("feature-n", { ...BODY, part_size: 4 }, 0);
+    Object.assign(doc.parts[0], { status: "done", child_film_id: "film-old", output_key: "o", attempts: 1 });
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    h.jobs.set("film-old", { film_id: "film-old", project: "p", bundle_key: "b", phase: "done", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], keyframes: [{ shot_id: "shot_01", keyframe_key: "k" }], motion_config: {}, finish_config: {} });
+    await worker.fetch(post("/api/film/feature-n/shots/s1/retake", {}), e as never, ctx);
+    vi.mocked(core.startFilmFromKeyframes).mockRejectedValueOnce(new core.FilmNotStartedError("R2 read"));
+    await tick(e);
+    const stored = (await loadParent(e as never, "feature-n"))!.doc;
+    expect(stored.parts[0].status).toBe("pending");
+    expect(stored.parts[0].claimed_at).toBeNull();
+    expect([stored.parts[0].retakes, stored.parts[0].retake_est]).toEqual([0, 0]);
+    expect(stored.parts[0].retake, "still waiting").not.toBeNull();
+    expect(stored.parts[0].not_before).not.toBeNull();
+  });
+
+  it("a retake's other throw keeps the claim", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const doc = buildParentDoc("feature-m", { ...BODY, part_size: 4 }, 0);
+    Object.assign(doc.parts[0], { status: "done", child_film_id: "film-old", output_key: "o", attempts: 1 });
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    h.jobs.set("film-old", { film_id: "film-old", project: "p", bundle_key: "b", phase: "done", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], keyframes: [{ shot_id: "shot_01", keyframe_key: "k" }], motion_config: {}, finish_config: {} });
+    await worker.fetch(post("/api/film/feature-m/shots/s1/retake", {}), e as never, ctx);
+    vi.mocked(core.startFilmFromKeyframes).mockRejectedValueOnce(new Error("job write failed"));
+    await tick(e);
+    const stored = (await loadParent(e as never, "feature-m"))!.doc;
+    expect(stored.parts[0].status).toBe("submitting");
+    expect(stored.parts[0].error).toMatch(/outcome unknown so far/);
+  });
+
   it("any other throw keeps the claim, because work may be out", async () => {
     const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
     const e = env();
