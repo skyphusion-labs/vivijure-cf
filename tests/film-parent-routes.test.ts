@@ -266,6 +266,33 @@ describe("GET /api/film", () => {
     expect(h.started, "a list must not advance anything").toEqual([]);
   });
 
+  it("one unreadable doc does not hide the others", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-a", BODY, 1));
+    await insertParent(e as never, buildParentDoc("feature-b", BODY, 2));
+    e.bucket.store.get("film-parents/feature-b.json")!.body = "not json";
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = await worker.fetch(new Request("https://studio.example/api/film"), e as never, ctx);
+    vi.restoreAllMocks();
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { films: Array<{ film_id: string }> }).films.map((f) => f.film_id)).toEqual(["feature-a"]);
+  });
+
+  it("a repeat create puts back a list row a crash lost, and only that", async () => {
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    const rows = () => [...e.bucket.store.keys()].filter((k) => k.startsWith("film-parents/by-time/"));
+    const [row] = rows();
+    const docBefore = e.bucket.store.get(`film-parents/${created.film_id}.json`)!.etag;
+    e.bucket.store.delete(row);
+    expect((await worker.fetch(post("/api/film", BODY), e as never, ctx)).status).toBe(200);
+    expect(rows(), "the same key, from the stored time").toEqual([row]);
+    expect(e.bucket.store.get(`film-parents/${created.film_id}.json`)!.etag).toBe(docBefore);
+    const etag = e.bucket.store.get(row)!.etag;
+    await worker.fetch(post("/api/film", BODY), e as never, ctx);
+    expect(e.bucket.store.get(row)!.etag, "a present row is left alone").toBe(etag);
+  });
+
   it("the limit reaches the listing", async () => {
     const { listParents } = await import("../src/film-parent-store");
     const e = env();

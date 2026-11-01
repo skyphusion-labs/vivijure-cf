@@ -17,7 +17,7 @@ import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyfram
 import { retryFailedRender } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
-import { clearActiveMarker, insertParent, listActiveParents, listParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
+import { clearActiveMarker, insertParent, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -2045,6 +2045,7 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
       return json({ ok: false, error: "this idempotency_key was used with a different request" }, 409);
     }
     doc = stored.doc;
+    await repairListRow(env, doc);
   }
   return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
 };
