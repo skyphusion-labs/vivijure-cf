@@ -7,8 +7,8 @@
 // The parent is a JSON document in R2, written with an etag match. Two ticks can run at once: a poll and
 // the cron. A submit spends money, so a tick writes a claim on the part first, and only the tick whose
 // claim landed submits. A crash between the submit and the next write leaves a stale claim. The next
-// tick cannot tell whether that submit went out, so it never submits again by itself: it marks the part
-// for a person, because a second submit can buy the part twice.
+// tick looks for a film in that part's own project since the claim, and adopts it. It never submits again by
+// itself, because a second submit can buy the part twice.
 
 export const MAX_SCENES_PER_PART = 40; // The largest film run so far has 20 shots. 40 is a limit, not a proof.
 export const MAX_PARTS = 64; // MAX_JOIN_FILMS in containers/video-finish/app.py.
@@ -229,6 +229,9 @@ export function buildParentDoc(
   const tag = filmId.replace(/^feature-/, "").slice(0, 8);
   const lines = body.dialogue_lines === undefined ? [] : body.dialogue_lines;
   if (!Array.isArray(lines)) refuse("dialogue_lines must be an array");
+  if (scenes.some((s) => typeof s.seconds !== "number" || !(s.seconds > 0))) {
+    refuse("every scene needs seconds above 0: size and spend are worked out from them");
+  }
   const known = new Set(scenes.map((s) => s.shot_id));
   if (known.has(undefined) || known.size !== scenes.length) refuse("every scene needs its own shot_id");
   for (const line of lines as ParentLine[]) {
@@ -367,6 +370,9 @@ export type JoinRead =
 /** A refusal that may pass by itself, such as a full door. It does not use up a join attempt. */
 export class JoinTransient extends Error {}
 
+/** The door refused and started nothing: a 4xx. Any other failure of a submit may have spent. */
+export class SubmitRefused extends Error {}
+
 export interface ParentDeps {
   /** Writes the doc if nobody else wrote since it was read. False means another tick won: stop. */
   save(doc: ParentDoc): Promise<boolean>;
@@ -376,7 +382,10 @@ export interface ParentDeps {
    *  means hold the part and ask again later. */
   admitSubmit(): Promise<string | null>;
   bundle(args: { storyboard: Record<string, unknown>; characterRefs: Record<string, unknown> }): Promise<string>;
+  /** Throws SubmitRefused when nothing started. Any other throw means the outcome is unknown. */
   start(body: Record<string, unknown>): Promise<string>;
+  /** The newest film in this project submitted at or after this time. */
+  findChild(project: string, sinceMs: number): Promise<string | null>;
   readChild(filmId: string): Promise<ChildRead | null>;
   submitJoin(doc: ParentDoc, filmKeys: string[], outputKey: string): Promise<string>;
   readJoin(doc: ParentDoc, jobId: string): Promise<JoinRead>;
@@ -446,50 +455,75 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
   }
 }
 
-/** Claim, then submit. Returns false when another tick owns the doc. */
-async function submitPart(doc: ParentDoc, part: ParentPart, deps: ParentDeps, now: number): Promise<boolean> {
-  part.status = "submitting";
-  part.claimed_at = now;
-  part.attempts += 1;
-  if (!(await deps.save(doc))) return false;
-  try {
-    const { bundleArgs, submit } = partInputs(doc, part);
-    part.bundle_key = await deps.bundle(bundleArgs);
-    part.child_film_id = await deps.start({ ...submit, bundle_key: part.bundle_key });
-    part.status = "running";
-    part.phase = "keyframe";
-    part.error = null;
-  } catch (e) {
-    part.status = "failed";
-    part.error = e instanceof Error ? e.message : String(e);
-  }
-  const outcome = {
-    status: part.status,
-    phase: part.phase,
-    error: part.error,
-    bundle_key: part.bundle_key,
-    child_film_id: part.child_film_id,
-    claimed_at: null,
+/** Claim, then submit. Returns false when another tick owns the doc.
+ *
+ *  Takes an index, and reads the part from the doc each time. A reload replaces doc.parts, so a part object
+ *  held across one is no longer in the doc, and writes to it would never be stored. */
+async function submitPart(doc: ParentDoc, index: number, deps: ParentDeps, now: number): Promise<boolean> {
+  const claim = doc.parts[index];
+  claim.status = "submitting";
+  claim.claimed_at = now;
+  claim.attempts += 1;
+  const save = async () => {
+    try {
+      return await deps.save(doc);
+    } catch {
+      return false;
+    }
   };
-  // A poll may have written since the claim. The film id must not be lost to that, because the part would
-  // then look like a submit of unknown outcome and a person would be asked to check a film that is fine.
+  if (!(await save())) return false;
+  const outcome: Partial<ParentPart> = {};
+  try {
+    const { bundleArgs, submit } = partInputs(doc, claim);
+    // Nothing is spent by a bundle, so a failure here is a plain failure.
+    outcome.bundle_key = await deps.bundle(bundleArgs);
+    try {
+      outcome.child_film_id = await deps.start({ ...submit, bundle_key: outcome.bundle_key });
+      Object.assign(outcome, { status: "running", phase: "keyframe", error: null, claimed_at: null });
+    } catch (e) {
+      if (!(e instanceof SubmitRefused)) {
+        // The door can throw or answer 5xx with work already out. The claim stays, so the stale path can
+        // adopt that film if it exists.
+        outcome.error = `submit outcome unknown so far: ${e instanceof Error ? e.message : String(e)}`;
+      } else {
+        throw e;
+      }
+    }
+  } catch (e) {
+    Object.assign(outcome, { status: "failed", error: e instanceof Error ? e.message : String(e), claimed_at: null });
+  }
+  // A poll may have written since the claim, or a write may have thrown. A known film id must not be lost to
+  // either. If it still is, the stale path finds the film by its project.
   for (let i = 0; i < 5; i++) {
-    Object.assign(doc.parts[part.index], outcome);
-    if (await deps.save(doc)) return true;
-    const fresh = await deps.reload();
+    Object.assign(doc.parts[index], outcome);
+    if (await save()) return true;
+    let fresh: ParentDoc | null = null;
+    try {
+      fresh = await deps.reload();
+    } catch {
+      continue;
+    }
     if (!fresh) return false;
     Object.assign(doc, fresh);
   }
   return false;
 }
 
-/** No row and no film id do not prove that no submit went out, so this never submits. */
-function failStaleClaims(doc: ParentDoc, now: number): void {
+/** Part projects are unique to this parent, so a film there submitted since the claim can only be this
+ *  claim's. Adopting it spends nothing. Only "no such film" needs a person, and it never submits again. */
+async function resolveStaleClaims(doc: ParentDoc, deps: ParentDeps, now: number): Promise<void> {
   for (const part of doc.parts) {
     if (part.status !== "submitting" || part.claimed_at === null || now - part.claimed_at < STALE_CLAIM_MS) continue;
-    part.status = "failed";
+    const found = await deps.findChild(part.project, part.claimed_at);
     part.claimed_at = null;
-    part.error = `submit outcome unknown: a film may be running in project ${part.project}. Check it before retrying, because a retry can buy this part twice`;
+    if (found) {
+      part.child_film_id = found;
+      part.status = "running";
+      part.error = null;
+    } else {
+      part.status = "failed";
+      part.error = `submit outcome unknown: no film was found in project ${part.project}, but a submit may have gone out. Check it before retrying, because a retry can buy this part twice`;
+    }
   }
 }
 
@@ -567,7 +601,7 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
   if (doc.phase === "done" || doc.phase === "failed") return doc;
   const before = JSON.stringify(doc);
   await readLiveParts(doc, deps);
-  failStaleClaims(doc, now);
+  await resolveStaleClaims(doc, deps, now);
   // A write only when something moved, so a poll does not collide with a tick that is submitting.
   const saveIfMoved = async () => {
     if (JSON.stringify(doc) !== before) await deps.save(doc);
@@ -603,11 +637,12 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
   }
   // The first part runs alone, and by default holds for a person after it (above).
   const room = (firstDone ? MAX_PARTS_IN_FLIGHT : 1) - doc.parts.filter(isLive).length;
-  const committed = committedEstimate(doc);
-  const next = doc.parts.filter((p) => p.status === "pending").slice(0, Math.max(0, room));
-  let spend = committed;
-  for (const part of next) {
-    if (spend + part.cost_est > doc.spend_ceiling_usd) {
+  const next = doc.parts.filter((p) => p.status === "pending").slice(0, Math.max(0, room)).map((p) => p.index);
+  for (const index of next) {
+    // From the doc each time: a submit can reload it, and another tick may have taken this part.
+    const part = doc.parts[index];
+    if (part.status !== "pending") continue;
+    if (committedEstimate(doc) + part.cost_est > doc.spend_ceiling_usd) {
       doc.stop_reason = "spend ceiling";
       if (!doc.parts.some(isLive)) doc.phase = "stopped";
       break;
@@ -619,8 +654,7 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
       break;
     }
     if (doc.stop_reason !== "spend ceiling") doc.stop_reason = null;
-    spend += part.cost_est;
-    if (!(await submitPart(doc, part, deps, now))) return doc;
+    if (!(await submitPart(doc, index, deps, now))) return doc;
   }
   if (!next.length && doc.phase === "running" && doc.stop_reason !== "spend ceiling") doc.stop_reason = null;
   await saveIfMoved();

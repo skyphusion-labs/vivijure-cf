@@ -30,7 +30,9 @@ export async function loadParent(env: StudioEnv, id: string): Promise<LoadedPare
 
 /** Writes only if the doc is new. False means this id already exists. */
 export async function insertParent(env: StudioEnv, doc: ParentDoc): Promise<boolean> {
-  // The marker first: a crash between the two leaves a marker with no doc, which a sweep skips, and never a
+  // Checked first, or a repeat create would put a finished film back on the cron list.
+  if (await env.R2_RENDERS.head(docKey(doc.film_id))) return false;
+  // The marker first: a crash between the two leaves a marker with no doc, which a sweep clears, and never a
   // parent the cron cannot see.
   await env.R2_RENDERS.put(activeKey(doc.film_id), "");
   const written = await env.R2_RENDERS.put(docKey(doc.film_id), JSON.stringify(doc), {
@@ -57,9 +59,16 @@ export async function saveParent(env: StudioEnv, loaded: LoadedParent): Promise<
   return true;
 }
 
-export async function listActiveParents(env: StudioEnv, limit: number): Promise<string[]> {
+export async function listActiveParents(env: StudioEnv, limit: number): Promise<Array<{ id: string; markedAt: number }>> {
   const listed = await env.R2_RENDERS.list({ prefix: FILM_PARENT_ACTIVE_PREFIX, limit });
-  return listed.objects.map((o) => o.key.slice(FILM_PARENT_ACTIVE_PREFIX.length));
+  return listed.objects.map((o) => ({
+    id: o.key.slice(FILM_PARENT_ACTIVE_PREFIX.length),
+    markedAt: o.uploaded instanceof Date ? o.uploaded.getTime() : 0,
+  }));
+}
+
+export async function clearActiveMarker(env: StudioEnv, id: string): Promise<void> {
+  await env.R2_RENDERS.delete(activeKey(id));
 }
 
 /** Calls to the studio's own doors, so a part goes through the same checks as any other film. */
@@ -95,6 +104,13 @@ export function parentDeps(env: StudioEnv, loaded: LoadedParent, doors: ParentDo
       return fresh.doc;
     },
     admitSubmit: doors.admitSubmit,
+    async findChild(project, sinceMs) {
+      // submitted_at is whole seconds, so round down or a film from the claim's own second is missed.
+      const row = await env.DB.prepare(
+        "SELECT job_id FROM renders WHERE project = ? AND job_id LIKE 'film-%' AND submitted_at >= ? ORDER BY submitted_at DESC LIMIT 1",
+      ).bind(project, Math.floor(sinceMs / 1000)).first<{ job_id: string }>();
+      return row?.job_id ?? null;
+    },
     bundle: doors.bundle,
     start: doors.start,
     async readChild(filmId) {

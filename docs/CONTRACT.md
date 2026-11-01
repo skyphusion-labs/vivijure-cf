@@ -1405,7 +1405,7 @@ Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"
 
 A long film is built as ordinary film jobs (parts) under one parent, joined at the end. Each part goes through `POST /api/storyboard/bundle` and `POST /api/render/film`, so it passes the same checks as any film.
 
-**`POST /api/film`** starts a parent. It spends.
+**`POST /api/film`** starts a parent. It spends. Each scene needs `seconds` above 0.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -1439,7 +1439,7 @@ Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The cron or 
 
 The spend limit, daily ceiling and storage quota also run at each part's submit. A refusal holds that part: it stays `pending`, `stop_reason` says why, and the next tick asks again.
 
-A part whose submit was interrupted reads `failed` with `submit outcome unknown`, after 15 minutes. It is never submitted again by itself. Check its project before retrying, because a retry can buy it twice.
+A submit that was interrupted, or that threw or answered 5xx, is never sent again by itself. After 15 minutes the parent looks for a film in that part's project submitted since the claim, and adopts it. If it finds none, the part reads `failed` with `submit outcome unknown`. Check its project before retrying, because a retry can buy it twice.
 
 A join that fails for good ends the film in `failed` with every part kept, and `resume` joins again. `404 "film"` if unknown.
 

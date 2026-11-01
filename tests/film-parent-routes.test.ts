@@ -33,9 +33,11 @@ import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 
 function r2() {
   const store = new Map<string, { body: string; etag: string }>();
+  const uploadedAt = new Map<string, Date>();
   let n = 0;
   return {
     store,
+    uploadedAt,
     async get(key: string) {
       const v = store.get(key);
       return v ? { etag: v.etag, json: async () => JSON.parse(v.body), text: async () => v.body } : null;
@@ -56,7 +58,7 @@ function r2() {
       store.delete(key);
     },
     async list({ prefix }: { prefix: string }) {
-      return { objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })) };
+      return { objects: [...store.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key, uploaded: uploadedAt.get(key) ?? new Date() })) };
     },
   };
 }
@@ -200,6 +202,38 @@ describe("the storage quota reaches a part", () => {
     expect(h.started).toEqual([]);
     expect(view.stop_reason).toBe("storage is full");
     expect(view.parts[0].status).toBe("pending");
+  });
+});
+
+describe("the cron list", () => {
+  it("a repeat create does not put a finished film back", async () => {
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    const loaded = await loadParent(e as never, created.film_id);
+    loaded!.doc.phase = "done";
+    await saveParent(e as never, loaded!);
+    const marker = `film-parents/active/${created.film_id}`;
+    expect(e.bucket.store.has(marker)).toBe(false);
+    await worker.fetch(post("/api/film", BODY), e as never, ctx);
+    expect(e.bucket.store.has(marker)).toBe(false);
+  });
+
+  it("the sweep clears a marker whose film is finished, and a long-orphaned one", async () => {
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    const loaded = await loadParent(e as never, created.film_id);
+    loaded!.doc.phase = "done";
+    await saveParent(e as never, loaded!);
+    const marker = `film-parents/active/${created.film_id}`;
+    await e.bucket.put(marker, "");
+    await e.bucket.put("film-parents/active/feature-gone", "");
+    e.bucket.uploadedAt.set("film-parents/active/feature-gone", new Date(Date.now() - 3_600_000));
+    await e.bucket.put("film-parents/active/feature-new", "");
+    await worker.scheduled({} as never, e as never, ctx);
+    await settle();
+    expect(e.bucket.store.has(marker)).toBe(false);
+    expect(e.bucket.store.has("film-parents/active/feature-gone")).toBe(false);
+    expect(e.bucket.store.has("film-parents/active/feature-new"), "a create may still be between its writes").toBe(true);
   });
 });
 
