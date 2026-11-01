@@ -3,7 +3,8 @@
 import { FINISH_AFFINITY_HEADER } from "./video-finish-binding";
 import { presignR2Get, presignR2Put, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { mediaFinishHeaders, videoFinishFetch } from "@skyphusion-labs/vivijure-core";
-import { JoinTransient, normalizeParentDoc } from "./film-parent";
+import { JoinTransient, normalizeParentDoc, type PartClipJob, type PartJob } from "./film-parent";
+import { clipJobDocKey, filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
 import type { StudioEnv } from "./orchestrator-env";
 import {
   FILM_PARENT_ACTIVE_PREFIX,
@@ -91,6 +92,33 @@ export async function listParents(env: StudioEnv, limit: number): Promise<Parent
 export async function repairListRow(env: StudioEnv, doc: ParentDoc): Promise<void> {
   const key = listKey(doc.film_id, doc.created_at);
   if (!(await env.R2_RENDERS.head(key))) await env.R2_RENDERS.put(key, "");
+}
+
+async function readJson<T>(env: StudioEnv, key: string): Promise<T | null> {
+  const object = await env.R2_RENDERS.get(key);
+  return object ? ((await object.json()) as T) : null;
+}
+
+/** A part's film job and clip job, as stored. Reads only. */
+export async function readPartJobs(env: StudioEnv, filmId: string | null): Promise<{ job: PartJob | null; clipJob: PartClipJob | null }> {
+  if (!filmId) return { job: null, clipJob: null };
+  const job = await readJson<PartJob>(env, filmJobDocKey(filmId));
+  const clipJob = job?.clip_job_id ? await readJson<PartClipJob>(env, clipJobDocKey(job.clip_job_id)) : null;
+  return { job, clipJob };
+}
+
+/** Shows how far each running part has got, in memory only. Status moves only on a tick. A read that fails
+ *  leaves the last stored progress, because a status view should not fail on a progress detail. */
+export async function overlayLiveProgress(env: StudioEnv, doc: ParentDoc): Promise<void> {
+  await Promise.all(doc.parts.filter((p) => p.status === "running").map(async (part) => {
+    try {
+      const { job, clipJob } = await readPartJobs(env, part.child_film_id);
+      if (job?.phase) part.phase = job.phase;
+      if (clipJob) part.shots_done = clipJob.shots.filter((s) => s.status === "done").length;
+    } catch (e) {
+      console.warn(`film progress ${part.part_id}: ${String(e)}`);
+    }
+  }));
 }
 
 export async function clearActiveMarker(env: StudioEnv, id: string): Promise<void> {

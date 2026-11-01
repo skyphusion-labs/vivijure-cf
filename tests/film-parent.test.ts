@@ -17,6 +17,7 @@ import {
   requestFingerprint,
   resumeParent,
   parentListRow,
+  partShotRows,
   parentView,
   partInputs,
   planPartRanges,
@@ -228,6 +229,39 @@ describe("a board as the panel writes it, with id and target_seconds", () => {
     const c = native();
     (c.storyboard as { scenes: Array<Record<string, unknown>> }).scenes[1] = { id: "z", prompt: "x" };
     expect(() => buildParentDoc("f", c, 0)).toThrow(/seconds above 0/);
+  });
+});
+
+describe("lines from a board's own scenes", () => {
+  const withLines = () => body(2, {
+    dialogue_lines: undefined,
+    part_size: 2,
+    storyboard: { title: "t", scenes: [{ id: "a", prompt: "p", target_seconds: 3, dialogue: { slot: "A", text: "hello" } }, { id: "b", prompt: "q", target_seconds: 3, dialogue: { slot: "B", text: " " } }] },
+  });
+  it("derives them at create, skipping an empty one", () => {
+    expect(buildParentDoc("f", withLines(), 0).dialogue_lines).toEqual([{ shot_id: "a", text: "hello" }]);
+  });
+  it("explicit lines win", () => {
+    const doc = buildParentDoc("f", { ...withLines(), dialogue_lines: [{ shot_id: "b", text: "mine" }] }, 0);
+    expect(doc.dialogue_lines).toEqual([{ shot_id: "b", text: "mine" }]);
+  });
+  it("so a voice-only retake works on such a film", () => {
+    const doc = buildParentDoc("f", withLines(), 0);
+    doc.parts[0].status = "done";
+    doc.parts[0].child_film_id = "c";
+    markRetake(doc, "a", { voice_id: "orion" });
+    expect(doc.parts[0].retake?.lines).toEqual({ shot_01: { text: "hello", voice_id: "orion" } });
+  });
+});
+
+describe("a refused first part stops in the same tick", () => {
+  it("reads stopped at once, with no later part started", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(4), 0));
+    deps.start = async () => { throw new SubmitRefused("submit refused (400): nope"); };
+    await advanceParent(doc, deps, 1);
+    expect(doc.parts[0].status).toBe("failed");
+    expect([doc.phase, doc.stop_reason, stopCode(doc)]).toEqual(["stopped", "part 0 failed", "part_failed"]);
+    expect(h.starts).toEqual([]);
   });
 });
 
@@ -877,6 +911,17 @@ describe("a retake of one shot", () => {
     });
   });
 
+  it("the view and the shot rows say which shots are in a retake", async () => {
+    const { deps, doc } = await finished();
+    expect(parentView(doc, 5).parts[1].retake_shots).toEqual([]);
+    markRetake(doc, "s2", {});
+    expect(parentView(doc, 5).parts[1].retake_shots).toEqual(["s2"]);
+    const rows = () => partShotRows(doc, doc.parts[1], null, null).map((r) => r.retake_status);
+    expect(rows()).toEqual(["waiting", null]);
+    await advanceParent(doc, deps, 5);
+    expect(rows()).toEqual(["running", null]);
+  });
+
   it("a retake the door could not start waits, counting nothing", async () => {
     const { deps, doc } = await finished();
     markRetake(doc, "s2", {});
@@ -1046,6 +1091,6 @@ describe("the status view", () => {
     expect(view.cost_actual).toBeNull();
     expect(view.parts[0].cost_actual).toBeNull();
     expect(JSON.stringify(view)).not.toContain("prompt");
-    expect(Object.keys(view.parts[0]).sort()).toEqual(["cost_actual", "cost_est", "error", "index", "output_key", "part_id", "phase", "shot_from", "shot_to", "shots_done", "shots_total", "status"]);
+    expect(Object.keys(view.parts[0]).sort()).toEqual(["cost_actual", "cost_est", "error", "index", "output_key", "part_id", "phase", "retake_shots", "shot_from", "shot_to", "shots_done", "shots_total", "status"]);
   });
 });

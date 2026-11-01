@@ -15,9 +15,9 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, cancelRetake, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, cancelRetake, partShotRows, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
-import { clearActiveMarker, insertParent, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
+import { clearActiveMarker, insertParent, overlayLiveProgress, readPartJobs, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -2055,13 +2055,25 @@ const hListParentFilms: Handler = async (_req, env) => {
   return json({ ok: true, films: docs.map(parentListRow) });
 };
 
-const hGetParentFilm: Handler = async (_req, env, ctx, p) => {
-  const doc = await tickParent(env, ctx, p.id);
-  if (!doc) throw notFound("film");
-  return json({ ok: true, ...parentView(doc, Date.now()) });
+// Reads only. No tick, no write, no film advanced: a phone can lose this request at any moment, and a read
+// must not move money. So it reads each live part's job doc, and never polls the film door.
+const hGetParentFilm: Handler = async (_req, env, _ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  await overlayLiveProgress(env, loaded.doc);
+  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
-const hRetryParentPart: Handler = async (req, env, ctx, p) => {
+const hParentPartShots: Handler = async (_req, env, _ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  const part = loaded.doc.parts[Number(p.n)];
+  if (!part) throw notFound("part");
+  const { job, clipJob } = await readPartJobs(env, part.child_film_id);
+  return json({ ok: true, shots: partShotRows(loaded.doc, part, job, clipJob) });
+};
+
+const hRetryParentPart: Handler = async (req, env, _ctx, p) => {
   const a = await readBody<{ shots?: unknown }>(req);
   if (a.shots !== "failed") throw badRequest('shots must be "failed"');
   const loaded = await loadParent(env, p.id);
@@ -2073,11 +2085,11 @@ const hRetryParentPart: Handler = async (req, env, ctx, p) => {
     throw e;
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
-  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
-  return json({ ok: true, ...parentView(doc, Date.now()) });
+  // State only. The cron is the one place that submits.
+  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
-const hRetakeParentShot: Handler = async (req, env, ctx, p) => {
+const hRetakeParentShot: Handler = async (req, env, _ctx, p) => {
   const a = await readBody<RetakeEdits & { new_still?: unknown }>(req);
   if (a.new_still !== undefined) throw badRequest("new_still is not built yet: a retake re-uses the shot's still");
   const loaded = await loadParent(env, p.id);
@@ -2089,11 +2101,11 @@ const hRetakeParentShot: Handler = async (req, env, ctx, p) => {
     throw e;
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
-  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
-  return json({ ok: true, ...parentView(doc, Date.now()) });
+  // State only. The cron is the one place that submits.
+  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
-const hResumeParent: Handler = async (_req, env, ctx, p) => {
+const hResumeParent: Handler = async (_req, env, _ctx, p) => {
   const loaded = await loadParent(env, p.id);
   if (!loaded) throw notFound("film");
   try {
@@ -2103,11 +2115,11 @@ const hResumeParent: Handler = async (_req, env, ctx, p) => {
     throw e;
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
-  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
-  return json({ ok: true, ...parentView(doc, Date.now()) });
+  // State only. The cron is the one place that submits.
+  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
-const hCancelParentRetake: Handler = async (_req, env, ctx, p) => {
+const hCancelParentRetake: Handler = async (_req, env, _ctx, p) => {
   const loaded = await loadParent(env, p.id);
   if (!loaded) throw notFound("film");
   try {
@@ -2117,11 +2129,11 @@ const hCancelParentRetake: Handler = async (_req, env, ctx, p) => {
     throw e;
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
-  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
-  return json({ ok: true, ...parentView(doc, Date.now()) });
+  // State only. The cron is the one place that submits.
+  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
-const hRaiseParentCeiling: Handler = async (req, env, ctx, p) => {
+const hRaiseParentCeiling: Handler = async (req, env, _ctx, p) => {
   const a = await readBody<{ spend_ceiling_usd?: unknown }>(req);
   const loaded = await loadParent(env, p.id);
   if (!loaded) throw notFound("film");
@@ -2132,8 +2144,8 @@ const hRaiseParentCeiling: Handler = async (req, env, ctx, p) => {
     throw e;
   }
   if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
-  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
-  return json({ ok: true, ...parentView(doc, Date.now()) });
+  // State only. The cron is the one place that submits.
+  return json({ ok: true, ...parentView(loaded.doc, Date.now()) });
 };
 
 async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
@@ -2517,6 +2529,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
   { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
   { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
+  { method: "GET",    pattern: "/api/film/:id/parts/:n/shots",          scope: "consumer",    handler: hParentPartShots },
   { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
