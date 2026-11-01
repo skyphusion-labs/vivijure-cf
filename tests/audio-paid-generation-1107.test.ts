@@ -34,7 +34,7 @@ function r2(failAudioPuts: number) {
     store,
     bucket: {
       put: async (k: string, v: unknown) => {
-        if (typeof v !== "string" && left-- > 0) throw new Error("R2 write failed: network connection lost");
+        if (typeof v !== "string" && left-- > 0) throw new Error("R2 write failed: refused");
         store.set(k, v);
       },
       get: async () => null,

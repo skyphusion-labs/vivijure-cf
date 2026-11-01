@@ -17,6 +17,7 @@
 // (ok:false), never a soft-degrade and never a fake keyframe -- nothing downstream can animate a frame
 // that was never rendered. Failures are DATA, never an exception across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -651,6 +652,7 @@ const RATE_HOLD_SLEEP = "30 seconds";
 
 export class CloudKeyframeWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const token = event.payload;
     const sk = stateKey(token.project, token.job_id);
     const shotsLeft = async (): Promise<number> => {
@@ -703,6 +705,7 @@ export class CloudKeyframeWorkflow extends WorkflowEntrypoint<Env, WorkflowParam
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 

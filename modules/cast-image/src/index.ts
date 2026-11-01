@@ -10,6 +10,7 @@
 // PollResponse carries no token, so the run state lives in R2 and the poll token is a stable pointer.
 // Failures are DATA, never an exception across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -156,6 +157,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<CastImage
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
