@@ -162,6 +162,15 @@ describe("POST /api/film", () => {
     expect(e.bucket.store.has(`film-parents/active/${json.film_id}`)).toBe(true);
   });
 
+  it("the route guard on the film door does not stop a parent starting its own part", async () => {
+    h.started = [];
+    const e = env();
+    await worker.fetch(post("/api/film", { ...BODY, idempotency_key: "own-part" }), e as never, ctx);
+    await tick(e);
+    expect(h.started).toHaveLength(1);
+    expect(String(h.started[0].project)).toMatch(/_[0-9a-f]{8}_p00$/);
+  });
+
   it("the same key returns the same film and starts nothing", async () => {
     h.started = [];
     const e = env();
