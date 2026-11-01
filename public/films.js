@@ -537,7 +537,8 @@
     const degraded = film.degraded;
     $("film-degraded").hidden = !degraded;
     $("film-degraded").textContent = degraded
-      ? "Shipped with a limit: " + (typeof degraded === "string" ? degraded : JSON.stringify(degraded))
+      ? (film.phase === "done" ? "Shipped with a limit: " : "Has a limit so far: ")
+        + (typeof degraded === "string" ? degraded : JSON.stringify(degraded))
       : "";
     $("film-error").hidden = !film.error;
     $("film-error").textContent = film.error || "";

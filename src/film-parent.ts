@@ -84,6 +84,9 @@ export interface ParentPart {
   shots_total: number;
   cost_est: number;
   error: string | null;
+  /** Shots of the delivered output that a finish step soft-degraded, and why. Set when a part's film finishes. */
+  finish_degraded?: number;
+  finish_reasons?: string[];
   /** When this part's film first could not be read. Null once it can be. */
   read_failed_since?: number | null;
   /** Submits made. */
@@ -435,6 +438,9 @@ export interface ChildRead {
   /** The film holds a clip job. false only when the film said so. */
   clips_started?: boolean;
   shots_done: number;
+  /** Shots whose finish chain did no work, and why. A finished part can still have lost its upscale. */
+  finish_degraded?: number;
+  finish_reasons?: string[];
   output_key: string | null;
   sidecar_key: string | null;
   error: string | null;
@@ -600,6 +606,11 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps, now: number): Pro
     }
     part.phase = child.phase;
     part.shots_done = child.shots_done;
+    // With the delivered output: a retake that fails leaves the old film, and its limit, in place.
+    if (child.phase === "done") {
+      part.finish_degraded = child.finish_degraded ?? 0;
+      part.finish_reasons = child.finish_reasons ?? [];
+    }
     if (child.phase === "failed") {
       // The film's own word, not this doc's last view: a storage problem can stretch that across a paid clip run.
       part.failed_before_clips = child.clips_started === false && child.shots_done === 0;
@@ -892,6 +903,11 @@ export function retryPart(doc: ParentDoc, index: number): void {
     part.free_retries = (part.free_retries ?? 0) + 1;
   }
   part.failed_before_clips = false;
+  // A plain retry has no delivered output, so nothing to report on. A retake keeps the film it may replace.
+  if (!part.retake) {
+    part.finish_degraded = 0;
+    part.finish_reasons = [];
+  }
   part.status = "pending";
   part.generation += 1;
   part.error = null;
@@ -1098,6 +1114,7 @@ export interface PartJob {
   phase?: string;
   clip_job_id?: string;
   keyframes?: Array<{ shot_id: string; keyframe_key: string }>;
+  finish_shots?: Array<{ shot_id: string; degraded?: string[] }>;
 }
 export interface PartClipJob {
   shots: Array<{
@@ -1134,6 +1151,7 @@ export function partShotRows(doc: ParentDoc, part: ParentPart, job: PartJob | nu
       prompt: scene.prompt ?? null,
       line: line?.text ?? null,
       error: clip?.error ?? null,
+      finish_degraded: job?.finish_shots?.find((s) => s.shot_id === local)?.degraded ?? [],
       ...(typeof clip?.attempts === "number" ? { attempts: clip.attempts } : {}),
       retake_status: inRetake ? (waiting ? "waiting" : "running") : null,
     };
@@ -1236,6 +1254,8 @@ export function parentView(doc: ParentDoc, now: number) {
       cost_actual: null,
       output_key: p.output_key,
       error: p.error,
+      finish_degraded: p.finish_degraded ?? 0,
+      finish_reasons: p.finish_reasons ?? [],
       read_failed_since: p.read_failed_since ?? null,
       // Master ids waiting or in progress. A running part cannot have its retake cancelled.
       retake_shots: p.retake ? Object.keys(p.retake.undo.prompts) : [],
@@ -1245,7 +1265,18 @@ export function parentView(doc: ParentDoc, now: number) {
     sidecar_key: doc.sidecar_key,
     bytes: doc.bytes,
     duration_seconds: doc.duration_seconds,
-    degraded: doc.degraded,
+    finish_degraded: doc.parts.reduce((n, p) => n + (p.finish_degraded ?? 0), 0),
+    degraded: parentDegradedText(doc),
     error: doc.error,
   };
+}
+
+/** What a person is told the film shipped without: captions, and any shot a finish step passed through. A long
+ *  film of uneven shots must say so here, because the shots look finished from every other field. */
+function parentDegradedText(doc: ParentDoc): string | null {
+  const lost = doc.parts.reduce((n, p) => n + (p.finish_degraded ?? 0), 0);
+  if (!lost) return doc.degraded;
+  const reasons = [...new Set(doc.parts.flatMap((p) => p.finish_reasons ?? []))].slice(0, 3).join("; ");
+  const finish = `${lost} shot${lost === 1 ? " has" : "s have"} a finish limit${reasons ? `: ${reasons}` : ""}`;
+  return doc.degraded ? `${doc.degraded}. ${finish}` : finish;
 }

@@ -39,6 +39,7 @@ import {
   READ_FAIL_LIMIT_MS,
 } from "../src/film-parent";
 import { childFromPoll, childPollBody } from "../src/film-parent-store";
+import { readFileSync } from "node:fs";
 
 function body(shots: number, over: Partial<CreateParentBody> = {}): CreateParentBody {
   return {
@@ -1287,7 +1288,107 @@ describe("the status view", () => {
     expect(view.cost_actual).toBeNull();
     expect(view.parts[0].cost_actual).toBeNull();
     expect(JSON.stringify(view)).not.toContain("prompt");
-    expect(Object.keys(view.parts[0]).sort()).toEqual(["cost_actual", "cost_est", "error", "index", "output_key", "part_id", "phase", "read_failed_since", "retake_shots", "shot_from", "shot_to", "shots_done", "shots_total", "status"]);
+    expect(Object.keys(view.parts[0]).sort()).toEqual(["cost_actual", "cost_est", "error", "finish_degraded", "finish_reasons", "index", "output_key", "part_id", "phase", "read_failed_since", "retake_shots", "shot_from", "shot_to", "shots_done", "shots_total", "status"]);
+  });
+});
+
+describe("cf#1223 a shot with a finish limit reaches the film's report", () => {
+  const degraded = (key: string, n: number, reasons: string[]): ChildRead => ({ ...done(key), finish_degraded: n, finish_reasons: reasons });
+
+  async function twoParts(first: ChildRead, second: ChildRead) {
+    const t = harness(buildParentDoc("f", body(4, { pause_after_first_part: false }), 0));
+    await advanceParent(t.doc, t.deps, 1);
+    t.h.children.set("film-1", first);
+    await advanceParent(t.doc, t.deps, 2);
+    t.h.children.set("film-2", second);
+    await advanceParent(t.doc, t.deps, 3);
+    return t;
+  }
+
+  it("counts them per part and for the film, and says why", async () => {
+    const { doc } = await twoParts(degraded("k1", 2, ["upscale: mirror budget"]), degraded("k2", 1, ["upscale: gone"]));
+    const view = parentView(doc, 4);
+    expect(view.finish_degraded).toBe(3);
+    expect(view.parts.map((p: { finish_degraded: number }) => p.finish_degraded)).toEqual([2, 1]);
+    expect(view.parts[0].finish_reasons).toEqual(["upscale: mirror budget"]);
+    expect(view.degraded).toBe("3 shots have a finish limit: upscale: mirror budget; upscale: gone");
+  });
+
+  it("says one shot in the singular, with no reasons when none came", async () => {
+    const { doc } = await twoParts(degraded("k1", 1, []), done("k2"));
+    expect(parentView(doc, 4).degraded).toBe("1 shot has a finish limit");
+  });
+
+  it("keeps the caption limit beside it", async () => {
+    const { doc } = await twoParts(degraded("k1", 1, ["x"]), done("k2"));
+    doc.degraded = "captions are missing for parts 1";
+    expect(parentView(doc, 4).degraded).toBe("captions are missing for parts 1. 1 shot has a finish limit: x");
+  });
+
+  it("CONTROL: a clean film reads clean, with no field to misread", async () => {
+    const { doc } = await twoParts(done("k1"), done("k2"));
+    const view = parentView(doc, 4);
+    expect(view.degraded).toBeNull();
+    expect(view.finish_degraded).toBe(0);
+  });
+
+  it("a retake that fails leaves the count with the film still delivered", async () => {
+    const t = await twoParts(degraded("k1", 1, ["x"]), done("k2"));
+    t.doc.parts[0].status = "running";
+    t.doc.parts[0].child_film_id = "film-9";
+    t.h.children.set("film-9", { phase: "failed", shots_done: 0, output_key: null, sidecar_key: null, error: "boom" });
+    await advanceParent(t.doc, t.deps, 5);
+    expect(parentView(t.doc, 6).finish_degraded).toBe(1);
+  });
+
+  it("a part running again has no new count until it finishes", async () => {
+    const t = await twoParts(degraded("k1", 1, ["x"]), done("k2"));
+    t.doc.parts[0].status = "running";
+    t.doc.parts[0].child_film_id = "film-9";
+    t.h.children.set("film-9", { phase: "finish", shots_done: 1, output_key: null, sidecar_key: null, error: null, finish_degraded: 2 });
+    await advanceParent(t.doc, t.deps, 5);
+    expect(parentView(t.doc, 6).finish_degraded).toBe(1);
+  });
+
+  it("a plain retry clears the count, as its part has no output now", async () => {
+    const t = await twoParts(degraded("k1", 1, ["x"]), done("k2"));
+    t.doc.parts[0].status = "failed";
+    retryPart(t.doc, 0);
+    expect(t.doc.parts[0].finish_degraded).toBe(0);
+    expect(t.doc.parts[0].finish_reasons).toEqual([]);
+  });
+
+  it("a retake that fixes the shot clears it", async () => {
+    const t = await twoParts(degraded("k1", 1, ["x"]), done("k2"));
+    t.doc.parts[0].status = "running";
+    t.doc.parts[0].child_film_id = "film-9";
+    t.h.children.set("film-9", done("k9"));
+    await advanceParent(t.doc, t.deps, 5);
+    expect(parentView(t.doc, 6).finish_degraded).toBe(0);
+  });
+
+  it("a doc from before this reads as zero", async () => {
+    const doc = buildParentDoc("f", body(4), 0);
+    delete (doc.parts[0] as { finish_degraded?: number }).finish_degraded;
+    expect(parentView(doc, 1).parts[0].finish_degraded).toBe(0);
+  });
+
+  it("the panel says Shipped only for a film that has", () => {
+    const js = readFileSync("public/films.js", "utf8");
+    expect(js).toContain('film.phase === "done" ? "Shipped with a limit: " : "Has a limit so far: "');
+  });
+
+  it("the shot row names the reason, by the board's id", () => {
+    const doc = buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0);
+    const rows = partShotRows(doc, doc.parts[0], { finish_shots: [{ shot_id: "shot_02", degraded: ["upscale: gone"] }] }, null);
+    expect(rows.map((r) => r.finish_degraded)).toEqual([[], ["upscale: gone"]]);
+  });
+
+  it("the store reads it off the film's poll", () => {
+    const read = childFromPoll({ phase: "done", clips: { done: 2 }, finish: { degraded: 1, reasons: ["a", 3] } });
+    expect(read.finish_degraded).toBe(1);
+    expect(read.finish_reasons).toEqual(["a"]);
+    expect(childFromPoll({ phase: "done" }).finish_degraded).toBe(0);
   });
 });
 
