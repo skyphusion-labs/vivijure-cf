@@ -13,12 +13,12 @@ without saying so is the defect, not the subset.
 
 | Population | Count | What it is |
 |---|---|---|
-| Studio API route entries | **99** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. `POST /api/cast/:id/voice-line` speaks one Aura-1 line. The voice-sample routes stay. |
+| Studio API route entries | **100** | Distinct `method` + `pattern` pairs the studio serves, ALL of them in `API_ROUTES`. `POST /api/cast/:id/voice-line` speaks one Aura-1 line. The voice-sample routes stay. |
 | Panel-reachable | **68** | Route entries the panel calls WITH THAT METHOD, i.e. the human surface. Derived at test time from the panel's own `fetch`/`api` call sites and `.href`/`.src` DOM assignments (cf#333), with controls in both directions. Panel-reachable (63) can be too LOW: a call built through more than one hop of variable indirection, or through a call shape outside those two, is invisible to it. The cast page calls hear-one-line and no longer calls the voice-sample routes. |
 | MCP tools | **106** | The whole catalog, BOTH targets (`vivijure-mcp` v2.1.0). It splits **68 studio** (67 curated plus the `studio_request` hatch) and **38 control-plane** (37 `cp_*` operator tools plus the `control_plane_request` hatch). Only the studio figure may be measured against the route-relative rows below: a control-plane tool cannot reach a studio route. The split is derived from each tool's CALL TARGET, not its name -- 37 tools are named `cp_*` and 38 target the control plane, and the one that differs is `control_plane_request`. v2.0.0 is the first release to REMOVE tools (109 -> 105, 71 -> 67 studio): the four `/api/demo/*` tools went with the public demo door, all four targeted the studio, so the control-plane figure does not move. |
 | Reached by a CURATED tool | **67** | Route entries with a purpose-built tool. Rose from 41 with v1.3.0's **30 new studio tools** (module config, storage, prefs, clips, frames, identity). |
-| Reachable via `studio_request` | **96** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. Hear-one-line is JSON. |
-| Byte-returning, invisible on the way OUT | **4** | Route entries whose response is BYTES. |
+| Reachable via `studio_request` | **97** | Every route EXCEPT the raw-body class. The hatch sends `application/json` and those refuse it on the content-type. Voice-sample attach accepts JSON `{ from_chat_artifact }` so the hatch can satisfy it; a raw video/audio body cannot. Hear-one-line is JSON. |
+| Byte-returning, invisible on the way OUT | **5** | Route entries whose response is BYTES. |
 | Raw-body, unreachable through the HATCH | **3** | The bytes-IN class. 2 of the 3 now have curated tools (`upload_image`, `upload_audio`); `POST /api/storyboard/character-ref` does not, and needs none (see below). |
 
 Two of those rows are the whole finding, and they point in opposite directions from what the issue
@@ -26,10 +26,10 @@ assumed.
 
 ## Finding 1: action parity is MOSTLY not the gap, and the exception was invisible
 
-`studio_request` sends any method to any path with the studio bearer, so for **96 of 99** route
-entries there is nothing an agent cannot invoke. Curated coverage is 67 of 99 (68%), and that number
+`studio_request` sends any method to any path with the studio bearer, so for **97 of 100** route
+entries there is nothing an agent cannot invoke. Curated coverage is 67 of 100 (67%), and that number
 measures **ergonomics**, not capability: a curated tool means the agent does not have to know the
-contract to find the route. For those 96 a low number costs discoverability, not reach, and 32 routes require the agent to read `docs/CONTRACT.md` first.
+contract to find the route. For those 97 a low number costs discoverability, not reach, and 33 routes require the agent to read `docs/CONTRACT.md` first.
 
 ### The correction, and it was this document's own claim
 
@@ -75,9 +75,9 @@ GET /api/artifact/renders/film-80c356bf.../film.mp4 -> 200
 Binary response (video/mp4, 3811331 bytes) not inlined.
 ```
 
-That is a real, live response from the production MCP against a real finished film. The four
-byte-returning route entries are `GET` + `HEAD /api/artifact/*key` and `GET` + `POST
-/api/cast/export/:id`.
+That is a real, live response from the production MCP against a real finished film. The five
+byte-returning route entries are `GET` + `HEAD /api/artifact/*key`, `GET /api/thumb/*key` and
+`GET` + `POST /api/cast/export/:id`.
 
 The consequence is the thing Conrad named: an agent can plan a film, cast it, submit it, watch it
 complete, and then **cannot look at what it made**. Neither can it look at a keyframe, a portrait,
@@ -184,7 +184,7 @@ the flattering direction, which is exactly why they survived.
 - **Reached by a curated tool (67) can only be too HIGH**, for the same reason at one remove: it is
   exact on method, but a tool that maps to a route says nothing about whether its ARGUMENTS cover
   every field the route accepts. Per-field parity is unmeasured.
-- **Route entries (99) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
+- **Route entries (100) can only be too LOW.** It is parsed from the `API_ROUTES` literal, so a route
   registered anywhere else is missed. Exactly one such route exists (`GET /api/modules`) and it is
   added explicitly; a second would be invisible.
 - **Panel corpus** was a hand-maintained 36-filename list against a 39-file `public/` until cf#332.

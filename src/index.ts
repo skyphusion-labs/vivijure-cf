@@ -101,7 +101,7 @@ export { FinishContainer } from "./finish-container";
 // wrangler [[workflows]] class_name "ShotWorkflow". The deploy rejects a workflow
 // whose class is not exported from the entrypoint.
 export { ShotWorkflow } from "./shot-workflow";
-import { ARTIFACT_PREFIXES, isServedArtifactKey } from "./shared";
+import { ARTIFACT_PREFIXES, getServedArtifact, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
   resolveAgentFinishSelect,
@@ -608,6 +608,59 @@ function artifactHeaders(contentType: string, key?: string, etag?: string): Head
 // GET and HEAD: a plain GET streams the full body (advertising Accept-Ranges); a ranged request returns
 // 206 + Content-Range for a satisfiable range, 416 + `Content-Range: bytes */size` for an out-of-bounds
 // one, and a full 200 when the Range is absent / malformed / multi-range.
+// A small copy of a still, for a sheet of many on a phone. Same key guard and auth as /api/artifact. Cached by
+// the original's etag, so a redrawn still at a new key or new bytes is never served stale, and a cached copy costs
+// no transformation.
+const THUMB_WIDTH = 360;
+const THUMB_STILL = /\.(png|jpe?g|webp)$/i;
+
+const hStillThumb: Handler = async (req, env, ctx, p) => {
+  if (!env.R2_RENDERS) throw notFound("the artifact store is not available on this deployment");
+  const key = p.key;
+  if (!isServedArtifactKey(key) || !THUMB_STILL.test(key)) throw notFound("still");
+  const meta = await env.R2_RENDERS.head(key);
+  if (!meta) throw notFound("still");
+  // Plain answers from here on. A blank tile would read as a bad still.
+  const refuse = (status: number, reason: string) =>
+    json({ error: `no thumbnail: ${reason}`, original: `/api/artifact/${key}` }, status);
+  const etag = `"thumb-${THUMB_WIDTH}-${meta.etag}"`;
+  const headers = (length?: number) => {
+    const h = artifactHeaders("image/jpeg", key, etag);
+    h.set("cache-control", "private, no-cache"); // A browser must ask each time, or a redraw at the same key shows the old picture.
+    h.delete("accept-ranges");
+    if (length !== undefined) h.set("content-length", String(length));
+    return h;
+  };
+  if (req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers: headers() });
+  if (!env.IMAGES) return refuse(503, "the image service is not bound on this deployment");
+
+  // A cache for this data center. The route's auth has already run. This URL is only a cache key on our own host:
+  // this Worker answers any request to it, and no route matches it.
+  const cacheKey = new Request(`${new URL(req.url).origin}/__thumb-cache/${THUMB_WIDTH}/${encodeURIComponent(meta.etag)}/${encodeURIComponent(key)}`);
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  const hit = await cache?.match(cacheKey).catch(() => undefined);
+  if (hit) return new Response(hit.body, { status: 200, headers: headers() });
+
+  const original = await getServedArtifact(env.R2_RENDERS, key);
+  if (!original) throw notFound("still");
+  let bytes: ArrayBuffer;
+  try {
+    const out = await env.IMAGES.input(original.body)
+      .transform({ width: THUMB_WIDTH, fit: "scale-down" })
+      .output({ format: "image/jpeg", quality: 75 });
+    bytes = await out.response().arrayBuffer();
+  } catch (e) {
+    console.warn(`thumbnail ${keyLabel(key)}: ${String(e)}`);
+    return refuse(502, "the original could not be resized");
+  }
+  if (bytes.byteLength === 0) return refuse(502, "resizing the original gave an empty image");
+  if (cache) {
+    const put = cache.put(cacheKey, new Response(bytes, { headers: { "cache-control": "public, max-age=2592000", "content-type": "image/jpeg" } }));
+    ctx.waitUntil(put.catch((e) => console.warn(`thumbnail cache: ${String(e)}`)));
+  }
+  return new Response(bytes, { status: 200, headers: headers(bytes.byteLength) });
+};
+
 const hServeArtifact: Handler = async (req, env, _c, p) => {
   // #646: a deploy with no render bucket bound (the zero-spend public demo) has no artifact store at
   // all. Its seeded rows carry absolute showcase URLs, so the frontend never reaches this route; a
@@ -2145,6 +2198,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         cast_loras: castIds,
         pretrained_loras: Object.keys(pre.cast.pretrained).length ? pre.cast.pretrained : undefined,
         idempotency_key,
+        quality_tier: coerceQualityTier(submit.qualityTier),
       }, modules);
       if (job.phase === "failed") throw new SubmitRefused(job.error || "the new still did not start");
       await insertRenderBestEffort(env, filmRowFromJob(job));
@@ -2153,6 +2207,8 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
     async readStills(filmId) {
       const r = await advanceFilmJob(env, filmId);
       if (!r) return null;
+      // Nothing else keeps this row current: the sweep skips keyframes-only rows, and no one polls this job.
+      await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob), ctx);
       return { phase: r.job.phase, keyframes: r.job.keyframes ?? [], error: r.job.error ?? null };
     },
     async pollFilm(filmId) {
@@ -2692,6 +2748,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/report",                          scope: "consumer",    handler: handleAbuseReport },
   { method: "GET",    pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
   { method: "HEAD",   pattern: "/api/artifact/*key",                   scope: "consumer",    handler: hServeArtifact },
+  { method: "GET",    pattern: "/api/thumb/*key",                      scope: "consumer",    handler: hStillThumb },
   { method: "GET",    pattern: "/api/artifact-url/*key",               scope: "consumer",    handler: hArtifactUrl },
   { method: "POST",   pattern: "/api/render/frames",                  scope: "consumer",    handler: hRenderFrames },
   { method: "POST",   pattern: "/api/storyboard/preflight",            scope: "consumer",    handler: hPreflight },

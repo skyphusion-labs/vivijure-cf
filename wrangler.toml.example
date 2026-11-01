@@ -184,6 +184,10 @@ simple = { limit = 30, period = 60 }
 # Storage. R2_RENDERS = the `vivijure` bucket (bundles, keyframes, clips, MP4s, project state).
 # R2 = the chat-side `skyphusion-llm` bucket the render flow copies a staged audio bed across from.
 # (Transition coupling: revisit moving the audio bed onto R2_RENDERS for a fully standalone studio.)
+# Cloudflare Images, for the still thumbnails at GET /api/thumb. Without it that route answers 503.
+[images]
+binding = "IMAGES"
+
 [[r2_buckets]]
 binding = "R2_RENDERS"
 bucket_name = "vivijure"

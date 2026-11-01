@@ -455,7 +455,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 99, // studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
+  routes: 100, // studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
   // cf#894: vivijure-mcp 1.3.0 took the catalog from 42 to 109. The growth is NOT what the issue
   // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
   // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
@@ -480,7 +480,7 @@ const PUBLISHED = {
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
   panelUncurated: 15, // voice-sample panel calls left; hear-one-line and four film routes are uncurated
   panelUncuratedPathOnly: 19, // method-aware 15 + the 4 uncurated path-only false positives
-  hatchReachable: 96, // reachable via studio_request = routes minus the raw-body class
+  hatchReachable: 97, // reachable via studio_request = routes minus the raw-body class
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously
@@ -675,6 +675,7 @@ describe("cf#317 published parity denominator (docs/mcp-parity.md)", () => {
 const BINARY_ROUTES = [
   "GET /api/artifact/*key",
   "HEAD /api/artifact/*key",
+  "GET /api/thumb/*key",
   "GET /api/cast/export/:id",
   "POST /api/cast/export/:id",
 ];

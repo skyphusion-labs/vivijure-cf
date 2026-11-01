@@ -846,6 +846,24 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect(h.started[0].cast_loras).toEqual({ A: 18 });
   });
 
+  it("new_still: each tick keeps the draw's history row current, with the part's tier", async () => {
+    const db = await import("@skyphusion-labs/vivijure-core/renders-db");
+    const spy = vi.spyOn(db, "updateRenderFromView").mockResolvedValue(undefined as never);
+    const e = await doneFilm();
+    const stored = await loadParent(e as never, "feature-x");
+    stored!.doc.shared.qualityTier = "standard";
+    await saveParent(e as never, stored!);
+    h.started = [];
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), e as never, ctx);
+    await tick(e);
+    expect(h.started[0].quality_tier).toBe("standard");
+    spy.mockClear();
+    h.jobs.set("film-1", { film_id: "film-1", phase: "done", keyframes: [{ shot_id: "shot_02", keyframe_key: "n" }], scenes: [] });
+    await tick(e);
+    expect(spy.mock.calls.some((c) => (c[1] as { jobId?: string }).jobId === "film-1"), "the row reaches a final status").toBe(true);
+    spy.mockRestore();
+  });
+
   it("new_still: the finished still replaces only that shot's key", async () => {
     const e = await doneFilm();
     h.started = [];
