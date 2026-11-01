@@ -94,6 +94,7 @@
           <textarea id="new-overrides" rows="3" spellcheck="false" placeholder='[{"index":3,"cast_loras":{},"character_refs":{}}]'></textarea></label>
       </details>
       <p class="films-muted">A music bed on the joined film is not built yet.</p>
+      <p id="new-warn" class="films-warn" role="status"></p>
       <p id="new-problems" class="films-error" role="status"></p>
       <p id="new-note" class="films-note" role="status"></p>
       <button id="new-start" type="button" class="planner-primary" disabled>Start</button>
@@ -104,6 +105,8 @@
         <h3>Start this film?</h3>
         <p id="new-confirm-what"></p>
         <p id="new-confirm-cost"></p>
+        <p id="new-confirm-warn" class="films-warn"></p>
+        <p id="new-confirm-overrides"></p>
         <p id="new-confirm-hold"></p>
         <div class="planner-actions">
           <button type="submit" value="cancel" class="planner-secondary">Go back</button>

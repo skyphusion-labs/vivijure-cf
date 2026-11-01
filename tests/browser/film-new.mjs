@@ -164,6 +164,67 @@ const text = (page, sel) => page.locator(sel).innerText();
   check("breaks and no hold are sent", posts[0].breaks?.join() === "2" && !("part_size" in posts[0]) && posts[0].pause_after_first_part === false, JSON.stringify({ ...posts[0], storyboard: 0 }));
   await ctx.close();
 }
+// ---- a reload after a lost response reuses the key. A success or a 409 ends it.
+{
+  const { ctx, page, posts } = await open({ refuse: "lost", status: 500 });
+  await filled(page);
+  await page.click("#new-start");
+  await page.click('#new-confirm button[value="go"]');
+  await page.waitForFunction(() => document.querySelector("#new-note")?.textContent.includes("Not started"));
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector("#new-part-size")?.value);
+  await filled(page);
+  await page.click("#new-start");
+  await page.click('#new-confirm button[value="go"]');
+  await page.waitForFunction(() => document.querySelector("#new-note")?.textContent.includes("Not started"));
+  check("same key across a reload", posts.length === 2 && posts[0].idempotency_key === posts[1].idempotency_key, JSON.stringify(posts.map((p) => p.idempotency_key)));
+  await ctx.close();
+}
+{
+  const { ctx, page, posts } = await open({ refuse: "different request", status: 409 });
+  await filled(page);
+  await page.click("#new-start");
+  await page.click('#new-confirm button[value="go"]');
+  await page.waitForFunction(() => document.querySelector("#new-note")?.textContent.includes("other settings"));
+  check("409 warns before a second film", (await text(page, "#new-note")).includes("starts a new film"));
+  await page.click("#new-start");
+  await page.click('#new-confirm button[value="go"]');
+  await page.waitForTimeout(300);
+  check("after a 409 the key is new", posts.length === 2 && posts[0].idempotency_key !== posts[1].idempotency_key);
+  await ctx.close();
+}
+{
+  const { ctx, page } = await open();
+  await filled(page);
+  await page.click("#new-start");
+  await page.click('#new-confirm button[value="go"]');
+  await page.waitForURL("**/films?id=feature-9");
+  check("a success ends the key", await page.evaluate(() => sessionStorage.getItem("skyphusion.films.startKey") === null));
+  await ctx.close();
+}
+
+// ---- the estimate over the ceiling warns, and per-part changes show on the confirm.
+{
+  const { ctx, page, posts } = await open();
+  await filled(page);
+  check("under the ceiling: no warning", (await text(page, "#new-warn")) === "");
+  await page.fill("#new-ceiling", "10");
+  check("over the ceiling warns on the form", (await text(page, "#new-warn")).includes("$37.80") && (await text(page, "#new-warn")).includes("stop before it finishes"));
+  check("over the ceiling still allowed", await page.locator("#new-start").isEnabled());
+  await page.click("#films-new details summary");
+  await page.fill("#new-overrides", JSON.stringify([{ index: 2, motion_backend: "talk" }]));
+  await page.click("#new-start");
+  await page.waitForSelector("#new-confirm[open]");
+  check("confirm repeats the warning", (await text(page, "#new-confirm-warn")).includes("above the $10.00 ceiling"));
+  check("confirm shows per-part changes, numbered as people count", (await text(page, "#new-confirm-overrides")).includes("part 3 (motion_backend)"), await text(page, "#new-confirm-overrides"));
+  await page.click('#new-confirm button[value="cancel"]');
+  await page.fill("#new-overrides", '{"index":2}');
+  await page.click("#new-start");
+  check("per-part changes must be a list", (await text(page, "#new-problems")).includes("JSON list") && !(await page.locator("#new-confirm[open]").count()));
+  check("nothing posted", posts.length === 0);
+  await ctx.close();
+}
+
 await browser.close();
 server.close();
 console.log(bad ? `${bad} failed` : "all passed");

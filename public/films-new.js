@@ -10,8 +10,21 @@
   let doors = [];
   let cast = [];
   let projects = [];
-  // One key for this form, so a double tap or a retry cannot start two films.
-  const idempotencyKey = "form-" + crypto.randomUUID();
+  // One key per attempt, kept across a reload. If a response is lost and someone reloads and starts
+  // again, the studio returns the film it already has instead of starting a second one.
+  const KEY_STORE = "skyphusion.films.startKey";
+  function idempotencyKey() {
+    let key = null;
+    try { key = sessionStorage.getItem(KEY_STORE); } catch (_) {}
+    if (!key) {
+      key = "form-" + crypto.randomUUID();
+      try { sessionStorage.setItem(KEY_STORE, key); } catch (_) {}
+    }
+    return key;
+  }
+  function dropKey() {
+    try { sessionStorage.removeItem(KEY_STORE); } catch (_) {}
+  }
 
   function board() {
     const text = $("new-board").value.trim();
@@ -137,6 +150,23 @@
     return out;
   }
 
+  // Allowed, because someone may want only the first parts. It must not be a surprise.
+  function overCeilingWarning(b) {
+    const est = Number($("new-per-shot").value) * b.scenes.length;
+    const ceiling = Number($("new-ceiling").value);
+    if (!(est > 0) || !(ceiling > 0) || est <= ceiling) return "";
+    return "Your estimate of $" + est.toFixed(2) + " is above the $" + ceiling.toFixed(2) + " ceiling, so the film will stop before it finishes.";
+  }
+
+  function overridesLine(req) {
+    const rows = req.part_overrides;
+    if (!Array.isArray(rows) || !rows.length) return "";
+    return "Per-part changes: " + rows.map((o) => {
+      const fields = Object.keys(o || {}).filter((k) => k !== "index").join(", ") || "nothing";
+      return "part " + (Number(o && o.index) + 1) + " (" + fields + ")";
+    }).join("; ") + ".";
+  }
+
   function refresh() {
     const b = board();
     renderDoors(b);
@@ -154,6 +184,7 @@
       facts.textContent = "";
       $("new-per-shot-hint").textContent = "";
     }
+    $("new-warn").textContent = b ? overCeilingWarning(b) : "";
     const list = problems(b);
     $("new-problems").textContent = list.join(" ");
     $("new-start").disabled = list.length > 0;
@@ -183,7 +214,7 @@
     const [width, height] = $("new-frame").value.split("x").map(Number);
     const req = {
       project: $("new-project").value.trim(),
-      idempotency_key: idempotencyKey,
+      idempotency_key: idempotencyKey(),
       storyboard: b,
       character_refs,
       shared: {
@@ -208,13 +239,13 @@
 
   function askStart() {
     const b = board();
-    let overridesOk = true;
+    let req = null;
     try {
-      buildRequest(b);
+      req = buildRequest(b);
     } catch (_) {
-      overridesOk = false;
+      req = null;
     }
-    if (!overridesOk) {
+    if (!req || (req.part_overrides && !Array.isArray(req.part_overrides))) {
       $("new-problems").textContent = "Per-part changes must be a JSON list.";
       return;
     }
@@ -222,6 +253,8 @@
     const est = Number($("new-per-shot").value) * b.scenes.length;
     $("new-confirm-what").textContent = b.scenes.length + " shots in " + count + " parts, on " + $("new-door").selectedOptions[0].textContent + ".";
     $("new-confirm-cost").textContent = "Your estimate: about $" + est.toFixed(2) + ". Ceiling: $" + Number($("new-ceiling").value).toFixed(2) + ". This is not a measured price.";
+    $("new-confirm-warn").textContent = overCeilingWarning(b);
+    $("new-confirm-overrides").textContent = overridesLine(req);
     $("new-confirm-hold").textContent = $("new-pause").checked
       ? "It stops after the first part, so you can watch it before the rest run."
       : "It does not stop after the first part. Every part runs.";
@@ -243,11 +276,18 @@
       return;
     }
     const out = await res.json().catch(() => ({}));
+    if (res.status === 409) {
+      // The key was used with different settings. A new key could start a second film, so say so.
+      dropKey();
+      note.textContent = "A film already started from this form with other settings. Check All films first. Pressing Start again starts a new film.";
+      return;
+    }
     if (!res.ok || !out.film_id) {
       note.textContent = "Not started: " + (out.error || "the studio answered " + res.status);
       return;
     }
-    // Create only writes. The film page's first read starts it.
+    // Create only writes, so the film page can read "Waiting to start" for a while.
+    dropKey();
     location.href = "films?id=" + encodeURIComponent(out.film_id);
   }
 
