@@ -7,7 +7,7 @@ import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledMo
 import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { FilmNotStartedError, startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
@@ -1990,9 +1990,22 @@ async function doorJson(run: () => Promise<Response>): Promise<{ status: number;
     return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
   } catch (e) {
     if (e instanceof HttpError) return { status: e.status, body: { error: e.message } };
+    // core#421: nothing was invoked, so this is a door that could not start and not a submit of unknown outcome.
+    if (e instanceof FilmNotStartedError) return { status: 503, body: { error: e.message } };
     throw e;
   }
 }
+
+/** core#421: a throw that says nothing was invoked is a wait, not a submit of unknown outcome. */
+async function holdIfNotStarted<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof FilmNotStartedError) throw new SubmitNotStarted(e.message);
+    throw e;
+  }
+}
+const startFromKeyframesOrHold: typeof startFilmFromKeyframes = (...a) => holdIfNotStarted(() => startFilmFromKeyframes(...a));
 
 function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
   return {
@@ -2020,7 +2033,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       const job = old.job;
       if (!job.keyframes?.length) throw new SubmitRefused("the part's finished film has no stills to re-use");
       const { scenes, dialogue_lines } = retakeScenesAndLines(job, retake);
-      const started = await startFilmFromKeyframes(env, {
+      const started = await startFromKeyframesOrHold(env, {
         project: job.project,
         bundle_key: job.bundle_key,
         scenes,
