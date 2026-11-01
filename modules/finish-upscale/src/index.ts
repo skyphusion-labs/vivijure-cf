@@ -298,12 +298,19 @@ function passthrough(
  *  through then, and inventing a key would be worse than the error it replaced -- the caller keeps
  *  the terminal error and its message says which case it is.
  */
-/** A door that could not upscale a clip this time, so the shot would stand out in the film. Nothing here is
- *  a property of the clip, so it is worth asking again: `transient` makes the core hold and re-dispatch this step
- *  (about a cent a try, measured), and only when that runs out does the passthrough stand, by name on the film. */
+/** What the door's wall-clock guard says when a clip ran out of its budget or was projected to (handler.py `reason`,
+ *  `project`, `_bounded_probe`). */
+const GUARD_EXPIRY = /exceeded|projected|expired|wall-clock/i;
+
+/** A door that could not upscale a clip, so the shot would stand out in the film. Most causes pass, so `transient`
+ *  makes the core hold and re-dispatch the step, and only when that runs out does the passthrough stand. A healthy try
+ *  is cheap: 40 clips cost $0.28 on BLACKWELL_96 at $3.49/hr, under a cent each. A guard expiry is the exception. Each
+ *  try runs up to 570 s, about $0.55, and a clip too heavy for the budget usually fails them all, so it goes straight
+ *  to the film's report as a limit, for a person to retry. */
 function softDegradeToRetry(st: PollState, reason: string): PollResponse<FinishOutput> | null {
   const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, reason || undefined);
-  return passed && withFailure(passed, { kind: "transient", code: "soft_degrade", detail: reason });
+  if (!passed || GUARD_EXPIRY.test(reason)) return passed;
+  return withFailure(passed, { kind: "transient", code: "soft_degrade", detail: reason });
 }
 
 function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> | null {

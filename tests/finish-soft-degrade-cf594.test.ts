@@ -134,20 +134,43 @@ afterEach(() => { globalThis.fetch = realFetch; vi.restoreAllMocks(); });
 
 describe("finish-upscale asks again before a shot stands out in the film (cf#1223)", () => {
   const subject = (name: string) => SUBJECTS.find((s) => s.name === name)!.worker;
-  for (const [shape, envelope, reason] of [
-    ["lifted", LIFTED_DEGRADE, "wall-clock guard expired after 900s"],
-    ["current", COMPLETED_DEGRADE, "no detectable face in clip"],
+  const failureOf = (body: PollBody) => (body.output as unknown as { failure?: unknown }).failure;
+  const TRANSIENT = "ffmpeg: connection reset while fetching the clip";
+
+  for (const [shape, envelope] of [
+    ["lifted", { status: "FAILED", error: TRANSIENT, output: { ok: false } }],
+    ["current", { status: "COMPLETED", output: { ok: false, detail: TRANSIENT } }],
   ] as const) {
-    it(`the ${shape} shape is transient, so the core holds and re-dispatches it`, async () => {
+    it(`a passing cause in the ${shape} shape is transient, so the core holds and re-dispatches it`, async () => {
       const { body } = await pollWith(subject("finish-upscale"), envelope);
-      expect((body.output as unknown as { failure?: unknown }).failure).toEqual({ kind: "transient", code: "soft_degrade", detail: reason });
+      expect(failureOf(body)).toEqual({ kind: "transient", code: "soft_degrade", detail: TRANSIENT });
       expect(body.output?.clip_key).toBe(SOURCE_CLIP);
     });
   }
 
+  // The door's own words, handler.py `reason`, `project` and `_bounded_probe`.
+  for (const reason of [
+    "upscale-guard: upscale exceeded 570s budget (elapsed 571.2s)",
+    "upscale-guard: upscale projected 900s > 300s left at frame 40",
+    "upscale-guard: probe exceeded its 30s bound",
+    "wall-clock guard expired after 900s",
+  ]) {
+    for (const [shape, envelope] of [
+      ["lifted", { status: "FAILED", error: reason, output: { ok: false } }],
+      ["current", { status: "COMPLETED", output: { ok: false, detail: reason } }],
+    ] as const) {
+      it(`a guard expiry in the ${shape} shape stands, with no retry: ${reason}`, async () => {
+        const { body } = await pollWith(subject("finish-upscale"), envelope);
+        expect(failureOf(body)).toBeUndefined();
+        expect(body.output?.degraded).toBe("backend-soft-degrade: " + reason);
+        expect(body.output?.clip_key).toBe(SOURCE_CLIP);
+      });
+    }
+  }
+
   it("CONTROL: other finish modules keep their one-shot degrade", async () => {
-    const { body } = await pollWith(subject("finish-rife"), COMPLETED_DEGRADE);
-    expect((body.output as unknown as { failure?: unknown }).failure).toBeUndefined();
+    const { body } = await pollWith(subject("finish-rife"), { status: "COMPLETED", output: { ok: false, detail: TRANSIENT } });
+    expect(failureOf(body)).toBeUndefined();
   });
 
   it("a crash is still a crash", async () => {
