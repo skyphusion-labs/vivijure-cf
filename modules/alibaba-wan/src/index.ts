@@ -70,7 +70,6 @@ const MANIFEST: ModuleManifest = {
       "A line shorter than 5 seconds always leaves that silent-mouthing tail.",
       "Without a line, invents speech from the prompt.",
       "Cannot lock the sample you kept.",
-      "One film, no scatter",
     ],
   },
   usage: {
