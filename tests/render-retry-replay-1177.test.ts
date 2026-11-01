@@ -165,6 +165,41 @@ describe("cf#1177 a retry", () => {
     expect(h.started).toEqual([]);
   });
 
+  describe("a direct submit naming a part", () => {
+    const PART = "Long_3c5aae7e_p01";
+    const SCENES = [{ shot_id: "shot_01", prompt: "x", seconds: 4 }];
+    const cases: Array<[string, string, Record<string, unknown>, Record<string, unknown>]> = [
+      ["film, by project", "/api/render/film", { project: PART, bundle_key: "bundles/p.tar.gz", scenes: SCENES, motion_backend: "talk" }, { project: "Ordinary", bundle_key: "bundles/Ordinary.tar.gz", scenes: SCENES, motion_backend: "talk" }],
+      ["film, by bundle", "/api/render/film", { bundle_key: `bundles/${PART}-0123456789abcdef.tar.gz`, scenes: SCENES, motion_backend: "talk" }, { bundle_key: "bundles/Ordinary-0123456789abcdef.tar.gz", scenes: SCENES, motion_backend: "talk" }],
+      ["render, by bundle", "/api/storyboard/render", { bundleKey: `bundles/${PART}-0123456789abcdef.tar.gz`, keyframesOnly: true, scenes: SCENES, renderOverrides: { keyframe_backend: "keyframe" } }, { bundleKey: "bundles/Ordinary-0123456789abcdef.tar.gz", keyframesOnly: true, scenes: SCENES, renderOverrides: { keyframe_backend: "keyframe" } }],
+    ];
+    for (const [name, path, part, ordinary] of cases) {
+      it(`${name}: refused, and the ordinary one is not`, async () => {
+        h.started = [];
+        const refused = await worker.fetch(post(path, part), env() as never, ctx);
+        expect(refused.status).toBe(409);
+        expect(((await refused.json()) as { error: string }).error).toMatch(/part of a long film/);
+        expect(h.started).toEqual([]);
+        expect((await worker.fetch(post(path, ordinary), env() as never, ctx)).status).toBe(201);
+        expect(h.started).toHaveLength(1);
+      });
+    }
+
+    it("clips, by project: refused, and the ordinary one is not", async () => {
+      const shots = [{ shot_id: "shot_01", keyframe_url: "https://g/k", prompt: "x", seconds: 3 }];
+      const refused = await worker.fetch(post("/api/render/clips", { project: PART, shots, motion_backend: "talk" }), env() as never, ctx);
+      expect(refused.status).toBe(409);
+      const ok = await worker.fetch(post("/api/render/clips", { project: "Ordinary", shots, motion_backend: "talk" }), env() as never, ctx);
+      expect(ok.status).not.toBe(409);
+    });
+
+    it("a body that is not JSON still gets the door's own answer", async () => {
+      const req = new Request("https://s.example/api/render/film", { method: "POST", headers: { "content-type": "application/json" }, body: "not json" });
+      const res = await worker.fetch(req, env() as never, ctx);
+      expect(res.status).not.toBe(409);
+    });
+  });
+
   it("the name test matches what a parent builds, and not an ordinary project", async () => {
     const { buildParentDoc, isParentPartProject } = await import("../src/film-parent");
     const doc = buildParentDoc("feature-3c5aae7e1234", {

@@ -12,10 +12,9 @@ import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
 } from "./film-render-bridge";
-import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
+import { filmJobDocKey, resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { isParentPartProject } from "./film-parent";
-import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
@@ -875,6 +874,21 @@ function refusingLongFilmParts(handler: Handler): Handler {
   return async (req, env, ctx, p) => {
     const row = await getRenderByIdForUser(env, await resolveRenderId(env, p.id));
     if (row && isParentPartProject(row.project)) return partOfLongFilm();
+    return handler(req, env, ctx, p);
+  };
+}
+
+/** For the submit routes outside callers use. It sits in the route table and not in the handler, because a
+ *  parent film starts its own parts by calling these handlers directly. */
+function refusingLongFilmProjects(handler: Handler): Handler {
+  return async (req, env, ctx, p) => {
+    // A bad body is left for the handler to answer.
+    const body = (await req.clone().json().catch(() => null)) as { project?: unknown; bundle_key?: unknown; bundleKey?: unknown } | null;
+    const bundle = body?.bundle_key ?? body?.bundleKey;
+    const named = typeof body?.project === "string" ? body.project : undefined;
+    // Both: the door takes its project from the bundle, and a request naming a part is a mistake either way.
+    const fromBundle = typeof bundle === "string" ? resolveProjectForBundle(bundle, named) : undefined;
+    if ((named && isParentPartProject(named)) || (fromBundle && isParentPartProject(fromBundle))) return partOfLongFilm();
     return handler(req, env, ctx, p);
   };
 }
@@ -2694,11 +2708,11 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/storyboard/audio-upload",         scope: "consumer",    handler: hStoryboardAudioUpload },
   { method: "POST",   pattern: "/api/storyboard/character-ref",        scope: "consumer",    handler: hStoryboardCharacterRef },
   { method: "POST",   pattern: "/api/audio/analyze",                   scope: "consumer",    handler: hAudioAnalyze },
-  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: hSubmitRender },
+  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: refusingLongFilmProjects(hSubmitRender) },
   { method: "POST",   pattern: "/api/storyboard/render-plan",          scope: "consumer",    handler: hRenderPlan },
-  { method: "POST",   pattern: "/api/render/clips",                     scope: "consumer",    handler: hStartClips },
+  { method: "POST",   pattern: "/api/render/clips",                     scope: "consumer",    handler: refusingLongFilmProjects(hStartClips) },
   { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
-  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
+  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: refusingLongFilmProjects(hStartFilm) },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
   { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
   { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
