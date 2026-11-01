@@ -132,11 +132,16 @@ async function filmRunId(filmId: string, shotIds: string[]): Promise<string> {
   return "kf-" + filmId.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 70) + "-" + hex;
 }
 
-/** True when the film no longer wants keyframes: failed, cancelled, or past this phase. No doc means
- *  carry on, because a caller may not be a film and a new film may not have written its doc yet. */
-async function filmIsOver(env: Env, filmId: string): Promise<boolean> {
+/** How long a film run draws before its film doc must exist. The core writes the doc once, right after
+ *  it invokes this module, so a doc still missing after this means the tick that started the run died.
+ *  Longer than the 300 s film advance lease, so a live tick always gets to write it. */
+export const FILM_DOC_GRACE_MS = 6 * 60 * 1000;
+
+/** True when the film no longer wants keyframes: failed, cancelled, or past this phase. A missing doc
+ *  counts as over only after the grace period, because a new film writes its doc after this run starts. */
+async function filmIsOver(env: Env, filmId: string, startedAtMs: number): Promise<boolean> {
   const obj = await env.R2_RENDERS.get(filmJobDocKey(filmId));
-  if (!obj) return false;
+  if (!obj) return Date.now() - startedAtMs >= FILM_DOC_GRACE_MS;
   const doc = JSON.parse(await obj.text()) as { phase?: unknown; cancelled?: unknown };
   return doc.cancelled === true || (typeof doc.phase === "string" && doc.phase !== "keyframe");
 }
@@ -145,7 +150,7 @@ const WORKFLOW_FINISHED = new Set(["complete", "errored", "terminated"]);
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.11",
+  version: "0.1.12",
   cancelable: true,
   api: MODULE_API,
   hooks: ["keyframe"],
@@ -666,13 +671,15 @@ export class CloudKeyframeWorkflow extends WorkflowEntrypoint<Env, WorkflowParam
     try {
       // Each pass finishes a shot, holds for a rate limit, or fails. drawNextShot caps the holds per
       // shot, so this bound is never what ends a healthy run.
+      // Read through a step so a replay keeps the original start time.
+      const startedAtMs = await step.do("start time", async () => Date.now());
       let remaining = await step.do("read plan", shotsLeft);
       const maxPasses = remaining * (KEYFRAME_RATE_MAX + 1);
       for (let pass = 0; pass < maxPasses && remaining > 0; pass++) {
         const r = await step.do("draw " + pass, DRAW_STEP_CONFIG, async () => {
           // Checked inside the step, right before the spend, so a film that ended without a /cancel
           // reaching us stops buying here.
-          if (token.film_id && (await filmIsOver(this.env, token.film_id))) return { over: true };
+          if (token.film_id && (await filmIsOver(this.env, token.film_id, startedAtMs))) return { over: true };
           const res = await drawNextShot(this.env, token, { mustPersist: true });
           return res.ok ? { left: await shotsLeft() } : { error: res.error };
         });
