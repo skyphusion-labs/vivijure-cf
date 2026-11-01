@@ -802,6 +802,26 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect(h.fromKeyframes).toEqual([]);
   });
 
+  it("new_still: a draw that invoked nothing waits, counting nothing, and any other throw keeps its claim", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = await doneFilm();
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), e as never, ctx);
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new core.FilmNotStartedError("R2 read"));
+    await tick(e);
+    let part = (await loadParent(e as never, "feature-x"))!.doc.parts[0];
+    expect([part.status, part.claimed_at, part.retake_est]).toEqual(["pending", null, 0]);
+    expect(part.not_before).not.toBeNull();
+    expect(part.retake?.still_film_id ?? null).toBeNull();
+
+    const f = await doneFilm();
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 5 }), f as never, ctx);
+    vi.mocked(core.startFilmJob).mockRejectedValueOnce(new Error("job write failed"));
+    await tick(f);
+    part = (await loadParent(f as never, "feature-x"))!.doc.parts[0];
+    expect(part.status).toBe("submitting");
+    expect(part.error).toMatch(/outcome unknown so far/);
+  });
+
   it("new_still: resolves the cast, because a job does not store its adapters", async () => {
     const e = await doneFilm();
     const stored = await loadParent(e as never, "feature-x");

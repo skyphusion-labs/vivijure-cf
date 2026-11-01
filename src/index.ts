@@ -2006,6 +2006,7 @@ async function holdIfNotStarted<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 const startFromKeyframesOrHold: typeof startFilmFromKeyframes = (...a) => holdIfNotStarted(() => startFilmFromKeyframes(...a));
+const startFilmJobOrHold: typeof startFilmJob = (...a) => holdIfNotStarted(() => startFilmJob(...a));
 
 function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
   return {
@@ -2102,7 +2103,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         throw new SubmitRefused(pre.refusal.message);
       }
       const castIds = Object.keys(pre.cast.castIds).length ? pre.cast.castIds : undefined;
-      const job = await startFilmJob(env, {
+      const job = await startFilmJobOrHold(env, {
         project: submit.project as string,
         bundle_key: bundled.body.bundleKey,
         scenes: (submit.scenes as FilmScene[]).filter((s) => shots.includes(s.shot_id)),
