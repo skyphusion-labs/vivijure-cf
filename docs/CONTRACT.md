@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**99 route entries** (distinct `method` + `pattern`) over **80 distinct path patterns**. Those two
+**100 route entries** (distinct `method` + `pattern`) over **81 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -342,6 +342,7 @@ unchanged.
 | 26 | GET | `/api/artifact/*key` | 2.11 |
 | 26c | HEAD | `/api/artifact/*key` | 2.11 |
 | 26a | GET | `/api/artifact-url/*key` | 2.11.1 |
+| 26d | GET | `/api/thumb/*key` | 2.11.2 |
 | 26b | POST | `/api/render/frames` | 2.11.2 |
 | 27 | POST | `/api/storyboard/preflight` | 2.12 |
 | 28 | POST | `/api/storyboard/plan` | 2.13 |
@@ -879,6 +880,12 @@ refuse. Existence is checked before signing, so a 200 always names an object tha
 > on revocation: R2 token revocation propagates slowly enough that revoke-after-use is not a control.
 > The signature covers exactly one key (never a prefix or wildcard) and the lifetime cannot be widened
 > by the caller. Request a fresh link rather than storing one.
+
+### 2.11.2 GET /api/thumb/*key
+
+Returns a still at 360 px wide, as JPEG, for a sheet of many. Same auth and key rules as `GET /api/artifact/*key`, and it takes `.png`, `.jpg`, `.jpeg` and `.webp` only. It never enlarges. It sends an `etag` from the original's and `cache-control: private, no-cache`, so a browser asks each time and a redraw at the same key is never hidden, and answers `304` to a matching `if-none-match`. `404` for an unknown key or a non-still. When there is no thumbnail it answers plainly and never a blank image: `{error, original}` with `502` if the original could not be resized, or `503` if the image service is not bound. `original` is the path to show instead.
+
+The bytes come from the Images binding (`IMAGES`). Each still is resized once in a data center and then served from the Cache API, keyed on the original's etag.
 
 ### 2.11.2 POST /api/render/frames
 

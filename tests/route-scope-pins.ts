@@ -18,7 +18,7 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 99;
+export const PINNED_ROUTE_COUNT = 100;
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
 export const PINNED_OPERATOR_COUNT = 8;
@@ -111,6 +111,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/artifact/*key", scope: "consumer" },
   { method: "HEAD", pattern: "/api/artifact/*key", scope: "consumer" },
   { method: "GET", pattern: "/api/artifact-url/*key", scope: "consumer" },
+  { method: "GET", pattern: "/api/thumb/*key", scope: "consumer" },
   { method: "POST", pattern: "/api/render/frames", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/preflight", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/plan", scope: "consumer" },
