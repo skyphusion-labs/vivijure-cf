@@ -138,6 +138,29 @@ beforeEach(async () => {
 });
 
 describe("DELETE /api/storyboard/renders/:id frees its stored files (cf#779)", () => {
+  it("refuses a part of a long film: nothing is freed and the row stays", async () => {
+    const row = ROW as { project: string };
+    const before = row.project;
+    row.project = "Long_3c5aae7e_p01";
+    try {
+      const { env, store } = makeEnv();
+      const objects = [...store];
+      vi.mocked(deleteRenderRow).mockClear();
+      const res = await worker.fetch(
+        new Request(`https://studio.example/api/storyboard/renders/${RENDER_PID}`, { method: "DELETE" }),
+        env, ctx,
+      );
+      const body = await res.json() as { error?: string };
+      expect(res.status).toBe(409);
+      expect(body.error).toMatch(/part of a long film/);
+      expect([...store], "the part keeps its objects").toEqual(objects);
+      expect(objects.length, "the instrument: there was something to delete").toBeGreaterThan(0);
+      expect(deleteRenderRow).not.toHaveBeenCalled();
+    } finally {
+      row.project = before;
+    }
+  });
+
   it("CONTROL: the objects are freed AND the row is dropped", async () => {
     const { env, store, ledgerDrops } = makeEnv();
     const res = await worker.fetch(
