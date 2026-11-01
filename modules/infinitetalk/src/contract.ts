@@ -32,6 +32,8 @@ export interface MotionUsageDecl {
 }
 
 export interface ModuleManifest {
+  /** Takes POST /cancel with a poll token. */
+  cancelable?: boolean;
   name: string;
   version: string;
   api: typeof MODULE_API;
