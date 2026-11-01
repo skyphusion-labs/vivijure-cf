@@ -1,0 +1,3 @@
+### fix(planner): phone access, door filter, look routing, and a spend confirm
+
+The Screenwriter dock no longer traps a phone: it stays shut until asked, and its close button stays below the top bar. The door filter for spoken lines now runs in a browser. A new look control routes anime to `cloud-keyframe` and photoreal to `keyframe`; an untrained character is refused on the LoRA route only. A motion render now asks first, with a clip total when the door states a rate (`ui.cost_usd_per_second`). Copy that overclaimed email, voice, retry and motion is corrected. `/` now opens the planner. Raw job output is shown only with operator tools on. Adds `npm run test:browser`.

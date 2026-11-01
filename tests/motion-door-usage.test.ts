@@ -209,10 +209,10 @@ describe("driving-audio honesty copy", () => {
     expect((m.usage as Usage).driving_audio).toBe(true);
   });
 
-  it("Seedance blurb may still mention the kept sample", async () => {
+  it("Seedance card promises no sample button, because the panel has none", async () => {
     const m = await moduleJson(cfSeedanceWorker as unknown as Worker);
     const card = ((m.ui?.blurb ?? "") + " " + (m.ui?.limits ?? []).join(" ")).toLowerCase();
-    expect(card).toMatch(/sample/);
+    expect(card).not.toMatch(/sample on cast/);
     expect(m.ui?.blurb ?? "").not.toMatch(JARGON);
   });
 

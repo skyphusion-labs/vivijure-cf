@@ -10,23 +10,24 @@ talks to the GPUs. You do not open RunPod or Cloudflare.
 
 ## The path
 
-1. **Project.** Open the studio. Start a project. Give it a name you will
-   remember.
-2. **Story.** Write what happens. The planner turns that into a
-   storyboard: scenes, shots, and who is in them.
-3. **Cast.** Add the people (or creatures) who appear. Give each one a
-   still picture. If you train a look for a face, wait until that job
-   finishes before you render. For cloud keyframes, design marks that
-   read the same when mirrored, and make them bold. See
+1. **Cast.** Add the people (or creatures) who appear. Give each one a
+   still picture. A photoreal film also needs a trained look for each person:
+   start it on Cast and wait until it finishes. An Anime film uses the picture.
+   For an Anime film, design marks that read the same when mirrored, and make
+   them bold. See
    [Flip-safe character design](../modules/cloud-keyframe/README.md#flip-safe-character-design).
-4. **Audio (optional).** Add music, talking, or both. Talking doors
-   either use the sample you kept (Seedance) or speak the line in the
-   Cast voice (Wan / InfiniteTalk). Hosted does not add mouths in finish.
+2. **Plan.** Write what happens. The planner turns that into a
+   storyboard: scenes, shots, and who is in them. A project name is under
+   Advanced if you want one.
+3. **Look.** On Render, choose Photoreal or Anime.
+4. **Audio (optional).** Add music, talking, or both. Each talking door card
+   says whether it speaks in the Cast voice or makes a voice from a
+   description. Hosted does not add mouths in finish.
 5. **Check.** Run preflight. Fix anything it flags (a clip that is too
    long, a missing picture, a door that is off).
-6. **Render.** Pick a quality: draft (fast look), standard, or final
-   (best, slower, costs more GPU time). Start the film. Leave the page
-   open or come back; the job keeps running.
+6. **Render.** Pick a quality and a door. The studio shows the clip cost
+   when the door states a rate, and asks before it starts. Leave the page
+   open or come back to check on it.
 7. **Watch.** When it is done, download the movie. If a finish step
    could not run, the studio still ships the film and tells you what it
    skipped. That is a degrade, not a silent success.

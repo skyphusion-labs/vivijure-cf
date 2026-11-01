@@ -25,6 +25,7 @@
 //
 // REFUSALS ARE RETURNED, NOT THROWN. The caller owns HTTP: it decides whether a refusal becomes a
 // thrown 400 or a `json(..., 503)` body. It also keeps this module importable by index.ts with no cycle.
+import { keyframeDoorUsesCastLora } from "./default-keyframe";
 import type { HookSelection, RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import {
   servingForHook,
@@ -71,6 +72,11 @@ export function missingSdxlForKeyframes(
     out.push({ slot, name: resolved.speakerNames?.[slot] });
   }
   return out;
+}
+
+/** A missing cast row is refused on every door. A missing LoRA only matters to a door that takes one. */
+export function refusedCast<T extends { reason: string }>(skipped: T[], keyframeBackend: string | undefined): T[] {
+  return keyframeDoorUsesCastLora(keyframeBackend) ? skipped : skipped.filter((d) => d.reason === "cast member not found");
 }
 
 export function missingSdxlMessage(missing: Array<{ slot: string; name?: string }>): string {
@@ -383,11 +389,12 @@ export async function preflightRenderModules(
   // render, which is the honest-failures rule (#245/#249). A door that sends no bindings resolves to
   // empty maps and is unaffected.
   const cast = await deps.resolveCastLoras(env as never, (input.castLoras ?? {}) as Record<string, unknown>);
-  if (cast.skipped.length) return bad(untrainedCastMessage(cast.skippedDetail));
+  const refused = refusedCast(cast.skippedDetail, input.keyframeBackend);
+  if (refused.length) return bad(untrainedCastMessage(refused));
   // Keyframes consume the SDXL adapter. Wan-train is motion-only and is not a
   // substitute. A Wan-ready bind used to pass this door and then render generic
   // stills.
-  const missingSdxl = missingSdxlForKeyframes(input.castLoras, cast);
+  const missingSdxl = keyframeDoorUsesCastLora(input.keyframeBackend) ? missingSdxlForKeyframes(input.castLoras, cast) : [];
   if (missingSdxl.length) return bad(missingSdxlMessage(missingSdxl));
 
   return {

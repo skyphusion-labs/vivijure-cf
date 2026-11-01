@@ -760,6 +760,7 @@
       motionWrap.hidden = true;
     }
     renderFinishPicks();
+    renderLookPicker();
     const styleEl = document.getElementById("planner-style-lock");
     if (styleEl && !styleEl.value && global.planState && global.planState.storyboard
       && typeof global.planState.storyboard.style_prefix === "string"
@@ -769,6 +770,75 @@
     if (typeof global.ensureVoiceLockFilled === "function") {
       global.ensureVoiceLockFilled();
     }
+  }
+
+  // Ruling: anime stills go through cloud-keyframe, photoreal through keyframe with cast LoRAs.
+  const LOOK_DOORS = { anime: "cloud-keyframe", photoreal: "keyframe" };
+  const LOOK_KEY = "skyphusion.planner.look";
+
+  function keyframeMods() {
+    const c = global.plannerRegistry && global.plannerRegistry._cacheForRenderConfig;
+    return (c && c.keyframe) || [];
+  }
+
+  function installedKeyframeDoor(name) {
+    return keyframeMods().some((m) => moduleName(m) === name);
+  }
+
+  function selectedLook() {
+    const el = document.getElementById("planner-look");
+    return el && el.value ? el.value : "";
+  }
+
+  // With no look chosen this is the same default as src/default-keyframe.ts.
+  function keyframeDoorForLook(look) {
+    if (look && LOOK_DOORS[look] && installedKeyframeDoor(LOOK_DOORS[look])) return LOOK_DOORS[look];
+    if (installedKeyframeDoor("cloud-keyframe") && !installedKeyframeDoor("keyframe")) return "cloud-keyframe";
+    return "keyframe";
+  }
+
+  function renderLookPicker() {
+    const wrap = document.getElementById("planner-look-wrap");
+    const el = document.getElementById("planner-look");
+    if (!wrap || !el) return;
+    const looks = Object.keys(LOOK_DOORS)
+      .filter((look) => installedKeyframeDoor(LOOK_DOORS[look]))
+      .sort((a, b) => (a === "photoreal" ? -1 : b === "photoreal" ? 1 : 0));
+    let want = el.value;
+    if (!want) {
+      try { want = localStorage.getItem(LOOK_KEY) || ""; } catch (_) { want = ""; }
+    }
+    el.innerHTML = "";
+    for (const look of looks) {
+      const opt = document.createElement("option");
+      opt.value = look;
+      opt.textContent = look === "anime" ? "Anime" : "Photoreal";
+      el.appendChild(opt);
+    }
+    if (looks.indexOf(want) >= 0) el.value = want;
+    wrap.hidden = looks.length < 2;
+    if (!el.dataset.wired) {
+      el.dataset.wired = "1";
+      el.addEventListener("change", () => {
+        try { localStorage.setItem(LOOK_KEY, el.value); } catch (_) {}
+      });
+    }
+  }
+
+  // Clip money only. Nothing here knows the price of stills, voices, music or finish.
+  function filmSpendSummary(scenes, mod) {
+    const list = Array.isArray(scenes) ? scenes : [];
+    const seconds = list.reduce((sum, s) => sum + (Number(s && (s.target_seconds || s.seconds)) || 0), 0);
+    const rate = mod && mod.ui && mod.ui.cost_usd_per_second;
+    const known = Array.isArray(rate) && rate.length === 2 && rate.every((r) => typeof r === "number" && r > 0)
+      && seconds > 0;
+    return {
+      shots: list.length,
+      seconds,
+      door: mod ? moduleLabel(mod) : "",
+      low: known ? rate[0] * seconds : null,
+      high: known ? rate[1] * seconds : null,
+    };
   }
 
   function finishCache() {
@@ -985,11 +1055,18 @@
     // opts.keyframesOnly so a keyframes-only preview is never falsely blocked here.
     const keyframesOnly = !!(opts && opts.keyframesOnly);
     const backendSel = document.getElementById("planner-motion-backend");
-    // Fastest stills path. Explicit keyframe_backend still wins. local-gpu
-    // stays omitted so core can couple it (vivijure-local#153).
-    if (!overrides.keyframe_backend && overrides.motion_backend !== "local-gpu"
-        && (overrides.motion_backend || overrides.config)) {
-      overrides.keyframe_backend = "keyframe";
+    // The look decides the stills door. Explicit keyframe_backend still wins. local-gpu stays
+    // omitted so core can couple it (vivijure-local#153).
+    if (!overrides.keyframe_backend && overrides.motion_backend !== "local-gpu") {
+      const look = selectedLook();
+      const route = keyframeDoorForLook(look);
+      if (look || overrides.motion_backend || overrides.config) {
+        overrides.keyframe_backend = route;
+        if (look) {
+          overrides.config = { ...(overrides.config || {}) };
+          overrides.config[route] = { ...(overrides.config[route] || {}), style: look };
+        }
+      }
     }
     if (!keyframesOnly && backendSel && !overrides.motion_backend) {
       const names = Array.from(backendSel.options || [])
@@ -1044,5 +1121,6 @@
     tierDisplayLabel,
     filmmakerCostLine,
     spendSentence,
+    filmSpendSummary,
   };
 })(window);

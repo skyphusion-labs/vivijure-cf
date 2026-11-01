@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { missingSdxlForKeyframes, missingSdxlMessage } from "../src/render-door";
+import { missingSdxlForKeyframes, missingSdxlMessage, refusedCast } from "../src/render-door";
 
 describe("missingSdxlForKeyframes", () => {
   it("is empty when every bound slot has an SDXL key", () => {
@@ -23,5 +23,18 @@ describe("missingSdxlForKeyframes", () => {
   it("ignores an empty bind map (no cast member on the film)", () => {
     expect(missingSdxlForKeyframes({}, { pretrained: {} })).toEqual([]);
     expect(missingSdxlForKeyframes(undefined, { pretrained: {} })).toEqual([]);
+  });
+});
+
+describe("refusedCast", () => {
+  const skipped = [{ slot: "A", reason: "no trained LoRA" }, { slot: "B", reason: "cast member not found" }];
+
+  it("refuses an untrained character on the LoRA door, and when the door is unknown", () => {
+    expect(refusedCast(skipped, "keyframe")).toEqual(skipped);
+    expect(refusedCast(skipped, undefined)).toEqual(skipped);
+  });
+
+  it("does not refuse an untrained character on the door that takes no LoRA", () => {
+    expect(refusedCast(skipped, "cloud-keyframe")).toEqual([skipped[1]]);
   });
 });

@@ -79,7 +79,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.1",
   api: MODULE_API,
   hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud", label: "Clips with the model's own sound, no speech (start and end stills)" }],
+  provides: [{ id: "i2v-cloud", label: "Kling: clips with the model's own sound, no speech (start and end stills)" }],
   config_schema: {
     resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution" },
     ratio: { type: "enum", values: ["21:9", "16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
@@ -89,6 +89,7 @@ const MANIFEST: ModuleManifest = {
     order: 94,
     locality: "cloud",
     cost: "$0.157/s at 720p, $0.235/s at 1080p",
+    cost_usd_per_second: [0.157, 0.235],
     blurb: "Clips with the model's own sound, no speech, from your stills, 3 to 30 seconds. The next still can be the end frame.",
     limits: [
       "3 to 30 second clips. Whole seconds.",
