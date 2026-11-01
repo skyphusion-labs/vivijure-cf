@@ -35,7 +35,9 @@ import {
   type JoinRead,
   type ParentDeps,
   type ParentDoc,
+  FREE_RETRIES_PER_PART,
 } from "../src/film-parent";
+import { childFromPoll, childPollBody } from "../src/film-parent-store";
 
 function body(shots: number, over: Partial<CreateParentBody> = {}): CreateParentBody {
   return {
@@ -1196,9 +1198,6 @@ describe("the spend ceiling counts retries and can be raised", () => {
     await advanceParent(t.doc, t.deps, 1);
     t.h.children.set("film-1", done("k1"));
     await advanceParent(t.doc, t.deps, 2);
-    // Clips have started, so the failed run has bought them. Before clips is cf#1214 below.
-    t.h.children.set("film-2", { phase: "clips", shots_done: 0, output_key: null, sidecar_key: null, error: null });
-    await advanceParent(t.doc, t.deps, 2);
     t.h.children.set("film-2", { phase: "failed", shots_done: 0, output_key: null, sidecar_key: null, error: "boom" });
     await advanceParent(t.doc, t.deps, 3);
     return t;
@@ -1292,35 +1291,58 @@ describe("the status view", () => {
 });
 
 describe("cf#1214 a retry of a part that failed before its clips", () => {
-  const failed = (shots_done = 0): ChildRead => ({ phase: "failed", shots_done, output_key: null, sidecar_key: null, error: "list: internal (10001)" });
-  const running = (phase: string, shots_done = 0): ChildRead => ({ phase, shots_done, output_key: null, sidecar_key: null, error: null });
+  const read = (over: Partial<ChildRead>): ChildRead => ({ phase: "keyframe", shots_done: 0, output_key: null, sidecar_key: null, error: null, clips_started: false, ...over });
+  const failed = (over: Partial<ChildRead> = {}): ChildRead => read({ phase: "failed", error: "list: internal (10001)", ...over });
 
-  async function failAt(phase: string, shotsDone = 0) {
+  async function failOnce(over: Partial<ChildRead> = {}) {
     const h0 = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [], spend_ceiling_usd: 1000 }), 0));
     const est = h0.doc.parts[0].cost_est;
     h0.doc.spend_ceiling_usd = est * 1.5;
     await advanceParent(h0.doc, h0.deps, 1);
-    h0.h.children.set("film-1", running(phase, shotsDone));
-    await advanceParent(h0.doc, h0.deps, 2);
-    h0.h.children.set("film-1", failed(shotsDone));
+    h0.h.children.set("film-1", failed(over));
     await advanceParent(h0.doc, h0.deps, 3);
     expect(h0.doc.parts[0].status).toBe("failed");
     return { ...h0, est };
   }
 
-  for (const phase of ["keyframe", "pre_clip_dialogue", "pre_clip_speech"]) {
-    it(`after ${phase} it gets past a ceiling of one and a half estimates, and counts one`, async () => {
-      const { h, deps, doc, est } = await failAt(phase);
-      retryPart(doc, 0);
-      await advanceParent(doc, deps, 4);
-      expect(h.starts).toHaveLength(2);
-      expect(doc.stop_reason).not.toBe("spend ceiling");
-      expect(parentView(doc, 4).spend_committed_est).toBe(est);
-    });
-  }
+  it("gets past a ceiling of one and a half estimates, and counts one", async () => {
+    const { h, deps, doc, est } = await failOnce();
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(2);
+    expect(doc.stop_reason).not.toBe("spend ceiling");
+    expect(parentView(doc, 4).spend_committed_est).toBe(est);
+  });
 
-  it("after clips began it still counts in full, and the ceiling stops it", async () => {
-    const { h, deps, doc, est } = await failAt("clips");
+  it("never reads zero for a part that ran, while it waits for its retry", async () => {
+    const { doc, est } = await failOnce();
+    retryPart(doc, 0);
+    expect(doc.parts[0].status).toBe("pending");
+    expect(parentView(doc, 4).spend_committed_est).toBe(est);
+  });
+
+  it("the third retry counts in full, so a loop reaches the ceiling", async () => {
+    const { h, deps, doc, est } = await failOnce();
+    doc.spend_ceiling_usd = est * 2;
+    const failAgain = async (n: number) => {
+      retryPart(doc, 0);
+      await advanceParent(doc, deps, n);
+      h.children.set(`film-${h.starts.length}`, failed());
+      await advanceParent(doc, deps, n + 1);
+    };
+    await failAgain(4);
+    await failAgain(6);
+    expect(parentView(doc, 8).spend_committed_est, "two free").toBe(est);
+    await failAgain(8);
+    expect(parentView(doc, 10).spend_committed_est, "the third counts").toBe(est * 2);
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 10);
+    expect(doc.stop_reason, "and the fourth is stopped").toBe("spend ceiling");
+    expect(FREE_RETRIES_PER_PART).toBe(2);
+  });
+
+  it("a film that holds a clip job counts in full, whatever this doc last saw", async () => {
+    const { h, deps, doc, est } = await failOnce({ clips_started: true });
     retryPart(doc, 0);
     await advanceParent(doc, deps, 4);
     expect(h.starts).toHaveLength(1);
@@ -1328,33 +1350,58 @@ describe("cf#1214 a retry of a part that failed before its clips", () => {
     expect(parentView(doc, 4).spend_committed_est).toBe(est);
   });
 
-  it("a finished shot means clips were bought, whatever the phase said", async () => {
-    const { h, deps, doc } = await failAt("keyframe", 1);
+  it("a film that did not say counts in full", async () => {
+    const { h, deps, doc } = await failOnce({ clips_started: undefined });
     retryPart(doc, 0);
     await advanceParent(doc, deps, 4);
     expect(h.starts).toHaveLength(1);
-    expect(doc.stop_reason).toBe("spend ceiling");
   });
 
-  it("the credit is taken once per failure, and never under zero", async () => {
-    const { doc } = await failAt("keyframe");
+  it("a finished shot means clips were bought", async () => {
+    const { h, deps, doc } = await failOnce({ shots_done: 1 });
     retryPart(doc, 0);
-    expect(doc.parts[0].attempts).toBe(0);
-    expect(doc.parts[0].failed_before_clips).toBe(false);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("a failure is forgiven once, even if the part reads failed again with nothing run", async () => {
+    const { doc } = await failOnce();
+    retryPart(doc, 0);
     doc.parts[0].status = "failed";
     retryPart(doc, 0);
-    expect(doc.parts[0].attempts).toBe(0);
-    doc.parts[0].status = "failed";
-    doc.parts[0].failed_before_clips = true;
-    retryPart(doc, 0);
-    expect(doc.parts[0].attempts, "never under zero").toBe(0);
+    expect(doc.parts[0].free_retries).toBe(1);
   });
 
   it("a retake that failed keeps its own count", async () => {
-    const { doc } = await failAt("keyframe");
+    const { doc } = await failOnce();
     doc.parts[0].retake = { shots: ["a"] } as never;
     retryPart(doc, 0);
-    expect(doc.parts[0].attempts).toBe(1);
+    expect(doc.parts[0].free_retries ?? 0).toBe(0);
+  });
+
+  it("the view says what it counts", async () => {
+    const { doc } = await failOnce();
+    expect(parentView(doc, 4).spend_ceiling_basis).toMatch(/except the first 2 retries/);
   });
 });
 
+describe("a film that cannot be read this tick is not gone", () => {
+  it("only a 404 is gone", () => {
+    expect(childPollBody(404, {})).toBeNull();
+    expect(childPollBody(200, { a: 1 })).toEqual({ a: 1 });
+    expect(() => childPollBody(500, {})).toThrow("film poll -> 500");
+  });
+
+  it("the store reads whether the film holds a clip job", () => {
+    expect(childFromPoll({ phase: "failed" }).clips_started).toBe(false);
+    expect(childFromPoll({ phase: "failed", clip_job_id: "clips-1" }).clips_started).toBe(true);
+  });
+
+  it("a read that throws leaves the part as it was", async () => {
+    const t = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
+    await advanceParent(t.doc, t.deps, 1);
+    const before = t.doc.parts[0].status;
+    await expect(advanceParent(t.doc, { ...t.deps, readChild: async () => { throw new Error("film poll -> 500"); } }, 2)).rejects.toThrow("500");
+    expect(t.doc.parts[0].status).toBe(before);
+  });
+});

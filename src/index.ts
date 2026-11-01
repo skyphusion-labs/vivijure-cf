@@ -18,7 +18,7 @@ import { isParentPartProject } from "./film-parent";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
-import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
+import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors, childPollBody } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -2054,7 +2054,12 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
     : undefined;
   await updateRenderFromView(env, filmJobToPollView(job, r.clipJob, kfDone), ctx);
   // cf#392: host summarize relays wan_lora_projection from the job doc when present.
-  return json({ ok: true, ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))) });
+  // clip_job_id tells a parent film whether this film ever bought clips, whatever else a failed tick left unread.
+  return json({
+    ok: true,
+    ...(job.clip_job_id ? { clip_job_id: job.clip_job_id } : {}),
+    ...(await withFilmDownloadUrl(env, summarizeFilmWithProjection(job, r.clipJob))),
+  });
 };
 
 // A long film as parts under one parent (film-parent.ts). A part goes through the same door handlers as
@@ -2213,7 +2218,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
     },
     async pollFilm(filmId) {
       const r = await doorJson(() => hPollFilm(new Request(`https://studio.internal/api/render/film/${filmId}`), env, ctx, { id: filmId }));
-      return r.status === 200 ? r.body : null;
+      return childPollBody(r.status, r.body);
     },
   };
 }
