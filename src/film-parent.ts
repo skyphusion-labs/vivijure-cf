@@ -84,8 +84,10 @@ export interface ParentPart {
   shots_total: number;
   cost_est: number;
   error: string | null;
-  /** Submits made, for the ceiling. */
+  /** Submits counted against the ceiling. A retry of a part that failed before its clips does not add one. */
   attempts: number;
+  /** The part failed before any clip was bought. Its stills are kept, and the retry's own estimate covers them. */
+  failed_before_clips?: boolean;
   /** Moves only on a deliberate retry, so a repeat of the same request carries the same key. */
   generation: number;
   claimed_at: number | null;
@@ -503,8 +505,11 @@ export function mergeSrt(parts: Array<{ text: string; offsetSeconds: number }>):
 
 const isLive = (p: ParentPart) => p.status === "running" || p.status === "submitting";
 
-/** Every submit counts in full, retries included. A retry keeps proven work, so this reads high: the safe
- *  direction for a ceiling. It is still an estimate, never a meter. */
+/** The phases of a child before any clip is submitted. */
+const BEFORE_CLIPS = new Set(["keyframe", "pre_clip_dialogue", "pre_clip_speech"]);
+
+/** Every submit counts in full, except a retry of a part that failed before its clips. A retry keeps proven work,
+ *  so this reads high: the safe direction for a ceiling. It is still an estimate, never a meter. */
 export function committedEstimate(doc: ParentDoc): number {
   return doc.parts.reduce((sum, p) => sum + p.cost_est * p.attempts + p.retake_est, 0);
 }
@@ -545,9 +550,11 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
       part.error = "the part's film job is gone";
       continue;
     }
+    const seen = part.phase;
     part.phase = child.phase;
     part.shots_done = child.shots_done;
     if (child.phase === "failed") {
+      part.failed_before_clips = child.shots_done === 0 && BEFORE_CLIPS.has(seen ?? "");
       part.status = "failed";
       part.error = child.error ?? "the part failed";
     } else if (child.phase === "done") {
@@ -830,6 +837,10 @@ export function retryPart(doc: ParentDoc, index: number): void {
   const part = doc.parts[index];
   if (!part) refuse("no such part");
   if (part.status !== "failed") refuse(`part ${index} is ${part.status}, not failed`);
+  // cf#1214: what the failed run bought was stills, which the retry keeps. One full estimate still covers the
+  // part, so the retry does not add a second one and trip the ceiling with nothing spent on clips.
+  if (part.failed_before_clips && !part.retake) part.attempts = Math.max(0, part.attempts - 1);
+  part.failed_before_clips = false;
   part.status = "pending";
   part.generation += 1;
   part.error = null;
