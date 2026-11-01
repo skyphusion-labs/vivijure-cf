@@ -71,6 +71,7 @@ const STUDIO_PAGE_PATHS = new Set([
   "/", "/index.html",
   "/planner", "/planner/", "/planner.html",
   "/cast", "/cast/", "/cast.html",
+  "/films", "/films/", "/films.html",
   "/modules", "/modules/", "/modules.html",
   "/settings", "/settings/", "/settings.html",
 ]);

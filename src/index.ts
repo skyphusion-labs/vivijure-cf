@@ -2571,6 +2571,7 @@ const STUDIO_PAGE_ASSETS: Record<string, string> = {
   "/planner/": "/planner.html",
   "/cast": "/cast.html",
   "/films": "/films.html",
+  "/films/": "/films.html",
   "/cast/": "/cast.html",
   "/modules": "/modules.html",
   "/modules/": "/modules.html",
