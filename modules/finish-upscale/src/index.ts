@@ -298,6 +298,21 @@ function passthrough(
  *  through then, and inventing a key would be worse than the error it replaced -- the caller keeps
  *  the terminal error and its message says which case it is.
  */
+/** What the door's wall-clock guard says when a clip ran out of its budget or was projected to (handler.py `reason`,
+ *  `project`, `_bounded_probe`). */
+const GUARD_EXPIRY = /exceeded|projected|expired|wall-clock/i;
+
+/** A door that could not upscale a clip, so the shot would stand out in the film. Most causes pass, so `transient`
+ *  makes the core hold and re-dispatch the step, and only when that runs out does the passthrough stand. A healthy try
+ *  is cheap: 40 clips cost $0.28 on BLACKWELL_96 at $3.49/hr, under a cent each. A guard expiry is the exception. Each
+ *  try runs up to 570 s, about $0.55, and a clip too heavy for the budget usually fails them all, so it goes straight
+ *  to the film's report as a limit, for a person to retry. */
+function softDegradeToRetry(st: PollState, reason: string): PollResponse<FinishOutput> | null {
+  const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, reason || undefined);
+  if (!passed || GUARD_EXPIRY.test(reason)) return passed;
+  return withFailure(passed, { kind: "transient", code: "soft_degrade", detail: reason });
+}
+
 function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> | null {
   if (!st.clipKey) return null;
   console.warn(`finish-upscale: poll passthrough (${reason}) shot=${st.shotId}`);
@@ -517,7 +532,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     // so it falls through to the pre-cf#594 terminal path below, row and message unchanged.
     const degrade = softDegradeInFailedEnvelope(s);
     if (degrade !== null) {
-      const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, degrade || undefined);
+      const passed = softDegradeToRetry(st, degrade);
       if (passed) {
         await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
         return passed;
@@ -565,7 +580,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // falls through to the pre-cf#594 terminal path below.
   const softDegrade = softDegradeInCompletedOutput(s.output);
   if (softDegrade !== null) {
-    const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, softDegrade || undefined);
+    const passed = softDegradeToRetry(st, softDegrade);
     if (passed) return passed;
   }
   const csam = csamRefusalInCompletedOutput(s.output);
