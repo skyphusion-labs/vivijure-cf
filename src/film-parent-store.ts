@@ -3,7 +3,7 @@
 import { FINISH_AFFINITY_HEADER } from "./video-finish-binding";
 import { presignR2Get, presignR2Put, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { mediaFinishHeaders, videoFinishFetch } from "@skyphusion-labs/vivijure-core";
-import { JoinTransient } from "./film-parent";
+import { JoinTransient, normalizeParentDoc } from "./film-parent";
 import type { StudioEnv } from "./orchestrator-env";
 import {
   FILM_PARENT_ACTIVE_PREFIX,
@@ -25,7 +25,7 @@ export interface LoadedParent {
 export async function loadParent(env: StudioEnv, id: string): Promise<LoadedParent | null> {
   const object = await env.R2_RENDERS.get(docKey(id));
   if (!object) return null;
-  return { doc: (await object.json()) as ParentDoc, etag: object.etag };
+  return { doc: normalizeParentDoc((await object.json()) as ParentDoc), etag: object.etag };
 }
 
 /** Writes only if the doc is new. False means this id already exists. */
@@ -75,6 +75,7 @@ export async function clearActiveMarker(env: StudioEnv, id: string): Promise<voi
 export interface ParentDoors {
   bundle(args: { storyboard: Record<string, unknown>; characterRefs: Record<string, unknown> }): Promise<string>;
   start(body: Record<string, unknown>): Promise<string>;
+  startRetake: ParentDeps["startRetake"];
   admitSubmit(): Promise<string | null>;
   pollFilm(filmId: string): Promise<Record<string, unknown> | null>;
 }
@@ -113,6 +114,7 @@ export function parentDeps(env: StudioEnv, loaded: LoadedParent, doors: ParentDo
     },
     bundle: doors.bundle,
     start: doors.start,
+    startRetake: doors.startRetake,
     async readChild(filmId) {
       const poll = await doors.pollFilm(filmId);
       return poll ? childFromPoll(poll) : null;

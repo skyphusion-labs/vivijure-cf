@@ -2,11 +2,25 @@ import { describe, it, expect, vi } from "vitest";
 
 // The wiring: routes, the door calls, the etag write. R2 here enforces onlyIf the way the docs describe,
 // which is my reading of R2 and not R2 itself. A live run is what proves the conditional write.
-const h = vi.hoisted(() => ({ started: [] as Array<Record<string, unknown>>, bundled: [] as unknown[], quotaFull: false }));
+const h = vi.hoisted(() => ({
+  started: [] as Array<Record<string, unknown>>,
+  bundled: [] as unknown[],
+  fromKeyframes: [] as Array<Record<string, unknown>>,
+  jobs: new Map<string, Record<string, unknown>>(),
+  quotaFull: false,
+}));
 vi.mock("@skyphusion-labs/vivijure-core/film-orchestrator", async (orig) => {
   const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/film-orchestrator")>();
   return {
     ...actual,
+    advanceFilmJob: vi.fn(async (_e: unknown, id: string) => {
+      const job = h.jobs.get(id);
+      return job ? { job, clipJob: null } : null;
+    }),
+    startFilmFromKeyframes: vi.fn(async (_e: unknown, args: Record<string, unknown>) => {
+      h.fromKeyframes.push(args);
+      return { film_id: "film-retake", project: args.project, phase: "clips", scenes: args.scenes, created_at: 0 };
+    }),
     startFilmJob: vi.fn(async (_e: unknown, args: Record<string, unknown>) => {
       h.started.push(args);
       return { film_id: `film-${h.started.length}`, project: args.project, phase: "keyframe", scenes: args.scenes, created_at: 0 };
@@ -205,6 +219,32 @@ describe("the storage quota reaches a part", () => {
   });
 });
 
+describe("a persist that throws after the film is out", () => {
+  it("still answers 201 and writes the history row", async () => {
+    const wan = await import("../src/wan-lora-projection");
+    const spy = vi.spyOn(wan, "persistWanLoraProjectionOnFilm").mockRejectedValue(new Error("R2 500"));
+    h.started = [];
+    const inserted: unknown[][] = [];
+    const e = env();
+    (e as Record<string, unknown>).DB = {
+      ...DB,
+      prepare: (sql: string) => ({
+        bind: (...a: unknown[]) => {
+          if (/INSERT INTO renders/i.test(sql)) inserted.push(a);
+          return { first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }) };
+        },
+        first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }),
+      }),
+    };
+    const res = await worker.fetch(post("/api/render/film", { project: "p", bundle_key: "bundles/p.tar.gz", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], motion_backend: "talk" }), e as never, ctx);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+    expect(res.status).toBe(201);
+    expect(h.started).toHaveLength(1);
+    expect(inserted.length, "the row is what the sweep and the adopt read").toBeGreaterThan(0);
+  });
+});
+
 describe("the cron list", () => {
   it("a repeat create does not put a finished film back", async () => {
     const e = env();
@@ -250,6 +290,17 @@ describe("the etag write", () => {
     expect(await saveParent(e as never, a!), "a moved its own etag on").toBe(true);
   });
 
+  it("loading fills fields an older doc does not have", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-old", BODY, 0) as unknown as Record<string, unknown> & { parts: Array<Record<string, unknown>> };
+    delete doc.join_version;
+    delete doc.parts[0].retake_est;
+    await e.bucket.put("film-parents/feature-old.json", JSON.stringify(doc));
+    const loaded = await loadParent(e as never, "feature-old");
+    expect(loaded!.doc.join_version).toBe(1);
+    expect(loaded!.doc.parts[0].retake_est).toBe(0);
+  });
+
   it("a stopped parent leaves the cron list", async () => {
     const e = env();
     const doc = buildParentDoc("feature-x", BODY, 0);
@@ -265,5 +316,103 @@ describe("GET /api/film/:id", () => {
   it("404s an unknown film", async () => {
     const res = await worker.fetch(new Request("https://studio.example/api/film/feature-none", { headers: { authorization: "Bearer t" } }), env() as never, ctx);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/film/:id/shots/:shot/retake", () => {
+  const OLD_JOB = {
+    film_id: "film-old", project: "Long_p00", bundle_key: "bundles/Long_p00-a.tar.gz", phase: "done", film_key: "renders/film-old/film.mp4",
+    scenes: [{ shot_id: "shot_01", prompt: "p1", seconds: 4 }, { shot_id: "shot_02", prompt: "p2", seconds: 4 }],
+    keyframes: [{ shot_id: "shot_01", keyframe_key: "k1" }, { shot_id: "shot_02", keyframe_key: "k2" }],
+    motion_backend: "talk", motion_config: { a: 1 }, finish_config: { up: {} }, finish_select: { mode: "default" },
+    speech_config: { s: {} }, film_finish_config: { f: {} }, master_config: { m: {} },
+    dialogue_lines: [{ shot_id: "shot_02", text: "old", voice_id: "v" }], voice_ref_keys: { shot_02: "vr" },
+    style_prefix: "sp", voice_lock: "vl", audio_key: "ak",
+    delivery_width: 832, delivery_height: 464, delivery_fps: 24, film_titles: { title: { text: "T" } }, cast_loras: { A: 7 },
+  };
+
+  async function doneFilm() {
+    const e = env();
+    const doc = buildParentDoc("feature-x", { ...BODY, part_size: 4, storyboard: { title: "t", scenes: [1, 2, 3, 4].map((i) => ({ shot_id: `s${i}`, prompt: `p${i}`, seconds: 4 })) } }, 0);
+    Object.assign(doc.parts[0], { status: "done", child_film_id: "film-old", output_key: "renders/film-old/film.mp4", attempts: 1 });
+    doc.phase = "done";
+    doc.output_key = "renders/feature-x/film.mp4";
+    await insertParent(e as never, doc);
+    h.jobs.set("film-old", OLD_JOB);
+    h.started = [];
+    h.bundled = [];
+    h.fromKeyframes = [];
+    return e;
+  }
+
+  it("repeats every input of the old job, and names only the retaken shot", async () => {
+    const e = await doneFilm();
+    const res = await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { line: "new" }), e as never, ctx);
+    expect(res.status).toBe(200);
+    expect(h.started, "no keyframe stage").toEqual([]);
+    expect(h.bundled).toEqual([]);
+    expect(h.fromKeyframes).toHaveLength(1);
+    const a = h.fromKeyframes[0];
+    expect(a.reuse_finished).toBe(true);
+    expect(a.retake_shots).toEqual(["shot_02"]);
+    expect(a.dialogue_lines).toEqual([{ shot_id: "shot_02", text: "new", voice_id: "v" }]);
+    expect(a.scenes).toEqual(OLD_JOB.scenes);
+    // A dropped input changes that clip's proof and buys it again, so each one is named.
+    const carried = ["project", "bundle_key", "keyframes", "motion_backend", "motion_config", "finish_config", "finish_select", "speech_config", "film_finish_config", "master_config", "voice_ref_keys", "style_prefix", "voice_lock", "audio_key", "delivery_width", "delivery_height", "delivery_fps", "film_titles", "cast_loras"] as const;
+    for (const k of carried) expect(a[k], k).toEqual((OLD_JOB as never)[k]);
+    const view = (await res.json()) as { phase: string; output_key: string };
+    expect(view.output_key, "the delivered film stays").toBe("renders/feature-x/film.mp4");
+    expect(view.phase).toBe("running");
+  });
+
+  it("writes the history row at once, with the old film's tier", async () => {
+    const e = await doneFilm();
+    h.jobs.set("film-old", { ...OLD_JOB, quality_tier: "standard" });
+    const rows: unknown[][] = [];
+    (e as Record<string, unknown>).DB = {
+      ...DB,
+      prepare: (sql: string) => ({
+        bind: (...a: unknown[]) => {
+          if (/INSERT INTO renders/i.test(sql)) rows.push(a);
+          return { first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }) };
+        },
+        first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }),
+      }),
+    };
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]).toContain("film-retake");
+    expect(rows[0]).toContain("standard");
+  });
+
+  it("cancel puts a done film back with no new film", async () => {
+    const e = await doneFilm();
+    h.fromKeyframes = [];
+    const stored = await loadParent(e as never, "feature-x");
+    stored!.doc.spend_ceiling_usd = 0.5;
+    await saveParent(e as never, stored!);
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    expect(h.fromKeyframes, "over the ceiling").toEqual([]);
+    const res = await worker.fetch(post("/api/film/feature-x/parts/0/retake/cancel", {}), e as never, ctx);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { phase: string }).phase).toBe("done");
+    expect((await worker.fetch(post("/api/film/feature-x/parts/0/retake/cancel", {}), e as never, ctx)).status).toBe(400);
+  });
+
+  it("refuses new_still, and an unknown shot, starting nothing", async () => {
+    const e = await doneFilm();
+    expect((await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true }), e as never, ctx)).status).toBe(400);
+    expect((await worker.fetch(post("/api/film/feature-x/shots/nope/retake", {}), e as never, ctx)).status).toBe(400);
+    expect(h.fromKeyframes).toEqual([]);
+  });
+
+  it("a job with no stills fails the part and buys nothing", async () => {
+    const e = await doneFilm();
+    h.jobs.set("film-old", { ...OLD_JOB, keyframes: undefined });
+    const res = await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    const view = (await res.json()) as { parts: Array<{ status: string; error: string }> };
+    expect(view.parts[0].status).toBe("failed");
+    expect(view.parts[0].error).toMatch(/no stills/);
+    expect(h.fromKeyframes).toEqual([]);
   });
 });
