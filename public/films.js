@@ -31,6 +31,9 @@
   let latest = null;
   const partRows = new Map();
   const openParts = new Set();
+  const openSheets = new Set();
+  const sheetBoxes = new Map();
+  let viewer = null;
   let voices = null;
   let actionNoteTimer = null;
 
@@ -180,10 +183,41 @@
       paint(open);
     });
     actions.append(toggle);
+    // The box outlives a rebuild of this row, so a poll does not refetch every still. It reloads only
+    // when the part moves to a stage that can change its stills.
+    let sheetBox = sheetBoxes.get(part.index);
+    if (!sheetBox) {
+      sheetBox = el("div", { className: "films-sheet" });
+      sheetBoxes.set(part.index, sheetBox);
+    }
+    const closedLabel = "Contact sheet";
+    const sheetToggle = el("button", { type: "button", className: "planner-secondary films-sheet-toggle", textContent: closedLabel });
+    const paintSheet = (open) => {
+      sheetToggle.setAttribute("aria-pressed", open ? "true" : "false");
+      sheetToggle.textContent = open ? "Hide contact sheet" : closedLabel;
+      if (open) {
+        const sig = sheetSig(part);
+        if (sheetBox.dataset.sig !== sig) {
+          sheetBox.dataset.sig = sig;
+          loadSheet(part, sheetBox, sig);
+        }
+      } else {
+        delete sheetBox.dataset.sig;
+        sheetBox.textContent = "";
+      }
+    };
+    sheetToggle.addEventListener("click", () => {
+      const open = !openSheets.has(part.index);
+      if (open) openSheets.add(part.index);
+      else openSheets.delete(part.index);
+      paintSheet(open);
+    });
+    actions.append(sheetToggle);
     if (part.output_key) actions.append(downloadLink(part.output_key, partName(film, part), "Download"));
     row.append(actions);
     if (part.output_key) row.append(watchControl(part.output_key, "Watch this part"));
-    row.append(shotsBox);
+    row.append(sheetBox, shotsBox);
+    if (openSheets.has(part.index)) paintSheet(true);
     if (openParts.has(part.index)) paint(true);
     return row;
   }
@@ -213,6 +247,76 @@
     const grid = el("ul", { className: "films-shot-grid" });
     for (const shot of shots) grid.append(buildShot(part, shot));
     box.append(grid);
+  }
+
+  // Every still of a part at a glance, to catch a wrong one fast. A tap opens it large.
+  // A small JPEG, so a sheet is cheap to scan. If the route cannot serve it, the full still shows once.
+  function sheetThumb(key) {
+    const img = el("img", { src: "/api/thumb/" + String(key).split("/").map(encodeURIComponent).join("/"), loading: "lazy", alt: "" });
+    img.onerror = () => {
+      img.onerror = null;
+      img.src = artifact(key);
+    };
+    return img;
+  }
+
+  function sheetSig(part) {
+    return [part.status, part.phase, (part.retake_shots || []).join()].join("|");
+  }
+
+  async function loadSheet(part, box, sig) {
+    if (!box.querySelector(".films-sheet-grid")) box.textContent = "Loading stills...";
+    let shots;
+    try {
+      const res = await fetch("/api/film/" + encodeURIComponent(filmId) + "/parts/" + part.index + "/shots");
+      if (!res.ok) throw new Error(String(res.status));
+      shots = (await res.json()).shots;
+    } catch (_) {
+      if (box.dataset.sig === sig) box.textContent = "Could not load the stills of this part.";
+      return;
+    }
+    // Hidden or superseded while this was on its way: do not show it, and do not load its stills.
+    if (box.dataset.sig !== sig) return;
+    box.textContent = "";
+    if (!Array.isArray(shots) || !shots.length) {
+      box.textContent = "No stills to show yet.";
+      return;
+    }
+    const missing = shots.filter((s) => !s.keyframe_key).length;
+    if (missing) box.append(el("div", { className: "films-muted", textContent: missing + " of " + shots.length + " shots have no still yet." }));
+    const grid = el("ul", { className: "films-sheet-grid" });
+    shots.forEach((shot, at) => {
+      const tile = el("button", { type: "button", className: "films-sheet-tile" });
+      tile.setAttribute("aria-label", "Shot " + (shot.index + 1));
+      if (shot.keyframe_key) tile.append(sheetThumb(shot.keyframe_key));
+      else tile.append(el("span", { className: "films-sheet-empty", textContent: "no still" }));
+      tile.append(el("span", { className: "films-sheet-num", textContent: String(shot.index + 1) }));
+      tile.addEventListener("click", () => openViewer(part.index, shots, at));
+      grid.append(el("li", {}, tile));
+    });
+    box.append(grid);
+  }
+
+  function openViewer(partIndex, shots, at) {
+    viewer = { partIndex, shots, at };
+    paintViewer();
+    if (!$("film-still-dialog").open) $("film-still-dialog").showModal();
+  }
+
+  function paintViewer() {
+    const { partIndex, shots, at } = viewer;
+    const shot = shots[at];
+    // The current part, not the one the sheet was built from, so New take follows the film.
+    const part = ((latest && latest.parts) || []).find((p) => p.index === partIndex);
+    $("film-still-title").textContent = "Shot " + (shot.index + 1) + ", " + shot.shot_id;
+    const img = $("film-still-img");
+    img.hidden = !shot.keyframe_key;
+    if (shot.keyframe_key) img.src = artifact(shot.keyframe_key);
+    else img.removeAttribute("src");
+    $("film-still-text").textContent = shot.prompt || "";
+    $("film-still-prev").disabled = at === 0;
+    $("film-still-next").disabled = at === shots.length - 1;
+    $("film-still-retake").hidden = !part || !canRetake(part);
   }
 
   function buildShot(part, shot) {
@@ -462,6 +566,7 @@
       }
     }
     renderParts(film);
+    if (viewer && $("film-still-dialog").open) paintViewer();
   }
 
   function stillMoving(film) {
@@ -531,6 +636,14 @@
     $("film-retry-dialog").showModal();
   }
 
+  // A server note can name an API field for callers of the API. This page has no such control, so a
+  // sentence that names one means nothing here.
+  function plainNote(note) {
+    // No regex lookbehind here: older Safari cannot parse one, and that stops this whole script.
+    const sentences = note.match(/[^.!?]+[.!?]*\s*/g) || [];
+    return sentences.filter((s) => !/\b[a-z]+_[a-z_]+\b/.test(s)).join("").trim();
+  }
+
   // Every action reads the same way: the server's refusal is shown as it came.
   async function post(path, body, doing, subject) {
     const note = $("film-load-note");
@@ -558,7 +671,7 @@
     const done = $("film-action-note");
     const alive = latest && latest.cron && !latest.cron.stale;
     done.textContent = doing + ": saved." + (alive ? " It takes effect within about a minute." : "")
-      + (typeof out.note === "string" && out.note ? " " + out.note : "");
+      + (typeof out.note === "string" ? " " + plainNote(out.note) : "");
     clearTimeout(actionNoteTimer);
     actionNoteTimer = setTimeout(() => { done.textContent = ""; }, 90000);
   }
@@ -576,6 +689,14 @@
       if ($("film-retake-dialog").returnValue === "go" && shot) {
         post("/shots/" + encodeURIComponent(shot.shot_id) + "/retake", retakeBody(shot), "New take of shot " + (shot.index + 1), "Shot " + (shot.index + 1));
       }
+    });
+    $("film-still-prev").addEventListener("click", () => { viewer.at -= 1; paintViewer(); });
+    $("film-still-next").addEventListener("click", () => { viewer.at += 1; paintViewer(); });
+    $("film-still-close").addEventListener("click", () => $("film-still-dialog").close());
+    $("film-still-retake").addEventListener("click", () => {
+      const shot = viewer.shots[viewer.at];
+      $("film-still-dialog").close();
+      askRetake(shot);
     });
     $("film-find").addEventListener("submit", (event) => {
       event.preventDefault();
