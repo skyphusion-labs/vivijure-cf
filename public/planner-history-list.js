@@ -454,11 +454,12 @@ function pollPolicy() {
 // recomputing. totalRows defaults to rows.length for callers that don't
 // filter (kept for compatibility, but in v0.37.1+ the only caller is
 // applyHistoryFilters which always provides both).
+let historyRowCache = new Map();
+
 function renderHistoryList(rows, totalRows) {
   const section = $("#planner-history");
   const list = $("#planner-history-list");
   const counter = $("#planner-history-counter");
-  list.innerHTML = "";
 
   if (totalRows === undefined) totalRows = rows ? rows.length : 0;
 
@@ -469,6 +470,8 @@ function renderHistoryList(rows, totalRows) {
   section.hidden = false;
   if (totalRows === 0) {
     counter.textContent = "";
+    list.innerHTML = "";
+    historyRowCache = new Map();
     const li = document.createElement("li");
     li.className = "planner-history-empty";
     li.textContent = "no renders yet; plan, bundle, and render a storyboard to see it here.";
@@ -478,6 +481,8 @@ function renderHistoryList(rows, totalRows) {
 
   if (!rows || rows.length === 0) {
     counter.textContent = "showing 0 of " + totalRows;
+    list.innerHTML = "";
+    historyRowCache = new Map();
     const li = document.createElement("li");
     li.className = "planner-history-empty";
     li.textContent = "no renders match the current filters";
@@ -503,9 +508,30 @@ function renderHistoryList(rows, totalRows) {
     else childrenByParent.set(x.parent_id, [x]);
   }
 
+  // Keep the element of a row that has not changed. Removing a playing <video> stops it, and a full
+  // rebuild every 30 s also lost strip scroll and half-typed labels while any job ran. Unchanged rows
+  // are not moved either, since moving one detaches it.
+  const regenSig = Array.from(historyState.regenJobs.keys()).join(",");
+  const nextRows = new Map();
+  let cursor = list.firstChild;
   for (const r of rows) {
-    list.appendChild(buildHistoryRow(r, childrenByParent));
+    const kids = (childrenByParent.get(r.id) || []).map((c) => c.id + ":" + c.status).join(",");
+    const sig = JSON.stringify(r) + "|" + kids + "|" + regenSig;
+    const known = historyRowCache.get(r.id);
+    const li = known && known.sig === sig ? known.li : buildHistoryRow(r, childrenByParent);
+    nextRows.set(r.id, { sig, li });
+    if (li === cursor) {
+      cursor = cursor.nextSibling;
+    } else {
+      list.insertBefore(li, cursor);
+    }
   }
+  while (cursor) {
+    const stale = cursor;
+    cursor = cursor.nextSibling;
+    list.removeChild(stale);
+  }
+  historyRowCache = nextRows;
 
   // cf#118: re-apply the cf#98 hook-availability gate over the rows we just built.
   // hook-availability.js applies on load and on DOMContentLoaded only, and EVERY history

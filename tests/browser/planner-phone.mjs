@@ -226,6 +226,68 @@ for (const [name, final] of [
   await ctx.close();
 }
 
+// ---- the history list keeps unchanged rows, and a collapsed row loads no film.
+{
+  const row = (id, status, extra = {}) => ({ job_id: `film-${id}`, id, project: "P", status, mode: "full", bundle_key: "b", output_key: `renders/${id}/film.mp4`, output: {}, submitted_at: 1793485974, updated_at: 1793486804, completed_at: 1793486804, tags: [], parent_id: null, keyframes: null, ...extra });
+  const rows = [row("done", "COMPLETED"), row("running", "IN_PROGRESS", { output_key: null })];
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  const films = [];
+  page.on("request", (r) => { if (r.url().includes("/film.mp4")) films.push(r.url()); });
+  await page.route("**/api/**", (r) => {
+    const { pathname } = new URL(r.request().url());
+    const json = (o) => r.fulfill({ contentType: "application/json", body: JSON.stringify(o) });
+    if (pathname === "/api/modules") return json(registry);
+    if (pathname === "/api/storyboard/renders") return json({ renders: rows });
+    if (pathname.startsWith("/api/artifact/")) return r.fulfill({ status: 404, body: "" });
+    return json({});
+  });
+  await page.goto(`${B}/planner`);
+  await page.click('[data-step-id="history"]');
+  await page.waitForSelector('.planner-history-item[data-id="done"]');
+  await page.waitForTimeout(400);
+  check("collapsed row builds no player", (await page.locator(".planner-history-player-video").count()) === 0);
+  check("collapsed row fetches no film", films.length === 0, films.join(","));
+  await page.click('.planner-history-item[data-id="done"] .planner-history-meta');
+  await page.waitForSelector(".planner-history-player-video");
+  check("expanding builds the player", (await page.locator(".planner-history-player-video").count()) === 1);
+  await page.evaluate(() => {
+    window.__video = document.querySelector(".planner-history-player-video");
+    window.__running = document.querySelector('.planner-history-item[data-id="running"]');
+  });
+  rows[1] = row("running", "IN_PROGRESS", { output_key: null, updated_at: 1793486900 });
+  await page.evaluate(() => loadHistory());
+  await page.waitForFunction(() => window.__running && !window.__running.isConnected, null, { timeout: 5000 }).catch(() => {});
+  check("a refresh keeps the unchanged row's player", await page.evaluate(() => window.__video.isConnected && document.querySelector(".planner-history-player-video") === window.__video));
+  check("a refresh rebuilds the changed row", await page.evaluate(() => !window.__running.isConnected && !!document.querySelector('.planner-history-item[data-id="running"]')));
+  check("row order holds", (await page.$$eval(".planner-history-item", (l) => l.map((e) => e.dataset.id))).join() === "done,running");
+  rows.reverse();
+  await page.evaluate(() => loadHistory());
+  await page.waitForTimeout(300);
+  check("a new order is applied", (await page.$$eval(".planner-history-item", (l) => l.map((e) => e.dataset.id))).join() === "running,done");
+  rows.length = 0;
+  rows.push(row("done", "COMPLETED"));
+  await page.evaluate(() => loadHistory());
+  await page.waitForTimeout(300);
+  check("a gone row is removed", (await page.locator(".planner-history-item").count()) === 1);
+  await ctx.close();
+}
+
+// ---- a job first seen late uses the server's run time for its clock.
+{
+  const { ctx, page } = await session({ width: 390, spoken: true, poll: { status: "IN_PROGRESS", statusRaw: "running", executionTimeMs: 3600000, output: { phase: "i2v", scene_total: 2, shots_done: 1 } } });
+  await gotoRender(page);
+  await page.waitForFunction(() => document.querySelector("#planner-motion-backend")?.options.length > 0);
+  await pickDoor(page, "talk-priced");
+  await page.click("#planner-render-btn");
+  await page.waitForSelector("#planner-spend-confirm[open]");
+  await page.click('#planner-spend-confirm button[value="start"]');
+  // Polls are about 8 s apart, so give the first one time to land before judging the clock.
+  const clockOk = await page.waitForFunction(() => /^(59|60)m /.test(document.querySelector("#planner-render-progress-elapsed")?.textContent ?? ""), null, { timeout: 25000 }).then(() => true, () => false);
+  check("late look: elapsed comes from the server", clockOk, await page.textContent("#planner-render-progress-elapsed"));
+  await ctx.close();
+}
+
 await browser.close();
 server.close();
 console.log(bad ? `${bad} failed` : "all passed");

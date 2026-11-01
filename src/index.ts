@@ -582,8 +582,10 @@ export function safeArtifactContentType(contentType: string): string {
   return "application/octet-stream";
 }
 
-function artifactHeaders(contentType: string, key?: string): Headers {
+function artifactHeaders(contentType: string, key?: string, etag?: string): Headers {
   const h = new Headers();
+  // Without a validator a browser cannot safely resume a dropped download of a large film.
+  if (etag) h.set("etag", etag);
   h.set("content-type", safeArtifactContentType(contentType));
   h.set("cache-control", "private, max-age=300");
   h.set("accept-ranges", "bytes");
@@ -622,20 +624,28 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // For a HEAD or any ranged GET, resolve the object size up front via head(): an R2 get() with an
   // out-of-bounds range returns null, indistinguishable from not-found, so the range must be validated
   // against the real size before any bytes are fetched.
-  if (isHead || rangeHeader) {
+  const ifNoneMatch = req.headers.get("if-none-match");
+  if (isHead || rangeHeader || ifNoneMatch) {
     const meta = await env.R2_RENDERS.head(key);
     if (!meta) throw notFound("artifact");
     const ct = meta.httpMetadata?.contentType || "application/octet-stream";
-    const parsed = parseByteRange(rangeHeader, meta.size);
+    const etag = meta.httpEtag;
+    if (ifNoneMatch && etag && ifNoneMatch === etag && !rangeHeader) {
+      return new Response(null, { status: 304, headers: artifactHeaders(ct, key, etag) });
+    }
+    // If-Range: bytes from a resumed download only join up if the object is still the same one.
+    const ifRange = req.headers.get("if-range");
+    const usableRange = ifRange && ifRange !== etag ? null : rangeHeader;
+    const parsed = parseByteRange(usableRange, meta.size);
 
     if (parsed === "unsatisfiable") {
-      const h = artifactHeaders(ct, key);
+      const h = artifactHeaders(ct, key, etag);
       h.set("content-range", `bytes */${meta.size}`);
       return new Response(null, { status: 416, headers: h });
     }
     if (parsed) {
       // Satisfiable single range -> 206. HEAD carries the same headers with no body.
-      const h = artifactHeaders(ct, key);
+      const h = artifactHeaders(ct, key, etag);
       h.set("content-range", `bytes ${parsed.start}-${parsed.end}/${meta.size}`);
       h.set("content-length", String(parsed.length));
       if (isHead) return new Response(null, { status: 206, headers: h });
@@ -644,7 +654,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
       return new Response(obj.body, { status: 206, headers: h });
     }
     // No range (or one we ignore) -> full 200. HEAD carries the headers with no body.
-    const h = artifactHeaders(ct, key);
+    const h = artifactHeaders(ct, key, etag);
     h.set("content-length", String(meta.size));
     if (isHead) return new Response(null, { status: 200, headers: h });
     const obj = await env.R2_RENDERS.get(key);
@@ -655,7 +665,7 @@ const hServeArtifact: Handler = async (req, env, _c, p) => {
   // Plain GET, no Range: stream the full body and advertise range support for the next seek.
   const obj = await env.R2_RENDERS.get(key);
   if (!obj) throw notFound("artifact");
-  const h = artifactHeaders(obj.httpMetadata?.contentType || "application/octet-stream", key);
+  const h = artifactHeaders(obj.httpMetadata?.contentType || "application/octet-stream", key, obj.httpEtag);
   h.set("content-length", String(obj.size));
   return new Response(obj.body, { headers: h });
 };
