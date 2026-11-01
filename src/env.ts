@@ -36,6 +36,14 @@ export interface Env {
   // R2 = the chat-side bucket; the render flow copies a staged audio bed across from it.
   R2: R2Bucket;
   R2_RENDERS: R2Bucket;
+  // Cloudflare Images, for GET /api/thumb. Optional: without it that route answers 503 and nothing else changes.
+  IMAGES?: {
+    input(stream: ReadableStream): {
+      transform(options: { width?: number; fit?: string }): {
+        output(options: { format: string; quality?: number }): Promise<{ response(): Response }>;
+      };
+    };
+  };
   DB: D1Database;
   // Per-shot workflow (still, wav, clip). Optional so a deploy that has not
   // applied the [[workflows]] binding still typechecks. The class is exported
