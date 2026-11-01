@@ -23,6 +23,8 @@ export const ONE_UPLOAD_BYTES = 5_363_466_240; // MAX_FILM_BYTES in containers/v
 const HOLD_AFTER_FIRST = "the first part is ready: watch it, then resume";
 export const FILM_PARENT_PREFIX = "film-parents/";
 export const FILM_PARENT_ACTIVE_PREFIX = "film-parents/active/";
+export const FILM_PARENT_LIST_PREFIX = "film-parents/by-time/";
+export const FILM_LIST_LIMIT = 50;
 
 export type ParentPhase = "planned" | "running" | "stopped" | "join" | "done" | "failed";
 export type PartStatus = "pending" | "submitting" | "running" | "done" | "failed";
@@ -826,6 +828,33 @@ export function raiseCeiling(doc: ParentDoc, value: unknown): void {
 
 const CEILING_BASIS = "estimate: every submit counts in full, including retries. Not a meter.";
 
+export type StopCode = "part_failed" | "spend_ceiling" | "first_part_hold" | "gate_held";
+
+/** A stable key for stop_reason, which is free text for a person to read. Absent means not stopped. */
+export function stopCode(doc: ParentDoc): StopCode | undefined {
+  const reason = doc.stop_reason;
+  if (reason === null) return undefined;
+  if (reason === "spend ceiling") return "spend_ceiling";
+  if (reason === HOLD_AFTER_FIRST) return "first_part_hold";
+  if (/^part \d+ failed$/.test(reason)) return "part_failed";
+  return "gate_held";
+}
+
+/** One row of the film list. No parts and no board, so a phone can read fifty. */
+export function parentListRow(doc: ParentDoc) {
+  const code = stopCode(doc);
+  return {
+    film_id: doc.film_id,
+    project: doc.project,
+    phase: doc.phase,
+    stop_reason: doc.stop_reason,
+    ...(code ? { stop_code: code } : {}),
+    created_at: doc.created_at,
+    shots_done: doc.parts.reduce((n, p) => n + p.shots_done, 0),
+    shots_total: doc.parts.reduce((n, p) => n + p.shots_total, 0),
+  };
+}
+
 /** The status view. Constant size per part, and no shot lists. */
 export function parentView(doc: ParentDoc, now: number) {
   const started = doc.started_at;
@@ -834,6 +863,7 @@ export function parentView(doc: ParentDoc, now: number) {
     project: doc.project,
     phase: doc.phase,
     stop_reason: doc.stop_reason,
+    ...(stopCode(doc) ? { stop_code: stopCode(doc) } : {}),
     created_at: doc.created_at,
     started_at: started,
     elapsed_ms: started === null ? 0 : (doc.finished_at ?? now) - started,

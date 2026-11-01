@@ -7,6 +7,7 @@ import { JoinTransient } from "./film-parent";
 import type { StudioEnv } from "./orchestrator-env";
 import {
   FILM_PARENT_ACTIVE_PREFIX,
+  FILM_PARENT_LIST_PREFIX,
   FILM_PARENT_PREFIX,
   type ChildRead,
   type JoinRead,
@@ -16,6 +17,9 @@ import {
 
 const docKey = (id: string) => `${FILM_PARENT_PREFIX}${id}.json`;
 const activeKey = (id: string) => `${FILM_PARENT_ACTIVE_PREFIX}${id}`;
+// R2 lists in key order, so the time is inverted to list newest first, and padded so it sorts as text.
+const listKey = (id: string, createdAt: number) =>
+  `${FILM_PARENT_LIST_PREFIX}${String(9_999_999_999_999 - createdAt).padStart(13, "0")}-${id}`;
 
 export interface LoadedParent {
   doc: ParentDoc;
@@ -39,7 +43,11 @@ export async function insertParent(env: StudioEnv, doc: ParentDoc): Promise<bool
     onlyIf: { etagDoesNotMatch: "*" },
     httpMetadata: { contentType: "application/json" },
   });
-  return !!written;
+  if (!written) return false;
+  // After the doc: a row with no doc would read as a film that is not there. A crash here leaves a film that
+  // is off the list and still works by its id.
+  await env.R2_RENDERS.put(listKey(doc.film_id, doc.created_at), "");
+  return true;
 }
 
 /** Writes if nobody wrote since `loaded` was read, and moves `loaded.etag` on. A parent that can act
@@ -65,6 +73,14 @@ export async function listActiveParents(env: StudioEnv, limit: number): Promise<
     id: o.key.slice(FILM_PARENT_ACTIVE_PREFIX.length),
     markedAt: o.uploaded instanceof Date ? o.uploaded.getTime() : 0,
   }));
+}
+
+/** Newest first. Reads each doc and advances nothing. */
+export async function listParents(env: StudioEnv, limit: number): Promise<ParentDoc[]> {
+  const listed = await env.R2_RENDERS.list({ prefix: FILM_PARENT_LIST_PREFIX, limit });
+  const ids = listed.objects.map((o) => o.key.slice(o.key.indexOf("-", FILM_PARENT_LIST_PREFIX.length) + 1));
+  const loaded = await Promise.all(ids.map((id) => loadParent(env, id)));
+  return loaded.flatMap((l) => (l ? [l.doc] : []));
 }
 
 export async function clearActiveMarker(env: StudioEnv, id: string): Promise<void> {

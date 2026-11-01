@@ -15,9 +15,9 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
-import { clearActiveMarker, insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
+import { clearActiveMarker, insertParent, listActiveParents, listParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -2046,6 +2046,11 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
 };
 
+const hListParentFilms: Handler = async (_req, env) => {
+  const docs = await listParents(env, FILM_LIST_LIMIT);
+  return json({ ok: true, films: docs.map(parentListRow) });
+};
+
 const hGetParentFilm: Handler = async (_req, env, ctx, p) => {
   const doc = await tickParent(env, ctx, p.id);
   if (!doc) throw notFound("film");
@@ -2493,6 +2498,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: hStartFilm },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
   { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
+  { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
   { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
