@@ -236,6 +236,31 @@ describe("the storage quota reaches a part", () => {
 });
 
 describe("a persist that throws after the film is out", () => {
+  it("on the panel door too: still 201, and the row is written", async () => {
+    const wan = await import("../src/wan-lora-projection");
+    const spy = vi.spyOn(wan, "persistWanLoraProjectionOnFilm").mockRejectedValue(new Error("R2 500"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    h.started = [];
+    const inserted: unknown[][] = [];
+    const e = env();
+    (e as Record<string, unknown>).DB = {
+      ...DB,
+      prepare: (sql: string) => ({
+        bind: (...a: unknown[]) => {
+          if (/INSERT INTO renders/i.test(sql)) inserted.push(a);
+          return { first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }) };
+        },
+        first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }),
+      }),
+    };
+    const res = await worker.fetch(post("/api/storyboard/render", { project: "p", bundleKey: "bundles/p.tar.gz", keyframesOnly: true, scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], renderOverrides: { keyframe_backend: "keyframe" } }), e as never, ctx);
+    expect(spy).toHaveBeenCalled();
+    vi.restoreAllMocks();
+    expect(res.status).toBe(201);
+    expect(h.started).toHaveLength(1);
+    expect(inserted.length).toBeGreaterThan(0);
+  });
+
   it("still answers 201 and writes the history row", async () => {
     const wan = await import("../src/wan-lora-projection");
     const spy = vi.spyOn(wan, "persistWanLoraProjectionOnFilm").mockRejectedValue(new Error("R2 500"));

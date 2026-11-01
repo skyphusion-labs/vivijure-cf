@@ -14,6 +14,7 @@ import {
 } from "./film-render-bridge";
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
+import { isParentPartProject } from "./film-parent";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
@@ -875,6 +876,10 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
     idempotency_key = readIdempotencyKey(b);
     acceptRederive = b.accept_rederive === true;
   } catch { /* empty body ok (pre-cf#528 clients) */ }
+  // A part of a long film is the parent's. A retry here would spend on a film the parent never hears of.
+  if (isParentPartProject(row.project)) {
+    return json({ ok: false, error: "this render is a part of a long film. Retry it from the film: POST /api/film/:id/parts/:n/retry." }, 409);
+  }
   // cf#1177: a full retry replays the original request, or does not start. Finalize has its own path, from its
   // parent preview.
   if (row.mode !== "finalized" && row.mode !== "cloud-finalized") {
@@ -1129,7 +1134,10 @@ const hSubmitRender: Handler = async (req, env) => {
   } as Parameters<typeof startFilmJob>[1], modules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
-  await persistWanLoraProjectionOnFilm(env, job, wanProj);
+  // Best effort, as on the film door: the film is out by now, and a throw here would strand it with no row.
+  await persistWanLoraProjectionOnFilm(env, job, wanProj).catch((e) => {
+    console.warn(`film ${job.film_id}: wan lora projection not persisted: ${String(e)}`);
+  });
   const view = filmJobToPollView(job, null);
   const row: NewRenderRow = {
     jobId: view.jobId,
