@@ -1032,14 +1032,19 @@ async def overlay(req):
 # _credits_card_filter) are factored out for unit-testability.
 
 def _escape_drawtext(text):
-    """Escape text for use in an ffmpeg drawtext text= value.
-    Mirrors modules/text-overlay overlay.ts escapeDrawtext: backslash first,
-    then colon, then single-quote (order is critical to avoid double-escaping).
+    """Escape text for an UNQUOTED drawtext text= value in a -vf filtergraph.
+
+    Two parsers read it, so two levels. The option parser first: backslash, quote, colon. Then the
+    graph parser: backslash, quote, and what would end a filter or a link. Measured against
+    textfile= on real ffmpeg (vivijure-cf#1218). A title inside single quotes lost its apostrophe, and
+    one with an apostrophe and a colon failed the render. Callers also set expansion=none, or a %{...}
+    in a title would be run.
     """
-    return (text
-            .replace("\\", "\\\\")
-            .replace(":", "\\:")
-            .replace("'", "\\'"))
+    option = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    graph = option.replace("\\", "\\\\").replace("'", "\\'")
+    for char in ",;[]":
+        graph = graph.replace(char, "\\" + char)
+    return graph
 
 
 def _title_card_filter(text, *, subtitle=None, font="DejaVu Sans",
@@ -1065,14 +1070,14 @@ def _title_card_filter(text, *, subtitle=None, font="DejaVu Sans",
         return f"((h-{len(lines) * line_h})/2+{i * line_h})"
 
     parts = [
-        f"drawtext=font='{font}':text='{_escape_drawtext(line)}':fontsize={size}"
+        f"drawtext=font='{font}':text={_escape_drawtext(line)}:expansion=none:fontsize={size}"
         f":fontcolor={color}:x=(w-text_w)/2:y={title_y(i)}"
         for i, line in enumerate(lines)
     ]
     if subtitle:
         sub_size = frame_text.fit_lines([subtitle], round(sub_font_size * scale), width)
         parts.append(
-            f"drawtext=font='{font}':text='{_escape_drawtext(subtitle)}'"
+            f"drawtext=font='{font}':text={_escape_drawtext(subtitle)}:expansion=none"
             f":fontsize={sub_size}:fontcolor={color}"
             f":x=(w-text_w)/2:y=(h/2+{gap})"
         )
@@ -1099,7 +1104,7 @@ def _credits_card_filter(lines, duration, *, font="DejaVu Sans",
         # t=dur -> y_0 = -total_h       (block ends above the frame)
         y_expr = f"h-(t/{duration:.3f})*(h+{total_h})+{i * line_height}"
         filters.append(
-            f"drawtext=font='{font}':text='{t}':fontsize={size}"
+            f"drawtext=font='{font}':text={t}:expansion=none:fontsize={size}"
             f":fontcolor={color}:x=(w-text_w)/2:y=({y_expr})"
         )
     return ",".join(filters)

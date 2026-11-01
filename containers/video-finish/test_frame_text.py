@@ -10,14 +10,14 @@ import sys
 import frame_text as ft
 
 # The filters as they were before cf#1111, written out. Landscape must keep producing these bytes.
-OLD_TITLE = ("drawtext=font='DejaVu Sans':text='My Film':fontsize=80:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2")
+OLD_TITLE = ("drawtext=font='DejaVu Sans':text=My Film:expansion=none:fontsize=80:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2")
 OLD_TITLE_SUB = (
-    "drawtext=font='DejaVu Sans':text='My Film':fontsize=80:fontcolor=white:x=(w-text_w)/2:y=(h/2-text_h-16)"
-    ",drawtext=font='DejaVu Sans':text='A Sub':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h/2+16)"
+    "drawtext=font='DejaVu Sans':text=My Film:expansion=none:fontsize=80:fontcolor=white:x=(w-text_w)/2:y=(h/2-text_h-16)"
+    ",drawtext=font='DejaVu Sans':text=A Sub:expansion=none:fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h/2+16)"
 )
 OLD_CREDITS = (
-    "drawtext=font='DejaVu Sans':text='One':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-(t/8.000)*(h+136)+0)"
-    ",drawtext=font='DejaVu Sans':text='Two':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-(t/8.000)*(h+136)+68)"
+    "drawtext=font='DejaVu Sans':text=One:expansion=none:fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-(t/8.000)*(h+136)+0)"
+    ",drawtext=font='DejaVu Sans':text=Two:expansion=none:fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-(t/8.000)*(h+136)+68)"
 )
 OLD_CAPTION_STYLE = (
     "FontName=DejaVu Sans,FontSize=28,PrimaryColour=&H00FFFFFF,Alignment=2,MarginV=36,"
@@ -106,6 +106,23 @@ def main():
         wrapped = app._title_card_filter(long_title, width=720, height=1280)
         check("a wrapped title draws one segment per line", wrapped.count("drawtext=") > 1, wrapped.count("drawtext="))
         check("a wrapped title has no overlapping lines", "y=((h-" in wrapped)
+
+        # vivijure-cf#1218: a real render against textfile= is in test_local_frame_text.py. These pin its results.
+        e = app._escape_drawtext
+        check("an apostrophe goes through both parsers", e("Two O'Clock") == "Two O\\\\\\'Clock", e("Two O'Clock"))
+        check("a colon goes through both parsers", e("a:b") == "a\\\\:b", e("a:b"))
+        check("a backslash goes through both parsers", e("a\\b") == "a\\\\\\\\b", e("a\\b"))
+        for char in ",;[]":
+            check(f"graph character {char} is escaped", e(f"a{char}b") == f"a\\{char}b", e(f"a{char}b"))
+        plain = app._title_card_filter("Two O'Clock", width=1920, height=1080)
+        check("a title is not in quotes", "text='" not in plain, plain)
+        check("a title is not expanded", "expansion=none" in plain, plain)
+        credits_filter = app._credits_card_filter(["Mara's"], 4.0)
+        check("a credit is not in quotes", "text='" not in credits_filter, credits_filter)
+        check("a credit is not expanded", "expansion=none" in credits_filter, credits_filter)
+        subtitled = app._title_card_filter("A", subtitle="B's", width=1920, height=1080)
+        check("a subtitle is not in quotes", subtitled.count("text='") == 0, subtitled)
+        check("a subtitle is not expanded", subtitled.count("expansion=none") == 2, subtitled)
 
     print(f"checks={checks} failed={len(failures)}")
     return 1 if failures else 0

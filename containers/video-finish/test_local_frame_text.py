@@ -22,6 +22,36 @@ DIALOGUE = "I never told anyone this. The night we met, I almost didn't come."
 FONT = os.environ.get("FRAME_TEXT_FONT")
 
 
+HARD_TITLES = [
+    "Two O'Clock", "Reel: one", "a\\b", "100% done", "It's 2:00 o'clock", "a, b; [c] = d",
+    "'quoted' \"double\"", "%{pts}", "back\\'slash:mix", "trail\\", "x=1:y=2", "Mara's \\: [cut], 50%; don't",
+]
+
+
+def escape_matches_textfile(out_dir):
+    """vivijure-cf#1218: the same text drawn through _escape_drawtext and through textfile= has the same pixels."""
+    font = f"fontfile='{FONT}'" if FONT else "font='DejaVu Sans'"
+    bad = []
+    for i, title in enumerate(HARD_TITLES):
+        source = os.path.join(out_dir, f"title_{i}.txt")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(title)
+        frames = []
+        for name, arg in (("a", f"textfile={source}"), ("b", f"text={app._escape_drawtext(title)}")):
+            out = os.path.join(out_dir, f"title_{i}_{name}.png")
+            vf = f"drawtext={font}:fontcolor=white:fontsize=40:x=20:y=20:expansion=none:{arg}"
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=black:s=1400x120:d=0.1",
+                 "-frames:v", "1", "-vf", vf, out],
+                check=True,
+            )
+            frames.append(Image.open(out).convert("RGB").tobytes())
+        if frames[0] != frames[1]:
+            bad.append(title)
+    print(f"escape against textfile: {len(HARD_TITLES)} titles, bad={bad}")
+    return bad
+
+
 def render(vf, width, height, out):
     if FONT:
         vf = vf.replace("font='DejaVu Sans'", f"fontfile='{FONT}'")
@@ -38,6 +68,8 @@ def render(vf, width, height, out):
 
 def main():
     out_dir = sys.argv[1] if len(sys.argv) > 1 else tempfile.mkdtemp(prefix="frametext-")
+    if escape_matches_textfile(out_dir):
+        return 1
     failures = []
 
     def check(name, ok, got):
