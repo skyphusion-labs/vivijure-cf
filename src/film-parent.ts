@@ -221,6 +221,11 @@ export function planPartRanges(total: number, partSize: unknown, breaks: unknown
   return ranges;
 }
 
+/** The name buildParentDoc gives a part's project: the film's tag, then the part. */
+export function isParentPartProject(project: string): boolean {
+  return /_[0-9a-f]{8}_p\d{2,}$/.test(project);
+}
+
 export function keyframeBackendForStyle(style: "photoreal" | "anime", explicit?: string): string {
   if (explicit) return explicit;
   return style === "anime" ? "cloud-keyframe" : "keyframe";
