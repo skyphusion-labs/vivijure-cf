@@ -48,6 +48,7 @@ function env() {
   };
 }
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as never;
+const PUBLIC = "11111111-1111-4111-8111-111111111111";
 const post = (path: string, body: unknown) => new Request(`https://s.example${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const row = (over: Record<string, unknown> = {}) => ({ id: 1, public_id: "r", job_id: "film-1", project: "p", status: "FAILED", mode: "full", bundle_key: "bundles/p.tar.gz", quality_tier: "final", keyframes: [], render_overrides: null, ...over });
 const ORIGINAL = { project: "p", bundle_key: "bundles/p.tar.gz", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }], motion_backend: "talk", film_titles: { title: { text: "T" } }, audio_key: undefined, idempotency_key: "first" };
@@ -129,6 +130,37 @@ describe("cf#1177 a retry", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toMatch(/parts\/:n\/retry/);
     expect((await retry(e, { accept_rederive: true })).status).toBe(409);
+    expect(h.started).toEqual([]);
+  });
+
+  for (const route of ["regen-shot", "finalize", "animate-cloud", "animate-hybrid", "add-narration", "add-audio"]) {
+    it(`${route} refuses a part of a long film, and starts nothing`, async () => {
+      h.started = [];
+      rows.set("row", row({ project: "Long_3c5aae7e_p01", status: "COMPLETED", mode: "keyframes-only" }));
+      const res = await worker.fetch(post(`/api/storyboard/renders/${PUBLIC}/${route}`, { shotId: "shot_01", audioKey: "a", script: "x" }), env() as never, ctx);
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toMatch(/part of a long film/);
+      expect(h.started).toEqual([]);
+    });
+
+    it(`${route} still reaches its own checks on an ordinary render`, async () => {
+      rows.set("row", row({ project: "Ordinary", status: "COMPLETED", mode: "keyframes-only" }));
+      const res = await worker.fetch(post(`/api/storyboard/renders/${PUBLIC}/${route}`, { shotId: "shot_01", audioKey: "a", script: "x" }), env() as never, ctx);
+      expect(res.status, "the control: the guard refuses only a part").not.toBe(409);
+    });
+  }
+
+  it("finish-retry refuses a part, by its job", async () => {
+    const e = env();
+    e.store.set("renders/film-p/film-job.json", JSON.stringify({ project: "Long_3c5aae7e_p01" }));
+    const res = await worker.fetch(post("/api/render/film/film-p/finish-retry", {}), e as never, ctx);
+    expect(res.status).toBe(409);
+  });
+
+  it("render-from-keyframes refuses a part's project", async () => {
+    h.started = [];
+    const res = await worker.fetch(post("/api/storyboard/render-from-keyframes", { bundleKey: "bundles/Long_3c5aae7e_p01-0123456789abcdef.tar.gz", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }] }), env() as never, ctx);
+    expect(res.status).toBe(409);
     expect(h.started).toEqual([]);
   });
 
