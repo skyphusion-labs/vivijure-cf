@@ -107,7 +107,6 @@ const MANIFEST: ModuleManifest = {
       "The model has image, video, and audio reference roles. This door does not send them",
       "Video-input price is not listed. This door does not send a video.",
       "Prompt up to 7000 characters.",
-      "One film, no scatter",
     ],
   },
   usage: {

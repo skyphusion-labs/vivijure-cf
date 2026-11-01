@@ -92,7 +92,7 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "5, 10, 15, or 20 second clips",
       "Same voice lock on every shot",
-      "Talking films stay on one film (no scatter) so the speaker can stay consistent",
+      "Every shot gets the same voice description, so the speaker can stay close",
       "First and last stills hold the cut",
       "Faces drift",
       "Cannot lock the Cast voice sample yet. Same description, not the same take.",

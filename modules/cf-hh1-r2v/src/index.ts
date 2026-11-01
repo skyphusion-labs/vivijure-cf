@@ -95,7 +95,6 @@ const MANIFEST: ModuleManifest = {
       "3-15 second clips",
       "Silent motion",
       "Holds a look from reference stills",
-      "One film, no scatter (look lock)",
       "No spoken lines. A board with a line needs a talking door",
     ],
   },

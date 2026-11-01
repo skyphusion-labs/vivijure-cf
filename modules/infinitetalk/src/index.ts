@@ -61,7 +61,6 @@ const MANIFEST: ModuleManifest = {
       "Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet.",
       "Clip length follows that audio.",
       "480p only (832x464). The provider ignores any other resolution request.",
-      "One film, no scatter",
     ],
   },
   usage: {
