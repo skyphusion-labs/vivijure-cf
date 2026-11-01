@@ -39,6 +39,7 @@
     <section id="films-home" class="planner-stage">
       <h1>Films</h1>
       <p class="lede">Long films, built as parts and joined at the end.</p>
+      <p><a class="planner-primary films-link" href="films?new=1">Start a film</a></p>
       <div id="films-all-wrap" hidden>
         <h2 class="planner-stage-title">all films</h2>
         <p id="films-all-empty" class="films-muted" hidden>No films on this studio yet.</p>
@@ -57,6 +58,59 @@
         <button type="submit" class="planner-secondary">Open</button>
       </form>
     </section>
+
+    <section id="films-new" class="planner-stage" hidden>
+      <p><a href="films">All films</a></p>
+      <h1>Start a film</h1>
+      <label class="planner-field"><span>name</span>
+        <input id="new-project" class="planner-input" type="text" maxlength="48" autocomplete="off" spellcheck="false" /></label>
+      <label class="planner-field"><span>master board from a project</span>
+        <select id="new-from-project"></select></label>
+      <label class="planner-field"><span>master board, as JSON</span>
+        <textarea id="new-board" rows="6" spellcheck="false"></textarea></label>
+      <p id="new-facts" class="films-muted"></p>
+      <div id="new-cast"></div>
+      <label class="planner-field"><span>shots in each part</span>
+        <input id="new-part-size" class="planner-input" type="number" inputmode="numeric" min="1" /></label>
+      <label class="planner-field"><span>or breaks, as shot counts where a part ends (30,62)</span>
+        <input id="new-breaks" class="planner-input" type="text" inputmode="numeric" autocomplete="off" /></label>
+      <label class="planner-field"><span>look</span>
+        <select id="new-look"><option value="photoreal">Photoreal</option><option value="anime">Anime</option></select></label>
+      <label class="planner-field"><span>motion door</span>
+        <select id="new-door"></select></label>
+      <label class="planner-field"><span>quality</span>
+        <select id="new-tier"></select></label>
+      <label class="planner-field"><span>frame (every part must match)</span>
+        <select id="new-frame"><option value="1920x1080">1920 x 1080</option><option value="1280x720">1280 x 720</option><option value="1080x1920">1080 x 1920</option></select></label>
+      <label class="planner-field"><span>your estimate per shot, in dollars</span>
+        <input id="new-per-shot" class="planner-input" type="number" inputmode="decimal" step="any" min="0" /></label>
+      <p id="new-per-shot-hint" class="films-muted"></p>
+      <label class="planner-field"><span>spend ceiling, in dollars</span>
+        <input id="new-ceiling" class="planner-input" type="number" inputmode="decimal" step="any" min="0" /></label>
+      <label class="films-check"><input id="new-pause" type="checkbox" checked /> Stop after the first part, so I can watch it</label>
+      <details>
+        <summary>Per-part changes</summary>
+        <label class="planner-field"><span>part_overrides, as JSON</span>
+          <textarea id="new-overrides" rows="3" spellcheck="false" placeholder='[{"index":3,"cast_loras":{},"character_refs":{}}]'></textarea></label>
+      </details>
+      <p class="films-muted">A music bed on the joined film is not built yet.</p>
+      <p id="new-problems" class="films-error" role="status"></p>
+      <p id="new-note" class="films-note" role="status"></p>
+      <button id="new-start" type="button" class="planner-primary" disabled>Start</button>
+    </section>
+
+    <dialog id="new-confirm" class="planner-spend-confirm">
+      <form method="dialog">
+        <h3>Start this film?</h3>
+        <p id="new-confirm-what"></p>
+        <p id="new-confirm-cost"></p>
+        <p id="new-confirm-hold"></p>
+        <div class="planner-actions">
+          <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+          <button type="submit" value="go" class="planner-primary">Start the film</button>
+        </div>
+      </form>
+    </dialog>
 
     <p id="film-load-note" class="films-note" role="status"></p>
 
@@ -120,5 +174,6 @@
   <script src="studio-chrome.js"></script>
   <script src="topbar.js"></script>
   <script src="films.js"></script>
+  <script src="films-new.js"></script>
 </body>
 </html>

@@ -474,12 +474,12 @@ const PUBLISHED = {
   // purpose until vivijure-mcp 2.0.0 dropped them. `curatedCovered` is UNCHANGED across that
   // release, and it should be, because a tool covering no route never counted toward it.
   curatedCovered: 67, // route entries reached by a CURATED tool
-  panelReachable: 66, // finish-retry added (core#377); cast page dropped the voice-sample calls and added hear-one-line; the 4 demo routes are gone
+  panelReachable: 67, // finish-retry added (core#377); cast page dropped the voice-sample calls and added hear-one-line; the 4 demo routes are gone
   // The three below lived ONLY in body prose until cf#423, and the suite was fully green with the
   // doc saying 29 while the code produced 30. That made them unassertABLE rather than merely
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
-  panelUncurated: 13, // voice-sample panel calls left; hear-one-line and two film board routes are uncurated
-  panelUncuratedPathOnly: 17, // method-aware 13 + the 4 uncurated path-only false positives
+  panelUncurated: 14, // voice-sample panel calls left; hear-one-line and three film routes are uncurated
+  panelUncuratedPathOnly: 18, // method-aware 14 + the 4 uncurated path-only false positives
   hatchReachable: 95, // reachable via studio_request = routes minus the raw-body class
 };
 
