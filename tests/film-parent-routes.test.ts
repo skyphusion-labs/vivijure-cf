@@ -112,6 +112,10 @@ const ctx = { waitUntil: (p: Promise<unknown>) => waits.push(p), passThroughOnEx
 const settle = async () => {
   while (waits.length) await waits.shift();
 };
+const tick = async (e: unknown) => {
+  await worker.scheduled({} as never, e as never, ctx);
+  await settle();
+};
 
 const BODY = {
   project: "Long",
@@ -139,7 +143,7 @@ describe("POST /api/film", () => {
     const json = (await res.json()) as { film_id: string; parts: number };
     expect(json.parts).toBe(2);
     expect(h.started, "create only writes: a submit must not run where it can be cut off").toHaveLength(0);
-    await worker.fetch(new Request(`https://studio.example/api/film/${json.film_id}`), e as never, ctx);
+    await tick(e);
     expect(h.started).toHaveLength(1);
     const tag = json.film_id.slice("feature-".length, "feature-".length + 8);
     expect(h.started[0].project).toBe(`Long_${tag}_p00`);
@@ -199,6 +203,7 @@ describe("the router's spend checks reach a part", () => {
     const e = env();
     const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
     (e as Record<string, unknown>).SPEND_RATE_LIMITER = limiter(false);
+    await tick(e);
     const view = (await (await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx)).json()) as { stop_reason: string; parts: Array<{ status: string }> };
     expect(h.started).toEqual([]);
     expect(view.stop_reason).toMatch(/rate limited/);
@@ -212,8 +217,9 @@ describe("the storage quota reaches a part", () => {
     const e = env();
     const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
     h.quotaFull = true;
-    const read = await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx);
+    await tick(e);
     h.quotaFull = false;
+    const read = await worker.fetch(new Request(`https://studio.example/api/film/${created.film_id}`), e as never, ctx);
     const view = (await read.json()) as { stop_reason: string; parts: Array<{ status: string }> };
     expect(h.started).toEqual([]);
     expect(view.stop_reason).toBe("storage is full");
@@ -308,6 +314,216 @@ describe("GET /api/film", () => {
     await insertParent(e as never, buildParentDoc("feature-b", BODY, 2));
     await insertParent(e as never, buildParentDoc("feature-c", BODY, 3));
     expect((await listParents(e as never, 2)).map((d) => d.film_id)).toEqual(["feature-c", "feature-b"]);
+  });
+});
+
+describe("only the cron submits", () => {
+  const read = (e: unknown, id: string, path = "") => worker.fetch(new Request(`https://studio.example/api/film/${id}${path}`), e as never, ctx);
+
+  it("a GET starts no film, calls no door, and writes nothing", async () => {
+    h.started = [];
+    h.bundled = [];
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    const before = [...e.bucket.store.entries()].map(([k, v]) => [k, v.etag]);
+    const puts = vi.spyOn(e.bucket, "put");
+    for (let i = 0; i < 3; i++) expect((await read(e, created.film_id)).status).toBe(200);
+    expect((await read(e, created.film_id, "/parts/0/shots")).status).toBe(200);
+    expect((await worker.fetch(new Request("https://studio.example/api/film"), e as never, ctx)).status).toBe(200);
+    expect(h.started).toEqual([]);
+    expect(puts).not.toHaveBeenCalled();
+    expect([...e.bucket.store.entries()].map(([k, v]) => [k, v.etag])).toEqual(before);
+    await tick(e);
+    expect(h.started, "the positive control: the same film starts on a tick").toHaveLength(1);
+  });
+
+  it("a GET on a running part does not advance its film", async () => {
+    const core = await import("@skyphusion-labs/vivijure-core/film-orchestrator");
+    const e = env();
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    await tick(e);
+    h.jobs.set("film-1", { phase: "clips" });
+    vi.mocked(core.advanceFilmJob).mockClear();
+    await read(e, created.film_id);
+    expect(core.advanceFilmJob).not.toHaveBeenCalled();
+  });
+
+  it("shows live progress from the job docs, and does not store it", async () => {
+    const e = env();
+    h.started = [];
+    const created = (await (await worker.fetch(post("/api/film", BODY), e as never, ctx)).json()) as { film_id: string };
+    await tick(e);
+    const filmId = "film-" + h.started.length;
+    await e.bucket.put(`renders/${filmId}/film-job.json`, JSON.stringify({ phase: "clips", clip_job_id: "clips-z" }));
+    await e.bucket.put("renders/clips-z/clips-job.json", JSON.stringify({ shots: [{ shot_id: "shot_01", status: "done" }, { shot_id: "shot_02", status: "pending" }] }));
+    const stored = () => e.bucket.store.get(`film-parents/${created.film_id}.json`)!.etag;
+    const etag = stored();
+    const view = (await (await read(e, created.film_id)).json()) as { parts: Array<{ phase: string; shots_done: number; status: string }> };
+    expect(view.parts[0]).toMatchObject({ phase: "clips", shots_done: 1, status: "running" });
+    expect(stored()).toBe(etag);
+  });
+
+  it("a retake, a retry and a resume write state and start nothing until the tick", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-w", BODY, 0);
+    doc.parts[0].status = "failed";
+    doc.parts[1].status = "pending";
+    await insertParent(e as never, doc);
+    h.started = [];
+    const res = await worker.fetch(post("/api/film/feature-w/parts/0/retry", { shots: "failed" }), e as never, ctx);
+    expect(((await res.json()) as { parts: Array<{ status: string }> }).parts[0].status).toBe("pending");
+    expect(h.started).toEqual([]);
+    await tick(e);
+    expect(h.started).toHaveLength(1);
+  });
+
+  it("lists shots by the board's own ids, with stored stills, clips and lines", async () => {
+    const e = env();
+    h.started = [];
+    const doc = buildParentDoc("feature-s", { ...BODY, dialogue_lines: [{ shot_id: "s2", text: "hi" }] }, 0);
+    Object.assign(doc.parts[0], { status: "running", child_film_id: "film-s" });
+    await insertParent(e as never, doc);
+    const created = { film_id: "feature-s" };
+    await e.bucket.put("renders/film-s/film-job.json", JSON.stringify({ phase: "clips", clip_job_id: "clips-y", keyframes: [{ shot_id: "shot_02", keyframe_key: "kf2" }] }));
+    await e.bucket.put("renders/clips-y/clips-job.json", JSON.stringify({ shots: [{ shot_id: "shot_02", status: "done", clip_key: "c2", delivered_frames: 48, delivered_fps: 24, attempts: 1 }] }));
+    const rows = ((await (await read(e, created.film_id, "/parts/0/shots")).json()) as { shots: Array<Record<string, unknown>> }).shots;
+    expect(rows[0]).toMatchObject({ shot_id: "s1", index: 0, status: "pending", clip_key: null, line: null, retake_status: null });
+    expect(rows[1]).toMatchObject({ shot_id: "s2", index: 1, status: "done", seconds: 4, delivered_seconds: 2, keyframe_key: "kf2", clip_key: "c2", prompt: "p2", line: "hi", attempts: 1 });
+    expect((await read(e, created.film_id, "/parts/9/shots")).status).toBe(404);
+  });
+});
+
+describe("a film the cron cannot see", () => {
+  const marker = (id: string) => `film-parents/active/${id}`;
+  async function stopped(e: ReturnType<typeof env>, id = "feature-w") {
+    const doc = buildParentDoc(id, BODY, 0);
+    doc.parts[0].status = "failed";
+    doc.phase = "stopped";
+    await insertParent(e as never, doc);
+    await e.bucket.delete(marker(id));
+    h.started = [];
+  }
+
+  it("a marker write that throws leaves the doc unchanged, so the POST can be sent again", async () => {
+    const e = env();
+    await stopped(e);
+    const put = e.bucket.put.bind(e.bucket);
+    const failing = vi.spyOn(e.bucket, "put").mockImplementation(async (k: string, b: string, o?: Parameters<typeof e.bucket.put>[2]) => {
+      if (k.startsWith("film-parents/active/")) throw new Error("R2 500");
+      return put(k, b, o);
+    });
+    await expect(worker.fetch(post("/api/film/feature-w/parts/0/retry", { shots: "failed" }), e as never, ctx)).rejects.toThrow().catch(() => {});
+    failing.mockRestore();
+    const res = await worker.fetch(post("/api/film/feature-w/parts/0/retry", { shots: "failed" }), e as never, ctx);
+    expect(res.status, "the doc did not move, so it is still failed").toBe(200);
+    await tick(e);
+    expect(h.started).toHaveLength(1);
+  });
+
+  it("a late delete is put back by the reconcile, and the film starts", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-d", BODY, 0);
+    await insertParent(e as never, doc);
+    await e.bucket.delete(marker("feature-d"));
+    h.started = [];
+    const clock = vi.spyOn(Date, "now").mockReturnValue(7 * 60_000);
+    await tick(e);
+    expect(h.started, "minute 7 does not reconcile, and there is no marker").toEqual([]);
+    clock.mockReturnValue(10 * 60_000);
+    await tick(e);
+    clock.mockRestore();
+    expect(e.bucket.store.has(marker("feature-d"))).toBe(true);
+    expect(h.started, "the same pass that restored it ticks it").toHaveLength(1);
+  });
+
+  it("the reconcile does not put back a finished film", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-f", BODY, 0);
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    await e.bucket.delete(marker("feature-f"));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10 * 60_000);
+    const log = vi.spyOn(console, "log");
+    await tick(e);
+    const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("film.cron_pass")) as string;
+    log.mockRestore();
+    clock.mockRestore();
+    expect(e.bucket.store.has(marker("feature-f"))).toBe(false);
+    expect(JSON.parse(line).restored, "never restored, not restored then cleared").toBe(0);
+  });
+
+  it("resume puts a lost marker back on a film that can act", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-r", BODY, 0));
+    await e.bucket.delete(marker("feature-r"));
+    const res = await worker.fetch(post("/api/film/feature-r/resume", {}), e as never, ctx);
+    expect(res.status).toBe(200);
+    expect(e.bucket.store.has(marker("feature-r"))).toBe(true);
+  });
+
+  it("the sweep keeps a marker when a newer doc can act", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-g", BODY, 0);
+    doc.phase = "done";
+    await insertParent(e as never, doc);
+    await e.bucket.put(marker("feature-g"), "");
+    const get = e.bucket.get.bind(e.bucket);
+    let reads = 0;
+    const spy = vi.spyOn(e.bucket, "get").mockImplementation(async (k: string) => {
+      if (k === "film-parents/feature-g.json" && ++reads === 2) {
+        const fresh = buildParentDoc("feature-g", BODY, 0);
+        e.bucket.store.get(k)!.body = JSON.stringify(fresh);
+      }
+      return get(k);
+    });
+    await tick(e);
+    spy.mockRestore();
+    expect(e.bucket.store.has(marker("feature-g"))).toBe(true);
+  });
+});
+
+describe("a cron pass starts somewhere else each minute", () => {
+  it("so the same film does not always go first", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-1", { ...BODY, project: "One" }, 0));
+    await insertParent(e as never, buildParentDoc("feature-2", { ...BODY, project: "Two" }, 0));
+    const first = async (minute: number) => {
+      const copy = env();
+      for (const [k, v] of e.bucket.store) copy.bucket.store.set(k, { ...v });
+      h.started = [];
+      const clock = vi.spyOn(Date, "now").mockReturnValue(minute * 60_000 + 1);
+      await tick(copy);
+      clock.mockRestore();
+      return String(h.started[0]?.project);
+    };
+    expect([(await first(1)).slice(0, 3), (await first(2)).slice(0, 3)].sort()).toEqual(["One", "Two"]);
+  });
+});
+
+describe("the cron heartbeat", () => {
+  const read = (e: unknown) => worker.fetch(new Request("https://studio.example/api/film/feature-h"), e as never, ctx);
+  it("reads stale until the cron runs, fresh after, and stale once it stops", async () => {
+    const e = env();
+    await insertParent(e as never, buildParentDoc("feature-h", BODY, 0));
+    let view = (await (await read(e)).json()) as { cron: { last_tick_at: number | null; stale: boolean } };
+    expect(view.cron).toEqual({ last_tick_at: null, stale: true });
+    await tick(e);
+    view = (await (await read(e)).json()) as typeof view;
+    expect(view.cron.stale).toBe(false);
+    expect(view.cron.last_tick_at).toBeGreaterThan(0);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 4 * 60_000);
+    view = (await (await read(e)).json()) as typeof view;
+    clock.mockRestore();
+    expect(view.cron.stale).toBe(true);
+  });
+  it("logs each pass", async () => {
+    const e = env();
+    const log = vi.spyOn(console, "log");
+    await tick(e);
+    const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("film.cron_pass"));
+    log.mockRestore();
+    expect(line).toBeDefined();
+    expect(Object.keys(JSON.parse(line as string)).sort()).toEqual(["active", "ev", "ms", "reached", "restored"]);
   });
 });
 
@@ -415,6 +631,8 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     const e = await doneFilm();
     const res = await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { line: "new" }), e as never, ctx);
     expect(res.status).toBe(200);
+    expect(h.fromKeyframes, "the route writes state, and the tick submits").toEqual([]);
+    await tick(e);
     expect(h.started, "no keyframe stage").toEqual([]);
     expect(h.bundled).toEqual([]);
     expect(h.fromKeyframes).toHaveLength(1);
@@ -446,6 +664,7 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
       }),
     };
     await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    await tick(e);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0]).toContain("film-retake");
     expect(rows[0]).toContain("standard");
@@ -458,6 +677,7 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     stored!.doc.spend_ceiling_usd = 0.5;
     await saveParent(e as never, stored!);
     await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    await tick(e);
     expect(h.fromKeyframes, "over the ceiling").toEqual([]);
     const res = await worker.fetch(post("/api/film/feature-x/parts/0/retake/cancel", {}), e as never, ctx);
     expect(res.status).toBe(200);
@@ -475,7 +695,9 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
   it("a job with no stills fails the part and buys nothing", async () => {
     const e = await doneFilm();
     h.jobs.set("film-old", { ...OLD_JOB, keyframes: undefined });
-    const res = await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    await tick(e);
+    const res = await worker.fetch(new Request("https://studio.example/api/film/feature-x"), e as never, ctx);
     const view = (await res.json()) as { parts: Array<{ status: string; error: string }> };
     expect(view.parts[0].status).toBe("failed");
     expect(view.parts[0].error).toMatch(/no stills/);

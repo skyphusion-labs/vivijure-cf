@@ -3,7 +3,8 @@
 import { FINISH_AFFINITY_HEADER } from "./video-finish-binding";
 import { presignR2Get, presignR2Put, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { mediaFinishHeaders, videoFinishFetch } from "@skyphusion-labs/vivijure-core";
-import { JoinTransient, normalizeParentDoc } from "./film-parent";
+import { JoinTransient, normalizeParentDoc, parentCanAct, type PartClipJob, type PartJob } from "./film-parent";
+import { clipJobDocKey, filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
 import type { StudioEnv } from "./orchestrator-env";
 import {
   FILM_PARENT_ACTIVE_PREFIX,
@@ -53,17 +54,17 @@ export async function insertParent(env: StudioEnv, doc: ParentDoc): Promise<bool
 /** Writes if nobody wrote since `loaded` was read, and moves `loaded.etag` on. A parent that can act
  *  again keeps its cron marker; one that cannot drops it. Retry puts it back. */
 export async function saveParent(env: StudioEnv, loaded: LoadedParent): Promise<boolean> {
+  // Only the cron moves a film, so a missing marker strands it. The marker goes first when the new state can
+  // act: a stray marker costs one read a minute, and a lost one costs the film.
+  const canAct = parentCanAct(loaded.doc);
+  if (canAct) await env.R2_RENDERS.put(activeKey(loaded.doc.film_id), "");
   const written = await env.R2_RENDERS.put(docKey(loaded.doc.film_id), JSON.stringify(loaded.doc), {
     onlyIf: { etagMatches: loaded.etag },
     httpMetadata: { contentType: "application/json" },
   });
   if (!written) return false;
   loaded.etag = written.etag;
-  const { phase, parts } = loaded.doc;
-  const live = parts.some((p) => p.status === "running" || p.status === "submitting");
-  const idle = phase === "done" || phase === "failed" || (phase === "stopped" && !live);
-  if (idle) await env.R2_RENDERS.delete(activeKey(loaded.doc.film_id));
-  else await env.R2_RENDERS.put(activeKey(loaded.doc.film_id), "");
+  if (!canAct) await env.R2_RENDERS.delete(activeKey(loaded.doc.film_id));
   return true;
 }
 
@@ -93,8 +94,68 @@ export async function repairListRow(env: StudioEnv, doc: ParentDoc): Promise<voi
   if (!(await env.R2_RENDERS.head(key))) await env.R2_RENDERS.put(key, "");
 }
 
+async function readJson<T>(env: StudioEnv, key: string): Promise<T | null> {
+  const object = await env.R2_RENDERS.get(key);
+  return object ? ((await object.json()) as T) : null;
+}
+
+/** A part's film job and clip job, as stored. Reads only. */
+export async function readPartJobs(env: StudioEnv, filmId: string | null): Promise<{ job: PartJob | null; clipJob: PartClipJob | null }> {
+  if (!filmId) return { job: null, clipJob: null };
+  const job = await readJson<PartJob>(env, filmJobDocKey(filmId));
+  const clipJob = job?.clip_job_id ? await readJson<PartClipJob>(env, clipJobDocKey(job.clip_job_id)) : null;
+  return { job, clipJob };
+}
+
+/** Shows how far each running part has got, in memory only. Status moves only on a tick. A read that fails
+ *  leaves the last stored progress, because a status view should not fail on a progress detail. */
+export async function overlayLiveProgress(env: StudioEnv, doc: ParentDoc): Promise<void> {
+  await Promise.all(doc.parts.filter((p) => p.status === "running").map(async (part) => {
+    try {
+      const { job, clipJob } = await readPartJobs(env, part.child_film_id);
+      if (job?.phase) part.phase = job.phase;
+      if (clipJob) part.shots_done = clipJob.shots.filter((s) => s.status === "done").length;
+    } catch (e) {
+      console.warn(`film progress ${part.part_id}: ${String(e)}`);
+    }
+  }));
+}
+
 export async function clearActiveMarker(env: StudioEnv, id: string): Promise<void> {
   await env.R2_RENDERS.delete(activeKey(id));
+}
+
+/** Puts back the marker of any recent film that can act. This is what closes a late delete, a lost write and
+ *  any path nobody has thought of. */
+export async function reconcileActiveMarkers(env: StudioEnv, limit: number): Promise<number> {
+  let restored = 0;
+  for (const doc of await listParents(env, limit)) {
+    if (!parentCanAct(doc)) continue;
+    if (await env.R2_RENDERS.head(activeKey(doc.film_id))) continue;
+    await env.R2_RENDERS.put(activeKey(doc.film_id), "");
+    console.warn(`film parent ${doc.film_id}: its cron marker was missing, and is back`);
+    restored += 1;
+  }
+  return restored;
+}
+
+const HEARTBEAT_KEY = `${FILM_PARENT_PREFIX}cron-heartbeat.json`;
+
+/** Written at the start of a pass, so a pass that runs out of time still shows the cron is alive. */
+export async function writeCronHeartbeat(env: StudioEnv, at: number): Promise<void> {
+  await env.R2_RENDERS.put(HEARTBEAT_KEY, JSON.stringify({ at }));
+}
+
+/** When the cron last ran. Null when it never has, or the read failed: a status view must still answer. */
+export async function readCronHeartbeat(env: StudioEnv): Promise<number | null> {
+  try {
+    const object = await env.R2_RENDERS.get(HEARTBEAT_KEY);
+    if (!object) return null;
+    const at = ((await object.json()) as { at?: unknown }).at;
+    return typeof at === "number" ? at : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Calls to the studio's own doors, so a part goes through the same checks as any other film. */

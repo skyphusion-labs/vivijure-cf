@@ -162,6 +162,11 @@ enabled = true
 [triggers]
 crons = ["*/1 * * * *"]
 
+# The cron is the only thing that advances a long film, and it bundles and submits parts. Going over the limit
+# kills a pass mid-submit. 30 s is the default for a cron at this interval; this asks for double. Not measured.
+[limits]
+cpu_ms = 60000
+
 # AI Gateway (LLM storyboard planning + cloud-animate scoring). GATEWAY_ID + CF_AIG_TOKEN are
 # Cloudflare Secrets Store secrets (see the [[secrets_store_secrets]] blocks below), seeded once by
 # the operator; their values never touch CI/GitHub.

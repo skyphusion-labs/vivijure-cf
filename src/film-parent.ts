@@ -273,8 +273,14 @@ export function buildParentDoc(
     }
   }
   const tag = filmId.replace(/^feature-/, "").slice(0, 8);
-  const lines = body.dialogue_lines === undefined ? [] : body.dialogue_lines;
-  if (!Array.isArray(lines)) refuse("dialogue_lines must be an array");
+  const given = body.dialogue_lines === undefined ? [] : body.dialogue_lines;
+  if (!Array.isArray(given)) refuse("dialogue_lines must be an array");
+  // A board carries its lines on its scenes. Without them here a retake could not change a voice, and the
+  // parent could not tell a part that should have captions from one that need not.
+  const lines = given.length ? given : scenes.flatMap((s) => {
+    const text = (s.dialogue as { text?: unknown } | undefined)?.text;
+    return typeof text === "string" && text.trim() ? [{ shot_id: sceneId(s) as string, text: text.trim() }] : [];
+  });
   if (scenes.some((s) => { const n = sceneSeconds(s); return typeof n !== "number" || !(n > 0); })) {
     refuse("every scene needs seconds above 0: size and spend are worked out from them");
   }
@@ -678,7 +684,7 @@ async function mergeCaptions(doc: ParentDoc, offsets: number[], deps: ParentDeps
   if (missing.length) doc.degraded = `captions are missing for parts ${missing.join(", ")}`;
 }
 
-/** One tick. Safe to run at any time and from two places at once. */
+/** One tick, and the only thing that submits: the cron runs it. Safe to run twice at once. */
 export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: number): Promise<ParentDoc> {
   if (doc.phase === "done" || doc.phase === "failed") return doc;
   const before = JSON.stringify(doc);
@@ -744,6 +750,12 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
     if (!(await submitPart(doc, index, deps, now))) return doc;
   }
   if (!next.length && doc.phase === "running" && doc.stop_reason !== "spend ceiling") doc.stop_reason = null;
+  // A refusal in this tick stops the film in this tick, so a reader never sees a failed part in a running film.
+  const refused = doc.parts.find((p) => p.status === "failed");
+  if (refused) {
+    doc.stop_reason = `part ${refused.index} failed`;
+    doc.phase = "stopped";
+  }
   await saveIfMoved();
   return doc;
 }
@@ -877,8 +889,71 @@ export function retakeScenesAndLines<
   return { scenes, dialogue_lines: lines.length ? lines : undefined };
 }
 
+/** Whether a tick has anything to do for this film. The cron marker follows this. */
+export function parentCanAct(doc: ParentDoc): boolean {
+  if (doc.phase === "done" || doc.phase === "failed") return false;
+  if (doc.phase !== "stopped") return true;
+  return doc.parts.some((p) => p.status === "running" || p.status === "submitting");
+}
+
+/** Where a cron pass starts, so the same films do not always go first. */
+export function rotateFrom<T>(items: T[], start: number): T[] {
+  if (!items.length) return items;
+  const at = start % items.length;
+  return [...items.slice(at), ...items.slice(0, at)];
+}
+
+/** The stored shape of a part's jobs, as far as a status read needs it. */
+export interface PartJob {
+  phase?: string;
+  clip_job_id?: string;
+  keyframes?: Array<{ shot_id: string; keyframe_key: string }>;
+}
+export interface PartClipJob {
+  shots: Array<{
+    shot_id: string;
+    status?: string;
+    keyframe_key?: string;
+    clip_key?: string;
+    error?: string;
+    attempts?: number;
+    delivered_frames?: number;
+    delivered_fps?: number;
+  }>;
+}
+
+/** One part's shots, by master id. Local ids stop here: a caller only ever sees the board's own. */
+export function partShotRows(doc: ParentDoc, part: ParentPart, job: PartJob | null, clipJob: PartClipJob | null) {
+  const waiting = part.retake && (part.status === "pending" || part.status === "failed");
+  return doc.storyboard.scenes.slice(part.shot_from, part.shot_to + 1).map((scene, i) => {
+    const local = `shot_${String(i + 1).padStart(2, "0")}`;
+    const id = sceneId(scene) as string;
+    const clip = clipJob?.shots.find((s) => s.shot_id === local);
+    const frames = clip?.delivered_frames;
+    const fps = clip?.delivered_fps;
+    const line = doc.dialogue_lines.find((l) => l.shot_id === id);
+    const inRetake = part.retake?.shots.includes(local);
+    return {
+      shot_id: id,
+      index: part.shot_from + i,
+      status: clip?.status ?? "pending",
+      seconds: sceneSeconds(scene),
+      ...(frames && fps ? { delivered_seconds: Math.round((frames / fps) * 1000) / 1000 } : {}),
+      keyframe_key: job?.keyframes?.find((k) => k.shot_id === local)?.keyframe_key ?? clip?.keyframe_key ?? null,
+      clip_key: clip?.clip_key ?? null,
+      prompt: scene.prompt ?? null,
+      line: line?.text ?? null,
+      error: clip?.error ?? null,
+      ...(typeof clip?.attempts === "number" ? { attempts: clip.attempts } : {}),
+      retake_status: inRetake ? (waiting ? "waiting" : "running") : null,
+    };
+  });
+}
+
 /** Carries on past the hold after the first part, or joins again after a join that failed. */
 export function resumeParent(doc: ParentDoc): void {
+  // A film that can act has nothing to resume, but its cron marker may be lost. Saving it puts that back.
+  if (parentCanAct(doc)) return;
   if (doc.phase === "failed" && doc.parts.every((p) => p.status === "done")) {
     doc.phase = "join";
     doc.finished_at = null;
@@ -971,6 +1046,8 @@ export function parentView(doc: ParentDoc, now: number) {
       cost_actual: null,
       output_key: p.output_key,
       error: p.error,
+      // Master ids waiting or in progress. A running part cannot have its retake cancelled.
+      retake_shots: p.retake ? Object.keys(p.retake.undo.prompts) : [],
     })),
     // Set only when a join finishes, so during a re-join this is still the film delivered last.
     output_key: doc.output_key,
