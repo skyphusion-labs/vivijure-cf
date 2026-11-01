@@ -5,7 +5,13 @@ import {
   keyframeBackendForStyle,
   MAX_PARTS,
   MAX_PARTS_IN_FLIGHT,
+  JoinTransient,
+  JOIN_MISSING_STREAK,
+  JOIN_TIMEOUT_MS,
   mergeSrt,
+  ONE_UPLOAD_BYTES,
+  requestFingerprint,
+  resumeParent,
   parentView,
   partInputs,
   planPartRanges,
@@ -32,6 +38,7 @@ function body(shots: number, over: Partial<CreateParentBody> = {}): CreateParent
     shared: { motion_backend: "infinitetalk", style: "photoreal", delivery_width: 1920, delivery_height: 1080 },
     spend_ceiling_usd: 1000,
     cost_usd_per_shot_est: 1,
+    pause_after_first_part: false,
     ...over,
   };
 }
@@ -43,7 +50,8 @@ function harness(doc: ParentDoc) {
     bundles: [] as Array<Record<string, unknown>>,
     starts: [] as Array<Record<string, unknown>>,
     children: new Map<string, ChildRead | null>(),
-    found: null as string | null,
+    held: null as string | null,
+    reloads: 0,
     joins: [] as string[][],
     join: { status: "pending" } as JoinRead,
     joinThrows: false,
@@ -55,6 +63,13 @@ function harness(doc: ParentDoc) {
       h.saves += 1;
       return h.saves !== h.loseSaveAt;
     },
+    async reload() {
+      h.reloads += 1;
+      return JSON.parse(JSON.stringify(doc));
+    },
+    async admitSubmit() {
+      return h.held;
+    },
     async bundle(args) {
       h.bundles.push(args);
       return `bundles/${String(args.storyboard.project)}.tar.gz`;
@@ -65,9 +80,6 @@ function harness(doc: ParentDoc) {
     },
     async readChild(id) {
       return h.children.has(id) ? (h.children.get(id) as ChildRead | null) : { phase: "clips", shots_done: 1, output_key: null, sidecar_key: null, error: null };
-    },
-    async findChild() {
-      return h.found;
     },
     async submitJoin(_d, keys) {
       if (h.joinThrows) throw new Error("door down");
@@ -140,7 +152,7 @@ describe("what a part submits", () => {
     const { submit, bundleArgs } = partInputs(doc, doc.parts[1]);
     expect((submit.scenes as Array<{ shot_id: string; prompt: string }>).map((s) => [s.shot_id, s.prompt])).toEqual([["shot_01", "p2"], ["shot_02", "p3"]]);
     expect(submit.dialogue_lines).toEqual([{ shot_id: "shot_01", text: "there" }]);
-    expect(bundleArgs.storyboard.projectName).toBe("Long_p01");
+    expect(bundleArgs.storyboard.projectName).toBe("Long_f_p01");
   });
   it("lets cast and door differ per part", () => {
     expect(partInputs(doc, doc.parts[1]).submit.cast_loras).toEqual({ A: "other" });
@@ -224,15 +236,17 @@ describe("the order of work", () => {
     expect(doc.parts[0].output_key).toBe("k1");
   });
 
-  it("a stale claim adopts the film it finds, and submits nothing new", async () => {
+  it("a stale claim never submits: it asks a person, naming the project", async () => {
     const { h, deps, doc } = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
     doc.parts[0].status = "submitting";
     doc.parts[0].claimed_at = 0;
-    h.found = "film-found";
     await advanceParent(doc, deps, STALE_CLAIM_MS);
     expect(h.starts).toHaveLength(0);
-    expect(doc.parts[0].child_film_id).toBe("film-found");
-    expect(doc.parts[0].status).toBe("running");
+    expect(doc.parts[0].status).toBe("failed");
+    expect(doc.parts[0].error).toMatch(/outcome unknown.*Long_f_p00.*twice/);
+    await advanceParent(doc, deps, STALE_CLAIM_MS + 1);
+    expect(doc.phase).toBe("stopped");
+    expect(h.starts).toHaveLength(0);
   });
 
   it("a fresh claim is left alone", async () => {
@@ -244,12 +258,81 @@ describe("the order of work", () => {
     expect(doc.parts[0].status).toBe("submitting");
   });
 
-  it("a stale claim with no film submits again", async () => {
-    const { h, deps, doc } = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
-    doc.parts[0].status = "submitting";
-    doc.parts[0].claimed_at = 0;
-    await advanceParent(doc, deps, STALE_CLAIM_MS);
+  it("a poll that writes during a submit does not lose the film id", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(4), 0));
+    h.loseSaveAt = 2; // The claim lands, then the write after the submit loses to another tick.
+    await advanceParent(doc, deps, 1);
+    expect(h.reloads).toBe(1);
     expect(h.starts).toHaveLength(1);
+    expect(doc.parts[0].child_film_id).toBe("film-1");
+    expect(doc.parts[0].status).toBe("running");
+  });
+
+  it("the key moves only on a deliberate retry", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
+    await advanceParent(doc, deps, 1);
+    expect(h.starts[0].idempotency_key).toBe("f-p00-g0");
+    h.children.set("film-1", { phase: "failed", shots_done: 0, output_key: null, sidecar_key: null, error: "x" });
+    await advanceParent(doc, deps, 2);
+    retryPart(doc, 0);
+    await advanceParent(doc, deps, 3);
+    expect(h.starts[1].idempotency_key).toBe("f-p00-g1");
+  });
+
+  it("holds a part when the router's checks refuse, and asks again without failing it", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(4), 0));
+    h.held = "daily spend ceiling reached";
+    await advanceParent(doc, deps, 1);
+    expect(h.starts).toHaveLength(0);
+    expect(h.bundles).toHaveLength(0);
+    expect(doc.parts[0].status).toBe("pending");
+    expect(doc.parts[0].attempts).toBe(0);
+    expect(doc.stop_reason).toBe("daily spend ceiling reached");
+    expect(doc.phase).toBe("running");
+    h.held = null;
+    await advanceParent(doc, deps, 2);
+    expect(h.starts).toHaveLength(1);
+    expect(doc.stop_reason).toBeNull();
+  });
+
+  it("two films of one project never share a part project", () => {
+    const a = buildParentDoc("feature-aaaaaaaa11", body(2, { dialogue_lines: [] }), 0);
+    const b = buildParentDoc("feature-bbbbbbbb22", body(2, { dialogue_lines: [] }), 0);
+    expect(a.parts[0].project).toBe("Long_aaaaaaaa_p00");
+    expect(b.parts[0].project).toBe("Long_bbbbbbbb_p00");
+  });
+
+  it("holds after the first part by default, and resume releases it", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(4, { pause_after_first_part: undefined }), 0));
+    await advanceParent(doc, deps, 1);
+    h.children.set("film-1", done("k1"));
+    await advanceParent(doc, deps, 2);
+    expect(h.starts).toHaveLength(1);
+    expect(doc.phase).toBe("stopped");
+    expect(doc.stop_reason).toMatch(/watch it/);
+    await advanceParent(doc, deps, 3);
+    expect(h.starts).toHaveLength(1);
+    resumeParent(doc);
+    await advanceParent(doc, deps, 4);
+    expect(h.starts).toHaveLength(2);
+  });
+
+  it("a one-part film has no hold", async () => {
+    const { h, deps, doc } = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [], pause_after_first_part: undefined }), 0));
+    await advanceParent(doc, deps, 1);
+    h.children.set("film-1", done("k1"));
+    await advanceParent(doc, deps, 2);
+    expect(doc.phase).toBe("join");
+  });
+
+  it("refuses a board one upload cannot carry, before any spend", () => {
+    expect(() => buildParentDoc("f", body(2, { dialogue_lines: [] }), 0, () => ONE_UPLOAD_BYTES + 1)).toThrow(/one upload carries/);
+    expect(buildParentDoc("f", body(2, { dialogue_lines: [] }), 0, () => ONE_UPLOAD_BYTES).parts).toHaveLength(1);
+  });
+
+  it("the fingerprint ignores the key and sees the rest", () => {
+    expect(requestFingerprint(body(2, { idempotency_key: "a" }))).toBe(requestFingerprint(body(2, { idempotency_key: "b" })));
+    expect(requestFingerprint(body(2, { spend_ceiling_usd: 1 }))).not.toBe(requestFingerprint(body(2)));
   });
 
   it("a refused submit fails the part and stops the film on the next tick", async () => {
@@ -275,7 +358,7 @@ describe("retrying a part", () => {
     retryPart(doc, 1);
     await advanceParent(doc, deps, 4);
     expect(h.starts).toHaveLength(3);
-    expect(h.starts[2].project).toBe("Long_p01");
+    expect(h.starts[2].project).toBe("Long_f_p01");
     expect(h.starts[2].reuse_finished).toBe(true);
     expect(h.starts[2].idempotency_key).not.toBe(firstKey);
     expect(doc.parts[0].output_key).toBe("k1");
@@ -312,17 +395,67 @@ describe("the join", () => {
     expect(doc.degraded).toBe("no caption file: no part produced one");
   });
 
-  it("a lost join submits again, and stops after the limit", async () => {
+  it("one missing read is not a lost join: only a streak counts", async () => {
     const { h, deps, doc } = await allDone([null, null]);
     h.join = { status: "missing" };
+    for (let i = 1; i < JOIN_MISSING_STREAK; i++) await advanceParent(doc, deps, 3 + i);
+    expect(h.joins).toHaveLength(1);
+    h.join = { status: "pending" };
+    await advanceParent(doc, deps, 10);
+    h.join = { status: "missing" };
+    await advanceParent(doc, deps, 11);
+    expect(h.joins, "the streak still counts: pending does not reset it, and this read completes it").toHaveLength(2);
+  });
+
+  it("a full door does not use up a join attempt", async () => {
+    const t = harness(buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0));
+    await advanceParent(t.doc, t.deps, 1);
+    t.h.children.set("film-1", done("k1"));
+    t.deps.submitJoin = async () => { throw new JoinTransient("join refused (429): full"); };
+    for (let i = 0; i < 10; i++) await advanceParent(t.doc, t.deps, 2 + i);
+    expect(t.doc.phase).toBe("join");
+    expect(t.doc.join_attempts).toBe(0);
+    expect(t.doc.error).toMatch(/429/);
+  });
+
+  it("a real refusal stops after the limit, and resume joins again", async () => {
+    const { h, deps, doc } = await allDone([null, null]);
+    h.join = { status: "failed", error: "films[1] differs" };
     await advanceParent(doc, deps, 4);
-    expect(h.joins).toHaveLength(2);
     await advanceParent(doc, deps, 5);
-    expect(h.joins).toHaveLength(3);
     await advanceParent(doc, deps, 6);
-    expect(h.joins).toHaveLength(3);
     expect(doc.phase).toBe("failed");
-    expect(doc.error).toBe("the join job was lost");
+    expect(doc.error).toBe("films[1] differs");
+    const joined = h.joins.length;
+    await advanceParent(doc, deps, 7);
+    expect(h.joins).toHaveLength(joined);
+    resumeParent(doc);
+    h.join = { status: "pending" };
+    await advanceParent(doc, deps, 8);
+    expect(h.joins).toHaveLength(joined + 1);
+    expect(doc.phase).toBe("join");
+    expect(doc.parts.map((p) => p.output_key), "paid parts are kept").toEqual(["k1", "k2"]);
+  });
+
+  it("a join that never answers times out instead of waiting forever", async () => {
+    const { h, deps, doc } = await allDone([null, null]);
+    h.join = { status: "pending" };
+    await advanceParent(doc, deps, 3 + JOIN_TIMEOUT_MS);
+    expect(doc.join_started_at).toBe(3);
+    await advanceParent(doc, deps, 4 + JOIN_TIMEOUT_MS);
+    expect(h.joins).toHaveLength(2);
+  });
+
+  it("a token refusal on status is not read as pending", async () => {
+    const { h, deps, doc } = await allDone([null, null]);
+    h.join = { status: "error", error: "join status refused (401)" };
+    await advanceParent(doc, deps, 4);
+    expect(doc.join_job_id, "it moves on, and does not wait").toBe("join-job");
+    expect(h.joins).toHaveLength(2);
+  });
+
+  it("nothing to resume is refused", () => {
+    expect(() => resumeParent(buildParentDoc("f", body(4), 0))).toThrow(/nothing to resume/);
   });
 
   it("merges captions at the join's offsets, and names a part whose captions are missing", async () => {

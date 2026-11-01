@@ -7,13 +7,20 @@
 // The parent is a JSON document in R2, written with an etag match. Two ticks can run at once: a poll and
 // the cron. A submit spends money, so a tick writes a claim on the part first, and only the tick whose
 // claim landed submits. A crash between the submit and the next write leaves a stale claim. The next
-// tick looks for the child in that part's own project before it submits again.
+// tick cannot tell whether that submit went out, so it never submits again by itself: it marks the part
+// for a person, because a second submit can buy the part twice.
 
 export const MAX_SCENES_PER_PART = 40; // The largest film run so far has 20 shots. 40 is a limit, not a proof.
 export const MAX_PARTS = 64; // MAX_JOIN_FILMS in containers/video-finish/app.py.
 export const MAX_PARTS_IN_FLIGHT = 3;
 export const MAX_JOIN_ATTEMPTS = 3;
-export const STALE_CLAIM_MS = 120_000;
+// Longer than any Worker invocation can run, so a claim this old has no live owner.
+export const STALE_CLAIM_MS = 15 * 60_000;
+export const JOIN_MISSING_STREAK = 3;
+// As long as the join's presigned URLs last.
+export const JOIN_TIMEOUT_MS = 6 * 60 * 60_000;
+export const ONE_UPLOAD_BYTES = 5_363_466_240; // MAX_FILM_BYTES in containers/video-finish/app.py.
+const HOLD_AFTER_FIRST = "the first part is ready: watch it, then resume";
 export const FILM_PARENT_PREFIX = "film-parents/";
 export const FILM_PARENT_ACTIVE_PREFIX = "film-parents/active/";
 
@@ -67,7 +74,10 @@ export interface ParentPart {
   shots_total: number;
   cost_est: number;
   error: string | null;
+  /** Submits made, for the ceiling. */
   attempts: number;
+  /** Moves only on a deliberate retry, so a repeat of the same request carries the same key. */
+  generation: number;
   claimed_at: number | null;
   child_film_id: string | null;
   bundle_key: string | null;
@@ -94,6 +104,11 @@ export interface ParentDoc {
   parts: ParentPart[];
   join_job_id: string | null;
   join_attempts: number;
+  join_missing: number;
+  join_started_at: number | null;
+  pause_after_first_part: boolean;
+  first_part_released: boolean;
+  request_hash: string;
   output_key: string | null;
   sidecar_key: string | null;
   bytes: number | null;
@@ -114,6 +129,7 @@ export interface CreateParentBody {
   part_overrides?: unknown;
   spend_ceiling_usd?: unknown;
   cost_usd_per_shot_est?: unknown;
+  pause_after_first_part?: unknown;
 }
 
 export class ParentRefusal extends Error {}
@@ -164,7 +180,20 @@ export function keyframeBackendForStyle(style: "photoreal" | "anime", explicit?:
   return style === "anime" ? "cloud-keyframe" : "keyframe";
 }
 
-export function buildParentDoc(filmId: string, body: CreateParentBody, now: number): ParentDoc {
+/** The caller's whole request, so a repeat key with a different body is refused and not ignored. */
+export function requestFingerprint(body: CreateParentBody): string {
+  const { idempotency_key: _key, ...rest } = body as CreateParentBody & { idempotencyKey?: unknown };
+  delete (rest as { idempotencyKey?: unknown }).idempotencyKey;
+  return JSON.stringify(rest);
+}
+
+export function buildParentDoc(
+  filmId: string,
+  body: CreateParentBody,
+  now: number,
+  predictBytes?: (width: number, height: number, seconds: number) => number,
+  requestHash = "",
+): ParentDoc {
   const project = typeof body.project === "string" ? body.project.trim() : "";
   if (!/^[A-Za-z0-9_-]{1,48}$/.test(project)) refuse("project must be 1 to 48 letters, digits, _ or -");
   if (!isObject(body.storyboard) || !Array.isArray(body.storyboard.scenes) || !body.storyboard.scenes.length) {
@@ -189,6 +218,15 @@ export function buildParentDoc(filmId: string, body: CreateParentBody, now: numb
   }
   const scenes = body.storyboard.scenes as ParentScene[];
   const ranges = planPartRanges(scenes.length, body.part_size, body.breaks);
+  if (predictBytes) {
+    const seconds = scenes.reduce((n, s) => n + (typeof s.seconds === "number" ? s.seconds : 0), 0);
+    const bytes = predictBytes(shared.delivery_width as number, shared.delivery_height as number, seconds);
+    // Refused here, because after the spend the join would refuse it instead.
+    if (bytes > ONE_UPLOAD_BYTES) {
+      refuse(`this board predicts ${bytes} bytes at this frame, over the ${ONE_UPLOAD_BYTES} one upload carries`);
+    }
+  }
+  const tag = filmId.replace(/^feature-/, "").slice(0, 8);
   const lines = body.dialogue_lines === undefined ? [] : body.dialogue_lines;
   if (!Array.isArray(lines)) refuse("dialogue_lines must be an array");
   const known = new Set(scenes.map((s) => s.shot_id));
@@ -205,6 +243,11 @@ export function buildParentDoc(filmId: string, body: CreateParentBody, now: numb
   }
   return {
     version: 1,
+    request_hash: requestHash,
+    pause_after_first_part: body.pause_after_first_part !== false,
+    first_part_released: false,
+    join_missing: 0,
+    join_started_at: null,
     film_id: filmId,
     project,
     phase: "planned",
@@ -222,7 +265,8 @@ export function buildParentDoc(filmId: string, body: CreateParentBody, now: numb
     parts: ranges.map(([from, to], index) => ({
       part_id: `${filmId}-p${String(index).padStart(2, "0")}`,
       index,
-      project: `${project}_p${String(index).padStart(2, "0")}`,
+      // The film's own tag is in the name, or two films of one project would overwrite each other's clips.
+      project: `${project}_${tag}_p${String(index).padStart(2, "0")}`,
       shot_from: from,
       shot_to: to,
       status: "pending",
@@ -232,6 +276,7 @@ export function buildParentDoc(filmId: string, body: CreateParentBody, now: numb
       cost_est: Math.round((to - from + 1) * perShot * 100) / 100,
       error: null,
       attempts: 0,
+      generation: 0,
       claimed_at: null,
       child_film_id: null,
       bundle_key: null,
@@ -296,9 +341,9 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
       ...(s.qualityTier ? { qualityTier: s.qualityTier } : {}),
       delivery_width: s.delivery_width,
       delivery_height: s.delivery_height,
-      // The attempt is in the key, because a deliberate retry must not match the submit it replaces.
-      idempotency_key: `${part.part_id}-a${part.attempts}`,
-      // Keeps paid work on a retry, and on the re-submit after a lost claim. Nothing to keep on a first run.
+      // A deliberate retry moves the generation, so it does not match the submit it replaces.
+      idempotency_key: `${part.part_id}-g${part.generation}`,
+      // Keeps paid work on a retry. Nothing to keep on a first run.
       reuse_finished: true,
     },
   };
@@ -316,16 +361,23 @@ export type JoinRead =
   | { status: "pending" }
   | { status: "missing" }
   | { status: "failed"; error: string }
+  | { status: "error"; error: string }
   | { status: "completed"; bytes: number; durationSeconds: number; filmOffsetsSeconds: number[] };
+
+/** A refusal that may pass by itself, such as a full door. It does not use up a join attempt. */
+export class JoinTransient extends Error {}
 
 export interface ParentDeps {
   /** Writes the doc if nobody else wrote since it was read. False means another tick won: stop. */
   save(doc: ParentDoc): Promise<boolean>;
+  /** The doc as stored now, and the base of the next save. */
+  reload(): Promise<ParentDoc | null>;
+  /** The router's spend limit, daily ceiling and storage quota, which a part never passes through. A reason
+   *  means hold the part and ask again later. */
+  admitSubmit(): Promise<string | null>;
   bundle(args: { storyboard: Record<string, unknown>; characterRefs: Record<string, unknown> }): Promise<string>;
   start(body: Record<string, unknown>): Promise<string>;
   readChild(filmId: string): Promise<ChildRead | null>;
-  /** The newest film in a part's own project, for a claim left by a crash. */
-  findChild(project: string): Promise<string | null>;
   submitJoin(doc: ParentDoc, filmKeys: string[], outputKey: string): Promise<string>;
   readJoin(doc: ParentDoc, jobId: string): Promise<JoinRead>;
   readText(key: string): Promise<string | null>;
@@ -411,28 +463,47 @@ async function submitPart(doc: ParentDoc, part: ParentPart, deps: ParentDeps, no
     part.status = "failed";
     part.error = e instanceof Error ? e.message : String(e);
   }
-  part.claimed_at = null;
-  return deps.save(doc);
+  const outcome = {
+    status: part.status,
+    phase: part.phase,
+    error: part.error,
+    bundle_key: part.bundle_key,
+    child_film_id: part.child_film_id,
+    claimed_at: null,
+  };
+  // A poll may have written since the claim. The film id must not be lost to that, because the part would
+  // then look like a submit of unknown outcome and a person would be asked to check a film that is fine.
+  for (let i = 0; i < 5; i++) {
+    Object.assign(doc.parts[part.index], outcome);
+    if (await deps.save(doc)) return true;
+    const fresh = await deps.reload();
+    if (!fresh) return false;
+    Object.assign(doc, fresh);
+  }
+  return false;
 }
 
-async function recoverStaleClaims(doc: ParentDoc, deps: ParentDeps, now: number): Promise<void> {
+/** No row and no film id do not prove that no submit went out, so this never submits. */
+function failStaleClaims(doc: ParentDoc, now: number): void {
   for (const part of doc.parts) {
     if (part.status !== "submitting" || part.claimed_at === null || now - part.claimed_at < STALE_CLAIM_MS) continue;
-    const found = await deps.findChild(part.project);
-    if (found) {
-      part.child_film_id = found;
-      part.status = "running";
-    } else {
-      part.status = "pending";
-    }
+    part.status = "failed";
     part.claimed_at = null;
+    part.error = `submit outcome unknown: a film may be running in project ${part.project}. Check it before retrying, because a retry can buy this part twice`;
   }
 }
 
 async function advanceJoin(doc: ParentDoc, deps: ParentDeps, now: number): Promise<void> {
   if (doc.join_job_id) {
     const r = await deps.readJoin(doc, doc.join_job_id);
-    if (r.status === "pending") return;
+    const timedOut = doc.join_started_at !== null && now - doc.join_started_at > JOIN_TIMEOUT_MS;
+    if (r.status === "pending" && !timedOut) return;
+    // A 404 can be transient, so only a streak counts as lost.
+    if (r.status === "missing" && !timedOut) {
+      doc.join_missing += 1;
+      if (doc.join_missing < JOIN_MISSING_STREAK) return;
+    }
+    doc.join_missing = 0;
     if (r.status === "completed") {
       doc.bytes = r.bytes;
       doc.duration_seconds = r.durationSeconds;
@@ -441,22 +512,28 @@ async function advanceJoin(doc: ParentDoc, deps: ParentDeps, now: number): Promi
       doc.finished_at = now;
       return;
     }
-    doc.error = r.status === "failed" ? r.error : "the join job was lost";
+    doc.error = r.status === "failed" || r.status === "error"
+      ? r.error
+      : timedOut ? "the join did not finish in time" : "the join job was lost";
     doc.join_job_id = null;
   }
   if (doc.join_attempts >= MAX_JOIN_ATTEMPTS) {
+    // Every part is paid for, so this is not the end: POST /api/film/:id/resume joins again.
     doc.phase = "failed";
     doc.finished_at = now;
     return;
   }
-  doc.join_attempts += 1;
   // Fixed key, so a re-submit reaches the same container job, which hashes object paths.
   doc.output_key = `renders/${doc.film_id}/film.mp4`;
   try {
     doc.join_job_id = await deps.submitJoin(doc, doc.parts.map((p) => p.output_key as string), doc.output_key);
+    doc.join_attempts += 1;
+    doc.join_started_at = now;
+    doc.join_missing = 0;
     doc.error = null;
   } catch (e) {
     doc.error = e instanceof Error ? e.message : String(e);
+    if (!(e instanceof JoinTransient)) doc.join_attempts += 1;
   }
 }
 
@@ -488,14 +565,19 @@ async function mergeCaptions(doc: ParentDoc, offsets: number[], deps: ParentDeps
 /** One tick. Safe to run at any time and from two places at once. */
 export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: number): Promise<ParentDoc> {
   if (doc.phase === "done" || doc.phase === "failed") return doc;
+  const before = JSON.stringify(doc);
   await readLiveParts(doc, deps);
-  await recoverStaleClaims(doc, deps, now);
+  failStaleClaims(doc, now);
+  // A write only when something moved, so a poll does not collide with a tick that is submitting.
+  const saveIfMoved = async () => {
+    if (JSON.stringify(doc) !== before) await deps.save(doc);
+  };
 
   if (doc.parts.every((p) => p.status === "done")) {
     doc.phase = "join";
     doc.stop_reason = null;
     await advanceJoin(doc, deps, now);
-    await deps.save(doc);
+    await saveIfMoved();
     return doc;
   }
 
@@ -503,7 +585,15 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
   if (failed.length) {
     doc.stop_reason = `part ${failed[0].index} failed`;
     doc.phase = "stopped";
-    await deps.save(doc);
+    await saveIfMoved();
+    return doc;
+  }
+
+  const firstDone = doc.parts[0].status === "done";
+  if (firstDone && doc.pause_after_first_part && !doc.first_part_released) {
+    doc.phase = "stopped";
+    doc.stop_reason = HOLD_AFTER_FIRST;
+    await saveIfMoved();
     return doc;
   }
 
@@ -511,8 +601,7 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
     doc.phase = "running";
     doc.started_at = now;
   }
-  // The first part runs alone: listen before spending on the rest.
-  const firstDone = doc.parts[0].status === "done";
+  // The first part runs alone, and by default holds for a person after it (above).
   const room = (firstDone ? MAX_PARTS_IN_FLIGHT : 1) - doc.parts.filter(isLive).length;
   const committed = committedEstimate(doc);
   const next = doc.parts.filter((p) => p.status === "pending").slice(0, Math.max(0, room));
@@ -523,10 +612,18 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
       if (!doc.parts.some(isLive)) doc.phase = "stopped";
       break;
     }
+    const held = await deps.admitSubmit();
+    if (held) {
+      // Held, not failed. The part stays pending and the next tick asks again.
+      doc.stop_reason = held;
+      break;
+    }
+    if (doc.stop_reason !== "spend ceiling") doc.stop_reason = null;
     spend += part.cost_est;
     if (!(await submitPart(doc, part, deps, now))) return doc;
   }
-  await deps.save(doc);
+  if (!next.length && doc.phase === "running" && doc.stop_reason !== "spend ceiling") doc.stop_reason = null;
+  await saveIfMoved();
   return doc;
 }
 
@@ -536,12 +633,33 @@ export function retryPart(doc: ParentDoc, index: number): void {
   if (!part) refuse("no such part");
   if (part.status !== "failed") refuse(`part ${index} is ${part.status}, not failed`);
   part.status = "pending";
+  part.generation += 1;
   part.error = null;
   part.child_film_id = null;
   part.phase = null;
   part.shots_done = 0;
   doc.stop_reason = null;
   if (doc.phase === "stopped") doc.phase = "running";
+}
+
+/** Carries on past the hold after the first part, or joins again after a join that failed. */
+export function resumeParent(doc: ParentDoc): void {
+  if (doc.phase === "failed" && doc.parts.every((p) => p.status === "done")) {
+    doc.phase = "join";
+    doc.finished_at = null;
+    doc.join_job_id = null;
+    doc.join_attempts = 0;
+    doc.join_missing = 0;
+    doc.error = null;
+    return;
+  }
+  if (doc.stop_reason === HOLD_AFTER_FIRST) {
+    doc.first_part_released = true;
+    doc.stop_reason = null;
+    doc.phase = "running";
+    return;
+  }
+  refuse(`nothing to resume: the film is ${doc.phase}`);
 }
 
 /** Raises the ceiling and lets a film stopped by it carry on. A failed part still stops it on the next tick. */
