@@ -83,7 +83,6 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "5 or 8 second clips",
       "Silent, with your trained face",
-      "One film, no scatter (face lock)",
       "No spoken lines. A board with a line needs a talking door",
     ],
   },

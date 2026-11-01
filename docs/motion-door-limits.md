@@ -22,8 +22,10 @@ contract we actually honor.
 
 Shared rules:
 
-- One film, no split. Motion and film stay on a single job. Talking clips
-  stay on one film so the door can hear itself shot to shot.
+- A film is one job. A long film is parts, each one film job, joined at the end
+  (`docs/CONTRACT.md` 2.22a). Talking clips hear each other only inside one part, so a
+  voice held by description alone may drift from one part to the next. That is not yet
+  measured.
 - **Flux v2v** (feed the last 4 seconds of the previous clip) is the real Flux
   speaker lock. Talking Flux stays on one film so that path can land. Until
   v2v is wired, the speaker lock is the same prompt lock on every shot.

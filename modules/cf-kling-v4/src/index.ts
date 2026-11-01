@@ -101,7 +101,6 @@ const MANIFEST: ModuleManifest = {
       "720p by default. 1080p is selectable and costs more.",
       "Prompt up to 26000 characters.",
       "9:16 is a choice. The provider page says aspect is ignored when a still is sent",
-      "One film, no scatter",
     ],
   },
   usage: {

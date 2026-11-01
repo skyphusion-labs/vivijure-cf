@@ -34,7 +34,6 @@ export const MANIFEST: ModuleManifest = {
       "About 2-8 second clips (no hard grid)",
       "Silent motion only. Best picture, not a talking door.",
       "Cannot lock a Cast voice sample. Spoken lines will not pick this door.",
-      "One film, no scatter (look door)",
       "Slower than a cloud talking door",
     ],
   },

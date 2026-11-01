@@ -50,7 +50,6 @@ export const MANIFEST: ModuleManifest = {
       "No spoken lines. A board with a line needs a talking door",
       "Runs whichever local backend you point it at: LTX (12GB floor) or CogVideoX (16GB floor); bigger cards add headroom",
       "Keyframes (SDXL preview) and short motion clips share the same card serially",
-      "One film, no scatter (look door)",
       "One GPU job at a time (a consumer card runs a single preview or motion job)",
       "Self-host / vivijure-local: hobby and non-commercial only (local#278). Commercial product use: vivijure-cf",
     ],

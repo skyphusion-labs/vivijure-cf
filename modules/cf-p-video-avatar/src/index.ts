@@ -96,7 +96,6 @@ const MANIFEST: ModuleManifest = {
       "Trailing silence is not trimmed. If billing follows the audio, that silence is billed.",
       "Whether the picture follows the portrait's shape is unknown until a real render.",
       "A named voice is sent because the provider requires one. Whether it changes an audio-driven clip is unknown until a real render.",
-      "One film, no scatter",
     ],
   },
   usage: {
