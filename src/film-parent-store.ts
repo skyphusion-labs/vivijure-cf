@@ -169,12 +169,15 @@ export interface ParentDoors {
   pollFilm(filmId: string): Promise<Record<string, unknown> | null>;
 }
 
-function childFromPoll(poll: Record<string, unknown>): ChildRead {
+export function childFromPoll(poll: Record<string, unknown>): ChildRead {
   const clips = poll.clips as { done?: number } | undefined;
   const finish = poll.film_finish as { sidecar_key?: string } | undefined;
+  const shotFinish = poll.finish as { degraded?: number; reasons?: string[] } | undefined;
   return {
     phase: String(poll.phase ?? ""),
     shots_done: typeof clips?.done === "number" ? clips.done : 0,
+    finish_degraded: typeof shotFinish?.degraded === "number" ? shotFinish.degraded : 0,
+    finish_reasons: Array.isArray(shotFinish?.reasons) ? shotFinish.reasons.filter((r) => typeof r === "string") : [],
     output_key: typeof poll.film_key === "string" ? poll.film_key : null,
     sidecar_key: finish?.sidecar_key ?? (typeof poll.sidecar_key === "string" ? poll.sidecar_key : null),
     error: typeof poll.error === "string" ? poll.error : null,

@@ -84,6 +84,9 @@ export interface ParentPart {
   shots_total: number;
   cost_est: number;
   error: string | null;
+  /** Shots of this part that a finish step soft-degraded, and why. Read from its film each tick. */
+  finish_degraded?: number;
+  finish_reasons?: string[];
   /** Submits made, for the ceiling. */
   attempts: number;
   /** Moves only on a deliberate retry, so a repeat of the same request carries the same key. */
@@ -427,6 +430,9 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
 export interface ChildRead {
   phase: string;
   shots_done: number;
+  /** Shots whose finish chain did no work, and why. A finished part can still have lost its upscale. */
+  finish_degraded?: number;
+  finish_reasons?: string[];
   output_key: string | null;
   sidecar_key: string | null;
   error: string | null;
@@ -547,6 +553,8 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
     }
     part.phase = child.phase;
     part.shots_done = child.shots_done;
+    part.finish_degraded = child.finish_degraded ?? 0;
+    part.finish_reasons = child.finish_reasons ?? [];
     if (child.phase === "failed") {
       part.status = "failed";
       part.error = child.error ?? "the part failed";
@@ -1036,6 +1044,7 @@ export interface PartJob {
   phase?: string;
   clip_job_id?: string;
   keyframes?: Array<{ shot_id: string; keyframe_key: string }>;
+  finish_shots?: Array<{ shot_id: string; degraded?: string[] }>;
 }
 export interface PartClipJob {
   shots: Array<{
@@ -1072,6 +1081,7 @@ export function partShotRows(doc: ParentDoc, part: ParentPart, job: PartJob | nu
       prompt: scene.prompt ?? null,
       line: line?.text ?? null,
       error: clip?.error ?? null,
+      finish_degraded: job?.finish_shots?.find((s) => s.shot_id === local)?.degraded ?? [],
       ...(typeof clip?.attempts === "number" ? { attempts: clip.attempts } : {}),
       retake_status: inRetake ? (waiting ? "waiting" : "running") : null,
     };
@@ -1174,6 +1184,8 @@ export function parentView(doc: ParentDoc, now: number) {
       cost_actual: null,
       output_key: p.output_key,
       error: p.error,
+      finish_degraded: p.finish_degraded ?? 0,
+      finish_reasons: p.finish_reasons ?? [],
       // Master ids waiting or in progress. A running part cannot have its retake cancelled.
       retake_shots: p.retake ? Object.keys(p.retake.undo.prompts) : [],
     })),
@@ -1182,7 +1194,18 @@ export function parentView(doc: ParentDoc, now: number) {
     sidecar_key: doc.sidecar_key,
     bytes: doc.bytes,
     duration_seconds: doc.duration_seconds,
-    degraded: doc.degraded,
+    finish_degraded: doc.parts.reduce((n, p) => n + (p.finish_degraded ?? 0), 0),
+    degraded: parentDegradedText(doc),
     error: doc.error,
   };
+}
+
+/** What a person is told the film shipped without: captions, and any shot a finish step passed through. A long
+ *  film of uneven shots must say so here, because the shots look finished from every other field. */
+function parentDegradedText(doc: ParentDoc): string | null {
+  const lost = doc.parts.reduce((n, p) => n + (p.finish_degraded ?? 0), 0);
+  if (!lost) return doc.degraded;
+  const reasons = [...new Set(doc.parts.flatMap((p) => p.finish_reasons ?? []))].slice(0, 3).join("; ");
+  const finish = `${lost} shot${lost === 1 ? " has" : "s have"} a finish limit${reasons ? `: ${reasons}` : ""}`;
+  return doc.degraded ? `${doc.degraded}. ${finish}` : finish;
 }
