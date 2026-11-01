@@ -2145,6 +2145,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         cast_loras: castIds,
         pretrained_loras: Object.keys(pre.cast.pretrained).length ? pre.cast.pretrained : undefined,
         idempotency_key,
+        quality_tier: coerceQualityTier(submit.qualityTier),
       }, modules);
       if (job.phase === "failed") throw new SubmitRefused(job.error || "the new still did not start");
       await insertRenderBestEffort(env, filmRowFromJob(job));
@@ -2153,6 +2154,8 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
     async readStills(filmId) {
       const r = await advanceFilmJob(env, filmId);
       if (!r) return null;
+      // Nothing else keeps this row current: the sweep skips keyframes-only rows, and no one polls this job.
+      await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob), ctx);
       return { phase: r.job.phase, keyframes: r.job.keyframes ?? [], error: r.job.error ?? null };
     },
     async pollFilm(filmId) {
