@@ -42,6 +42,7 @@ keeps the credentials.
 | `/film-titles` | POST | prepend a title card + append credit cards |
 | `/subtitle` | POST | burn time-synced captions (and/or emit a soft `.srt` sidecar) |
 | `/async/{route}` | POST | #602: submit `film-titles`, `subtitle`, or `finish` as a BACKGROUND job -> `202 {ok, jobId}` |
+| `/async/join-films` | POST | join finished films by URL into one film: video copied, one audio encode. Keyed job id, below |
 | `/async/status/{jobId}` | GET | poll a background job -> `{ok, status: pending|completed|failed, result?, error?}` (`404 {status:"not_found"}` if unknown) |
 
 Every route takes presigned R2 URLs (GET inputs, PUT output) in a small JSON body and returns
@@ -219,3 +220,54 @@ Response `200 { ok: true, verdict, reason, metrics, keyframe_similarity }`:
 
 `400` on missing `clipUrl` / invalid JSON, `413` on an over-cap clip, `502` on a fetch failure, `500` on an
 ffmpeg/inspect error. Thresholds + rationale live in `inspect_core.py` (unit-tested by `test_inspect.py`).
+
+## Joining finished films: `POST /async/join-films`
+
+Joins up to 64 finished films, in order, into one film. A long film can be built as several ordinary films and
+joined here. Same bearer and URL allowlist as every other route. There is no synchronous form.
+
+```json
+{ "films": [{ "url": "<presigned GET>" }, { "url": "<presigned GET>" }],
+  "outputUrl": "<presigned PUT>", "outputKey": "<echoed in the result>" }
+```
+
+`202 {ok, jobId, status}`, then poll `GET /async/status/{jobId}`. The result:
+
+```json
+{ "ok": true, "key": "...", "bytes": 0, "durationSeconds": 0, "videoSeconds": 0, "audioSeconds": 0,
+  "hasAudio": true, "films": 2, "filmSeconds": [0, 0], "filmOffsetsSeconds": [0, 0],
+  "width": 1920, "height": 1080, "elapsedMs": 0 }
+```
+
+`filmOffsetsSeconds` is where each film starts in the join, from probed film durations. Use it to shift a film's
+captions. It is not measured from the joined file.
+
+**Refusals**
+
+| Status | When |
+|---|---|
+| 400 | Bad body, more than 64 films, a URL off the allowlist, or a URL with a quote, newline or backslash. Refused at submit, so no job exists |
+| 413 | The films total more than one upload carries (5,363,466,240 bytes), or the joined film does. No upload is tried |
+| 422 | A film differs from the first in video codec, profile, frame size, pixel format, frame rate or time base, or in audio sample rate or channels, or only some films have audio |
+| 502 | A film would not read. Names the film index, never the URL |
+| 500 | ffmpeg failed or timed out, or the guard found a film missing from the join |
+
+Failures after submit arrive as `status: failed` with the error text. Films that are all silent join with no audio track.
+
+**Restarting.** Job state is in memory, so a restart loses a running join. The job id is a hash of the output and
+film object paths, not of the signatures. To recover, submit again with fresh URLs for the same objects:
+
+- Still running: you get the same job, and no second join starts.
+- Completed within the last hour: you get the same job and its result.
+- Failed, or lost to a restart (status answers `not_found`): it runs again under the same id.
+
+The output bytes are the same on every run from the same binary. Send the same `x-vivijure-finish-affinity` header on
+every submit and poll: the job lives on one instance. A completed job's id is remembered for an hour, so to redo a
+join on purpose, use a different output key.
+
+**URL lifetime.** Film URLs must stay valid through the join, and the output URL through its upload. The join runs
+up to 3x the film's length, with a 20 minute floor, plus up to 30 minutes for the upload.
+
+**Why audio is encoded.** See the comment above `JOIN_AUDIO_ARGS` in `app.py`. A plain `-c copy` measured 796 ms late
+at the last of 25 parts when counted in samples, and 0 ms when read from timestamps, so check sync by sample count.
+Sync here was measured from decoded samples, not on a hardware player.

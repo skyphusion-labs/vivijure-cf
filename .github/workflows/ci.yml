@@ -299,6 +299,7 @@ jobs:
           containers/video-finish/test_concat_guard.py
           containers/video-finish/test_frame_text.py
           containers/video-finish/test_film_cap.py
+          containers/video-finish/test_join_films.py
           containers/video-finish/test_chunked_contract.py
           containers/video-finish/test_finish_work_call_site.py
           containers/video-finish/test_selftest.py

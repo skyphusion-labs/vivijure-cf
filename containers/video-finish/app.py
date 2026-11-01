@@ -18,17 +18,20 @@ import logging
 import math
 import os
 import functools
+import hashlib
 import shutil
 import subprocess
 import tempfile
 import time
 import uuid
 
+from urllib.parse import urlsplit
+
 from aiohttp import ClientSession, ClientTimeout, web
 
 from bearer import bearer_middleware, require_bearer_config
 from ffmpeg_run import FFMPEG_TIMEOUT, FFPROBE_TIMEOUT, FfmpegTimeout, _run
-from concat_guard import assert_no_dropped_parts
+from concat_guard import ConcatDropError, assert_no_dropped_parts
 import frame_text
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
@@ -38,15 +41,19 @@ PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
 UPLOAD_TIMEOUT_S = 120
 MAX_CLIP_BYTES = 256 * 1024 * 1024   # 256 MB per clip
-# cf#1129: a route that takes a WHOLE film takes a film-sized input. This is what assemble admits, core's
-# assembleFilmByteCeiling: 20 GB of disk, less the batch working set, the audio bed and the image reserve,
-# over the two full-length copies at finalize. tests/film-byte-cap-1129.test.ts holds the two equal.
+# cf#1129: a route that takes a WHOLE film takes a film-sized input.
+#
+# cf#1133: this is also the largest film the container can deliver. Every film leaves in ONE presigned PUT, and R2
+# documents 4.995 GiB for a single PUT (5 GiB less 5 MiB). The disk budget alone allows 6.85 GB (core's
+# assembleFilmByteCeiling before cf#1133), so a film in that gap did all its work and then failed at upload. The cap
+# is the lower of the two, and _put_file refuses above it. Multipart would only buy the gap up to the disk limit, and
+# needs a part URL pool from the Worker. tests/film-byte-cap-1129.test.ts holds this equal to core's admission.
 #
 # PEAK DISK AT THIS CAP, for a film F. /subtitle: source + burn, 2F. /film-titles: source + normalized, then the
 # source goes and it is normalized + output, so 2F plus the cards. Mux: source + bed + output, 2F + 256 MB. Frames:
-# F plus stills. F is at most 6.85 GB, so 2F is 13.7 GB, about 16 GB with the 2 GB image reserve, against 20 GB.
+# F plus stills. F is at most 5.36 GB, so 2F is 10.7 GB, about 13 GB with the 2 GB image reserve, against 20 GB.
 # That assumes a re-encode at crf 18 is about the size of its source. An assembled film is already at those settings.
-MAX_FILM_BYTES = 6_852_516_352
+MAX_FILM_BYTES = 5_363_466_240
 # A film transfer is bounded by its size, not by the 120 s that suits a clip. sock_read stops a dead connection.
 FILM_TRANSFER_TIMEOUT_S = 1800
 FILM_TRANSFER_STALL_S = 120
@@ -58,6 +65,8 @@ MAX_AUDIO_BYTES = 256 * 1024 * 1024   # 256 MB: match the per-clip bound. A loss
 # (_assemble / _remux_audio_only, `-t vdur`), so a long source yields a film-length track, not a bloated one.
 # A too-tight 64 MB cap silently dropped a legitimate multi-minute lossless bed -> silent film (the #77/#249 bug).
 MAX_CLIPS = 80
+# POST /async/join-films: how many finished films one join takes. A guard on the request, not a measured limit.
+MAX_JOIN_FILMS = 64
 
 # cf#784: bound the working set so peak disk is a fixed cost rather than a function of film
 # length. A batch is closed once it reaches this many SOURCE bytes, so the batch may overshoot
@@ -184,7 +193,19 @@ async def async_submit(req):
         return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
     now = time.monotonic()
     _reap_jobs(now)
-    job_id = uuid.uuid4().hex
+    keyer = KEYED_ASYNC_JOBS.get(route)
+    if keyer is None:
+        job_id = uuid.uuid4().hex
+    else:
+        # A keyed job has one id for one set of inputs, so a re-submit finds the running job instead of
+        # starting a second. A job that failed, or that a restart lost, simply runs again.
+        try:
+            job_id = keyer(body)
+        except _JobError as e:
+            return web.json_response({"ok": False, "error": e.message}, status=e.status)
+        known = JOBS.get(job_id)
+        if known is not None and known["status"] != "failed":
+            return web.json_response({"ok": True, "jobId": job_id, "status": known["status"]}, status=202)
     JOBS[job_id] = {"status": "pending", "at": now}
     asyncio.create_task(_run_job(job_id, work(body)))
     log.info("/async/%s accepted job=%s", safe_log_value(route), job_id)  # codeql[py/log-injection]
@@ -758,7 +779,7 @@ def _remux_audio_only(work, video_path, audio_path):
     return out, _probe_duration(out), True
 
 
-def _concat_hard_urls(urls, out, list_path):
+def _concat_hard_urls(urls, out, list_path, output_args=("-c", "copy"), timeout=None):
     """Hard-concat parts read straight from their presigned URLs -- they never land on disk.
 
     This is what keeps peak disk at roughly ONE film at the final join instead of the partials
@@ -768,6 +789,9 @@ def _concat_hard_urls(urls, out, list_path):
     disk for neither memory nor fidelity.
 
     ffmpeg refuses a non-file protocol unless whitelisted, and https needs https AND tls listed.
+
+    output_args defaults to a stream copy of everything. /async/join-films copies the video and encodes
+    the audio. timeout defaults to FFMPEG_TIMEOUT.
     """
     with open(list_path, "w") as f:
         f.write("\n".join(f"file '{u}'" for u in urls) + "\n")
@@ -775,8 +799,8 @@ def _concat_hard_urls(urls, out, list_path):
         "ffmpeg", "-y",
         "-protocol_whitelist", CONCAT_PROTOCOL_WHITELIST,
         "-f", "concat", "-safe", "0", "-i", list_path,
-        "-c", "copy", out,
-    ])
+        *output_args, out,
+    ], timeout=timeout)
 
 
 def _parse_partial_urls(raw):
@@ -827,6 +851,9 @@ async def _put_file(session, url, path, content_type="video/mp4", label="output"
     Returns the byte count, so callers that reported a length keep reporting a real size.
     """
     size = os.path.getsize(path)
+    if size > MAX_FILM_BYTES:
+        # cf#1133: R2 would refuse this one PUT. Say so here, with the numbers, rather than as "put 400".
+        raise _JobError(413, f"{label} is {size} bytes, over the {MAX_FILM_BYTES} byte limit of one upload")
     with open(path, "rb") as f:
         async with guarded_put(session, url, allow_redirects=False, data=f,
                                headers={"content-type": content_type,
@@ -1809,6 +1836,208 @@ async def frames(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# POST /async/join-films: join finished films, in order, into one film.
+#
+# The video is stream-copied, so a join costs no picture quality and little CPU. The audio is decoded and
+# encoded once across the whole join. A plain `-c copy` leaves audio packets at the joins whose timestamp step is cut short while
+# they still decode to a full 1024 samples, so the join holds more samples than its timestamps imply. Measured on 25 parts: 796 ms late at the last part when counted in
+# samples, which is what a player playing samples in order hears, and 0 ms when read from timestamps. One audio
+# encode held the spread at or under 8.3 ms. test_local_join_films.py measures this by sample count. Keep it that way.
+#
+# min_hard_comp IS REQUIRED. aresample only corrects timing past that many seconds, and its default is 0.1 s. At the
+# default, 25 short films with audio 21 to 34 ms long spread to 50 ms, the same as with no filter at all. At 0.01 the
+# spread was 8.3 ms or less on four sets of 25 films, 2 to 20 s long, with 0 to 200 ms of extra audio. It pads or trims
+# samples at a join and does not resample, so pitch is untouched. async=1000 also held (5.7 ms) by resampling.
+#
+# Parts are read by URL, so peak disk is the output, twice for an instant during faststart.
+#
+# RESTARTS. Job state is in memory, so a restart loses a running join, and status then answers not_found. The
+# caller re-submits with the same URLs, or fresh ones for the same objects. The job id comes from the object paths
+# and not the signatures, so a re-submit reaches the same job, and the output bytes are the same every run. The
+# caller must send the same x-vivijure-finish-affinity header on every call, or it reaches another instance.
+JOIN_AUDIO_ARGS = ("-af", "aresample=async=1:min_hard_comp=0.01:first_pts=0", "-c:a", "aac", "-b:a", "192k")
+# What must match across parts. A stream copy of parts that differ here plays wrongly or not at all, and nothing
+# in ffmpeg reports it.
+JOIN_VIDEO_FIELDS = ("codec_name", "profile", "width", "height", "pix_fmt", "r_frame_rate", "time_base")
+JOIN_AUDIO_FIELDS = ("sample_rate", "channels")
+
+
+def _parse_join_body(body):
+    """(film urls, output url), or _JobError. Runs at submit, so a bad request never becomes a job."""
+    if not isinstance(body, dict):
+        raise _JobError(400, "body must be an object")
+    films = body.get("films")
+    if not isinstance(films, list) or not films:
+        raise _JobError(400, "films must be a non-empty array")
+    if len(films) > MAX_JOIN_FILMS:
+        raise _JobError(400, f"too many films (>{MAX_JOIN_FILMS})")
+    urls = []
+    for i, film in enumerate(films):
+        url = film.get("url") if isinstance(film, dict) else None
+        if not isinstance(url, str) or not url:
+            raise _JobError(400, f"films[{i}].url missing")
+        ok, why = validate_fetch_url(url)
+        if not ok:
+            raise _JobError(400, f"films[{i}].url blocked: {why}")
+        # These go into a concat list as file '<url>'. A quote or a newline would add a directive to it.
+        if any(ch in url for ch in "'\r\n\\"):
+            raise _JobError(400, f"films[{i}].url has a character a concat list cannot carry")
+        urls.append(url)
+    output_url = body.get("outputUrl")
+    if not isinstance(output_url, str) or not output_url:
+        raise _JobError(400, "outputUrl required")
+    ok, why = validate_fetch_url(output_url)
+    if not ok:
+        raise _JobError(400, f"outputUrl blocked: {why}")
+    return urls, output_url
+
+
+def _join_job_id(body):
+    urls, output_url = _parse_join_body(body)
+    identity = [[urlsplit(u).netloc, urlsplit(u).path] for u in [output_url, *urls]]
+    return "join-" + hashlib.sha256(_json.dumps(identity).encode("utf-8")).hexdigest()[:32]
+
+
+def _probe_join_part(url):
+    """Stream fields and size of one part, read by URL. Raises _JobError with no URL in it: it is signed."""
+    try:
+        proc = _run(
+            ["ffprobe", "-v", "error", "-protocol_whitelist", CONCAT_PROTOCOL_WHITELIST,
+             "-show_entries",
+             "format=duration,size:stream=codec_type," + ",".join(JOIN_VIDEO_FIELDS + JOIN_AUDIO_FIELDS),
+             "-of", "json", url],
+            timeout=FFPROBE_TIMEOUT, text=True,
+        )
+        info = _json.loads(proc.stdout)
+        fmt = info["format"]
+        streams = info["streams"]
+        video = next(st for st in streams if st.get("codec_type") == "video")
+        audio = next((st for st in streams if st.get("codec_type") == "audio"), None)
+        return {
+            "duration": float(fmt["duration"]),
+            "size": int(fmt["size"]),
+            "video": {k: video.get(k) for k in JOIN_VIDEO_FIELDS},
+            "audio": None if audio is None else {k: audio.get(k) for k in JOIN_AUDIO_FIELDS},
+        }
+    except FfmpegTimeout:
+        raise _JobError(502, "probe timed out") from None
+    except subprocess.CalledProcessError:
+        raise _JobError(502, "probe failed") from None
+    except (KeyError, StopIteration, TypeError, ValueError):
+        raise _JobError(502, "probe found no readable video") from None
+
+
+def _check_join_parts(parts):
+    """Refuse parts a stream copy cannot join, and a join one upload cannot carry."""
+    first = parts[0]
+    for i, part in enumerate(parts):
+        if part["video"] != first["video"]:
+            diff = [k for k in JOIN_VIDEO_FIELDS if part["video"].get(k) != first["video"].get(k)]
+            raise _JobError(422, f"films[{i}] differs from films[0] in video: {', '.join(diff)}")
+        if (part["audio"] is None) != (first["audio"] is None):
+            raise _JobError(422, f"films[{i}] and films[0] differ: one has no audio track")
+        if part["audio"] != first["audio"]:
+            diff = [k for k in JOIN_AUDIO_FIELDS if part["audio"].get(k) != first["audio"].get(k)]
+            raise _JobError(422, f"films[{i}] differs from films[0] in audio: {', '.join(diff)}")
+    total = sum(part["size"] for part in parts)
+    if total > MAX_FILM_BYTES:
+        raise _JobError(413, f"films total {total} bytes, over the {MAX_FILM_BYTES} byte limit of one upload")
+
+
+def _stream_seconds(path, selector):
+    proc = _run(
+        ["ffprobe", "-v", "error", "-select_streams", selector,
+         "-show_entries", "stream=duration", "-of", "default=noprint_wrappers=1:nokey=1", path],
+        timeout=FFPROBE_TIMEOUT, text=True,
+    )
+    try:
+        return float(proc.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _frame_rate(text):
+    num, _, den = str(text).partition("/")
+    try:
+        return float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+async def _join_films_work(body):
+    """Probe the parts, join them, check nothing dropped, PUT one film. Raises _JobError on any failure."""
+    t0 = time.monotonic()
+    urls, output_url = _parse_join_body(body)
+    output_key = body.get("outputKey", "")
+    loop = asyncio.get_running_loop()
+
+    parts = []
+    for i, url in enumerate(urls):
+        try:
+            parts.append(await loop.run_in_executor(None, _probe_join_part, url))
+        except _JobError as e:
+            raise _JobError(e.status, f"films[{i}] {e.message}") from None
+    _check_join_parts(parts)
+
+    has_audio = parts[0]["audio"] is not None
+    part_seconds = [part["duration"] for part in parts]
+    total_seconds = sum(part_seconds)
+    fps = _frame_rate(parts[0]["video"]["r_frame_rate"]) or 24
+    output_args = ["-map", "0:v:0", "-c:v", "copy"]
+    if has_audio:
+        output_args += ["-map", "0:a:0", *JOIN_AUDIO_ARGS]
+    # The bytes are the same on every run from one binary, which test_local_join_films.py proves. No flag is needed.
+    output_args += ["-movflags", "+faststart"]
+    timeout = max(FFMPEG_TIMEOUT, int(total_seconds * ENCODE_SECONDS_PER_FILM_SECOND))
+
+    work = tempfile.mkdtemp(prefix="join-")
+    try:
+        out_path = os.path.join(work, "joined.mp4")
+        try:
+            await loop.run_in_executor(
+                None, functools.partial(
+                    _concat_hard_urls, urls, out_path, os.path.join(work, "parts.txt"),
+                    output_args=output_args, timeout=timeout),
+            )
+            seconds = _probe_duration(out_path)
+            assert_no_dropped_parts(seconds, part_seconds, level=f"join of {len(urls)} films", fps=fps)
+            video_seconds = _stream_seconds(out_path, "v:0")
+            audio_seconds = _stream_seconds(out_path, "a:0") if has_audio else None
+        except FfmpegTimeout as e:
+            raise _JobError(500, str(e)) from None
+        except ConcatDropError as e:
+            raise _JobError(500, str(e)) from None
+        except subprocess.CalledProcessError as e:
+            # e.stderr can quote a signed URL, so it goes nowhere.
+            raise _JobError(500, f"ffmpeg exited {e.returncode} during the join") from None
+
+        async with ClientSession(timeout=_film_timeout()) as s:
+            size = await _put_file(s, output_url, out_path)
+
+        offsets, at = [], 0.0
+        for d in part_seconds:
+            offsets.append(round(at, 3))
+            at += d
+        return {
+            "ok": True,
+            "key": output_key,
+            "bytes": size,
+            "durationSeconds": round(seconds, 3),
+            "videoSeconds": None if video_seconds is None else round(video_seconds, 3),
+            "audioSeconds": None if audio_seconds is None else round(audio_seconds, 3),
+            "hasAudio": has_audio,
+            "films": len(urls),
+            "filmSeconds": [round(d, 3) for d in part_seconds],
+            "filmOffsetsSeconds": offsets,
+            "width": parts[0]["video"]["width"],
+            "height": parts[0]["video"]["height"],
+            "elapsedMs": _elapsed_ms(t0),
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 # film.finish titles/subtitle (#602) plus assemble/mux (/finish). A 17-shot
 # concat outlives the Cloudflare Worker fetch budget; /async/finish is how
 # gather survives. /overlay and /inspect stay synchronous.
@@ -1816,7 +2045,10 @@ ASYNC_WORKS = {
     "film-titles": _film_titles_work,
     "subtitle": _subtitle_work,
     "finish": _finish_work,
+    "join-films": _join_films_work,
 }
+# Routes whose job id comes from their inputs. Every other route mints a random id.
+KEYED_ASYNC_JOBS = {"join-films": _join_job_id}
 
 app = web.Application(
     client_max_size=1024 * 1024,  # JSON bodies are small (URLs + a short SRT)

@@ -90,6 +90,7 @@ def main():
     finally:
         app._probe_duration = orig_probe
 
+    check("the cap is what one R2 PUT carries", app.MAX_FILM_BYTES == 5 * 1024**3 - 5 * 1024**2, app.MAX_FILM_BYTES)
     print(f"failed={len(failures)}")
     return 1 if failures else 0
 
