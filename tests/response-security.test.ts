@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   applyResponseSecurity,
@@ -134,5 +135,22 @@ describe("applyResponseSecurity (the single header chokepoint)", () => {
       status: 200, headers: { "content-type": "text/css", "cache-control": "public, max-age=0, must-revalidate" } });
     const out = applyResponseSecurity(css, req("/app.css"));
     expect(out.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+  });
+});
+
+describe("every studio page gets the studio CSP", () => {
+  // A page missing from STUDIO_PAGE_PATHS gets default-src 'none': it renders as bare HTML and runs no
+  // script. A test that serves public/ as files cannot see that, and /films shipped that way once.
+  const pages = readdirSync(`${process.cwd()}/public`).filter((f) => f.endsWith(".html"));
+
+  it("found the pages", () => {
+    expect(pages).toContain("films.html");
+  });
+
+  it.each(pages)("%s, by its file name and its pretty path", (file) => {
+    for (const path of [`/${file}`, `/${file.replace(/\.html$/, "")}`]) {
+      const csp = applyResponseSecurity(htmlResponse("<html></html>"), req(path)).headers.get("content-security-policy") ?? "";
+      expect(csp, path).toContain("script-src");
+    }
   });
 });

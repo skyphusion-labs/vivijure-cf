@@ -12,6 +12,7 @@
   const DEFAULT_NAV = [
     { id: "planner", label: "Planner", href: "planner" },
     { id: "cast", label: "Cast", href: "cast" },
+    { id: "films", label: "Films", href: "films" },
   ];
   const OPERATOR_NAV = [
     { id: "pipeline", label: "Modules", href: "modules" },
