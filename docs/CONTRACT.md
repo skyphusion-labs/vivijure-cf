@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**90 route entries** (distinct `method` + `pattern`) over **72 distinct path patterns**. Those two
+**93 route entries** (distinct `method` + `pattern`) over **75 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -364,6 +364,9 @@ unchanged.
 | 45 | POST | `/api/render/film` | 2.20 |
 | 46 | GET | `/api/render/film/:id` | 2.21 |
 | 46a | POST | `/api/render/film/:id/finish-retry` | 2.21 |
+| 46b | POST | `/api/film` | 2.22a |
+| 46c | GET | `/api/film/:id` | 2.22a |
+| 46d | POST | `/api/film/:id/parts/:n/retry` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1395,6 +1398,45 @@ Regenerate a single shot's keyframe from a COMPLETED render's bundle (keyframes-
 Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"`;
 `400 "render has no bundle_key"`; `400 "shot <id> not in bundle storyboard"`;
 `503 { ok:false, error: "no keyframe module installed ..." }`; `422 { ok:false, error }` on submit failure.
+
+### 2.22a Long films as parts: `/api/film`
+
+A long film is built as ordinary film jobs (parts) under one parent, joined at the end. Each part goes through `POST /api/storyboard/bundle` and `POST /api/render/film`, so it passes the same checks as any film.
+
+**`POST /api/film`** starts a parent. It spends.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `project` | string | yes | 1 to 48 letters, digits, `_` or `-`. Part `n` runs in project `<project>_pNN`. |
+| `idempotency_key` | string | yes | Alias `idempotencyKey`. The same project and key return the same film with `created: false` and `200`. |
+| `storyboard` | object | yes | The master board. Each scene needs its own `shot_id`. |
+| `character_refs` | object | yes | As `characterRefs` on the bundle route. |
+| `dialogue_lines` | `[{shot_id,text,voice_id?}]` | no | By master `shot_id`. |
+| `part_size` or `breaks` | number or number[] | one of them | `breaks` are shot counts where a part ends. |
+| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `cast_loras`, `film_titles`, `qualityTier`. `audio_key` is refused: a bed on the joined film is not built. |
+| `part_overrides` | `[{index,cast_loras?,character_refs?,motion_backend?}]` | no | What differs for one part. |
+| `spend_ceiling_usd` | number | yes | No new part is submitted if its estimate would cross this. |
+| `cost_usd_per_shot_est` | number | yes | The caller's estimate per shot. The ceiling works from this, so it is only as good as this number. |
+
+`keyframe_backend`, if omitted, comes from `style`: `anime` uses `cloud-keyframe`, `photoreal` uses `keyframe`.
+
+Limits are on `GET /api/modules` under `render`: `max_scenes_per_part`, `max_parts`.
+
+Returns `201 {ok, film_id, phase, parts, created}`. Errors: `400` naming the field.
+
+**`GET /api/film/:id`** advances the parent one tick and returns it:
+
+`{ok, film_id, project, phase, stop_reason, created_at, started_at, elapsed_ms, shots_done, shots_total, cost_est, cost_actual, parts, output_key, sidecar_key, bytes, duration_seconds, degraded, error}`
+
+`phase` is `planned`, `running`, `stopped`, `join`, `done` or `failed`. Each `parts[]` row is `{part_id, index, shot_from, shot_to, status, phase, shots_done, shots_total, cost_est, cost_actual, output_key, error}`. `shot_from` and `shot_to` index the master board. `status` is `pending`, `running`, `done` or `failed`.
+
+`cost_est` is an estimate. `cost_actual` is always `null`: no meter can attribute spend to one film. `null` is not zero.
+
+`stopped` means no new part is submitted, because a part failed or the ceiling was reached. Parts already running carry on. The first part runs alone, and then at most 3 at once. The cron advances a parent, so polling is not required. `404 "film"` if unknown.
+
+**`POST /api/film/:id/parts/:n/retry`** with `{"shots":"failed"}` puts a failed part back in line and advances. The part is re-submitted with its stored inputs and `reuse_finished: true`. `400` if the part has not failed. `409` if the film changed during the call.
+
+`POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0.
 
 ### 2.23 Scatter (retired)
 
