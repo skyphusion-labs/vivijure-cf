@@ -626,7 +626,7 @@ const hStillThumb: Handler = async (req, env, ctx, p) => {
   const etag = `"thumb-${THUMB_WIDTH}-${meta.etag}"`;
   const headers = (length?: number) => {
     const h = artifactHeaders("image/jpeg", key, etag);
-    h.set("cache-control", "private, max-age=86400");
+    h.set("cache-control", "private, no-cache"); // A browser must ask each time, or a redraw at the same key shows the old picture.
     h.delete("accept-ranges");
     if (length !== undefined) h.set("content-length", String(length));
     return h;

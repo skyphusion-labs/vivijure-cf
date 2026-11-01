@@ -55,7 +55,7 @@ describe("GET /api/thumb", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/jpeg");
     expect(res.headers.get("etag")).toBe('"thumb-360-abc"');
-    expect(res.headers.get("cache-control")).toBe("private, max-age=86400");
+    expect(res.headers.get("cache-control")).toBe("private, no-cache");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([9, 9]));
     expect(calls.widths).toEqual([360]);
   });

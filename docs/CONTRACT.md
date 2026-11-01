@@ -883,7 +883,7 @@ refuse. Existence is checked before signing, so a 200 always names an object tha
 
 ### 2.11.2 GET /api/thumb/*key
 
-Returns a still at 360 px wide, as JPEG, for a sheet of many. Same auth and key rules as `GET /api/artifact/*key`, and it takes `.png`, `.jpg`, `.jpeg` and `.webp` only. It never enlarges. It sends an `etag` from the original's and `cache-control: private, max-age=86400`, and answers `304` to a matching `if-none-match`. `404` for an unknown key or a non-still. When there is no thumbnail it answers plainly and never a blank image: `{error, original}` with `502` if the original could not be resized, or `503` if the image service is not bound. `original` is the path to show instead.
+Returns a still at 360 px wide, as JPEG, for a sheet of many. Same auth and key rules as `GET /api/artifact/*key`, and it takes `.png`, `.jpg`, `.jpeg` and `.webp` only. It never enlarges. It sends an `etag` from the original's and `cache-control: private, no-cache`, so a browser asks each time and a redraw at the same key is never hidden, and answers `304` to a matching `if-none-match`. `404` for an unknown key or a non-still. When there is no thumbnail it answers plainly and never a blank image: `{error, original}` with `502` if the original could not be resized, or `503` if the image service is not bound. `original` is the path to show instead.
 
 The bytes come from the Images binding (`IMAGES`). Each still is resized once in a data center and then served from the Cache API, keyed on the original's etag.
 
