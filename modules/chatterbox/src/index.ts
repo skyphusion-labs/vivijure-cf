@@ -15,6 +15,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -161,6 +162,7 @@ const SYNTH_STEP_CONFIG: WorkflowStepConfig = {
 
 export class ChatterboxWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const { job_id, project, lines } = event.payload;
     try {
       const audio: DialogueShotAudio[] = [];
@@ -243,6 +245,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<DialogueO
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 

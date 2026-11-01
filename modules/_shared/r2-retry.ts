@@ -1,18 +1,22 @@
 // Bounded retry for R2 errors that are really temporary.
 //
 // Without this, one R2 internal error in a film tick failed the whole part: core turns any throw in a tick into a
-// terminal failure, and nothing retried the call. studioEnv applies this once, so every route and the cron pass
-// use it. It repeats storage calls only, so it can never buy anything.
+// terminal failure, and nothing retried the call. studioEnv applies this for the studio. Each module applies it at
+// its own entries, since a module binds its own R2_RENDERS. It repeats storage calls only.
 //
-// Not covered: reading a body. `(await get(key)).text()` happens after this returns. An outage longer than the
-// backoff still reaches core's terminal path.
+// Not covered: reading a body, since `(await get(key)).text()` happens after this returns; a conditional put; a
+// stream put. An outage longer than the backoff still fails what it fails today.
+//
+// Known risk: a repeated plain put can overwrite a newer write, when the first try landed and errored and another
+// writer got in between. Rare, and worse only for a doc two writers share.
 
 const RETRYING = Symbol.for("vivijure.r2-retrying");
 
-/** Cloudflare R2 error reference: 10001 InternalError, 10043 ServiceUnavailable, 10058 TooManyRequests. */
-const TEMPORARY = /\((?:10001|10043|10058)\)\s*$|network connection lost/i;
+/** Cloudflare R2 error reference: 10001 InternalError, 10043 ServiceUnavailable, 10054 ClientDisconnect,
+ *  10058 TooManyRequests. */
+const TEMPORARY = /\((?:10001|10043|10054|10058)\)\s*$|network connection lost/i;
 
-/** Waits between attempts, in ms. Five attempts over about 3.7 s. */
+/** Waits between attempts, in ms, each with up to 25% jitter added. Five attempts over 3.7 to 4.6 s. */
 export const R2_RETRY_DELAYS_MS = [200, 500, 1000, 2000];
 
 export function isTemporaryR2Error(e: unknown): boolean {
@@ -29,7 +33,7 @@ async function withRetry<T>(op: string, call: () => Promise<T>, sleep: Sleep): P
     } catch (e) {
       if (attempt >= R2_RETRY_DELAYS_MS.length || !isTemporaryR2Error(e)) throw e;
       console.warn(JSON.stringify({ ev: "r2.retry", op, attempt: attempt + 1, error: String(e).slice(0, 200) }));
-      await sleep(R2_RETRY_DELAYS_MS[attempt]);
+      await sleep(R2_RETRY_DELAYS_MS[attempt] * (1 + Math.random() * 0.25));
     }
   }
 }
@@ -66,4 +70,10 @@ export function retryingBucket<B extends object>(bucket: B, sleep: Sleep = realS
       return method.bind(target);
     },
   });
+}
+
+/** For a module entry. Changes the env in place, as studioEnv does, and is safe to call on every request. */
+export function withRetryingR2<E extends { R2_RENDERS?: object }>(env: E): E {
+  if (env.R2_RENDERS) env.R2_RENDERS = retryingBucket(env.R2_RENDERS);
+  return env;
 }

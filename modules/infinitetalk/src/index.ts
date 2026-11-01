@@ -9,6 +9,7 @@
 // Async (same shape as alibaba-wan): GET /module.json, POST /invoke (submit -> poll token), POST /poll
 // (check GET /status, finalize to R2 on completion). Failures are DATA.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -234,6 +235,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 

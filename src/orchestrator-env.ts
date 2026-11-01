@@ -1,4 +1,4 @@
-import { retryingBucket } from "./r2-retry";
+import { retryingBucket } from "../modules/_shared/r2-retry";
 import {
   orchestratorContextFromPlatform,
   type OrchestratorEnv,
@@ -48,7 +48,7 @@ function meterStudioWrites(raw: Env): void {
 }
 
 export function studioEnv(raw: Env): StudioEnv {
-  // Retry inside the meter, so a repeated write is counted once. Both wraps are idempotent.
+  // Retry inside the meter, so the meter's own head on a stream put is retried too. Both wraps are idempotent.
   if (raw.R2_RENDERS) raw.R2_RENDERS = retryingBucket(raw.R2_RENDERS);
   if (raw.R2_RENDERS && raw.DB) meterStudioWrites(raw);
   const { PRESIGNER } = orchestratorEnv(raw);

@@ -1,5 +1,9 @@
+vi.mock("cloudflare:workers", () => ({ WorkflowEntrypoint: class {} }));
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { R2_RETRY_DELAYS_MS, isTemporaryR2Error, retryingBucket } from "../src/r2-retry";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { R2_RETRY_DELAYS_MS, isTemporaryR2Error, retryingBucket, withRetryingR2 } from "../modules/_shared/r2-retry";
 import { studioEnv } from "../src/orchestrator-env";
 import type { Env } from "../src/env";
 import { advanceFilmJob, filmJobDocKey, type FilmJob, type FinishShot } from "@skyphusion-labs/vivijure-core/film-orchestrator";
@@ -27,7 +31,11 @@ function bucket(failures: string[], ok: unknown = "ok") {
 describe("R2 retry", () => {
   let sleeps: number[];
   const sleep = async (ms: number) => { sleeps.push(ms); };
-  beforeEach(() => { sleeps = []; vi.spyOn(console, "warn").mockImplementation(() => {}); });
+  beforeEach(() => {
+    sleeps = [];
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(Math, "random").mockReturnValue(0); // no jitter, unless a test says so
+  });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   for (const name of ["get", "head", "list", "delete"] as const) {
@@ -40,12 +48,99 @@ describe("R2 retry", () => {
   }
 
   it("names what is temporary", () => {
-    for (const m of [LIVE, "get: unavailable (10043)", "put: slow down (10058)", "Network connection lost."]) {
+    for (const m of [LIVE, "get: unavailable (10043)", "put: slow down (10058)", "put: client gone (10054)", "Network connection lost."]) {
       expect(isTemporaryR2Error(new Error(m)), m).toBe(true);
     }
     for (const m of ["put: Unauthorized (10042)", "get: bucket gone (10006)", "boom", "line (10001) of a log file"]) {
       expect(isTemporaryR2Error(new Error(m)), m).toBe(false);
     }
+  });
+
+  it("adds up to 25% jitter", async () => {
+    vi.mocked(Math.random).mockReturnValue(0.999);
+    const { b } = bucket([LIVE]);
+    await retryingBucket(b, sleep).list();
+    expect(sleeps[0]).toBeGreaterThan(249);
+    expect(sleeps[0]).toBeLessThan(250);
+  });
+
+  it("the default sleep really waits", async () => {
+    vi.useFakeTimers();
+    const { b, calls } = bucket([LIVE]);
+    const p = retryingBucket(b).list();
+    await vi.advanceTimersByTimeAsync(199);
+    expect(calls.list, "still waiting at 199 ms").toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await p;
+    expect(calls.list).toHaveLength(2);
+  });
+
+  // A real binding needs its own `this`. Called without it, workerd throws Illegal invocation.
+  class BoundBucket {
+    #calls = 0;
+    #fail = true;
+    get calls() { return this.#calls; }
+    async #op(): Promise<string> {
+      this.#calls += 1;
+      if (this.#fail) { this.#fail = false; throw new Error(LIVE); }
+      return "ok";
+    }
+    get(_k: string) { return this.#op(); }
+    head(_k: string) { return this.#op(); }
+    list() { return this.#op(); }
+    delete(_k: string) { return this.#op(); }
+    put(_k: string, _v: unknown, _o?: unknown) { return this.#op(); }
+    createMultipartUpload(_k: string) { return this.#op(); }
+  }
+
+  it("calls every method on the binding, not on nothing", async () => {
+    for (const call of [
+      (w: BoundBucket) => w.get("k"), (w: BoundBucket) => w.head("k"), (w: BoundBucket) => w.list(),
+      (w: BoundBucket) => w.delete("k"), (w: BoundBucket) => w.put("k", "v"),
+    ]) {
+      const real = new BoundBucket();
+      await expect(call(retryingBucket(real, sleep))).resolves.toBe("ok");
+      expect(real.calls).toBe(2);
+    }
+    // No retry here, but it still must reach the binding: the error is the binding's own.
+    const real = new BoundBucket();
+    await expect(retryingBucket(real, sleep).createMultipartUpload("k")).rejects.toThrow(LIVE);
+    const stream = new BoundBucket();
+    await expect(retryingBucket(stream, sleep).put("k", new Blob(["x"]).stream())).rejects.toThrow(LIVE);
+    const conditional = new BoundBucket();
+    await expect(retryingBucket(conditional, sleep).put("k", "v", { onlyIf: {} })).rejects.toThrow(LIVE);
+  });
+
+  for (const [name, body] of [
+    ["an ArrayBuffer", new Uint8Array([1]).buffer],
+    ["a typed array", new Uint8Array([1])],
+    ["a Blob", new Blob(["x"])],
+  ] as const) {
+    it(`repeats a put of ${name}`, async () => {
+      const { b, calls } = bucket([LIVE]);
+      await retryingBucket(b, sleep).put("k", body);
+      expect(calls.put).toHaveLength(2);
+    });
+  }
+
+  it("the meter sits outside the retry: its own head on a stream put is retried", async () => {
+    const writes: unknown[][] = [];
+    const stmt = (args: unknown[] = []) => ({ bind: (...a: unknown[]) => stmt(a), run: async () => { writes.push(args); return { meta: { changes: 1 } }; }, first: async () => null, all: async () => ({ results: [] }) });
+    let heads = 0;
+    const raw = {
+      DB: { prepare: () => stmt(), batch: async () => [] },
+      R2_RENDERS: {
+        put: async () => ({}),
+        head: async () => { heads += 1; if (heads === 1) throw new Error("head: internal (10001)"); return { size: 7 }; },
+      },
+    } as unknown as Env;
+    vi.useFakeTimers();
+    const env = studioEnv(raw);
+    const p = env.R2_RENDERS.put("renders/x", new Blob(["x"]).stream());
+    await vi.runAllTimersAsync();
+    await p;
+    expect(heads).toBe(2);
+    expect(writes.length).toBeGreaterThan(0);
   });
 
   it("stops at five attempts and throws the real error", async () => {
@@ -196,5 +291,51 @@ describe("R2 retry", () => {
       await tick(env);
       expect(invokes.n).toBe(1);
     });
+  });
+
+  it("every module that uses the binding retries at each entry", () => {
+    const root = "modules";
+    const seen: string[] = [];
+    for (const m of readdirSync(root)) {
+      const file = join(root, m, "src/index.ts");
+      if (!existsSync(file) || m === "_shared" || m === "local-gpu") continue;
+      const s = readFileSync(file, "utf8");
+      if (!s.includes("R2_RENDERS")) continue;
+      seen.push(m);
+      expect(s, `${m} fetch`).toMatch(/async fetch\([^)]*\): Promise<Response> \{\n\s+withRetryingR2\(env\);/);
+      if (s.includes("this.env")) expect(s, `${m} workflow`).toMatch(/async run\([^)]*\): Promise<void> \{\n\s+withRetryingR2\(this\.env\);/);
+    }
+    expect(seen.length).toBe(20);
+  });
+
+  it("withRetryingR2 leaves an env with no bucket alone, and wraps once", async () => {
+    expect(withRetryingR2({})).toEqual({});
+    const { b } = bucket([]);
+    const env = { R2_RENDERS: b as object };
+    withRetryingR2(env);
+    const once = env.R2_RENDERS;
+    withRetryingR2(env);
+    expect(env.R2_RENDERS).toBe(once);
+  });
+
+  it("a real module survives the live error on a poll", async () => {
+    const { default: veo } = await import("../modules/cf-veo/src/index");
+    let gets = 0;
+    const env = {
+      R2_RENDERS: {
+        get: async () => {
+          gets += 1;
+          if (gets === 1) throw new Error(LIVE);
+          return { text: async () => JSON.stringify({ status: "running" }) };
+        },
+      },
+    };
+    vi.useFakeTimers();
+    const req = new Request("https://m/poll", { method: "POST", body: JSON.stringify({ poll: btoa(JSON.stringify({ job_id: "job-1", shot_id: "s", seconds: 4 })) }) });
+    const p = (veo as { fetch: (r: Request, e: unknown, c: unknown) => Promise<Response> }).fetch(req, env, {});
+    await vi.runAllTimersAsync();
+    const res = await p;
+    expect(gets).toBe(2);
+    expect(res.status).toBe(200);
   });
 });

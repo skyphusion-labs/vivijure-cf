@@ -10,6 +10,7 @@
 // audio, exactly like the minimax-hailuo door. enable_prompt_expansion defaults false so the
 // prompt is sent as-is; expose it as an opt-in config bool for one-line enable later.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -247,6 +248,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
