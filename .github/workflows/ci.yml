@@ -59,6 +59,11 @@ jobs:
 
       - name: Test
         run: npm test
+      # Real pages in real Chrome. A stubbed window cannot see what only a browser does.
+      - name: Browser tests
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run test:browser
 
       # cf#470. The tenant module catalog is defined in vivijure-control-plane and MIRRORED here
       # at scripts/tenant-module-catalog.txt, because this repo cannot import the other one. That

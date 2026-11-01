@@ -32,7 +32,7 @@
     "check:matrix": "node scripts/check-capability-matrix.mjs",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
-    "test:browser": "node tests/browser/planner-phone.mjs",
+    "test:browser": "node tests/browser/planner-phone.mjs && node tests/browser/film-board.mjs",
     "test:watch": "vitest",
     "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
   },

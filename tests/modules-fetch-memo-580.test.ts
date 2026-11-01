@@ -149,6 +149,7 @@ describe("cf#580 the PER-PAGE claim, made against what a page actually loads", (
     "planner.html": 5,
     "modules.html": 5,
     "cast.html": 3,
+    "films.html": 1,
     "settings.html": 3,
   };
 
