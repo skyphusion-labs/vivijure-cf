@@ -94,6 +94,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   R2_RENDERS: { path: "operator-only", note: "bound to the OPERATOR bucket in wrangler.toml. The plane binds no R2 at all; catalog modules avoid it via the per-job tenant R2 credential on the invoke envelope (needs_tenant_r2, cp#270)" },
   IMAGES: { path: "operator-only", note: "Cloudflare Images binding on the operator account" },
   EMAIL: { path: "operator-only", note: "send_email binding on the operator account" },
+  KEYFRAME_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script. Without it the module draws one shot per poll" },
   DIALOGUE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   CHATTERBOX_WORKFLOW: { path: "operator-only", note: "Workflow binding; Chatterbox Turbo TTS class ships with the operator script" },
   SCORE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },

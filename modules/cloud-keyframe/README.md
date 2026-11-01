@@ -100,9 +100,11 @@ To self-host (service `vivijure-module-cloud-keyframe`, bound into the core as `
   ignored (this module trains no LoRA; identity is the portraits).
 - **Output** (`KeyframeOutput`): `project`, `keyframes[]` (`shot_id` + `keyframe_key`). No
   `trained_loras` (none trained).
-- **Async**: `POST /invoke` reads the bundle, stages refs, plans the shots, and returns a poll token;
-  `POST /poll` renders one shot per cycle (gen -> normalize -> store) and returns the keys on
-  completion.
+- **Async**: `POST /invoke` reads the bundle, stages refs, plans the shots, starts a Workflow, and
+  returns a poll token. The Workflow draws one shot per step (gen -> normalize -> store), so drawing
+  does not depend on a poll. `POST /poll` reads progress from R2 and returns the keys on completion.
+  `POST /cancel` stops the Workflow. Without the `KEYFRAME_WORKFLOW` binding, `/poll` draws one shot
+  per call.
 - **R2 transport**: this worker reads the bundle and writes the keyframes itself (it holds the
   `R2_RENDERS` binding), unlike the GPU `keyframe` module whose backend owns R2.
 
