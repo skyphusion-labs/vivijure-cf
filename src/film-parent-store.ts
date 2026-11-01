@@ -79,8 +79,18 @@ export async function listActiveParents(env: StudioEnv, limit: number): Promise<
 export async function listParents(env: StudioEnv, limit: number): Promise<ParentDoc[]> {
   const listed = await env.R2_RENDERS.list({ prefix: FILM_PARENT_LIST_PREFIX, limit });
   const ids = listed.objects.map((o) => o.key.slice(o.key.indexOf("-", FILM_PARENT_LIST_PREFIX.length) + 1));
-  const loaded = await Promise.all(ids.map((id) => loadParent(env, id)));
-  return loaded.flatMap((l) => (l ? [l.doc] : []));
+  // One unreadable doc must not hide every other film.
+  const loaded = await Promise.allSettled(ids.map((id) => loadParent(env, id)));
+  return loaded.flatMap((r, i) => {
+    if (r.status === "rejected") console.warn(`film list: ${ids[i]} could not be read: ${String(r.reason)}`);
+    return r.status === "fulfilled" && r.value ? [r.value.doc] : [];
+  });
+}
+
+/** A crash at create can leave a film off the list. Writing the row again changes nothing else. */
+export async function repairListRow(env: StudioEnv, doc: ParentDoc): Promise<void> {
+  const key = listKey(doc.film_id, doc.created_at);
+  if (!(await env.R2_RENDERS.head(key))) await env.R2_RENDERS.put(key, "");
 }
 
 export async function clearActiveMarker(env: StudioEnv, id: string): Promise<void> {
