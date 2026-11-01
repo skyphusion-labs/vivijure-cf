@@ -468,12 +468,12 @@ describe("worker.fetch root routing -- the root is the module host", () => {
   it("token mode: GET / serves the module host unchanged (byte-identical)", async () => {
     const { env, asked } = makeEnv({ AUTH_MODE: "token", STUDIO_API_TOKEN: SECRET });
     await worker.fetch(get("/"), env, ctx);
-    expect(asked()).toBe("/modules.html");
+    expect(asked()).toBe("/planner.html");
   });
 
   it("normal (no AUTH_MODE) mode: GET / serves the module host unchanged", async () => {
     const { env, asked } = makeEnv({});
     await worker.fetch(get("/"), env, ctx);
-    expect(asked()).toBe("/modules.html");
+    expect(asked()).toBe("/planner.html");
   });
 });

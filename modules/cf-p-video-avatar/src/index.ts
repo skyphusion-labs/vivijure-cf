@@ -87,11 +87,12 @@ const MANIFEST: ModuleManifest = {
     order: 92,
     locality: "cloud",
     cost: "$0.025/s at 720p, $0.045/s at 1080p",
+    cost_usd_per_second: [0.025, 0.045],
     blurb: "Portrait plus Cast audio, at 720p or 1080p. The speaker is ours, not invented.",
     limits: [
       "Mouth follows the storyboard line in the Cast voice. A shot with no line is refused.",
       "720p or 1080p.",
-      "15 seconds is this door's own cap, not the provider's, until a real long-line test (#931).",
+      "15 seconds is this door's own cap, not the provider's, until a real long-line test.",
       "Trailing silence is not trimmed. If billing follows the audio, that silence is billed.",
       "Whether the picture follows the portrait's shape is unknown until a real render.",
       "A named voice is sent because the provider requires one. Whether it changes an audio-driven clip is unknown until a real render.",

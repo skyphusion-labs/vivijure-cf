@@ -32,6 +32,7 @@
     "check:matrix": "node scripts/check-capability-matrix.mjs",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
+    "test:browser": "node tests/browser/planner-phone.mjs",
     "test:watch": "vitest",
     "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
   },
@@ -40,6 +41,7 @@
     "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "^5.0.5",
     "blake3-wasm": "2.1.5",
+    "playwright-core": "^1.64.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
     "wrangler": "^4.152.0"

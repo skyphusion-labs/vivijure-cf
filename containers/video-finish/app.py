@@ -1843,12 +1843,16 @@ async def frames(req):
 # encoded once across the whole join. A plain `-c copy` leaves audio packets at the joins whose timestamp step is cut short while
 # they still decode to a full 1024 samples, so the join holds more samples than its timestamps imply. Measured on 25 parts: 796 ms late at the last part when counted in
 # samples, which is what a player playing samples in order hears, and 0 ms when read from timestamps. One audio
-# encode held the spread at or under 8.3 ms. test_local_join_films.py measures this by sample count. Keep it that way.
+# encode holds it under a frame, with no growth. test_local_join_films.py measures this by sample count. Keep it that way.
 #
 # min_hard_comp IS REQUIRED. aresample only corrects timing past that many seconds, and its default is 0.1 s. At the
-# default, 25 short films with audio 21 to 34 ms long spread to 50 ms, the same as with no filter at all. At 0.01 the
-# spread was 8.3 ms or less on four sets of 25 films, 2 to 20 s long, with 0 to 200 ms of extra audio. It pads or trims
-# samples at a join and does not resample, so pitch is untouched. async=1000 also held (5.7 ms) by resampling.
+# default, on ffmpeg 9.0.2, 25 short films with audio 21 to 34 ms long spread to 50 ms, the same as with no filter at
+# all. At 0.01 the filter pads or trims samples at a join and does not resample, so pitch is untouched.
+#
+# SPREAD ON THE DEPLOYED BUILD, ffmpeg 5.1 by its Lavf59.27.100 tag, one join of 25 films each (cf#1167): 8.0 ms at 20 s
+# a film and 15.3 ms at 2 to 3 s a film. One frame at 24 fps is 41.7 ms. The 10 ms bound in test_local_join_films.py
+# holds at film length here and not on short films. That test runs on whatever ffmpeg is on PATH, and on ffmpeg 9.0.2
+# the same four-set comparison measured 8.3 ms or less, so a pass there does not speak for this image.
 #
 # Parts are read by URL, so peak disk is the output, twice for an instant during faststart.
 #

@@ -66,7 +66,6 @@ function showRenderStage() {
   // v0.221.0: a fresh visit to the render stage starts with no LoRA warning;
   // the next render click re-checks against fresh cast state.
   hideLoraPreflightWarning();
-  loraPreflightAck = null;
   syncRenderModeUi();
 }
 
@@ -84,10 +83,6 @@ function showRenderStage() {
 // training finishes after load (see buildCastLoraSubmit v0.135.6), so the gate
 // re-fetches /api/cast before checking rather than trusting planState.castCatalog.
 
-// Signature of the unready-slot set the user has already acknowledged by
-// clicking render a second time. Reset whenever the set is empty or changes.
-let loraPreflightAck = null;
-
 function hideLoraPreflightWarning() {
   const el = $("#planner-lora-preflight-warning");
   if (!el) return;
@@ -102,7 +97,7 @@ function paintLoraWarning(el, unready, proceedHint) {
   const msg = document.createElement("span");
   msg.className = "planner-lora-preflight-msg";
   msg.textContent =
-    "These characters are using portraits only: " + names + ". "
+    "No trained look yet: " + names + ". "
     + (proceedHint || "Faces may vary between shots.");
   const link = document.createElement("a");
   link.href = "cast";
@@ -118,8 +113,21 @@ function showLoraPreflightWarning(unready) {
   paintLoraWarning(
     $("#planner-lora-preflight-warning"),
     unready,
-    "Click render again to proceed anyway.",
+    "A photoreal film needs a trained look for each person. Train them on Cast, or choose the Anime look.",
   );
+}
+
+// The stills door this submit would use. A door that takes no LoRA has nothing to refuse.
+function keyframeDoorForSubmit() {
+  const cfg = window.plannerRenderConfig;
+  if (!cfg || typeof cfg.collectForSubmit !== "function") return "";
+  try {
+    const expert = $("#planner-render-overrides");
+    const o = cfg.collectForSubmit(expert ? expert.value : "", { keyframesOnly: true });
+    return (o && o.keyframe_backend) || "";
+  } catch (_) {
+    return "";
+  }
 }
 
 // Motion backend for the LoRA preflight gate: mirrors the render submit's backend
@@ -149,9 +157,8 @@ function motionIsWanLora(motionBackend) {
 // freshly-shown warning. Re-fetches /api/cast so the readiness check is fresh.
 async function loraPreflightGate() {
   const bindings = planState.castBindings || {};
-  if (Object.keys(bindings).length === 0) {
+  if (Object.keys(bindings).length === 0 || keyframeDoorForSubmit() === "cloud-keyframe") {
     hideLoraPreflightWarning();
-    loraPreflightAck = null;
     return true;
   }
   setRenderStatus("checking the cast...", "loading");
@@ -164,22 +171,14 @@ async function loraPreflightGate() {
   });
   if (unready.length === 0) {
     hideLoraPreflightWarning();
-    loraPreflightAck = null;
     setRenderStatus("", "");
     return true;
   }
-  const sig = window.loraPreflight.loraSlotSignature(unready);
-  if (loraPreflightAck === sig) {
-    // Same warning the user already saw; they clicked render again -> proceed.
-    hideLoraPreflightWarning();
-    return true;
-  }
-  loraPreflightAck = sig;
   showLoraPreflightWarning(unready);
   setRenderStatus(
     unready.length === 1
-      ? "1 character is using a portrait only (see note above)"
-      : unready.length + " characters are using portraits only (see note above)",
+      ? "1 character has no trained look (see the note below)"
+      : unready.length + " characters have no trained look (see the note below)",
     "error",
   );
   return false;
@@ -223,6 +222,28 @@ function requirePlannerVoiceLock(keyframesOnly) {
   const ta = $("#planner-voice-lock");
   if (ta) ta.focus();
   return null;
+}
+
+// Nothing spends until this resolves true. The total covers clips only, and says so.
+function confirmFilmSpend(renderOverrides) {
+  const dlg = $("#planner-spend-confirm");
+  const cfg = window.plannerRenderConfig;
+  if (!dlg || typeof dlg.showModal !== "function" || !cfg) return Promise.resolve(true);
+  const name = renderOverrides && renderOverrides.motion_backend;
+  const mods = window.plannerRegistry ? window.plannerRegistry.motionBackendModules() || [] : [];
+  const sum = cfg.filmSpendSummary(planState.storyboard.scenes, mods.find((m) => m.name === name));
+  const money = (n) => "$" + n.toFixed(2);
+  $("#planner-spend-what").textContent =
+    sum.shots + (sum.shots === 1 ? " shot" : " shots") + ", about " + Math.round(sum.seconds)
+    + " seconds, on " + (sum.door || name || "the chosen door") + ".";
+  $("#planner-spend-total").textContent = sum.low === null
+    ? "This door does not state a rate, so the studio cannot give a total."
+    : "Clips: about " + money(sum.low) + " to " + money(sum.high) + ".";
+  return new Promise((resolve) => {
+    dlg.addEventListener("close", () => resolve(dlg.returnValue === "start"), { once: true });
+    dlg.returnValue = "";
+    dlg.showModal();
+  });
 }
 
 async function submitRender() {
@@ -281,6 +302,11 @@ async function submitRender() {
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
     renderState.pollTimer = null;
+  }
+  if (!keyframesOnly && !(await confirmFilmSpend(renderOverrides))) {
+    setRenderStatus("", "");
+    renderState.submitting = false;
+    return;
   }
   const qualityTier = $("#planner-quality-tier").value;
   // v0.40.0: the checkbox (read above) is the source of truth for the next submission. The
@@ -679,6 +705,9 @@ function updateRenderProgress(data) {
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
   if (terminal.indexOf(data.status) >= 0) {
     hideProgressWidget();
+    // Counters and phase describe a running job. Left up, they contradict the final status.
+    $("#planner-render-scene").hidden = true;
+    $("#planner-render-phase").hidden = true;
     return;
   }
   // v0.136.0: SUBMITTED (pre-confirmation) is a queue-equivalent wait; do not

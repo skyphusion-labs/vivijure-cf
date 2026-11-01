@@ -50,9 +50,17 @@ const DECLARED: Record<string, { sites: string[]; why: string }> = {
     sites: ["planner-registry.js", "planner-render-config.js"],
     why: "rollout-window fallback for modules that predate ui.locality; retires with that window",
   },
+  "cloud-keyframe": {
+    sites: ["planner-render-config.js", "planner-render.js"],
+    why: "ruling: the look decides the stills door, and this door takes no LoRA. Retires when a manifest flag says so",
+  },
   "local-gpu": {
     sites: ["planner-render-config.js"],
     why: "suppressed from the projected config list and from the cloud-keyframe default; predates cf#780",
+  },
+  "alibaba-wan-lora": {
+    sites: ["cast.js"],
+    why: "Cast shows Wan training only where this door exists. Retires when Wan training is removed",
   },
   "infinitetalk": {
     sites: ["planner-render-config.js"],

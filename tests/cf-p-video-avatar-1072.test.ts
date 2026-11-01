@@ -91,7 +91,7 @@ describe("cf-p-video-avatar is installable and is not a default", () => {
     expect(m.usage.first_last).toBeUndefined();
     expect(m.ui.order).toBeGreaterThan(90);
     expect(m.config_schema.resolution.default).toBe("720p");
-    expect(m.ui.limits.join(" ")).toMatch(/own cap.*#931/);
+    expect(m.ui.limits.join(" ")).toMatch(/own cap/);
     expect(m.ui.cost).toMatch(/0\.025/);
     expect(m.ui.cost).toMatch(/0\.045/);
   });
