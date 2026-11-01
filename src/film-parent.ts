@@ -87,6 +87,8 @@ export interface ParentPart {
   /** Shots of the delivered output that a finish step soft-degraded, and why. Set when a part's film finishes. */
   finish_degraded?: number;
   finish_reasons?: string[];
+  /** When this part's film first could not be read. Null once it can be. */
+  read_failed_since?: number | null;
   /** Submits made. */
   attempts: number;
   /** Retries of this part that the ceiling does not count, because the run before them failed before its clips. */
@@ -557,14 +559,46 @@ async function readStillsJob(part: ParentPart, retake: PartRetake, deps: ParentD
   part.error = null;
 }
 
-async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
+/** A part's film that cannot be read for this long is failed, so it cannot hold a long film up for ever. It is the
+ *  child's own stall ceiling: by then the film would have failed itself, if it could be read. */
+export const READ_FAIL_LIMIT_MS = 90 * 60 * 1000;
+
+/** One part's unreadable film must not stop its siblings being read, or the film being saved. */
+function noteUnreadable(part: ParentPart, now: number, e: unknown): void {
+  const message = e instanceof Error ? e.message : String(e);
+  part.read_failed_since ??= now;
+  part.error = `its film could not be read: ${message}`;
+  if (now - part.read_failed_since < READ_FAIL_LIMIT_MS) return;
+  part.status = "failed";
+  part.error = `its film could not be read for ${Math.round(READ_FAIL_LIMIT_MS / 60000)} minutes: ${message}`;
+  part.read_failed_since = null;
+  part.failed_before_clips = false;
+  if (part.retake) part.retake.still_film_id = null;
+}
+
+async function readLiveParts(doc: ParentDoc, deps: ParentDeps, now: number): Promise<void> {
   for (const part of doc.parts) {
     if (part.status === "running" && part.retake?.still_film_id) {
-      await readStillsJob(part, part.retake, deps);
+      try {
+        await readStillsJob(part, part.retake, deps);
+        part.read_failed_since = null;
+      } catch (e) {
+        noteUnreadable(part, now, e);
+      }
       continue;
     }
     if (part.status !== "running" || !part.child_film_id) continue;
-    const child = await deps.readChild(part.child_film_id);
+    let child: ChildRead | null;
+    try {
+      child = await deps.readChild(part.child_film_id);
+    } catch (e) {
+      noteUnreadable(part, now, e);
+      continue;
+    }
+    if (part.read_failed_since) {
+      part.read_failed_since = null;
+      part.error = null;
+    }
     if (!child) {
       part.status = "failed";
       part.error = "the part's film job is gone";
@@ -785,7 +819,7 @@ async function mergeCaptions(doc: ParentDoc, offsets: number[], deps: ParentDeps
 export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: number): Promise<ParentDoc> {
   if (doc.phase === "done" || doc.phase === "failed") return doc;
   const before = JSON.stringify(doc);
-  await readLiveParts(doc, deps);
+  await readLiveParts(doc, deps, now);
   await resolveStaleClaims(doc, deps, now);
   // A write only when something moved, so a poll does not collide with a tick that is submitting.
   const saveIfMoved = async () => {
@@ -1222,6 +1256,7 @@ export function parentView(doc: ParentDoc, now: number) {
       error: p.error,
       finish_degraded: p.finish_degraded ?? 0,
       finish_reasons: p.finish_reasons ?? [],
+      read_failed_since: p.read_failed_since ?? null,
       // Master ids waiting or in progress. A running part cannot have its retake cancelled.
       retake_shots: p.retake ? Object.keys(p.retake.undo.prompts) : [],
     })),
