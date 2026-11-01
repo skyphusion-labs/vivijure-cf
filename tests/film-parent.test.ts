@@ -1065,6 +1065,16 @@ describe("a retake of one shot", () => {
       expect(heldEndFrames(keyframes, { ...base, shots: ["shot_02"] }), "no new still").toEqual({});
     });
 
+    it("two retakes in a row: the first hold stands, and a shot bought now drops its hold", () => {
+      const base = { from_film_id: "f", prompts: {}, lines: {}, undo: { prompts: {}, lines: {} } };
+      // After the first retake, shot_02 has a new still and shot_01 holds the old one.
+      const second = [{ shot_id: "shot_01", keyframe_key: "k1" }, { shot_id: "shot_02", keyframe_key: "n2" }, { shot_id: "shot_03", keyframe_key: "k3" }];
+      const prior = { shot_01: "k2" };
+      expect(heldEndFrames(second, { ...base, shots: ["shot_03"], stills: { shot_03: "n3" } }, prior), "a new hold beside the old").toEqual({ shot_01: "k2", shot_02: "k3" });
+      expect(heldEndFrames(second, { ...base, shots: ["shot_02"], stills: { shot_02: "n2b" } }, prior), "not overwritten by the newer still").toEqual({ shot_01: "k2" });
+      expect(heldEndFrames(second, { ...base, shots: ["shot_01"] }, prior), "shot_01 is bought, so it is free of the hold").toEqual({});
+    });
+
     it("rebuy_previous buys and counts the shot before, within the part", async () => {
       const { h, deps, doc } = await finished();
       markRetake(doc, "s3", { new_still: true, seed: 7, rebuy_previous: true });

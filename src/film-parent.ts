@@ -869,11 +869,18 @@ const retakeNextCost = (r: PartRetake, perShot: number): number =>
 export function heldEndFrames(
   keyframes: Array<{ shot_id: string; keyframe_key: string }>,
   retake: PartRetake,
+  prior?: Record<string, string>,
 ): Record<string, string> {
+  // A hold from an earlier retake stands: that clip's proof names that frame. A shot bought now drops its hold.
   const held: Record<string, string> = {};
+  for (const [shot, key] of Object.entries(prior ?? {})) {
+    if (!retake.shots.includes(shot)) held[shot] = key;
+  }
   keyframes.forEach((k, i) => {
     const next = keyframes[i + 1];
-    if (next && retake.stills?.[next.shot_id] && !retake.shots.includes(k.shot_id)) held[k.shot_id] = next.keyframe_key;
+    if (next && retake.stills?.[next.shot_id] && !retake.shots.includes(k.shot_id)) {
+      held[k.shot_id] ??= next.keyframe_key;
+    }
   });
   return held;
 }

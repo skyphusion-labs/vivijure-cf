@@ -768,6 +768,14 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect(h.fromKeyframes[0].held_end_frames, "shot 1 keeps the old still as its end frame").toEqual({ shot_01: "k2" });
   });
 
+  it("a retake of a film that already holds a frame keeps that hold", async () => {
+    const e = await doneFilm();
+    h.jobs.set("film-old", { ...OLD_JOB, held_end_frames: { shot_00: "older" } });
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    await tick(e);
+    expect(h.fromKeyframes[0].held_end_frames).toEqual({ shot_00: "older" });
+  });
+
   it("new_still says what it holds, and rebuy_previous does not", async () => {
     const e = await doneFilm();
     const a = (await (await worker.fetch(post("/api/film/feature-x/shots/s2/retake", { new_still: true, seed: 1 }), e as never, ctx)).json()) as { note?: string };

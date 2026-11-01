@@ -2026,7 +2026,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         scenes,
         // New stills in place of the old, by shot. Every other still keeps its key, so its clip's proof holds.
         keyframes: job.keyframes.map((k) => ({ ...k, keyframe_key: retake.stills?.[k.shot_id] ?? k.keyframe_key })),
-        held_end_frames: heldEndFrames(job.keyframes, retake),
+        held_end_frames: heldEndFrames(job.keyframes, retake, job.held_end_frames),
         motion_backend: job.motion_backend ?? undefined,
         motion_config: job.motion_config,
         finish_config: job.finish_config,
