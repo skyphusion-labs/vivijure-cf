@@ -132,6 +132,30 @@ let realFetch: typeof fetch;
 beforeEach(() => { realFetch = globalThis.fetch; });
 afterEach(() => { globalThis.fetch = realFetch; vi.restoreAllMocks(); });
 
+describe("finish-upscale asks again before a shot stands out in the film (cf#1223)", () => {
+  const subject = (name: string) => SUBJECTS.find((s) => s.name === name)!.worker;
+  for (const [shape, envelope, reason] of [
+    ["lifted", LIFTED_DEGRADE, "wall-clock guard expired after 900s"],
+    ["current", COMPLETED_DEGRADE, "no detectable face in clip"],
+  ] as const) {
+    it(`the ${shape} shape is transient, so the core holds and re-dispatches it`, async () => {
+      const { body } = await pollWith(subject("finish-upscale"), envelope);
+      expect((body.output as unknown as { failure?: unknown }).failure).toEqual({ kind: "transient", code: "soft_degrade", detail: reason });
+      expect(body.output?.clip_key).toBe(SOURCE_CLIP);
+    });
+  }
+
+  it("CONTROL: other finish modules keep their one-shot degrade", async () => {
+    const { body } = await pollWith(subject("finish-rife"), COMPLETED_DEGRADE);
+    expect((body.output as unknown as { failure?: unknown }).failure).toBeUndefined();
+  });
+
+  it("a crash is still a crash", async () => {
+    const { body } = await pollWith(subject("finish-upscale"), CRASH);
+    expect(body.ok).toBe(false);
+  });
+});
+
 describe("the harness itself can report the failing reading (controls)", () => {
   it("the recording D1 stub records, so an empty capture below means nothing was written", () => {
     const { db, calls } = recordingDb();

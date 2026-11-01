@@ -298,6 +298,14 @@ function passthrough(
  *  through then, and inventing a key would be worse than the error it replaced -- the caller keeps
  *  the terminal error and its message says which case it is.
  */
+/** A door that could not upscale a clip this time, so the shot would stand out in the film. Nothing here is
+ *  a property of the clip, so it is worth asking again: `transient` makes the core hold and re-dispatch this step
+ *  (about a cent a try, measured), and only when that runs out does the passthrough stand, by name on the film. */
+function softDegradeToRetry(st: PollState, reason: string): PollResponse<FinishOutput> | null {
+  const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, reason || undefined);
+  return passed && withFailure(passed, { kind: "transient", code: "soft_degrade", detail: reason });
+}
+
 function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> | null {
   if (!st.clipKey) return null;
   console.warn(`finish-upscale: poll passthrough (${reason}) shot=${st.shotId}`);
@@ -517,7 +525,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     // so it falls through to the pre-cf#594 terminal path below, row and message unchanged.
     const degrade = softDegradeInFailedEnvelope(s);
     if (degrade !== null) {
-      const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, degrade || undefined);
+      const passed = softDegradeToRetry(st, degrade);
       if (passed) {
         await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
         return passed;
@@ -565,7 +573,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // falls through to the pre-cf#594 terminal path below.
   const softDegrade = softDegradeInCompletedOutput(s.output);
   if (softDegrade !== null) {
-    const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, softDegrade || undefined);
+    const passed = softDegradeToRetry(st, softDegrade);
     if (passed) return passed;
   }
   const csam = csamRefusalInCompletedOutput(s.output);
