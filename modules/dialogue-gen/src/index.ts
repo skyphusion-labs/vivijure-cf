@@ -137,12 +137,16 @@ async function synthLine(env: Env, project: string, line: NormalizedLine): Promi
   const body = new ArrayBuffer(written.byteLength);
   new Uint8Array(body).set(written);
   const key = audioKey(project, line.shot_id);
-  await env.R2_RENDERS.put(key, body, { httpMetadata: { contentType: AUDIO_MIME } });
+  // On the object, so the gain a line was given can be read back from the line itself.
+  await env.R2_RENDERS.put(key, body, {
+    httpMetadata: { contentType: AUDIO_MIME },
+    ...(norm ? { customMetadata: { gain_db: norm.gain_db.toFixed(2) } } : {}),
+  });
   return {
     shot_id: line.shot_id,
     audio_key: key,
     voice_id: line.voice,
-    ...(norm ? { duration_s: norm.seconds } : {}),
+    ...(norm ? { duration_s: norm.seconds, gain_db: norm.gain_db } : {}),
   };
 }
 
