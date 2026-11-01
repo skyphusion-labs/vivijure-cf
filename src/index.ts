@@ -15,7 +15,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retryPart, SubmitRefused, type CreateParentBody } from "./film-parent";
+import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
 import { clearActiveMarker, insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
@@ -1883,7 +1883,11 @@ const hStartFilm: Handler = async (req, env) => {
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
-  await persistWanLoraProjectionOnFilm(env, job, filmWanProj);
+  // Best effort. The film is out by now, so a throw here would strand it with no history row, unseen by the
+  // sweep and by a parent film's adopt (cf#695's reasoning).
+  await persistWanLoraProjectionOnFilm(env, job, filmWanProj).catch((e) => {
+    console.warn(`film ${job.film_id}: wan lora projection not persisted: ${String(e)}`);
+  });
   // Write a renders-table row so this film shows in the history panel (#164), the same way
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
@@ -1947,10 +1951,48 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       const r = await doorJson(() => hStartFilm(internalRequest("/api/render/film", body), env, ctx, {}));
       if (r.status !== 201 || typeof r.body.film_id !== "string") {
         const message = `submit refused (${r.status}): ${String(r.body.error ?? "no film id")}`;
-        if (r.status >= 400 && r.status < 500) throw new SubmitRefused(message);
-        throw new Error(message);
+        // The door answered, and everything after startFilmJob in it is best effort, so an answer that is not
+        // a 201 means nothing started. A 5xx here is its own checks being unable to run: try again later.
+        if (r.status >= 500) throw new SubmitNotStarted(message);
+        throw new SubmitRefused(message);
       }
       return r.body.film_id;
+    },
+    async startRetake(retake, idempotency_key) {
+      const old = await advanceFilmJob(env, retake.from_film_id);
+      if (!old) throw new SubmitRefused("the part's finished film job is gone");
+      const job = old.job;
+      if (!job.keyframes?.length) throw new SubmitRefused("the part's finished film has no stills to re-use");
+      const { scenes, dialogue_lines } = retakeScenesAndLines(job, retake);
+      const started = await startFilmFromKeyframes(env, {
+        project: job.project,
+        bundle_key: job.bundle_key,
+        scenes,
+        keyframes: job.keyframes,
+        motion_backend: job.motion_backend ?? undefined,
+        motion_config: job.motion_config,
+        finish_config: job.finish_config,
+        finish_select: job.finish_select,
+        speech_config: job.speech_config,
+        film_finish_config: job.film_finish_config,
+        master_config: job.master_config,
+        derive_mode: "finalized",
+        audio_key: job.audio_key,
+        dialogue_lines,
+        style_prefix: job.style_prefix,
+        voice_lock: job.voice_lock,
+        voice_ref_keys: job.voice_ref_keys,
+        delivery_width: job.delivery_width,
+        delivery_height: job.delivery_height,
+        delivery_fps: job.delivery_fps,
+        film_titles: job.film_titles,
+        cast_loras: job.cast_loras,
+        reuse_finished: true,
+        retake_shots: retake.shots,
+        idempotency_key,
+      });
+      if (started.phase === "failed") throw new SubmitRefused(started.error || "the retake did not start");
+      return started.film_id;
     },
     async admitSubmit() {
       const spend = await enforceSpendLimit(internalRequest("/api/render/film", {}), env);
@@ -2017,6 +2059,22 @@ const hRetryParentPart: Handler = async (req, env, ctx, p) => {
   if (!loaded) throw notFound("film");
   try {
     retryPart(loaded.doc, Number(p.n));
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hRetakeParentShot: Handler = async (req, env, ctx, p) => {
+  const a = await readBody<RetakeEdits & { new_still?: unknown }>(req);
+  if (a.new_still !== undefined) throw badRequest("new_still is not built yet: a retake re-uses the shot's still");
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    markRetake(loaded.doc, p.shot, a);
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
@@ -2438,6 +2496,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
+  { method: "POST",   pattern: "/api/film/:id/shots/:shot/retake",      scope: "consumer",    handler: hRetakeParentShot },
   { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },

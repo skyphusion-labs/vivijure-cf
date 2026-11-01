@@ -76,6 +76,7 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/film$/,
   /^\/api\/film\/[^/]+\/parts\/[^/]+\/retry$/,
   /^\/api\/film\/[^/]+\/resume$/,
+  /^\/api\/film\/[^/]+\/shots\/[^/]+\/retake$/,
   /^\/api\/film\/[^/]+\/ceiling$/,
 
   /^\/api\/storyboard\/render-from-keyframes$/,

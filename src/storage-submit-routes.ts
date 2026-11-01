@@ -45,6 +45,7 @@ export const PANEL_STORAGE_SUBMIT_PATTERNS: RegExp[] = [
   /^\/api\/film$/,
   /^\/api\/film\/[^/]+\/parts\/[^/]+\/retry$/,
   /^\/api\/film\/[^/]+\/resume$/,
+  /^\/api\/film\/[^/]+\/shots\/[^/]+\/retake$/,
   // A finish retry writes a whole new film beside the old one, and only deletes the old one if it finishes.
   /^\/api\/render\/film\/[^/]+\/finish-retry$/,
   // Re-submits a stored row through startFilmJob: a full film of keyframes and clips, which is the

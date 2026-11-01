@@ -302,6 +302,7 @@ const NOT_DOORS = new Set<string>([
   "/api/film",
   "/api/film/:id/parts/:n/retry",
   "/api/film/:id/ceiling",
+  "/api/film/:id/shots/:shot/retake",
   "/api/film/:id/resume",
   "/api/storyboard/character-ref",
   "/api/storyboard/enhance",

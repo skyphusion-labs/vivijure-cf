@@ -290,7 +290,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**95 route entries** (distinct `method` + `pattern`) over **77 distinct path patterns**. Those two
+**96 route entries** (distinct `method` + `pattern`) over **78 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -369,6 +369,7 @@ unchanged.
 | 46d | POST | `/api/film/:id/parts/:n/retry` | 2.22a |
 | 46e | POST | `/api/film/:id/ceiling` | 2.22a |
 | 46f | POST | `/api/film/:id/resume` | 2.22a |
+| 46g | POST | `/api/film/:id/shots/:shot/retake` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1439,11 +1440,13 @@ Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The cron or 
 
 The spend limit, daily ceiling and storage quota also run at each part's submit. A refusal holds that part: it stays `pending`, `stop_reason` says why, and the next tick asks again.
 
-A submit that was interrupted, or that threw or answered 5xx, is never sent again by itself. After 15 minutes the parent looks for a film in that part's project submitted since the claim, and adopts it. If it finds none, the part reads `failed` with `submit outcome unknown`. Check its project before retrying, because a retry can buy it twice.
+A part whose submit the door answered with a 5xx started nothing, so it stays `pending`, costs nothing, shows the answer in `error`, and the next tick asks again. A submit that was interrupted or that threw is never sent again by itself. After 15 minutes the parent looks for a film in that part's project submitted since the claim, and adopts it. If it finds none, the part reads `failed` with `submit outcome unknown`. Check its project before retrying, because a retry can buy it twice.
 
 A join that fails for good ends the film in `failed` with every part kept, and `resume` joins again. `404 "film"` if unknown.
 
 **`POST /api/film/:id/parts/:n/retry`** with `{"shots":"failed"}` puts a failed part back in line and advances. The part is re-submitted with its stored inputs and `reuse_finished: true`. `400` if the part has not failed. `409` if the film changed during the call. A retry that would cross the ceiling leaves the part pending and stops the film.
+
+**`POST /api/film/:id/shots/:shot/retake`** with `{prompt?, line?, voice_id?}` marks one shot of a finished part for a new take. `:shot` is the master `shot_id`. The part runs again from its existing stills with `reuse_finished` and `retake_shots`, so it buys that shot's clip and finish, plus its line if the line or voice changed, and keeps the rest. Then the film joins again to a new key. `output_key` stays the last finished film until the new join is done, and then changes. Several shots of a waiting part add to one retake. The estimate adds one shot per retaken shot. `new_still` is refused: not built yet. `400` if the shot is unknown or its part is not finished. `409` if the film changed during the call.
 
 **`POST /api/film/:id/resume`** carries on past the hold after the first part, or joins again after a failed join. `400` if there is nothing to resume. `409` if the film changed during the call.
 

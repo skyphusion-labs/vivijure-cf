@@ -75,6 +75,7 @@ export async function clearActiveMarker(env: StudioEnv, id: string): Promise<voi
 export interface ParentDoors {
   bundle(args: { storyboard: Record<string, unknown>; characterRefs: Record<string, unknown> }): Promise<string>;
   start(body: Record<string, unknown>): Promise<string>;
+  startRetake: ParentDeps["startRetake"];
   admitSubmit(): Promise<string | null>;
   pollFilm(filmId: string): Promise<Record<string, unknown> | null>;
 }
@@ -113,6 +114,7 @@ export function parentDeps(env: StudioEnv, loaded: LoadedParent, doors: ParentDo
     },
     bundle: doors.bundle,
     start: doors.start,
+    startRetake: doors.startRetake,
     async readChild(filmId) {
       const poll = await doors.pollFilm(filmId);
       return poll ? childFromPoll(poll) : null;
