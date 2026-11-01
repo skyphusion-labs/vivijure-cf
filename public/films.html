@@ -132,6 +132,11 @@
           <strong id="film-stop-reason"></strong>
           <div id="film-stop-note"></div>
         </div>
+        <div id="film-cron" class="films-stop" role="alert" hidden>
+          <strong>The studio's scheduler has not run for 3 minutes.</strong>
+          <div>Nothing will move until it does. This film is not just slow.</div>
+          <div class="films-actions"><button id="film-wake" type="button" class="planner-secondary">Wake this film</button></div>
+        </div>
         <div class="films-actions"><button id="film-resume" type="button" class="planner-primary" hidden></button></div>
         <div id="film-spend" class="films-muted"></div>
         <div id="film-basis" class="films-muted"></div>
@@ -146,6 +151,8 @@
         <div id="film-error" class="films-error" role="alert" hidden></div>
       </section>
 
+      <p id="film-action-note" class="films-note" role="status"></p>
+      <p id="film-retake-note" class="films-warn" hidden>A new take is under way. The film below is the last finished one until the new join is done.</p>
       <section id="film-output" class="planner-stage" hidden></section>
 
       <section class="planner-stage">
@@ -154,9 +161,34 @@
           <label class="films-muted"><input id="film-only-trouble" type="checkbox" /> only failed or rendering</label>
         </div>
         <div id="film-parts-count" class="films-muted"></div>
+        <form id="film-find" class="films-open">
+          <label class="planner-field">
+            <span>go to shot number</span>
+            <input id="film-find-number" class="planner-input" type="number" inputmode="numeric" min="1" />
+          </label>
+          <button type="submit" class="planner-secondary">Go</button>
+        </form>
         <ul id="film-parts" class="films-parts"></ul>
       </section>
     </div>
+
+    <dialog id="film-retake-dialog" class="planner-spend-confirm">
+      <form method="dialog">
+        <h3 id="film-retake-title"></h3>
+        <label class="planner-field"><span>prompt</span>
+          <textarea id="film-retake-prompt" rows="4"></textarea></label>
+        <label class="planner-field"><span>spoken line</span>
+          <textarea id="film-retake-line" rows="2"></textarea></label>
+        <label class="planner-field"><span>voice</span>
+          <select id="film-retake-voice"></select></label>
+        <label class="films-check"><input id="film-retake-still" type="checkbox" /> Draw a new still too. This costs a little more.</label>
+        <p>This buys this shot's clip and finish, and its line if the line or voice changes. Every other shot is kept, then the film joins again. It costs money, and the studio cannot give a price.</p>
+        <div class="planner-actions">
+          <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+          <button type="submit" value="go" class="planner-primary">Make a new take</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="film-retry-dialog" class="planner-spend-confirm">
       <form method="dialog">
