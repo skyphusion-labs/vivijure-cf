@@ -761,3 +761,28 @@ describe("cloud-keyframe forbids drawn text (cf#1155)", () => {
     expect(composeEditPrompt("Wren speaks on a pier", "anime")).toContain("No written words, captions, subtitles or speech bubbles");
   });
 });
+
+describe("cloud-keyframe /invoke with the drawing workflow bound", () => {
+  it("starts the workflow, draws nothing, and puts its id in the poll token", async () => {
+    restoreGenOk();
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const create = vi.fn(async () => ({ id: "wf-9" }));
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = { create };
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(atob(sub.poll!)).workflow_id).toBe("wf-9");
+    expect(genCalls).toHaveLength(0);
+  });
+
+  it("fails the submit when the workflow cannot start", async () => {
+    const env = await makeKeyframeEnv();
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: async () => { throw new Error("no quota"); },
+    };
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok).toBe(false);
+    expect(sub.error).toContain("no quota");
+  });
+});

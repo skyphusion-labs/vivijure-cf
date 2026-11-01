@@ -8,7 +8,9 @@
 //   GET  /module.json -> manifest
 //   POST /invoke      -> read the bundle, stage each cast portrait (downscaled), plan the shots, write
 //                        run state to R2, return { ok, pending, poll }
-//   POST /poll        -> render the next shot, write its keyframe to R2, advance; pending until done
+//   POST /poll        -> report the workflow's progress from R2; pending until done
+// With KEYFRAME_WORKFLOW bound, a workflow draws one shot per step, so drawing does not depend on a
+// poll surviving and a poll returns in one R2 read. Without the binding, /poll draws one shot.
 // PollResponse carries no token, so the run state lives in R2 and the poll token is a stable pointer.
 //
 // This is a PRODUCER stage, not a polish step: a shot it cannot render is an honest HARD FAIL
@@ -25,6 +27,7 @@ import {
   type KeyframeInput,
   type KeyframeOutput,
 } from "./contract";
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import {
   generateImage,
   maxRefsForModel,
@@ -97,11 +100,28 @@ interface Env {
   GATEWAY_ID?: SecretsStoreSecret;
   R2_RENDERS: R2Bucket;
   IMAGES?: ImagesBinding;
+  /** Draws the shots outside any request. Absent on a host that has not bound it. */
+  KEYFRAME_WORKFLOW?: WorkflowBinding;
+}
+
+interface WorkflowInstance {
+  id: string;
+  status(): Promise<{ status: string; error?: unknown }>;
+  terminate(): Promise<void>;
+}
+interface WorkflowBinding {
+  create(options?: { id?: string; params?: WorkflowParams }): Promise<WorkflowInstance>;
+  get(id: string): Promise<WorkflowInstance>;
+}
+export interface WorkflowParams {
+  project: string;
+  job_id: string;
 }
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.10",
+  version: "0.1.11",
+  cancelable: true,
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
@@ -365,15 +385,56 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   } catch (e) {
     return { ok: false, error: "cloud-keyframe: could not persist run state: " + (e as Error).message };
   }
+  if (env.KEYFRAME_WORKFLOW) {
+    let workflowId: string;
+    try {
+      const instance = await env.KEYFRAME_WORKFLOW.create({ params: { project: input.project, job_id } });
+      workflowId = instance.id;
+    } catch (e) {
+      return { ok: false, error: "cloud-keyframe: could not start drawing workflow: " + (e as Error).message };
+    }
+    return {
+      ok: true,
+      pending: true,
+      poll: encodePoll({ project: input.project, job_id, workflow_id: workflowId }),
+      jobId: job_id,
+    };
+  }
   return { ok: true, pending: true, poll: encodePoll({ project: input.project, job_id }), jobId: job_id };  // #318 (additive); cloud-keyframe writes no progress snapshot -> core gets no sub-progress, degrades gracefully
 }
 
-/** /poll: load the run state, render the next shot (gen -> normalize -> store), advance, and return
- *  pending until the shot queue drains -> the KeyframeOutput with every keyframe key. Any failure to
- *  render or store a shot is a HARD FAIL. */
+/** /poll. A workflow run only reads state, so the caller never waits on a provider. A token with no
+ *  workflow draws one shot here. */
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeOutput>> {
   const token = decodePoll(body.poll);
   if (!token) return { ok: false, error: "cloud-keyframe: bad poll token" };
+  if (!token.workflow_id) return drawNextShot(env, token);
+  const obj = await env.R2_RENDERS.get(stateKey(token.project, token.job_id));
+  if (!obj) return { ok: false, error: "cloud-keyframe: run state not found (expired or bad token)" };
+  const state = JSON.parse(await obj.text()) as CloudKeyframeState;
+  if (state.workflow_error) return { ok: false, error: state.workflow_error };
+  if (state.shots.length === 0) return { ok: true, output: readOutput(state) };
+  if (env.KEYFRAME_WORKFLOW) {
+    try {
+      const { status } = await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).status();
+      if (status === "errored" || status === "terminated") {
+        return { ok: false, error: "cloud-keyframe: drawing workflow " + status };
+      }
+    } catch (e) {
+      // State is the record. A failed status read is not a failed render.
+      console.warn("cloud-keyframe: workflow status read failed: " + (e as Error).message);
+    }
+  }
+  return { ok: true, pending: true };
+}
+
+/** Load the run state, render the next shot (gen -> normalize -> store), advance, and return pending
+ *  until the shot queue drains -> the KeyframeOutput with every keyframe key. Any failure to render
+ *  or store a shot is a HARD FAIL. */
+async function drawNextShot(
+  env: Env,
+  token: { project: string; job_id: string },
+): Promise<PollResponse<KeyframeOutput>> {
   const sk = stateKey(token.project, token.job_id);
   const obj = await env.R2_RENDERS.get(sk);
   if (!obj) return { ok: false, error: "cloud-keyframe: run state not found (expired or bad token)" };
@@ -516,6 +577,57 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
   return state.shots.length === 0 ? { ok: true, output: readOutput(state) } : { ok: true, pending: true };
 }
 
+/** One step per shot, so a shot finished before a crash is never bought again. A retry redraws only
+ *  the shot that failed, because the run state advances only after a shot is stored. */
+const DRAW_STEP_CONFIG: WorkflowStepConfig = {
+  retries: { limit: 1, delay: "30 seconds", backoff: "constant" },
+  timeout: "10 minutes",
+};
+const RATE_HOLD_SLEEP = "30 seconds";
+
+export class CloudKeyframeWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
+  async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    const token = event.payload;
+    const sk = stateKey(token.project, token.job_id);
+    const shotsLeft = async (): Promise<number> => {
+      const obj = await this.env.R2_RENDERS.get(sk);
+      return obj ? (JSON.parse(await obj.text()) as CloudKeyframeState).shots.length : 0;
+    };
+    const fail = async (error: string): Promise<void> => {
+      await step.do("record failure", async () => {
+        const obj = await this.env.R2_RENDERS.get(sk);
+        if (!obj) return;
+        const state = JSON.parse(await obj.text()) as CloudKeyframeState;
+        state.workflow_error = error.slice(0, 500);
+        await this.env.R2_RENDERS.put(sk, JSON.stringify(state), {
+          httpMetadata: { contentType: "application/json" },
+        });
+      });
+    };
+    try {
+      // Each pass finishes a shot, holds for a rate limit, or fails. drawNextShot caps the holds per
+      // shot, so this bound is never what ends a healthy run.
+      let remaining = await step.do("read plan", shotsLeft);
+      const maxPasses = remaining * (KEYFRAME_RATE_MAX + 1);
+      for (let pass = 0; pass < maxPasses && remaining > 0; pass++) {
+        const r = await step.do("draw " + pass, DRAW_STEP_CONFIG, async () => {
+          const res = await drawNextShot(this.env, token);
+          return res.ok ? { left: await shotsLeft() } : { error: res.error };
+        });
+        if ("error" in r) {
+          await fail(String(r.error));
+          return;
+        }
+        if (r.left === remaining) await step.sleep("rate hold " + pass, RATE_HOLD_SLEEP);
+        remaining = r.left;
+      }
+      if (remaining > 0) await fail("cloud-keyframe: drawing stopped with " + remaining + " shots left");
+    } catch (e) {
+      await fail("cloud-keyframe: drawing workflow failed: " + (e as Error).message);
+    }
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -560,6 +672,25 @@ export default {
         return json({ ok: false, error: "poll token required" } as PollResponse);
       }
       return json(await poll(env, body));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: PollRequest;
+      try {
+        body = (await request.json()) as PollRequest;
+      } catch {
+        return json({ ok: false, error: "invalid JSON body" });
+      }
+      const token = body && typeof body.poll === "string" ? decodePoll(body.poll) : null;
+      if (!token) return json({ ok: false, error: "cloud-keyframe: bad poll token" });
+      // A token with no workflow has nothing running: drawing only happens inside its polls.
+      if (!token.workflow_id || !env.KEYFRAME_WORKFLOW) return json({ ok: true });
+      try {
+        await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).terminate();
+        return json({ ok: true });
+      } catch (e) {
+        return json({ ok: false, error: "cloud-keyframe: could not stop drawing workflow: " + (e as Error).message });
+      }
     }
 
     return json({ ok: false, error: "not found" }, 404);

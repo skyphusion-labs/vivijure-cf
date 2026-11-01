@@ -216,6 +216,8 @@ export interface CloudKeyframeState {
   film_ref?: FilmRefPlan;
   /** Still look. Absent on older state docs; treat as photoreal. */
   style?: KeyframeStyle;
+  /** Set when the drawing workflow stopped on a hard failure. /poll reports it. */
+  workflow_error?: string;
 }
 
 /** Select the scenes to render: the requested subset (`shot_ids`) or every scene in the bundle. */
@@ -237,6 +239,8 @@ export function usedSlots(scenes: BundleScene[]): string[] {
 export interface PollToken {
   project: string;
   job_id: string;
+  /** Set when a workflow draws the shots. /poll then only reads state. */
+  workflow_id?: string;
 }
 
 export function encodePoll(t: PollToken): string {
@@ -247,7 +251,9 @@ export function decodePoll(token: string): PollToken | null {
   try {
     const o = JSON.parse(atob(token)) as PollToken;
     if (o && typeof o.project === "string" && typeof o.job_id === "string") {
-      return { project: o.project, job_id: o.job_id };
+      const t: PollToken = { project: o.project, job_id: o.job_id };
+      if (typeof o.workflow_id === "string" && o.workflow_id) t.workflow_id = o.workflow_id;
+      return t;
     }
   } catch {
     /* fall through */
