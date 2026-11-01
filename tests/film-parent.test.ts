@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   advanceParent,
   buildParentDoc,
+  cancelRetake,
   keyframeBackendForStyle,
   markRetake,
   MAX_PARTS,
@@ -10,6 +11,8 @@ import {
   JOIN_MISSING_STREAK,
   JOIN_TIMEOUT_MS,
   mergeSrt,
+  normalizeParentDoc,
+  NOT_STARTED_BACKOFF_MS,
   ONE_UPLOAD_BYTES,
   requestFingerprint,
   resumeParent,
@@ -115,6 +118,37 @@ function harness(doc: ParentDoc) {
 }
 
 const done = (key: string, sidecar: string | null = null): ChildRead => ({ phase: "done", shots_done: 2, output_key: key, sidecar_key: sidecar, error: null });
+
+describe("a doc written before these fields existed", () => {
+  function older() {
+    const doc = buildParentDoc("g", body(4, { spend_ceiling_usd: 1 }), 0);
+    const loose = doc as unknown as Record<string, unknown>;
+    delete loose.join_version;
+    delete loose.rejoin_needed;
+    for (const p of doc.parts as unknown as Array<Record<string, unknown>>) {
+      delete p.retake;
+      delete p.retake_est;
+      delete p.retakes;
+      delete p.not_before;
+    }
+    return doc;
+  }
+  it("keeps its ceiling", async () => {
+    const { h, deps, doc } = harness(normalizeParentDoc(older()));
+    await advanceParent(doc, deps, 1);
+    expect(h.starts, "the part estimate is over the ceiling").toEqual([]);
+    expect(doc.stop_reason).toBe("spend ceiling");
+  });
+  it("joins to the real key", () => {
+    const doc = normalizeParentDoc(older());
+    expect(doc.join_version).toBe(1);
+    expect(parentView(doc, 0).spend_committed_est).toBe(0);
+  });
+  it("a plain pending part is not a waiting retake", () => {
+    const doc = normalizeParentDoc(older());
+    expect(() => markRetake(doc, "s0", {})).toThrow(/needs a finished part/);
+  });
+});
 
 describe("planning parts", () => {
   it("splits by part size and by breaks", () => {
@@ -283,7 +317,7 @@ describe("the order of work", () => {
     expect(h.starts).toHaveLength(0);
   });
 
-  it("a door 5xx started nothing: the part waits, counts nothing, and goes on the next tick", async () => {
+  it("a door 5xx started nothing: the part waits, counts nothing, and goes after its backoff", async () => {
     const { h, deps, doc } = harness(buildParentDoc("f", body(4), 0));
     const start = deps.start;
     deps.start = async () => { throw new SubmitNotStarted("submit refused (503): usage read failed"); };
@@ -294,7 +328,14 @@ describe("the order of work", () => {
     expect(doc.parts[0].error).toMatch(/503/);
     expect(doc.phase).toBe("running");
     deps.start = start;
+    let asked = 0;
+    const admit = deps.admitSubmit;
+    deps.admitSubmit = async () => { asked += 1; return admit(); };
     await advanceParent(doc, deps, 2);
+    expect(asked, "each ask costs a daily count, so it waits").toBe(0);
+    expect(h.starts).toHaveLength(0);
+    await advanceParent(doc, deps, 1 + NOT_STARTED_BACKOFF_MS);
+    expect(asked).toBe(1);
     expect(h.starts).toHaveLength(1);
     expect(h.starts[0].idempotency_key, "the same request, so the same key").toBe("f-p00-g0");
     expect(doc.parts[0].status).toBe("running");
@@ -657,7 +698,7 @@ describe("a retake of one shot", () => {
     expect(h.starts, "a retake must not run the keyframe stage").toEqual([]);
     expect(h.bundles).toEqual([]);
     expect(h.retakes).toHaveLength(1);
-    expect(h.retakes[0][0]).toEqual({ from_film_id: "film-2", shots: ["shot_01"], prompts: { shot_01: "new" }, lines: {} });
+    expect(h.retakes[0][0]).toMatchObject({ from_film_id: "film-2", shots: ["shot_01"], prompts: { shot_01: "new" }, lines: {} });
     expect(doc.parts[0].output_key).toBe("k1");
     expect(doc.parts[0].status).toBe("done");
   });
@@ -704,6 +745,101 @@ describe("a retake of one shot", () => {
     expect(h.retakes.map((r) => [r[0].from_film_id, r[1]])).toEqual([["film-2", "f-p01-r1"], ["film-2", "f-p01-r2"]]);
   });
 
+  it("a retake after a join that failed for good joins again", async () => {
+    const { h, deps, doc } = await allDone([null, null]);
+    h.join = { status: "failed", error: "films[1] differs" };
+    await advanceParent(doc, deps, 4);
+    await advanceParent(doc, deps, 5);
+    await advanceParent(doc, deps, 6);
+    expect(doc.phase).toBe("failed");
+    const joined = h.joins.length;
+    markRetake(doc, "s2", {});
+    expect([doc.join_attempts, doc.finished_at, doc.error]).toEqual([0, null, null]);
+    h.join = { status: "pending" };
+    await advanceParent(doc, deps, 7);
+    h.children.set("film-retake-1", done("k2b"));
+    await advanceParent(doc, deps, 8);
+    expect(h.joins).toHaveLength(joined + 1);
+    expect(h.joins[joined]).toEqual(["k1", "k2b"]);
+  });
+
+  it("drops the old captions when the new film has none", async () => {
+    const { h, deps, doc } = await allDone(["a.srt", "b.srt"]);
+    h.texts.set("a.srt", "1\n00:00:01,000 --> 00:00:02,000\nx\n");
+    h.texts.set("b.srt", "1\n00:00:01,000 --> 00:00:02,000\ny\n");
+    h.join = { status: "completed", bytes: 9, durationSeconds: 8, filmOffsetsSeconds: [0, 4] };
+    await advanceParent(doc, deps, 4);
+    expect(doc.sidecar_key).toBe("renders/f/film.srt");
+    doc.parts[0].sidecar_key = null;
+    markRetake(doc, "s2", {});
+    h.join = { status: "pending" };
+    await advanceParent(doc, deps, 5);
+    h.children.set("film-retake-1", done("k2b"));
+    await advanceParent(doc, deps, 6);
+    h.join = { status: "completed", bytes: 9, durationSeconds: 8, filmOffsetsSeconds: [0, 4] };
+    await advanceParent(doc, deps, 7);
+    expect(doc.sidecar_key).toBeNull();
+    expect(doc.degraded).toMatch(/no caption/);
+  });
+
+  describe("cancelling a retake", () => {
+    it("puts the part and the board back, and needs no join", async () => {
+      const { h, deps, doc } = await finished();
+      doc.spend_ceiling_usd = 4;
+      markRetake(doc, "s2", { prompt: "new", line: "new line" });
+      await advanceParent(doc, deps, 5);
+      expect(doc.stop_reason).toBe("spend ceiling");
+      cancelRetake(doc, 1, 6);
+      expect(doc.parts[1].retake).toBeNull();
+      expect(doc.parts[1].status).toBe("done");
+      expect(doc.parts[1].child_film_id).toBe("film-2");
+      expect(doc.storyboard.scenes[2].prompt).toBe("p2");
+      expect(doc.dialogue_lines.find((l) => l.shot_id === "s2")?.text).toBe("there");
+      expect([doc.phase, doc.stop_reason]).toEqual(["done", null]);
+      await advanceParent(doc, deps, 7);
+      expect(h.retakes).toEqual([]);
+      expect(h.joins).toEqual([]);
+    });
+
+    it("after a failed take, goes back to the film it replaced", async () => {
+      const { h, deps, doc } = await finished();
+      markRetake(doc, "s2", {});
+      await advanceParent(doc, deps, 5);
+      expect(doc.parts[1].child_film_id).toBe("film-retake-1");
+      h.children.set("film-retake-1", { phase: "failed", shots_done: 0, output_key: null, sidecar_key: null, error: "boom" });
+      await advanceParent(doc, deps, 6);
+      cancelRetake(doc, 1, 7);
+      expect(doc.parts[1].child_film_id).toBe("film-2");
+      expect(doc.parts[1].output_key).toBe("k2");
+      expect(doc.phase).toBe("done");
+    });
+
+    it("joins if another part's new take is still undelivered", async () => {
+      const { h, deps, doc } = await finished();
+      markRetake(doc, "s1", {});
+      await advanceParent(doc, deps, 5);
+      h.join = { status: "pending" };
+      h.children.set("film-retake-1", done("k1b"));
+      markRetake(doc, "s2", {});
+      await advanceParent(doc, deps, 6);
+      expect(doc.rejoin_needed).toBe(true);
+      expect(doc.parts[1].status).not.toBe("done");
+      doc.parts[1].status = "failed";
+      cancelRetake(doc, 1, 7);
+      await advanceParent(doc, deps, 8);
+      expect(h.joins).toEqual([["k1b", "k2"]]);
+    });
+
+    it("refuses a part with no waiting retake, and one that is running", async () => {
+      const { deps, doc } = await finished();
+      expect(() => cancelRetake(doc, 0, 5)).toThrow(/no waiting retake/);
+      markRetake(doc, "s2", {});
+      await advanceParent(doc, deps, 5);
+      expect(doc.parts[1].status).toBe("running");
+      expect(() => cancelRetake(doc, 1, 6)).toThrow(/no waiting retake/);
+    });
+  });
+
   it("a retake the door could not start waits, counting nothing", async () => {
     const { deps, doc } = await finished();
     markRetake(doc, "s2", {});
@@ -738,7 +874,7 @@ describe("a retake of one shot", () => {
     h.join = { status: "completed", bytes: 9, durationSeconds: 8, filmOffsetsSeconds: [0, 4] };
     await advanceParent(doc, deps, 7);
     markRetake(doc, "s3", {});
-    expect(doc.parts[1].retake).toEqual({ from_film_id: "film-retake-1", shots: ["shot_02"], prompts: {}, lines: {} });
+    expect(doc.parts[1].retake).toMatchObject({ from_film_id: "film-retake-1", shots: ["shot_02"], prompts: {}, lines: {} });
   });
 
   it("counts one shot against the ceiling, and refuses to cross it", async () => {
@@ -771,7 +907,7 @@ describe("a retake of one shot", () => {
       scenes: [{ shot_id: "shot_01", prompt: "a", seconds: 3 }, { shot_id: "shot_02", prompt: "b", seconds: 3 }],
       dialogue_lines: [{ shot_id: "shot_01", text: "x", voice_id: "v1" }, { shot_id: "shot_02", text: "y", voice_id: "v2" }],
     };
-    const out = retakeScenesAndLines(job, { from_film_id: "f", shots: ["shot_02"], prompts: { shot_02: "B" }, lines: { shot_02: { text: "Y" } } });
+    const out = retakeScenesAndLines(job, { from_film_id: "f", shots: ["shot_02"], prompts: { shot_02: "B" }, lines: { shot_02: { text: "Y" } }, undo: { prompts: {}, lines: {} } });
     expect(out.scenes[0]).toBe(job.scenes[0]);
     expect(out.scenes[1]).toEqual({ shot_id: "shot_02", prompt: "B", seconds: 3 });
     expect(out.dialogue_lines?.[0]).toBe(job.dialogue_lines[0]);

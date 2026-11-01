@@ -290,6 +290,17 @@ describe("the etag write", () => {
     expect(await saveParent(e as never, a!), "a moved its own etag on").toBe(true);
   });
 
+  it("loading fills fields an older doc does not have", async () => {
+    const e = env();
+    const doc = buildParentDoc("feature-old", BODY, 0) as unknown as Record<string, unknown> & { parts: Array<Record<string, unknown>> };
+    delete doc.join_version;
+    delete doc.parts[0].retake_est;
+    await e.bucket.put("film-parents/feature-old.json", JSON.stringify(doc));
+    const loaded = await loadParent(e as never, "feature-old");
+    expect(loaded!.doc.join_version).toBe(1);
+    expect(loaded!.doc.parts[0].retake_est).toBe(0);
+  });
+
   it("a stopped parent leaves the cron list", async () => {
     const e = env();
     const doc = buildParentDoc("feature-x", BODY, 0);
@@ -352,6 +363,40 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     const view = (await res.json()) as { phase: string; output_key: string };
     expect(view.output_key, "the delivered film stays").toBe("renders/feature-x/film.mp4");
     expect(view.phase).toBe("running");
+  });
+
+  it("writes the history row at once, with the old film's tier", async () => {
+    const e = await doneFilm();
+    h.jobs.set("film-old", { ...OLD_JOB, quality_tier: "standard" });
+    const rows: unknown[][] = [];
+    (e as Record<string, unknown>).DB = {
+      ...DB,
+      prepare: (sql: string) => ({
+        bind: (...a: unknown[]) => {
+          if (/INSERT INTO renders/i.test(sql)) rows.push(a);
+          return { first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }) };
+        },
+        first: async () => null, all: async () => ({ results: [] }), run: async () => ({ success: true }),
+      }),
+    };
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]).toContain("film-retake");
+    expect(rows[0]).toContain("standard");
+  });
+
+  it("cancel puts a done film back with no new film", async () => {
+    const e = await doneFilm();
+    h.fromKeyframes = [];
+    const stored = await loadParent(e as never, "feature-x");
+    stored!.doc.spend_ceiling_usd = 0.5;
+    await saveParent(e as never, stored!);
+    await worker.fetch(post("/api/film/feature-x/shots/s2/retake", {}), e as never, ctx);
+    expect(h.fromKeyframes, "over the ceiling").toEqual([]);
+    const res = await worker.fetch(post("/api/film/feature-x/parts/0/retake/cancel", {}), e as never, ctx);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { phase: string }).phase).toBe("done");
+    expect((await worker.fetch(post("/api/film/feature-x/parts/0/retake/cancel", {}), e as never, ctx)).status).toBe(400);
   });
 
   it("refuses new_still, and an unknown shot, starting nothing", async () => {

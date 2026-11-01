@@ -17,6 +17,8 @@ export const MAX_JOIN_ATTEMPTS = 3;
 // Longer than any Worker invocation can run, so a claim this old has no live owner.
 export const STALE_CLAIM_MS = 15 * 60_000;
 export const JOIN_MISSING_STREAK = 3;
+/** How long a part waits after the door could not run its checks. Each ask costs a daily ceiling count. */
+export const NOT_STARTED_BACKOFF_MS = 5 * 60_000;
 // As long as the join's presigned URLs last.
 export const JOIN_TIMEOUT_MS = 6 * 60 * 60_000;
 export const ONE_UPLOAD_BYTES = 5_363_466_240; // MAX_FILM_BYTES in containers/video-finish/app.py.
@@ -85,6 +87,8 @@ export interface ParentPart {
   sidecar_key: string | null;
   /** A retake waiting to run, against the finished film it replaces. */
   retake: PartRetake | null;
+  /** Do not ask the door again before this time. */
+  not_before: number | null;
   /** Estimate of every retake so far, on top of cost_est x attempts. */
   retake_est: number;
   retakes: number;
@@ -96,6 +100,9 @@ export interface PartRetake {
   shots: string[];
   prompts: Record<string, string>;
   lines: Record<string, { text: string; voice_id?: string }>;
+  /** Master board values before this retake, by master shot id, so a cancel can put them back. A null line
+   *  means the shot had none. */
+  undo: { prompts: Record<string, unknown>; lines: Record<string, ParentLine | null> };
 }
 
 export interface ParentDoc {
@@ -119,6 +126,8 @@ export interface ParentDoc {
   join_attempts: number;
   /** Starts at 1. A re-join writes a new key, so the film already delivered stays readable. */
   join_version: number;
+  /** A part's film changed since the last finished join, so the delivered film is out of date. */
+  rejoin_needed: boolean;
   join_missing: number;
   join_started_at: number | null;
   pause_after_first_part: boolean;
@@ -155,6 +164,20 @@ function refuse(message: string): never {
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** A doc written before a field existed must not read it as undefined: the ceiling is a sum of these, and a
+ *  NaN never crosses anything. */
+export function normalizeParentDoc(doc: ParentDoc): ParentDoc {
+  doc.join_version ??= 1;
+  doc.rejoin_needed ??= false;
+  for (const part of doc.parts) {
+    part.retake ??= null;
+    part.retake_est ??= 0;
+    part.retakes ??= 0;
+    part.not_before ??= null;
+  }
+  return doc;
 }
 
 /** Inclusive shot ranges. `breaks` are shot counts at which a part ends. */
@@ -301,12 +324,14 @@ export function buildParentDoc(
       output_key: null,
       sidecar_key: null,
       retake: null,
+      not_before: null,
       retake_est: 0,
       retakes: 0,
     })),
     join_job_id: null,
     join_attempts: 0,
     join_version: 1,
+    rejoin_needed: false,
     output_key: null,
     sidecar_key: null,
     bytes: null,
@@ -473,6 +498,7 @@ async function readLiveParts(doc: ParentDoc, deps: ParentDeps): Promise<void> {
       } else {
         part.status = "done";
         // Held until now, so a retake that fails retries as a retake, not as a full re-render.
+        if (part.retake) doc.rejoin_needed = true;
         part.retake = null;
         part.shots_done = part.shots_total;
         part.output_key = child.output_key;
@@ -514,11 +540,11 @@ async function submitPart(doc: ParentDoc, index: number, deps: ParentDeps, now: 
       outcome.child_film_id = retake
         ? await deps.startRetake(retake, `${claim.part_id}-r${claim.retakes}`)
         : await deps.start({ ...inputs?.submit, bundle_key: outcome.bundle_key });
-      Object.assign(outcome, { status: "running", phase: retake ? "clips" : "keyframe", error: null, claimed_at: null });
+      Object.assign(outcome, { status: "running", phase: retake ? "clips" : "keyframe", error: null, claimed_at: null, not_before: null });
     } catch (e) {
       if (e instanceof SubmitNotStarted) {
         // Spent nothing, so it counts for nothing and no person is needed.
-        Object.assign(outcome, { status: "pending", error: e.message, claimed_at: null });
+        Object.assign(outcome, { status: "pending", error: e.message, claimed_at: null, not_before: now + NOT_STARTED_BACKOFF_MS });
         if (!retake) outcome.attempts = claim.attempts - 1;
         else Object.assign(outcome, { retakes: claim.retakes - 1, retake_est: claim.retake_est - retake.shots.length * doc.cost_usd_per_shot_est });
       } else if (!(e instanceof SubmitRefused)) {
@@ -583,6 +609,8 @@ async function advanceJoin(doc: ParentDoc, deps: ParentDeps, now: number): Promi
     doc.join_missing = 0;
     if (r.status === "completed") {
       doc.output_key = joinOutputKey(doc);
+      doc.rejoin_needed = false;
+      doc.degraded = null;
       doc.bytes = r.bytes;
       doc.duration_seconds = r.durationSeconds;
       await mergeCaptions(doc, r.filmOffsetsSeconds, deps);
@@ -618,6 +646,8 @@ async function mergeCaptions(doc: ParentDoc, offsets: number[], deps: ParentDeps
   const shots = (p: ParentPart) => new Set(
     doc.storyboard.scenes.slice(p.shot_from, p.shot_to + 1).map((s) => s.shot_id));
   const speaking = doc.parts.filter((p) => doc.dialogue_lines.some((l) => shots(p).has(l.shot_id)));
+  // This film's captions or none: the last film's would be out of step with a changed line.
+  doc.sidecar_key = null;
   if (!doc.parts.some((p) => p.sidecar_key)) {
     if (speaking.length) doc.degraded = "no caption file: no part produced one";
     return;
@@ -680,7 +710,11 @@ export async function advanceParent(doc: ParentDoc, deps: ParentDeps, now: numbe
   }
   // The first part runs alone, and by default holds for a person after it (above).
   const room = (firstDone ? MAX_PARTS_IN_FLIGHT : 1) - doc.parts.filter(isLive).length;
-  const next = doc.parts.filter((p) => p.status === "pending").slice(0, Math.max(0, room)).map((p) => p.index);
+  const next = doc.parts
+    // By index as well as room: a first part waiting out a backoff must not let a later one go ahead of it.
+    .filter((p) => p.status === "pending" && (firstDone || p.index === 0) && (p.not_before === null || p.not_before <= now))
+    .slice(0, Math.max(0, room))
+    .map((p) => p.index);
   for (const index of next) {
     // From the doc each time: a submit can reload it, and another tick may have taken this part.
     const part = doc.parts[index];
@@ -738,7 +772,14 @@ export function markRetake(doc: ParentDoc, shotId: string, edits: RetakeEdits): 
   if (edits.line !== undefined && (typeof edits.line !== "string" || !edits.line.trim())) refuse("line must be text");
   if (edits.voice_id !== undefined && (typeof edits.voice_id !== "string" || !edits.voice_id.trim())) refuse("voice_id must be text");
   const local = `shot_${String(index - part.shot_from + 1).padStart(2, "0")}`;
-  const retake: PartRetake = part.retake ?? { from_film_id: part.child_film_id as string, shots: [], prompts: {}, lines: {} };
+  const retake: PartRetake = part.retake ?? {
+    from_film_id: part.child_film_id as string, shots: [], prompts: {}, lines: {}, undo: { prompts: {}, lines: {} },
+  };
+  if (!(shotId in retake.undo.prompts)) {
+    retake.undo.prompts[shotId] = doc.storyboard.scenes[index].prompt;
+    const had = doc.dialogue_lines.find((l) => l.shot_id === shotId);
+    retake.undo.lines[shotId] = had ? { ...had } : null;
+  }
   if (!retake.shots.includes(local)) retake.shots.push(local);
   // The master board follows, so a later plain retry renders what was last asked for.
   if (typeof edits.prompt === "string") {
@@ -762,17 +803,53 @@ export function markRetake(doc: ParentDoc, shotId: string, edits: RetakeEdits): 
   part.status = "pending";
   part.phase = null;
   part.error = null;
-  if (doc.phase === "done" || doc.phase === "join") {
+  // Failed too: a retake is a natural answer to a join that failed for good, and it must be able to join.
+  if (doc.phase === "done" || doc.phase === "join" || doc.phase === "failed") {
     doc.join_version += 1;
     doc.join_job_id = null;
     doc.join_attempts = 0;
     doc.join_missing = 0;
     doc.join_started_at = null;
     doc.finished_at = null;
-    doc.degraded = null;
+    doc.error = null;
   }
   doc.phase = "running";
   doc.stop_reason = null;
+}
+
+/** Drops a retake that has not finished, and puts the part and the board back. Nothing is refunded: a take
+ *  that already ran was paid for. */
+export function cancelRetake(doc: ParentDoc, index: number, now: number): void {
+  const part = doc.parts[index];
+  if (!part) refuse("no such part");
+  if (!part.retake || (part.status !== "pending" && part.status !== "failed")) {
+    refuse(`part ${index} has no waiting retake`);
+  }
+  const { undo, from_film_id } = part.retake;
+  for (const [shotId, prompt] of Object.entries(undo.prompts)) {
+    const scene = doc.storyboard.scenes.find((s) => s.shot_id === shotId) as ParentScene;
+    scene.prompt = prompt as string | undefined;
+  }
+  for (const [shotId, line] of Object.entries(undo.lines)) {
+    doc.dialogue_lines = doc.dialogue_lines.filter((l) => l.shot_id !== shotId);
+    if (line) doc.dialogue_lines.push(line);
+  }
+  part.retake = null;
+  part.status = "done";
+  part.child_film_id = from_film_id;
+  part.shots_done = part.shots_total;
+  part.phase = "done";
+  part.error = null;
+  part.not_before = null;
+  const allDone = doc.parts.every((p) => p.status === "done");
+  doc.stop_reason = null;
+  if (allDone && doc.output_key && !doc.rejoin_needed) {
+    // The delivered film still matches every part, so there is nothing to join.
+    doc.phase = "done";
+    doc.finished_at = now;
+  } else if (doc.phase === "stopped") {
+    doc.phase = "running";
+  }
 }
 
 /** Scenes and lines for the re-run. Everything not named here comes from the old job unchanged, or the

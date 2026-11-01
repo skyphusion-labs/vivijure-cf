@@ -15,7 +15,7 @@ import {
 import { resolveClipDurationFloor } from "@skyphusion-labs/vivijure-core/film-model";
 import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyframes";
 import { retryFailedRender } from "./render-retry";
-import { advanceParent, buildParentDoc, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
+import { advanceParent, buildParentDoc, cancelRetake, markRetake, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
 import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
 import { clearActiveMarker, insertParent, listActiveParents, loadParent, parentDeps, saveParent, type ParentDoors } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
@@ -1992,6 +1992,9 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         idempotency_key,
       });
       if (started.phase === "failed") throw new SubmitRefused(started.error || "the retake did not start");
+      // A row now, like the film door: a tick killed before its save would otherwise leave a film the adopt
+      // cannot find. The tier is the old film's, since this path takes none.
+      await insertRenderBestEffort(env, filmRowFromJob({ ...started, quality_tier: job.quality_tier }));
       return started.film_id;
     },
     async admitSubmit() {
@@ -2089,6 +2092,20 @@ const hResumeParent: Handler = async (_req, env, ctx, p) => {
   if (!loaded) throw notFound("film");
   try {
     resumeParent(loaded.doc);
+  } catch (e) {
+    if (e instanceof ParentRefusal) throw badRequest(e.message);
+    throw e;
+  }
+  if (!(await saveParent(env, loaded))) return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  const doc = await advanceParent(loaded.doc, parentDeps(env, loaded, parentDoors(env, ctx)), Date.now());
+  return json({ ok: true, ...parentView(doc, Date.now()) });
+};
+
+const hCancelParentRetake: Handler = async (_req, env, ctx, p) => {
+  const loaded = await loadParent(env, p.id);
+  if (!loaded) throw notFound("film");
+  try {
+    cancelRetake(loaded.doc, Number(p.n), Date.now());
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
@@ -2497,6 +2514,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
   { method: "POST",   pattern: "/api/film/:id/shots/:shot/retake",      scope: "consumer",    handler: hRetakeParentShot },
+  { method: "POST",   pattern: "/api/film/:id/parts/:n/retake/cancel",  scope: "consumer",    handler: hCancelParentRetake },
   { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: hRegenShot },
