@@ -6,7 +6,7 @@ vi.mock("../modules/cloud-keyframe/src/image-gen", async (orig) => {
   return { ...real, generateImage: vi.fn() };
 });
 
-import worker, { CloudKeyframeWorkflow } from "../modules/cloud-keyframe/src/index";
+import worker, { CloudKeyframeWorkflow, FILM_DOC_GRACE_MS } from "../modules/cloud-keyframe/src/index";
 import { generateImage } from "../modules/cloud-keyframe/src/image-gen";
 import { decodePoll, stateKey, encodePoll } from "../modules/cloud-keyframe/src/keyframe";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
@@ -201,6 +201,64 @@ describe("cloud-keyframe workflow", () => {
     if (doc) R2.map.set(filmJobDocKey(FILM), JSON.stringify(doc));
     await runWorkflow(env, fakeStep(), FILM);
     expect(generateImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("a film run whose doc never appears stops once the grace period passes", async () => {
+    const { env } = makeEnv(["shot_01", "shot_02", "shot_03"]);
+    const t0 = 1_800_000_000_000;
+    let now = t0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.mocked(generateImage).mockImplementation(async () => {
+      now += FILM_DOC_GRACE_MS;
+      return tiny;
+    });
+    try {
+      await runWorkflow(env, fakeStep(), "film-abc");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(generateImage).toHaveBeenCalledTimes(1);
+    const r = await post(env, "/poll", token);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("film is over");
+  });
+
+  it("a doc that appears inside the grace period keeps the run drawing", async () => {
+    const { env, R2 } = makeEnv(["shot_01", "shot_02"]);
+    const t0 = 1_800_000_000_000;
+    let now = t0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.mocked(generateImage).mockImplementation(async () => {
+      R2.map.set(filmJobDocKey("film-abc"), JSON.stringify({ phase: "keyframe" }));
+      now += FILM_DOC_GRACE_MS * 2;
+      return tiny;
+    });
+    try {
+      await runWorkflow(env, fakeStep(), "film-abc");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(generateImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("a run with no film id never reads a film doc", async () => {
+    const { env } = makeEnv(["shot_01", "shot_02"]);
+    let now = 1_800_000_000_000;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.mocked(generateImage).mockImplementation(async () => {
+      now += FILM_DOC_GRACE_MS * 2;
+      return tiny;
+    });
+    try {
+      await runWorkflow(env, fakeStep());
+    } finally {
+      spy.mockRestore();
+    }
+    expect(generateImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("the grace period outlasts the film advance lease", () => {
+    expect(FILM_DOC_GRACE_MS).toBeGreaterThan(300 * 1000);
   });
 
   it("a failed final state write fails the step instead of buying the shot on every pass", async () => {
