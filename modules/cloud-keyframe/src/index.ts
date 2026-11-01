@@ -27,6 +27,7 @@ import {
   type KeyframeInput,
   type KeyframeOutput,
 } from "./contract";
+import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import {
   generateImage,
@@ -116,7 +117,31 @@ interface WorkflowBinding {
 export interface WorkflowParams {
   project: string;
   job_id: string;
+  /** The film this run draws for. Absent when the caller is not a film. */
+  film_id?: string;
 }
+
+/** A run for a film has one id per film and shot set, so a re-submit reaches the run already going
+ *  instead of drawing a second set. Letters, digits and hyphens only, as a Workflow id requires. */
+async function filmRunId(filmId: string, shotIds: string[]): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode([...shotIds].sort().join(",")),
+  );
+  const hex = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return "kf-" + filmId.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 70) + "-" + hex;
+}
+
+/** True when the film no longer wants keyframes: failed, cancelled, or past this phase. No doc means
+ *  carry on, because a caller may not be a film and a new film may not have written its doc yet. */
+async function filmIsOver(env: Env, filmId: string): Promise<boolean> {
+  const obj = await env.R2_RENDERS.get(filmJobDocKey(filmId));
+  if (!obj) return false;
+  const doc = JSON.parse(await obj.text()) as { phase?: unknown; cancelled?: unknown };
+  return doc.cancelled === true || (typeof doc.phase === "string" && doc.phase !== "keyframe");
+}
+
+const WORKFLOW_FINISHED = new Set(["complete", "errored", "terminated"]);
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
@@ -309,7 +334,15 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     return { ok: false, error: "cloud-keyframe: unknown film_ref (use none | first_keyframe | cast:<slot>)" };
   }
 
-  const job_id = crypto.randomUUID();
+  const contextId = req.context?.job_id;
+  const filmId = typeof contextId === "string" && contextId.startsWith("film-") ? contextId : undefined;
+  // A film run has a fixed id. Its state doc doubles as the record that the run was already planned.
+  const job_id = env.KEYFRAME_WORKFLOW && filmId
+    ? await filmRunId(filmId, selected.map((s) => s.shot_id))
+    : crypto.randomUUID();
+  if (env.KEYFRAME_WORKFLOW && filmId && (await env.R2_RENDERS.get(stateKey(input.project, job_id)))) {
+    return startDrawing(env.KEYFRAME_WORKFLOW, { project: input.project, job_id, film_id: filmId }, job_id);
+  }
   const tarNames = listTarNames(tar);
   const slot_refs: Record<string, string[]> = {};
   // Stage every used slot; for film_ref=cast:<slot> also stage the anchor slot even if no selected
@@ -386,21 +419,44 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     return { ok: false, error: "cloud-keyframe: could not persist run state: " + (e as Error).message };
   }
   if (env.KEYFRAME_WORKFLOW) {
-    let workflowId: string;
-    try {
-      const instance = await env.KEYFRAME_WORKFLOW.create({ params: { project: input.project, job_id } });
-      workflowId = instance.id;
-    } catch (e) {
-      return { ok: false, error: "cloud-keyframe: could not start drawing workflow: " + (e as Error).message };
-    }
-    return {
-      ok: true,
-      pending: true,
-      poll: encodePoll({ project: input.project, job_id, workflow_id: workflowId }),
-      jobId: job_id,
-    };
+    return startDrawing(
+      env.KEYFRAME_WORKFLOW,
+      { project: input.project, job_id, ...(filmId ? { film_id: filmId } : {}) },
+      filmId ? job_id : undefined,
+    );
   }
   return { ok: true, pending: true, poll: encodePoll({ project: input.project, job_id }), jobId: job_id };  // #318 (additive); cloud-keyframe writes no progress snapshot -> core gets no sub-progress, degrades gracefully
+}
+
+/** Start the run, or reach the one already going when a fixed id is taken. */
+async function startDrawing(
+  workflows: WorkflowBinding,
+  params: WorkflowParams,
+  id: string | undefined,
+): Promise<InvokeResponse<KeyframeOutput>> {
+  let workflowId: string;
+  try {
+    workflowId = (await workflows.create({ ...(id ? { id } : {}), params })).id;
+  } catch (e) {
+    let existing: WorkflowInstance | undefined;
+    if (id) {
+      try {
+        existing = await workflows.get(id);
+      } catch {
+        /* no such run: the create error below is the real one */
+      }
+    }
+    if (!existing) {
+      return { ok: false, error: "cloud-keyframe: could not start drawing workflow: " + (e as Error).message };
+    }
+    workflowId = existing.id;
+  }
+  return {
+    ok: true,
+    pending: true,
+    poll: encodePoll({ project: params.project, job_id: params.job_id, workflow_id: workflowId }),
+    jobId: params.job_id,
+  };
 }
 
 /** /poll. A workflow run only reads state, so the caller never waits on a provider. A token with no
@@ -434,6 +490,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
 async function drawNextShot(
   env: Env,
   token: { project: string; job_id: string },
+  opts: { mustPersist?: boolean } = {},
 ): Promise<PollResponse<KeyframeOutput>> {
   const sk = stateKey(token.project, token.job_id);
   const obj = await env.R2_RENDERS.get(sk);
@@ -571,14 +628,16 @@ async function drawNextShot(
 
   try {
     await env.R2_RENDERS.put(sk, JSON.stringify(state), { httpMetadata: { contentType: "application/json" } });
-  } catch {
-    /* best-effort: the next poll re-reads the prior state and continues */
+  } catch (e) {
+    // A poll can re-read the prior state. A workflow would read that as a rate hold and buy the shot
+    // again on every pass, so there the step fails and its retry limit bounds the cost.
+    if (opts.mustPersist) throw e;
   }
   return state.shots.length === 0 ? { ok: true, output: readOutput(state) } : { ok: true, pending: true };
 }
 
-/** One step per shot, so a shot finished before a crash is never bought again. A retry redraws only
- *  the shot that failed, because the run state advances only after a shot is stored. */
+/** One step per shot, so a shot recorded in run state is never bought again. A step that dies between
+ *  buying a shot and recording it redraws that one shot on its retry. */
 const DRAW_STEP_CONFIG: WorkflowStepConfig = {
   retries: { limit: 1, delay: "30 seconds", backoff: "constant" },
   timeout: "10 minutes",
@@ -611,9 +670,16 @@ export class CloudKeyframeWorkflow extends WorkflowEntrypoint<Env, WorkflowParam
       const maxPasses = remaining * (KEYFRAME_RATE_MAX + 1);
       for (let pass = 0; pass < maxPasses && remaining > 0; pass++) {
         const r = await step.do("draw " + pass, DRAW_STEP_CONFIG, async () => {
-          const res = await drawNextShot(this.env, token);
+          // Checked inside the step, right before the spend, so a film that ended without a /cancel
+          // reaching us stops buying here.
+          if (token.film_id && (await filmIsOver(this.env, token.film_id))) return { over: true };
+          const res = await drawNextShot(this.env, token, { mustPersist: true });
           return res.ok ? { left: await shotsLeft() } : { error: res.error };
         });
+        if ("over" in r) {
+          await fail("cloud-keyframe: stopped drawing because the film is over");
+          return;
+        }
         if ("error" in r) {
           await fail(String(r.error));
           return;
@@ -689,6 +755,13 @@ export default {
         await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).terminate();
         return json({ ok: true });
       } catch (e) {
+        // A finished run is not running on our account, which is what ok:true means here.
+        try {
+          const { status } = await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).status();
+          if (WORKFLOW_FINISHED.has(status)) return json({ ok: true });
+        } catch {
+          /* the status read failed too: report the terminate error */
+        }
         return json({ ok: false, error: "cloud-keyframe: could not stop drawing workflow: " + (e as Error).message });
       }
     }

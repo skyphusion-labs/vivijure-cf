@@ -9,6 +9,7 @@ vi.mock("../modules/cloud-keyframe/src/image-gen", async (orig) => {
 import worker, { CloudKeyframeWorkflow } from "../modules/cloud-keyframe/src/index";
 import { generateImage } from "../modules/cloud-keyframe/src/image-gen";
 import { decodePoll, stateKey, encodePoll } from "../modules/cloud-keyframe/src/keyframe";
+import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
 
 const tiny = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1]).buffer as ArrayBuffer, mime: "image/png" };
 
@@ -60,9 +61,9 @@ function fakeStep() {
   };
 }
 
-async function runWorkflow(env: unknown, s: ReturnType<typeof fakeStep>) {
+async function runWorkflow(env: unknown, s: ReturnType<typeof fakeStep>, film_id?: string) {
   const wf = new CloudKeyframeWorkflow({} as never, env as never);
-  await wf.run({ payload: { project: "neon", job_id: "j" } } as never, s.step as never);
+  await wf.run({ payload: { project: "neon", job_id: "j", ...(film_id ? { film_id } : {}) } } as never, s.step as never);
 }
 
 const token = encodePoll({ project: "neon", job_id: "j", workflow_id: "wf-1" });
@@ -162,6 +163,82 @@ describe("cloud-keyframe workflow", () => {
     const r = await post(env, "/poll", encodePoll({ project: "neon", job_id: "j" }));
     expect(r).toEqual({ ok: true, pending: true });
     expect(generateImage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ phase: "failed" }],
+    [{ phase: "clips" }],
+    [{ phase: "keyframe", cancelled: true }],
+  ])("stops before the next paid step when the film reads %j", async (doc) => {
+    const { env, R2 } = makeEnv(["shot_01", "shot_02", "shot_03"]);
+    const FILM = "film-abc";
+    R2.map.set(filmJobDocKey(FILM), JSON.stringify(doc));
+    await runWorkflow(env, fakeStep(), FILM);
+    expect(generateImage).not.toHaveBeenCalled();
+    const r = await post(env, "/poll", token);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("film is over");
+  });
+
+  it("stops part way when the film ends while drawing", async () => {
+    const { env, R2 } = makeEnv(["shot_01", "shot_02", "shot_03"]);
+    const FILM = "film-abc";
+    R2.map.set(filmJobDocKey(FILM), JSON.stringify({ phase: "keyframe" }));
+    vi.mocked(generateImage).mockImplementation(async () => {
+      R2.map.set(filmJobDocKey(FILM), JSON.stringify({ phase: "failed" }));
+      return tiny;
+    });
+    await runWorkflow(env, fakeStep(), FILM);
+    expect(generateImage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["no doc", null],
+    ["keyframe phase", { phase: "keyframe" }],
+  ])("keeps drawing with %s", async (_n, doc) => {
+    const { env, R2 } = makeEnv(["shot_01", "shot_02"]);
+    const FILM = "film-abc";
+    if (doc) R2.map.set(filmJobDocKey(FILM), JSON.stringify(doc));
+    await runWorkflow(env, fakeStep(), FILM);
+    expect(generateImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed final state write fails the step instead of buying the shot on every pass", async () => {
+    const { env, R2 } = makeEnv(["shot_01", "shot_02"]);
+    const realPut = R2.put.bind(R2);
+    R2.put = async (key: string, value: ArrayBuffer | string) => {
+      if (key === stateKey("neon", "j") && !String(value).includes("workflow_error")) throw new Error("r2 down");
+      return realPut(key, value);
+    };
+    await runWorkflow(env, fakeStep());
+    expect(generateImage).toHaveBeenCalledTimes(1);
+    const r = await post(env, "/poll", token);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("r2 down");
+  });
+
+  it("a poll tolerates the same failed state write", async () => {
+    const { env, R2 } = makeEnv(["shot_01", "shot_02"]);
+    const realPut = R2.put.bind(R2);
+    R2.put = async (key: string, value: ArrayBuffer | string) => {
+      if (key === stateKey("neon", "j")) throw new Error("r2 down");
+      return realPut(key, value);
+    };
+    expect((await post(env, "/poll", encodePoll({ project: "neon", job_id: "j" }))).ok).toBe(true);
+  });
+
+  it.each(["complete", "errored", "terminated"])("cancel on a run already %s is success", async (st) => {
+    const { env, instance } = makeEnv([], st);
+    instance.terminate.mockRejectedValueOnce(new Error("(instance.cannot_terminate)"));
+    expect((await post(env, "/cancel", token)).ok).toBe(true);
+  });
+
+  it("cancel on a live run that will not stop is a failure", async () => {
+    const { env, instance } = makeEnv(["shot_01"]);
+    instance.terminate.mockRejectedValueOnce(new Error("boom"));
+    const r = await post(env, "/cancel", token);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("boom");
   });
 
   it("the poll token keeps the workflow id", () => {
