@@ -108,3 +108,23 @@ describe("cf#520 routeRequest decides no route by hand", () => {
 // after being reassigned, or dispatch inside a helper `routeRequest` calls. The literal count is
 // the wider of the two and catches every in-function form; the equality check exists so the failure
 // message names the specific class when it is that one.
+
+// THE ONE SANCTIONED PRE-GATE ROUTE: POST /api/internal/sweep (src/sweep-route.ts). It cannot be a table
+// entry. A table route is reached only after gateApi admits a studio credential, and this route must NOT
+// accept any studio credential: it runs on its own SWEEP_TOKEN, and every request that is not an
+// authorized sweep must fall through and read exactly like an unknown path. So it is decided here, by
+// constant, ahead of the gate. That is the residual named above, so it is pinned by hand rather than left
+// to slip through it: exactly this one line, before the gate, and a second constant-decided route in
+// routeRequest is a review question, not a precedent. Its behaviour is covered by tests/sweep-route.test.ts.
+describe("the sweep route is the one route decided before the gate", () => {
+  it("routeRequest mentions SWEEP_ROUTE_PATH once, as the authorized-sweep check, ahead of gateApi", () => {
+    const b = routeRequestBody();
+    const lines = b.text.split("\n");
+    const hits = lines.filter((l) => l.includes("SWEEP_ROUTE_PATH")).map((l) => l.trim());
+    expect(hits).toEqual(["if (url.pathname === SWEEP_ROUTE_PATH && (await sweepRouteAuthorized(request, env))) {"]);
+    const at = lines.findIndex((l) => l.includes("SWEEP_ROUTE_PATH"));
+    const gate = lines.findIndex((l) => l.includes("gateApi("));
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(gate);
+  });
+});

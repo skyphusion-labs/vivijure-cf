@@ -149,6 +149,8 @@ import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
 import { resolveStudioRelease } from "./studio-release";
+import { acquireSweepLease, releaseSweepLease } from "./sweep-lease";
+import { SWEEP_ROUTE_PATH, sweepRouteAuthorized } from "./sweep-route";
 import {
   projectWanLorasIntoModuleConfig,
   ensureModuleOverrideConfig,
@@ -2856,10 +2858,33 @@ export default {
   },
   async scheduled(_event: ScheduledEvent, raw: Env, ctx: ExecutionContext): Promise<void> {
     const env = studioEnv(raw);
-    ctx.waitUntil(sweepUnresolvedJobs(env, ctx));
-    ctx.waitUntil(sweepFilmParents(env, ctx));
+    ctx.waitUntil(runSweepPass(env, ctx, "cron"));
   },
 };
+
+/** The one sweep pass, shared by the cron and POST /api/internal/sweep. It advances film and scatter jobs
+ *  nobody is polling (core render-sweep) and is the only driver of parent films. The two sweeps run side by
+ *  side, as they did as two separate waitUntil calls, and one failing never stops the other. The pass lease
+ *  (src/sweep-lease.ts) keeps a second pass from starting while one runs. */
+export async function runSweepPass(env: StudioEnv, ctx: ExecutionContext, source: "cron" | "route"): Promise<void> {
+  const lease = await acquireSweepLease(env.R2_RENDERS, Date.now());
+  if (lease === "busy") {
+    console.log(JSON.stringify({ ev: "sweep.skipped", source, reason: "another pass holds the lease" }));
+    return;
+  }
+  try {
+    const results = await Promise.allSettled([sweepUnresolvedJobs(env, ctx), sweepFilmParents(env, ctx)]);
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(JSON.stringify({ ev: "sweep.failed", source, sweep: i === 0 ? "render" : "film_parents", reason: String(r.reason) }));
+      }
+    });
+  } finally {
+    if (lease.etag !== null) {
+      await releaseSweepLease(env.R2_RENDERS, lease.etag).catch((e) => console.warn(`sweep lease release: ${String(e)}`));
+    }
+  }
+}
 
 async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -2871,6 +2896,13 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     // cf#520: the gate answers WHO is calling. It runs HERE, before any route has been matched,
     // so it structurally cannot answer WHAT they may do -- there is no route yet. The authorization
     // comparison therefore lives at the dispatch site below and this decision is carried forward.
+    // The sweep route (src/sweep-route.ts) is answered BEFORE the gate, on its own credential only. A request
+    // that is not an authorized sweep is not this route: it falls through to the gate and the table like any
+    // unknown /api path, so the route is invisible while SWEEP_TOKEN is unset or the token is wrong.
+    if (url.pathname === SWEEP_ROUTE_PATH && (await sweepRouteAuthorized(request, env))) {
+      ctx.waitUntil(runSweepPass(env, ctx, "route"));
+      return json({ ok: true }, 202);
+    }
     let credential: Scope | null = null;
     if (url.pathname.startsWith("/api/")) {
       const gate = await gateApi(request, env);

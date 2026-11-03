@@ -161,6 +161,8 @@ enabled = true
 
 [triggers]
 crons = ["*/1 * * * *"]
+# Cannot keep this trigger? Set the SWEEP_TOKEN secret and call POST /api/internal/sweep once a minute
+# instead (docs/CONTRACT.md 2.22b).
 
 # The cron is the only thing that advances a long film, and it bundles and submits parts. Going over the limit
 # kills a pass mid-submit. 30 s is the default for a cron at this interval; this asks for double. Not measured.
@@ -373,6 +375,9 @@ secret_name = "FINISH_DOOR_TOKEN"
 # ---   R2_S3_ENDPOINT + R2_S3_BUCKET : identifiers (URL + bucket name), now rendered into [vars]
 # ---     above from CLOUDFLARE_ACCOUNT_ID at deploy (#238 follow-up) -- NOT wrangler secrets.
 # ---   STUDIO_API_TOKEN : operator login, deploy-minted worker secret (openssl rand | wrangler secret put).
+# ---   SWEEP_TOKEN : OPTIONAL worker secret for a deployment that cannot keep [triggers] below. It opens
+# ---     POST /api/internal/sweep, which runs the cron pass for an external scheduler. Unset = no route.
+# ---     Must differ from STUDIO_API_TOKEN. docs/CONTRACT.md 2.22b.
 # ---   OPENAI_API_KEY : optional BYOK, read by modules/image-generate for the transparent-PNG path.
 # ---   (XAI_API_KEY is GONE, cf#839: it was declared and documented with a `wrangler secret put`
 # ---   recipe and read by no code at all. xAI models are reached through the AI Gateway on Unified

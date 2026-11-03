@@ -154,6 +154,12 @@ export interface Env {
   // (openssl rand -hex 32 | wrangler secret put STUDIO_API_TOKEN). See docs/SECURITY.md.
   AUTH_MODE?: string;
   STUDIO_API_TOKEN?: string;
+  // Optional worker SECRET for POST /api/internal/sweep (src/sweep-route.ts): the route an external
+  // scheduler calls to run the cron sweep pass on a deployment that cannot attach a cron trigger. Unset or
+  // empty -> the route does not exist (it answers like any unknown /api path). Must differ from
+  // STUDIO_API_TOKEN and every consumer token, or the route refuses it. Mint:
+  // openssl rand -hex 32 | npx wrangler secret put SWEEP_TOKEN
+  SWEEP_TOKEN?: string;
 
   // Dev-only planner AI mock (#411 dev-parity). When "1"/"true", planStoryboard/refineStoryboard
   // return deterministic canned completions instead of a live model call, so the planner re-prompt

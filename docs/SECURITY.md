@@ -236,6 +236,12 @@ credential carries:
 | `ALLOW_UNAUTHENTICATED = "true"` dev opt-out (legacy unset mode only) | `operator` |
 | Named token (`api_tokens` row) | the row's `scope`; migration 0020 DEFAULTS every pre-existing row to `consumer` until reissued |
 
+`SWEEP_TOKEN` (optional worker secret) is not in this table on purpose: it is not a studio credential
+and carries no scope. It opens exactly one route, `POST /api/internal/sweep` (CONTRACT.md 2.22b), and
+the gate does not accept it anywhere else. Unset, the route does not exist. It must differ from
+`STUDIO_API_TOKEN` and every consumer token, or the route refuses it. Mint it like the operator token,
+`openssl rand -hex 32 | npx wrangler secret put SWEEP_TOKEN`, and give it only to the scheduler.
+
 The `operator` routes are installation, configuration, or estate-wide state: `GET /api/storage/usage`,
 `POST /api/storage/reconcile`, `GET /api/modules/installed`, `POST /api/modules/install`,
 `DELETE`/`PATCH /api/modules/install/:name`, and `GET`/`PATCH /api/modules/:name/config`. Every other

@@ -144,6 +144,10 @@ Lost it? Mint a new one and paste that instead:
 openssl rand -hex 32 | npx wrangler secret put STUDIO_API_TOKEN
 ```
 
+No cron trigger on your deployment? Set the optional `SWEEP_TOKEN` secret and have a scheduler call
+`POST /api/internal/sweep` once a minute; it is off until you set it. See
+[CONTRACT.md 2.22b](CONTRACT.md).
+
 Want a stronger front door (single sign-on, a team, audit logs)? That is Cloudflare Access, the
 optional hardening path: set `AUTH_MODE=access` in `deploy.env` (the script then requires the two
 `ACCESS_*` values and refuses to run without them). Details in [SECURITY.md](SECURITY.md).

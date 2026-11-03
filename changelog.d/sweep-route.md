@@ -1,0 +1,3 @@
+### feat(studio): an authenticated sweep route for a deployment with no cron
+
+`POST /api/internal/sweep` runs the same pass the cron runs, for a deployment that cannot attach a cron trigger to the studio Worker. Without it, a film job nobody polls never advances and a long film is accepted and never starts. It is off by default: it exists only when the new optional `SWEEP_TOKEN` secret is set, takes only `Authorization: Bearer <SWEEP_TOKEN>`, and answers `202 { "ok": true }`. Any other request reads exactly like an unknown path. The studio's own tokens never open it. The cron and the route now share one pass under a short R2 lease, so two passes do not overlap; the cron had no pass-level guard before.
