@@ -32,6 +32,7 @@ import { plannerAiMockEnabled, mockPlannerRaw } from "./mock";
 import {
   pickProvider,
   opusModel,
+  opusTransport,
   callOpus,
   callLocal,
   LOCAL_MODEL,
@@ -57,6 +58,8 @@ interface WorkerEnv {
   TENANT_ID?: string;
   TENANT_SLUG?: string;
   ENHANCE_MODEL?: string;
+  // "1" opts in to Opus over the AI binding with no CF_AIG_TOKEN (provider.ts opusTransport).
+  ENHANCE_OPUS_BINDING?: string;
   PLANNER_AI_MOCK?: string;
 }
 
@@ -295,6 +298,8 @@ export default {
         ok: true,
         module: MANIFEST.name,
         credentials: { gateway_id: Boolean(gatewayId), cf_aig_token: Boolean(aigToken) },
+        // Which Opus transport a render would use: "token", "binding", or "off" (local model).
+        opus: opusTransport({ AI: env.AI, GATEWAY_ID: gatewayId, CF_AIG_TOKEN: aigToken, ENHANCE_OPUS_BINDING: env.ENHANCE_OPUS_BINDING }) ?? "off",
       });
     }
 
@@ -320,6 +325,7 @@ export default {
         TENANT_ID: env.TENANT_ID,
         TENANT_SLUG: env.TENANT_SLUG,
         ENHANCE_MODEL: env.ENHANCE_MODEL,
+        ENHANCE_OPUS_BINDING: env.ENHANCE_OPUS_BINDING,
         PLANNER_AI_MOCK: env.PLANNER_AI_MOCK,
       };
       return json(await runEnhance(provEnv, req));
