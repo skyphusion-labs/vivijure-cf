@@ -433,6 +433,13 @@ echo "<your-account-id>"            | npx wrangler secret put CLOUDFLARE_ACCOUNT
 TOKEN="$(openssl rand -hex 32)"; echo "STUDIO API TOKEN: $TOKEN"
 printf %s "$TOKEN"                  | npx wrangler secret put STUDIO_API_TOKEN
 
+# OPTIONAL, and only if this deployment cannot attach the cron trigger ([triggers] in wrangler.toml).
+# The cron is what advances film jobs nobody is polling and the only thing that starts a long film.
+# Without it, set SWEEP_TOKEN and have an external scheduler POST /api/internal/sweep once a minute
+# with Authorization: Bearer <SWEEP_TOKEN> (docs/CONTRACT.md 2.22b). Unset, the route does not exist.
+# Use a value distinct from STUDIO_API_TOKEN; the route refuses a reused token.
+# openssl rand -hex 32 | npx wrangler secret put SWEEP_TOKEN
+
 # 3c. Apply the database schema
 npx wrangler d1 migrations apply vivijure-studio --remote
 # The numbered chain builds the CURRENT (post-identity-strip) schema directly; a fresh install

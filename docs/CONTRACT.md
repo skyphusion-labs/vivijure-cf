@@ -239,6 +239,10 @@ the same deny reason as any other bad token so a prober learns nothing, and a
   class.
 - Studio HTML/JS/CSS pages are served from the `ASSETS` binding for `GET`/`HEAD` (static assets, not
   part of the API contract).
+- `POST /api/internal/sweep` (2.22b) is decided before the auth gate, on its own `SWEEP_TOKEN`
+  credential, and is not a table entry, so it is not counted in 2.1. A request that is not an
+  authorized sweep falls through and gets exactly what an unknown path gets. It is the one route
+  decided this way; `tests/no-inline-api-routes.test.ts` pins it.
 - All other API routes dispatch through the `API_ROUTES` table (method + path pattern -> handler).
 - Path patterns use `:param` (one URL segment, percent-decoded) and `*param` (greedy trailing
   catch-all that captures the rest of the path, slashes included -- used for R2 keys). A pattern with
@@ -1440,7 +1444,7 @@ Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The next cro
 
 **`GET /api/film`** lists films, newest first, at most 50: `{ok, films:[{film_id, project, phase, stop_reason, stop_code?, created_at, shots_done, shots_total}]}`. It advances nothing.
 
-**Only the cron submits.** Every tick, each minute, advances each active film, and that is the one place a part is started or a join is sent. `GET` routes read and never advance a film or write anything, because a phone can lose a request at any moment and a read must not move money. Retry, resume, ceiling, retake and cancel write state and return it, and the next tick acts on it. So a retake reads `pending` right after the call.
+**Only the cron submits.** Every tick, each minute, advances each active film, and that is the one place a part is started or a join is sent. `GET` routes read and never advance a film or write anything, because a phone can lose a request at any moment and a read must not move money. Retry, resume, ceiling, retake and cancel write state and return it, and the next tick acts on it. So a retake reads `pending` right after the call. On a deployment with no cron trigger, an external scheduler drives the same tick through `POST /api/internal/sweep` (2.22b).
 
 **`GET /api/film/:id/parts/:n/shots`** lists a part's shots: `{ok, shots:[{shot_id, index, status, seconds, delivered_seconds?, keyframe_key, clip_key, prompt, line, error, finish_degraded, attempts?, retake_status}]}`. `shot_id` is the board's own id. `retake_status` is `waiting`, `running` or `null`. It reads stored job docs only. During a retake, `status` and `clip_key` come from the part's latest film. `404` if the film or part is unknown.
 
@@ -1473,6 +1477,37 @@ A join that fails for good ends the film in `failed` with every part kept, and `
 **`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 
 `POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0.
+
+### 2.22b POST /api/internal/sweep -- the cron pass, for a deployment with no cron
+
+**Off by default.** Some deployments cannot attach a cron trigger to the studio Worker. Without the
+cron nothing advances a film job nobody is polling, and a long film (2.22a) is accepted and never
+started. This route runs the same pass the cron runs, so an external scheduler can call it instead.
+
+- **Exists only when the `SWEEP_TOKEN` worker secret is set** (non-empty). Unset, the path is an
+  unknown path and nothing about the studio changes.
+- **Credential:** `Authorization: Bearer <SWEEP_TOKEN>` on `POST` only, compared in constant time.
+  The cookie transport does not apply. The studio's operator token, a consumer token, an Access JWT
+  and the dev opt-out never open it: the auth gate does not run for this route, and the only
+  comparison is against `SWEEP_TOKEN`. It works the same in every `AUTH_MODE`.
+- **Refusal is invisible.** A wrong or missing token, any other method, or an unset secret is not this
+  route: the request falls through to normal dispatch and gets exactly the answer an unknown `/api/`
+  path gets with the same headers (the auth gate's refusal for a caller with no studio credential,
+  `404` for a caller with one). A `SWEEP_TOKEN` that equals `STUDIO_API_TOKEN` or a live consumer
+  token is refused the same way and logs `sweep.token_reused`.
+- **Response:** `202 { "ok": true }`. The pass runs in `ctx.waitUntil`, after the response, as on the
+  cron path. Nothing about the pass is reported to the caller; read the `@event render_sweep` and
+  `film.cron_pass` log lines (`docs/observability.md`). A Worker gives `waitUntil` work after a fetch
+  response about 30 seconds; the cron path has the scheduled-event budget instead.
+- **One pass at a time.** The cron and this route share one pass (`runSweepPass`, `src/index.ts`) under
+  one R2 lease (`src/sweep-lease.ts`, `film-parents/sweep-lease.json`, 90 s). A call while a pass is
+  running still answers `202` and logs `sweep.skipped`. The cron had no pass-level guard before this
+  route; the per-row guards (the film job advance lease and the parent film etag compare) are
+  unchanged and stay the correctness layer. If the lease cannot be read or written, the pass runs
+  unguarded and logs `sweep.lease_unavailable`, because skipping it would strand films.
+- **Cadence:** call it once a minute, as the cron does. More often only produces skipped passes.
+- `GET /api/film/:id` reports `cron.stale` from the heartbeat this pass writes, so a deployment driven
+  by this route reads as live while the scheduler runs.
 
 ### 2.23 Scatter (retired)
 

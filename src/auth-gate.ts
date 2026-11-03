@@ -97,7 +97,7 @@ export async function sha256Hex(s: string): Promise<string> {
 // attacker can climb). Returns the consumer name on a live match, null otherwise. FAIL CLOSED for
 // this credential class: no DB binding or a D1 error just means no named token matches -- the
 // operator secret path is untouched either way.
-async function namedTokenConsumer(presented: string, env: Env): Promise<{ name: string; scope: Scope } | null> {
+export async function namedTokenConsumer(presented: string, env: Env): Promise<{ name: string; scope: Scope } | null> {
   if (!env.DB) return null;
   try {
     const hash = await sha256Hex(presented);
