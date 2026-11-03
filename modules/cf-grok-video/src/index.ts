@@ -66,6 +66,8 @@ interface Env {
   I2V_WORKFLOW: WorkflowBinding;
   R2_S3_ACCESS_KEY_ID?: SecretsStoreSecret | string;
   R2_S3_SECRET_ACCESS_KEY?: SecretsStoreSecret | string;
+  /** Optional: set only when the pair above is an R2 temporary credential. */
+  R2_S3_SESSION_TOKEN?: SecretsStoreSecret | string;
   R2_S3_ENDPOINT?: string;
   R2_S3_BUCKET?: string;
 }
@@ -166,7 +168,8 @@ async function mintUploadUrl(env: Env, key: string): Promise<string> {
   } catch {
     throw new Error("cf-grok-video: R2_S3_ENDPOINT is not a valid https URL");
   }
-  return presignR2Put({ accessKeyId, secretAccessKey, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
+  const sessionToken = await secretValue(env.R2_S3_SESSION_TOKEN);
+  return presignR2Put({ accessKeyId, secretAccessKey, sessionToken, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
 }
 
 /** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */

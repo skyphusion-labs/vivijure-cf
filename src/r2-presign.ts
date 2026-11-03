@@ -9,6 +9,13 @@
 // (secrets, from an R2 API token with Object Read+Write on the bucket),
 // R2_S3_ENDPOINT (https://<accountid>.r2.cloudflarestorage.com) and
 // R2_S3_BUCKET (the R2_RENDERS bucket name). Region is always "auto" for R2.
+//
+// Optional fifth value: R2_S3_SESSION_TOKEN (secret). Set it when the access key pair is an R2
+// TEMPORARY credential (POST /accounts/{id}/r2/temp-access-credentials), which R2 refuses without its
+// session token. When set, the token is signed into the query as X-Amz-Security-Token. When unset,
+// the URL is byte-identical to the long-lived-key form. A URL signed with a temporary credential
+// stops working when that credential expires, whatever its own X-Amz-Expires says, so whoever issues
+// the credential must keep its remaining life above the longest TTL signed here (6h, the film link).
 
 import type { Env } from "./env";
 import { isPresignSafeKey } from "./shared";
@@ -67,6 +74,8 @@ export interface R2PresignConfig {
   secretAccessKey: string;
   endpoint: string; // https://<accountid>.r2.cloudflarestorage.com
   bucket: string;
+  /** Session token of an R2 temporary credential. Absent or empty means a long-lived key pair. */
+  sessionToken?: string;
 }
 
 async function configFromEnv(env: Env): Promise<R2PresignConfig> {
@@ -79,7 +88,10 @@ async function configFromEnv(env: Env): Promise<R2PresignConfig> {
       "R2 presign needs R2_S3_ACCESS_KEY_ID, R2_S3_SECRET_ACCESS_KEY, R2_S3_ENDPOINT, R2_S3_BUCKET",
     );
   }
-  return { accessKeyId, secretAccessKey, endpoint, bucket };
+  const sessionToken = await secretValue(env.R2_S3_SESSION_TOKEN);
+  return sessionToken
+    ? { accessKeyId, secretAccessKey, endpoint, bucket, sessionToken }
+    : { accessKeyId, secretAccessKey, endpoint, bucket };
 }
 
 // SigV4 query-string presign. `nowMs` is injectable for deterministic tests;
@@ -118,6 +130,10 @@ export async function presignR2WithConfig(
     "X-Amz-Expires": String(expiresSeconds),
     "X-Amz-SignedHeaders": "host",
   };
+  // A temporary credential's session token is part of the SIGNED query (SigV4 query auth), never
+  // appended after signing. Empty string is treated as absent so a blank secret cannot emit a bare
+  // X-Amz-Security-Token= that R2 would reject.
+  if (cfg.sessionToken) q["X-Amz-Security-Token"] = cfg.sessionToken;
   const canonicalQuery = Object.keys(q)
     .sort()
     .map((k) => `${uriEncode(k, true)}=${uriEncode(q[k], true)}`)

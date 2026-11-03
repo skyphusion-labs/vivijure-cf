@@ -363,6 +363,19 @@ exactly its function:
   `needs_tenant_r2` module, or the RunPod endpoint it submits to, holds read-and-write over the
   whole render bucket, not just its job's objects. Only ever set the flag on a module you would
   trust with that key.
+- **Temporary R2 credentials (optional).** The access key pair may instead be an R2 temporary
+  credential (`POST /accounts/{id}/r2/temp-access-credentials`: one bucket, optional prefixes, a
+  permission, a TTL of at most 7 days). Set its session token as the `R2_S3_SESSION_TOKEN` secret
+  next to the pair. The studio presigner (`src/r2-presign.ts`) and the `cf-grok-video` upload
+  presigner then sign `X-Amz-Security-Token` into every URL; with the token unset, URLs are
+  byte-identical to the long-lived form. Two consequences to plan for: a URL signed with a
+  temporary credential dies when that credential expires, whatever its own `X-Amz-Expires` says,
+  so the issuer must renew while the remaining life is still above the longest presign TTL the
+  studio uses (6 hours, the film download link). And the token joins the credential that
+  `envForTenantOrDispatch` strips from tenant and dispatch env (`src/shot-step.ts`). The tenant
+  credential block on the module invoke envelope (`InvokeRequest.r2`, above) does not carry a
+  session token yet, so a `needs_tenant_r2` module given a temporary pair cannot use it until the
+  core envelope and the GPU backend learn the field.
 - **Presigned URLs** are short-lived and key-scoped: the lifetime is clamped to `[1, 604800]`
   seconds and the key is validated by `isPresignSafeKey` before signing, so a hostile expiry or a
   traversal/scheme-injected key cannot widen the grant (#6). The

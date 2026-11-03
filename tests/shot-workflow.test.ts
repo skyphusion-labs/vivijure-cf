@@ -175,6 +175,14 @@ describe("shot workflow", () => {
     expect(carriesR2Credential(env)).toBe(false);
   });
 
+  it("strips the session token of a temporary R2 credential too", () => {
+    const env = envForTenantOrDispatch({ R2_RENDERS: { put: true }, R2_S3_SESSION_TOKEN: "sess" });
+    expect("R2_S3_SESSION_TOKEN" in env).toBe(false);
+    expect(env.R2_RENDERS).toEqual({ put: true });
+    expect(carriesR2Credential({ R2_S3_SESSION_TOKEN: "sess" })).toBe(true);
+    expect(carriesR2Credential({ r2: { session_token: "sess" } })).toBe(true);
+  });
+
   it("openShot refuses to pass an R2 credential into the workflow params", async () => {
     let seen: unknown;
     const opened = await openShot(

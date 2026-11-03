@@ -1305,8 +1305,8 @@ wrapped a second time. This workflow records the key and retries the step. It do
 open their vendor call again.
 
 A tenant worker and a dispatch module do not receive the R2 credential
-(`R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`, or a body field `secret_access_key` /
-`access_key_id`). An R2 binding is not that credential.
+(`R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`, `R2_S3_SESSION_TOKEN`, or a body field
+`secret_access_key` / `access_key_id` / `session_token`). An R2 binding is not that credential.
 
 ### 2.20 POST /api/render/film -- start a film job
 
