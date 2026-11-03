@@ -1,10 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // POST /api/internal/sweep (src/sweep-route.ts) and the pass lease (src/sweep-lease.ts).
 //
 // The core sweep is mocked so a call can be COUNTED; the film parent sweep runs for real against the fake
 // bucket, and its heartbeat write is how the tests see that it ran. Every refusal below was driven red by
 // removing the check it covers (see the PR body for the mutation table).
+//
+// DETERMINISTIC BY CONSTRUCTION. No real timer and no wall clock decides an outcome: Date is frozen at T0,
+// the fake bucket yields on microtasks only, and the overlap test holds the first pass open on an explicit
+// gate instead of hoping it is still running. The first draft raced the cron pass against the route's real
+// crypto.subtle digests; under a loaded full suite the cron pass sometimes released before the route asked,
+// and the route then ran a second pass.
+const T0 = Date.UTC(2026, 10, 3, 12, 0, 0);
 
 vi.mock("@skyphusion-labs/vivijure-core/render-sweep", async (orig) => {
   const real = await orig<typeof import("@skyphusion-labs/vivijure-core/render-sweep")>();
@@ -23,7 +30,8 @@ const SWEEP = "s".repeat(64);
 const HEARTBEAT_KEY = "film-parents/cron-heartbeat.json";
 
 /** R2 with the two properties the lease depends on: the etag is a hash of the CONTENT (as in R2), and
- *  onlyIf is honoured. Every call yields once, so two concurrent callers really interleave. */
+ *  onlyIf is honoured. Every call yields to the microtask queue first, so two concurrent callers really
+ *  interleave, with no timer involved. */
 function fakeBucket() {
   const store = new Map<string, { body: string; etag: string; customMetadata: Record<string, string> }>();
   const hash = (s: string) => {
@@ -31,7 +39,7 @@ function fakeBucket() {
     for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
     return (h >>> 0).toString(16);
   };
-  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
   const bucket = {
     store,
     failing: false,
@@ -118,9 +126,20 @@ const unknown = (env: Env, init: RequestInit = {}) => call(env, "/api/internal/n
 const sweepCalls = () => vi.mocked(sweepUnresolvedJobs).mock.calls.length;
 
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(T0);
   vi.mocked(sweepUnresolvedJobs).mockClear();
   consumerHash = await sha256Hex(CONSUMER);
 });
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** Real event-loop turns (not a timer) until `done()`, bounded so a broken wait fails instead of hanging. */
+async function until(done: () => boolean) {
+  for (let i = 0; i < 1000 && !done(); i++) await new Promise((r) => setImmediate(r));
+  expect(done(), "the awaited state was reached").toBe(true);
+}
 
 describe("POST /api/internal/sweep refuses everything but SWEEP_TOKEN, as an unknown route", () => {
   it("SWEEP_TOKEN unset: the route does not exist, even for the operator", async () => {
@@ -218,22 +237,30 @@ describe("the sweep pass", () => {
 
   it("a pass already running holds the lease: cron and route both skip, and run again once it is released", async () => {
     const { env } = makeEnv();
-    const a = makeCtx();
-    const b = makeCtx();
-    await Promise.all([
-      worker.scheduled({} as never, env as never, a.ctx),
-      worker.fetch(new Request("https://studio.example/api/internal/sweep", { method: "POST", ...bearer(SWEEP) }), env as never, b.ctx),
-    ]);
-    await Promise.all([a.drain(), b.drain()]);
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    vi.mocked(sweepUnresolvedJobs).mockImplementationOnce(async () => { await gate; return 0; });
+    // The cron pass takes the lease and is held open inside the sweep.
+    const cron = makeCtx();
+    await worker.scheduled({} as never, env as never, cron.ctx);
+    await until(() => sweepCalls() === 1);
+    // While it is held, the route answers 202 and runs nothing, and so does a second cron tick.
+    const got = await call(env, "/api/internal/sweep", bearer(SWEEP));
+    expect(got.status).toBe(202);
+    const cron2 = makeCtx();
+    await worker.scheduled({} as never, env as never, cron2.ctx);
+    await cron2.drain();
     expect(sweepCalls()).toBe(1);
     // Released at the end of the pass, so the next call runs.
+    open();
+    await cron.drain();
     await call(env, "/api/internal/sweep", bearer(SWEEP));
     expect(sweepCalls()).toBe(2);
   });
 
   it("a lease left by a pass that died expires", async () => {
     const { env, bucket } = makeEnv();
-    const now = Date.now();
+    const now = T0;
     await bucket.put(SWEEP_LEASE_KEY, "dead", { customMetadata: { until: String(now + SWEEP_LEASE_MS) } });
     await call(env, "/api/internal/sweep", bearer(SWEEP));
     expect(sweepCalls()).toBe(0);
@@ -244,7 +271,7 @@ describe("the sweep pass", () => {
 
   it("two passes taking one expired lease at the same instant: exactly one wins", async () => {
     const { bucket } = makeEnv();
-    const now = Date.now();
+    const now = T0;
     await bucket.put(SWEEP_LEASE_KEY, "old", { customMetadata: { until: String(now - 1) } });
     const got = await Promise.all([acquireSweepLease(bucket as never, now), acquireSweepLease(bucket as never, now)]);
     expect(got.filter((l) => l !== "busy")).toHaveLength(1);
