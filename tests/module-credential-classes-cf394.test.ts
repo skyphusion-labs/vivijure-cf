@@ -79,6 +79,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   TELEMETRY_DB: { path: "plane-bound", note: "the tenant studio D1, for runpod_job_log (cf#279 / cp#248)" },
   TENANT_ID: { path: "plane-bound", note: "opaque tenant identifier, plain_text" },
   TENANT_SLUG: { path: "plane-bound", note: "tenant display slug, plain_text" },
+  ENHANCE_OPUS_BINDING: { path: "plane-bound", note: "plan-enhance opt-in to Opus over the AI binding with no CF_AIG_TOKEN, plain_text" },
   RUNPOD_ENDPOINT_ID: { path: "plane-bound", note: "plain_text at upload; an endpoint id is not a secret" },
 
   // --- reached through the plane proxy rather than held ---
