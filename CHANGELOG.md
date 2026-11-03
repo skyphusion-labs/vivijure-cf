@@ -143,6 +143,10 @@ A title with an apostrophe lost it, and one with a colon as well failed the rend
 
 A door that soft-degraded an upscale passed the small clip through at once, so one shot could sit in a film beside upscaled ones. For a cause that may pass, the step now reports `transient`, so the core holds and re-dispatches it. A wall-clock guard expiry gets no retry: each try can run 570 s, about $0.55, and a clip too heavy usually fails them all. It stands as a limit on the film's report, for a person to retry.
 
+### feat(r2): support temporary R2 S3 credentials
+
+The studio presigner and the `cf-grok-video` upload presigner read an optional `R2_S3_SESSION_TOKEN`. When set, presigned URLs sign `X-Amz-Security-Token`, so the R2 S3 pair can be an R2 temporary credential. When unset, URLs are byte-identical to before. The token is stripped from tenant and dispatch env with the rest of the credential (vivijure-cf#1232).
+
 ## v1.42.2 -- 2026-10-31
 
 ### fix(finish): title cards, captions, mux and frames take a film over 256 MB (#1129)
