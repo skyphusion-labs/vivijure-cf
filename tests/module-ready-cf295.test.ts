@@ -189,13 +189,20 @@ describe("plan-enhance: GET /ready (Opus credentials informational; local fallba
   const worker = planEnhanceWorker as unknown as Worker;
   it("ok:true with neither credential (local Workers AI fallback)", async () => {
     expect((await get(worker, {})).body).toEqual({
-      ok: true, module: "plan-enhance", credentials: { gateway_id: false, cf_aig_token: false },
+      ok: true, module: "plan-enhance", credentials: { gateway_id: false, cf_aig_token: false }, opus: "off",
     });
   });
   it("ok:true with both, reports both visible", async () => {
     expect((await get(worker, { GATEWAY_ID: "gw", CF_AIG_TOKEN: "tok" })).body).toEqual({
-      ok: true, module: "plan-enhance", credentials: { gateway_id: true, cf_aig_token: true },
+      ok: true, module: "plan-enhance", credentials: { gateway_id: true, cf_aig_token: true }, opus: "token",
     });
+  });
+  it("reports the binding transport only when opted in, with a gateway and no token", async () => {
+    expect((await get(worker, { GATEWAY_ID: "gw", ENHANCE_OPUS_BINDING: "1" })).body).toEqual({
+      ok: true, module: "plan-enhance", credentials: { gateway_id: true, cf_aig_token: false }, opus: "binding",
+    });
+    expect((await get(worker, { GATEWAY_ID: "gw" })).body).toMatchObject({ opus: "off" });
+    expect((await get(worker, { ENHANCE_OPUS_BINDING: "1" })).body).toMatchObject({ opus: "off" });
   });
 });
 

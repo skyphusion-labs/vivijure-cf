@@ -536,6 +536,10 @@ the core Worker's own `CF_AIG_TOKEN`, plan-enhance binds it from a module-scoped
 differs, the same per-resource pattern as the `RUNPOD_ENDPOINT_ID` secrets above). With neither set,
 plan-enhance runs entirely on the free local Workers AI model.
 
+Optional instead of the token: set the plain var `ENHANCE_OPUS_BINDING = "1"` on plan-enhance (with
+`GATEWAY_ID` still bound). The module then reaches Opus through its `AI` binding, which needs no token.
+A token, when set, still wins (`modules/plan-enhance/README.md`).
+
 Seed the store ONCE, from a trusted box that already holds the values. The hidden prompt keeps the
 value out of shell history -- never pass `--value` on the command line:
 
