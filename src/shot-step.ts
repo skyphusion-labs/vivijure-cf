@@ -90,8 +90,10 @@ export function clipCall(stillUrl: string, wavUrl?: string): ClipCall {
 const CREDENTIAL_KEYS = new Set([
   "secret_access_key",
   "access_key_id",
+  "session_token",
   "R2_S3_SECRET_ACCESS_KEY",
   "R2_S3_ACCESS_KEY_ID",
+  "R2_S3_SESSION_TOKEN",
 ]);
 
 /** An R2 binding is not a credential. These fields are. */
@@ -121,5 +123,6 @@ export function envForTenantOrDispatch<T extends Record<string, unknown>>(env: T
   const out = { ...env };
   delete out.R2_S3_ACCESS_KEY_ID;
   delete out.R2_S3_SECRET_ACCESS_KEY;
+  delete out.R2_S3_SESSION_TOKEN;
   return out;
 }

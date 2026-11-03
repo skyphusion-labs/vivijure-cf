@@ -76,6 +76,8 @@ export interface Env {
   // BUCKET are vars. Optional so a presign-free deploy still typechecks.
   R2_S3_ACCESS_KEY_ID?: SecretsStoreSecret | string;
   R2_S3_SECRET_ACCESS_KEY?: SecretsStoreSecret | string;
+  // Optional session token, set only when ACCESS/SECRET are an R2 temporary credential. Secret.
+  R2_S3_SESSION_TOKEN?: SecretsStoreSecret | string;
   R2_S3_ENDPOINT?: string;
   R2_S3_BUCKET?: string;
 

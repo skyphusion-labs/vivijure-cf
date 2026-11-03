@@ -104,6 +104,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   I2V_WORKFLOW: { path: "operator-only", note: "Workflow binding for CF AI Gateway i2v modules; gen runs in the Workflow step, not waitUntil (#155)" },
   R2_S3_ACCESS_KEY_ID: { path: "operator-only", note: "R2 S3 API key so cf-grok-video can mint a ZDR output.upload_url PUT; same store secret as the host" },
   R2_S3_SECRET_ACCESS_KEY: { path: "operator-only", note: "R2 S3 API secret for the ZDR upload_url PUT" },
+  R2_S3_SESSION_TOKEN: { path: "operator-only", note: "optional session token when the R2 S3 pair is a temporary credential" },
   R2_S3_ENDPOINT: { path: "operator-only", note: "R2 S3 endpoint identifier (not a secret)" },
   R2_S3_BUCKET: { path: "operator-only", note: "R2 bucket name for the ZDR upload_url PUT" },
   AUDIO_MASTER_URL: { path: "operator-only", note: "public HTTPS origin for the audio-master CPU container" },
