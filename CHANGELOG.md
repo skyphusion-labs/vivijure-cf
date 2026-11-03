@@ -147,6 +147,10 @@ A door that soft-degraded an upscale passed the small clip through at once, so o
 
 The studio presigner and the `cf-grok-video` upload presigner read an optional `R2_S3_SESSION_TOKEN`. When set, presigned URLs sign `X-Amz-Security-Token`, so the R2 S3 pair can be an R2 temporary credential. When unset, URLs are byte-identical to before. The token is stripped from tenant and dispatch env with the rest of the credential (vivijure-cf#1232).
 
+### feat(plan-enhance): reach Opus through the AI binding without a token
+
+With `GATEWAY_ID` and the new opt-in var `ENHANCE_OPUS_BINDING = "1"`, plan-enhance calls Opus with `env.AI.run` and the AI Gateway catalog id, so it needs no `CF_AIG_TOKEN`. A deployment with a token is unchanged, and so is one with a gateway and no opt-in, which stays on the free local model. `GET /ready` reports the transport as `opus`.
+
 ## v1.42.2 -- 2026-10-31
 
 ### fix(finish): title cards, captions, mux and frames take a film over 256 MB (#1129)
