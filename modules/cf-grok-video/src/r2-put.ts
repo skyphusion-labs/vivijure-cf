@@ -34,16 +34,20 @@ function uriEncode(str: string, encodeSlash: boolean): string {
 export async function presignR2Put(opts: {
   accessKeyId: string;
   secretAccessKey: string;
+  /** Session token of an R2 temporary credential; absent or empty means a long-lived key pair. */
+  sessionToken?: string;
   endpoint: string;
   bucket: string;
   key: string;
   expiresSeconds: number;
+  /** Injectable clock for deterministic tests; defaults to now. */
+  nowMs?: number;
 }): Promise<string> {
   const url = new URL(opts.endpoint);
   const host = url.host;
   const region = "auto";
   const service = "s3";
-  const now = new Date();
+  const now = new Date(opts.nowMs ?? Date.now());
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
   const dateStamp = amzDate.slice(0, 8);
   const scope = `${dateStamp}/${region}/${service}/aws4_request`;
@@ -55,6 +59,8 @@ export async function presignR2Put(opts: {
     "X-Amz-Expires": String(opts.expiresSeconds),
     "X-Amz-SignedHeaders": "host",
   };
+  // Signed into the query, as host r2-presign.ts does. Empty is absent.
+  if (opts.sessionToken) q["X-Amz-Security-Token"] = opts.sessionToken;
   const canonicalQuery = Object.keys(q)
     .sort()
     .map((k) => `${uriEncode(k, true)}=${uriEncode(q[k], true)}`)

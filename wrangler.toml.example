@@ -352,6 +352,13 @@ binding = "R2_S3_SECRET_ACCESS_KEY"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
 secret_name = "R2_S3_SECRET_ACCESS_KEY"
 
+# OPTIONAL: only when the R2_S3_* pair is an R2 temporary credential. Uncomment after creating the
+# store secret; leave commented on a long-lived key pair (src/r2-presign.ts, vivijure-cf#1232).
+# [[secrets_store_secrets]]
+# binding = "R2_S3_SESSION_TOKEN"
+# store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
+# secret_name = "R2_S3_SESSION_TOKEN"
+
 # Media containers (video-finish / audio-mix / audio-beat-sync / image-prep / audio-master).
 # Reuses the GPU door store secret so we do not mint a second bearer.
 #
