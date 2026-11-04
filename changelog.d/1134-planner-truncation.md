@@ -1,3 +1,0 @@
-### fix(plan-enhance): a plan cut off at its output limit says so (#1134)
-
-A long plan ran out of output tokens, and the studio reported `title is required` instead. A failed refine returned its input and read as a success. Plan and refine now return the true reason: a cut-off reply, a model error, or a reply that does not parse. A cut-off or refused reply is never retried on the local model. Plan, refine and the director pass can now use 21000 output tokens, up from 4096, so the most a single call can spend rises in step. Plan and refine skip the AI Gateway cache, so a retry reaches the model and an identical re-plan is billed again.

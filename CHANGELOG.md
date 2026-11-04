@@ -5,9 +5,151 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.43.0 -- 2026-11-03
+
 ### fix(retry): a retry keeps what it already paid for (#1166)
 
 Retry now asks core to keep each line, clip and finish step whose inputs are proven identical, and buys only the rest. `POST /api/render/film` takes the same choice as `reuse_finished: true`. The default on that door stays off. Needs core at `39c6a25` or later.
+
+### feat(video-finish): join finished films into one film, and cap a film at what one upload carries
+
+`POST /async/join-films` joins up to 64 finished films, in order, by URL, into one PUT. The video is copied and the audio is encoded once. Films must match in frame, rate and codec, and a mismatch is refused before any join. The job id comes from the object paths, so a re-submit after a restart reaches the same job and writes the same bytes. See `containers/video-finish/README.md`.
+
+`MAX_FILM_BYTES` falls from 6.85 GB to 5,363,466,240 bytes, the R2 limit for one PUT, and `_put_file` refuses above it with a named 413. Core's assemble admission needs the matching change.
+
+### fix(plan-enhance): a plan cut off at its output limit says so (#1134)
+
+A long plan ran out of output tokens, and the studio reported `title is required` instead. A failed refine returned its input and read as a success. Plan and refine now return the true reason: a cut-off reply, a model error, or a reply that does not parse. A cut-off or refused reply is never retried on the local model. Plan, refine and the director pass can now use 21000 output tokens, up from 4096, so the most a single call can spend rises in step. Plan and refine skip the AI Gateway cache, so a retry reaches the model and an identical re-plan is billed again.
+
+**Fix: chat image reads the output shape the proxied models publish (#1141).**
+
+`image-generate` read `url`, `image_url`, `output_url`, `data`, `images` and `output`, and the models publish `image`, sometimes wrapped in `result`. Every Google call answered `no image URL`. It now reads what `cloud-keyframe` and `cast-image` already read.
+
+**Fix: finish-blender sends the presigned URLs the core gives it (#1146).**
+
+`finish-upscale` and `finish-rife` forward `video_url` and `output_url`, and `finish-blender` did not. So the door could only use R2 mode, and a door with no R2 env failed every shot and the whole film after the clips were paid.
+
+**Fix: plan-enhance keeps a shot under the 50 word cap (#1150).**
+
+A rewrite over the cap was returned as success and then refused by the validator. The model is now asked for under 40 words. A rewrite still over 50 keeps the original prompt, and the notes say how many.
+
+**Fix: a failed cf-p-video-avatar call names its gateway log (#1154).**
+
+A provider `7003` carries no detail, so the failure could not be diagnosed. The error now carries the AI Gateway log id, which holds no content and points to the request.
+
+**Fix: cloud-keyframe tells the model not to draw text (#1155).**
+
+A still of someone speaking could come back with a speech bubble or a caption, which then stayed on screen for the whole clip. Both prompts now forbid it.
+
+**Fix: the audio-mix dialogue track can be a whole film (#1158).**
+
+The dialogue track is the assembled film, and one 128 MB cap covered every track, so an upscaled 2 minute film was refused. The dialogue track is now capped at 3 GB. Music and sfx stay at 128 MB. Needs a container deploy.
+
+### fix(modules): dialogue-gen is the default dialogue door
+
+`dialogue-gen` now sorts ahead of `chatterbox`. A provider queue on `chatterbox` was failing spoken films, and the core picks the door by order with no per-film choice (vivijure-cf#1164).
+
+### fix(retry): a retry repeats the original film, or does not start (#1177)
+
+The film and render doors store the request beside the film, and retry replays it with `reuse_finished`, so cast, voices, bed and titles are kept and proven work is not bought again. A render with no stored request now answers 409 saying what it would lose, unless `accept_rederive: true`.
+
+### fix(cloud-keyframe): a film run with no film doc stops after a grace period
+
+A drawing run for a film treats a film doc still missing after 6 minutes as a film that is over, and stops before the next paid step. A run with no film id is not affected.
+
+### fix(cloud-keyframe): draw keyframes in a Workflow
+
+`cloud-keyframe` draws one shot per Workflow step. Progress no longer depends on a poll, and `/poll` returns from one R2 read, so a poll does not hold the film advance lease for the length of a draw. `/cancel` stops the Workflow, and the Workflow stops by itself when its film is over. A re-submit for the same film and shots reaches the run already going. A host without the new `KEYFRAME_WORKFLOW` binding draws one shot per poll, and a poll token from before the change finishes that way.
+
+### feat(films): a film board for long films built as parts
+
+New `/films` page, phone first. It shows a parent film's phase, shots, estimate, stop reason and limits, each part's status and error, retries a failed part, resumes a held film or a failed join, raises the spend ceiling, and offers the joined film and each part to watch or download. It projects `GET /api/film/:id`, so it needs the parent film routes. Actual spend is not shown as a number because no meter attributes it to one film. `test:browser` now also covers this page and runs in CI.
+
+### feat(films): a contact sheet for each part
+
+Each part on the film board can show all its stills in a grid, using small thumbnails from `GET /api/thumb/`. A tap opens one large, with previous and next, and a new take if the part allows it.
+
+### fix(film): a shot that lost a finish step reaches the film's report
+
+A shot whose upscale soft-degraded looked finished from everything on a long film. The film and each part now count such shots in `finish_degraded`, the part gives the reasons, `degraded` says so in text, and the shot row names its own. The panel's existing line shows that text.
+
+### feat(films): review a part's shots and make a new take
+
+Each part on the film board opens a shot list: still, seconds, prompt, line and error, with the clip on a tap. A new take can change the prompt, line or voice, and a waiting take can be cancelled. "Go to shot number" opens the right part. The board warns when the scheduler has stopped, and says when a step takes effect, since the cron acts on it within about a minute.
+
+### fix(films): a reload cannot start a second film, and the confirm says more
+
+The start form keeps its key across a reload until the film starts, and warns plainly if a key was used with other settings. It warns when the estimate is above the ceiling, and the confirm lists per-part changes.
+
+### feat(films): start a long film from the panel
+
+`/films?new=1` takes a master board from a project or pasted JSON, cast per slot, part size or breaks, look, door, frame, an estimate per shot and a spend ceiling, then asks before it creates the film. Caps and doors come from `GET /api/modules`. It stops after the first part by default.
+
+### docs(cast): flip-safe character design for cloud keyframes
+
+The cast editor, the studio guide and the `cloud-keyframe` README now say that a one-sided mark is not reliable on the cloud route. Use marks that read the same when mirrored, and make them bold, because a thin mark can drop out. This removes the wrong-side failure. It does not promise drift-free output.
+
+### fix(history): keep unchanged rows, load no film until expanded, send ETags
+
+The film list keeps a row's element when the row has not changed, so a refresh no longer stops a playing video. A collapsed row loads no film. The render clock uses the server's run time on a second device. Artifacts send an ETag, answer `If-None-Match` and honour `If-Range`.
+
+### feat(infinitetalk): a stopped film can stop a clip job
+
+The module declares `cancelable` and takes `POST /cancel` with a poll token. It calls `POST /cancel/<job>` on the public endpoint. Whether RunPod still charges a job cancelled while running is not measured. The module needs its own deploy.
+
+### fix(dialogue-gen): bring each spoken line to one level
+
+Aura's level varied by about 15 dB from line to line, and short lines came back quietest, so one speaker could be hard to hear. Each line now goes to -20 dBFS of speech, measured with pauses left out, up to a -1 dBFS peak and at most 24 dB of gain. Measured on 40 real lines: speech level range 15.3 dB before, 2.1 dB after. It applies to lines made after this deploy. A line that is reused keeps its old level.
+
+### docs(modules): door cards stop saying "One film, no scatter"
+
+Scatter is retired, and a long film is now parts joined at the end, so that line meant nothing to a filmmaker and was no longer the rule. The Flux card and `docs/motion-door-limits.md` now say what holds.
+
+### feat(film): long films as parts under one parent
+
+`POST /api/film` takes a master board, splits it into ordinary film jobs, runs them in order with limits, and joins the finished films. `GET /api/film/:id` reads it. `POST /api/film/:id/parts/:n/retry` re-submits a failed part and keeps proven work. `POST /api/film/:id/ceiling` raises the spend ceiling. The ceiling counts retries. `POST /api/film/:id/shots/:shot/retake` buys a new take of one shot of a finished part and joins again. `GET /api/film` lists films, and `stop_code` gives a stable key for `stop_reason`. `POST /api/render/film` now takes `delivery_width` and `delivery_height`.
+
+### fix(planner): phone access, door filter, look routing, and a spend confirm
+
+The Screenwriter dock no longer traps a phone: it stays shut until asked, and its close button stays below the top bar. The door filter for spoken lines now runs in a browser. A new look control routes anime to `cloud-keyframe` and photoreal to `keyframe`; an untrained character is refused on the LoRA route only. A motion render now asks first, with a clip total when the door states a rate (`ui.cost_usd_per_second`). Copy that overclaimed email, voice, retry and motion is corrected. `/` now opens the planner. Raw job output is shown only with operator tools on. Adds `npm run test:browser`.
+
+### fix(modules): provider safety filters are always on
+
+`alibaba-wan`, `alibaba-wan-lora`, `infinitetalk` and `cf-p-video-avatar` always send the provider safety filter on. It is not a config field, and a stored config that sets the old key is ignored. In `cast-image`, a provider safety flag ends the run as a plain failure with the provider's reason, on the model the run started with.
+
+### fix(studio, modules): retry temporary R2 errors
+
+Every R2 call through `studioEnv`, and through each module that binds `R2_RENDERS`, now retries codes 10001, 10043, 10054, 10058 and a lost connection: five attempts over 3.7 to 4.6 s, with jitter. Real errors fail at once. One R2 internal error used to end a film part.
+
+Limits. A conditional put and a stream put are not repeated. Reading a body after `get` is not covered. An outage longer than the backoff still fails what it failed before. A repeated plain put can overwrite a newer write when the first try landed and errored, which is rare.
+
+### fix(film): a retry before any clip does not count twice against the ceiling
+
+A part that failed before its clips, then retried, counted a whole second estimate, so a ceiling near one part's estimate stopped the film with nothing spent on clips. The first 2 such retries per part now add nothing: the stills are kept, and one estimate covers them. From the third they count in full, so a loop reaches the ceiling. "Before its clips" is the part's film saying it holds no clip job. A film that cannot be read this tick is no longer read as gone, and is left for the next tick.
+
+### feat(studio): a small copy of a still for contact sheets
+
+`GET /api/thumb/*key` returns a still at 360 px wide as JPEG, through the Images binding, with the same auth and key rules as `/api/artifact`. A contact sheet of 40 no longer needs 40 full PNGs. If the original cannot be resized it answers 502 with the path of the original, and 503 if `IMAGES` is not bound. It never returns a blank image. A deployment needs the `[images]` binding.
+
+### feat(studio): an authenticated sweep route for a deployment with no cron
+
+`POST /api/internal/sweep` runs the same pass the cron runs, for a deployment that cannot attach a cron trigger to the studio Worker. Without it, a film job nobody polls never advances and a long film is accepted and never starts. It is off by default: it exists only when the new optional `SWEEP_TOKEN` secret is set, takes only `Authorization: Bearer <SWEEP_TOKEN>`, and answers `202 { "ok": true }`. Any other request reads exactly like an unknown path. The studio's own tokens never open it. The cron and the route now share one pass under a short R2 lease, so two passes do not overlap; the cron had no pass-level guard before.
+
+### fix(video-finish): keep apostrophes and colons in titles
+
+A title with an apostrophe lost it, and one with a colon as well failed the render. Title, subtitle and credit text now goes to drawtext unquoted and escaped for both parsers, with `expansion=none`. Needs a container deploy.
+
+### fix(finish-upscale): ask again before a shot stands out in the film
+
+A door that soft-degraded an upscale passed the small clip through at once, so one shot could sit in a film beside upscaled ones. For a cause that may pass, the step now reports `transient`, so the core holds and re-dispatches it. A wall-clock guard expiry gets no retry: each try can run 570 s, about $0.55, and a clip too heavy usually fails them all. It stands as a limit on the film's report, for a person to retry.
+
+### feat(r2): support temporary R2 S3 credentials
+
+The studio presigner and the `cf-grok-video` upload presigner read an optional `R2_S3_SESSION_TOKEN`. When set, presigned URLs sign `X-Amz-Security-Token`, so the R2 S3 pair can be an R2 temporary credential. When unset, URLs are byte-identical to before. The token is stripped from tenant and dispatch env with the rest of the credential (vivijure-cf#1232).
+
+### feat(plan-enhance): reach Opus through the AI binding without a token
+
+With `GATEWAY_ID` and the new opt-in var `ENHANCE_OPUS_BINDING = "1"`, plan-enhance calls Opus with `env.AI.run` and the AI Gateway catalog id, so it needs no `CF_AIG_TOKEN`. A deployment with a token is unchanged, and so is one with a gateway and no opt-in, which stays on the free local model. `GET /ready` reports the transport as `opus`.
 
 ## v1.42.2 -- 2026-10-31
 
