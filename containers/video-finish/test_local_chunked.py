@@ -152,7 +152,7 @@ check(abs(r["durationSeconds"] - out_dur) < 0.01, "reported duration matches the
 # --- ARM 2: the OUTER guard must catch a DROPPED PARTIAL -----------------------
 # Inject at the seam chunking creates: the partial list handed to the final join loses one.
 real_join = app._concat_hard_urls
-def dropping(urls, out, list_path): return real_join(urls[:-1], out, list_path)
+def dropping(urls, out, list_path, **kw): return real_join(urls[:-1], out, list_path, **kw)
 app._concat_hard_urls = dropping
 try:
     asyncio.run(app._finish_chunked(body(clips), pool(N), 0.0))
