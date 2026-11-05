@@ -28,6 +28,7 @@ import { hearCastVoiceLine } from "./cast-voice-line";
 import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
+import { studioPageAsset, whoamiBody } from "./panel-home";
 import { isPublicId } from "@skyphusion-labs/vivijure-core/public-id";
 
 import {
@@ -2533,7 +2534,8 @@ const hAudioAnalyze: Handler = async (req, env) => {
 };
 
 // --- misc planner endpoints ----------------------------------------------
-const hWhoami: Handler = async () => json({ user: "studio" });
+// cf#1242: panel_home rides here only when PANEL_HOME=simple (src/panel-home.ts).
+const hWhoami: Handler = async (_req, env) => json(whoamiBody(env));
 const hGetPrefs: Handler = async (req, env) => {
   const prefs = await getUserPrefs(env);
   return json({ ok: true, prefs });
@@ -2849,6 +2851,9 @@ const STUDIO_PAGE_ASSETS: Record<string, string> = {
   "/index.html": "/planner.html",
   "/planner": "/planner.html",
   "/planner/": "/planner.html",
+  // cf#1242: the one-screen Make a video page. Always here; PANEL_HOME=simple also puts it at "/".
+  "/make": "/make.html",
+  "/make/": "/make.html",
   "/cast": "/cast.html",
   "/films": "/films.html",
   "/films/": "/films.html",
@@ -2926,7 +2931,7 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
     if (WELCOME_REDIRECT_PATHS.has(url.pathname) && (request.method === "GET" || request.method === "HEAD")) {
       return Response.redirect(WELCOME_REDIRECT_TARGET, 301);
     }
-    const studioPage = STUDIO_PAGE_ASSETS[url.pathname];
+    const studioPage = studioPageAsset(STUDIO_PAGE_ASSETS, url.pathname, env);
     if (studioPage && (request.method === "GET" || request.method === "HEAD")) {
       return serveStudioAsset(env, request, url, studioPage);
     }
