@@ -22,6 +22,11 @@
     // user can uncheck individual sources to skip them on one
     // generate without removing them from the row.
     sourceSelection: new Set(),
+    // The Wan LoRA pane shows only when BOTH are true: the alibaba-wan-lora door is installed
+    // (module registry) AND this host can train a Wan LoRA (GET /api/cast wan_lora_trainable).
+    // Both start false so a missing signal or a failed request keeps the pane hidden.
+    wanDoorInstalled: false,
+    wanLoraTrainable: false,
   };
 
   // The ref key path-segment can contain "/" (cast/<id>/refs/<uuid>.<ext>);
@@ -167,6 +172,8 @@
     try {
       const data = await api("/api/cast");
       state.cast = Array.isArray(data.cast) ? data.cast : [];
+      state.wanLoraTrainable = data.wan_lora_trainable === true;
+      applyWanLoraPaneVisibility();
       renderCastList();
       setListStatus(
         state.cast.length === 0
@@ -184,8 +191,15 @@
         if (pick != null) selectCast(pick);
       }
     } catch (e) {
+      state.wanLoraTrainable = false;
+      applyWanLoraPaneVisibility();
       setListStatus("could not load cast: " + e.message, true);
     }
+  }
+
+  function applyWanLoraPaneVisibility() {
+    const pane = $("#cast-wan-lora-pane");
+    if (pane) pane.hidden = !(state.wanDoorInstalled && state.wanLoraTrainable);
   }
 
   // Fill the dialogue-voice picker from the catalog (GET /api/voices). One source of truth on the
@@ -1317,13 +1331,16 @@
     // v0.57.0: standalone LoRA training.
     const loraBtn = $("#cast-lora-train-btn");
     if (loraBtn) loraBtn.addEventListener("click", trainLora);
-    // Wan training only has a use where a door can take its result.
+    // Wan training only has a use where a door can take its result AND this host can train it
+    // (applyWanLoraPaneVisibility). A registry that fails to load keeps the pane hidden.
     if (window.moduleRegistry) {
       window.moduleRegistry.load().then((reg) => {
-        const pane = $("#cast-wan-lora-pane");
-        if (pane && reg && Array.isArray(reg.modules)) {
-          pane.hidden = !reg.modules.some((m) => m && m.name === "alibaba-wan-lora");
-        }
+        state.wanDoorInstalled = !!(reg && Array.isArray(reg.modules)
+          && reg.modules.some((m) => m && m.name === "alibaba-wan-lora"));
+        applyWanLoraPaneVisibility();
+      }, () => {
+        state.wanDoorInstalled = false;
+        applyWanLoraPaneVisibility();
       });
     }
     const wanLoraBtn = $("#cast-wan-lora-train-btn");

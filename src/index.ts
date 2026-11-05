@@ -39,7 +39,7 @@ import {
   clearPortrait, getCastIdByPublicId,
 } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "./cast-public";
-import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora } from "@skyphusion-labs/vivijure-core/cast-lora-train";
+import { handleCastLoraStatus, handleCastTrainLora, handleCastTrainWanLora, wanTrainEndpointConfigured } from "@skyphusion-labs/vivijure-core/cast-lora-train";
 import { isValidVoiceId, VOICE_IDS, VOICE_CATALOG } from "@skyphusion-labs/vivijure-core/voices";
 import { handleAdoptRender } from "@skyphusion-labs/vivijure-core/render-adopt";
 import {
@@ -341,7 +341,21 @@ const hSaveProjectStoryboard: Handler = async (req, env, _c, p) => {
 
 // --- cast ----------------------------------------------------------------
 // Wrapped by resource name ({cast}) -- the frontend reads data.cast (array for list, object for item).
-const hListCast: Handler = async (_req, env) => json({ cast: (await listCast(env)).map(toPublicCast) });
+// `wan_lora_trainable` tells the cast page whether THIS host can train a Wan LoRA, so it can hide the
+// Wan pane on a host without the Wan train endpoint instead of offering a button that can only end
+// in the 501. A boolean only: the endpoint id never leaves the server. Fail closed: a secret read
+// that throws reports false and the list still loads.
+async function wanLoraTrainable(env: StudioEnv): Promise<boolean> {
+  try {
+    return await wanTrainEndpointConfigured(env);
+  } catch {
+    return false;
+  }
+}
+const hListCast: Handler = async (_req, env) => {
+  const [rows, wanTrainable] = await Promise.all([listCast(env), wanLoraTrainable(env)]);
+  return json({ cast: rows.map(toPublicCast), wan_lora_trainable: wanTrainable });
+};
 // The dialogue voice catalog (aura-1 speakers). Static; the cast voice picker renders from it so the
 // list of voices has one source of truth (src/voices.ts), not a hardcoded copy in the frontend.
 // cf#919: `talking_doors` is PROJECTED through the installed motion.backend set, not served as the
