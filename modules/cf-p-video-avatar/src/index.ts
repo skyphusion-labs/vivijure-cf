@@ -37,6 +37,7 @@ import {
   type ModuleConfig,
 } from "./params";
 import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
+import { namingGatewayLog } from "../../_shared/gateway-log";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -146,15 +147,8 @@ export async function generateClip(env: Env, params: WorkflowParams): Promise<un
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  try {
-    return await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
-  } catch (e) {
-    // cf#1154: a provider 7003 carries no detail, and the request body is in the gateway log. The log id
-    // holds no content, so it is safe to carry. Same object, so nothing downstream of the throw changes.
-    const logId = env.AI.aiGatewayLogId;
-    if (e instanceof Error && logId) e.message = `${e.message} (gateway log ${logId})`;
-    throw e;
-  }
+  // cf#1154: a provider 7003 carries no detail. The error names the gateway log that holds the request.
+  return namingGatewayLog(env.AI, () => env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } }));
 }
 
 /** Download and write. Retries on its own step, and never reaches the provider. */
