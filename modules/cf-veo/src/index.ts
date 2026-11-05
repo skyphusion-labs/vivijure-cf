@@ -39,6 +39,7 @@ import {
   type ModuleConfig,
 } from "./params";
 import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
+import { namingGatewayLog } from "../../_shared/gateway-log";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -48,6 +49,8 @@ interface R2Bucket {
 
 interface AiRun {
   run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
+  // Set by the binding after a gateway call. Absent on a stub or an unrouted call.
+  aiGatewayLogId?: string | null;
 }
 
 interface WorkflowInstance {
@@ -143,11 +146,12 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
 }
 
 /** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
-async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
+export async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config, await keyframeImageInput(params.input.keyframe_url));
-  return env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+  // cf#1159: a 2002 carries no reason. The error names the gateway log that holds the request and the reply.
+  return namingGatewayLog(env.AI, () => env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } }));
 }
 
 /** Download and write. Retries on its own step, and never reaches the provider. */
