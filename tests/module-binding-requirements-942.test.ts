@@ -14,8 +14,8 @@
 // `binding` from the `[[secrets_store_secrets]]` block that follows in six of these files. Both
 // produce a plausible wrong answer rather than an error, which is why each has a case below.
 
-import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { describe, it, expect, afterEach } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readWorkflows } from "../scripts/build-module-release";
@@ -44,8 +44,20 @@ function declaredBlockCount(module: string): number {
 
 const ALL = modulesWithConfig();
 
+// cf#1239: every fixture dir this run creates, by exact path. Cleanup removes ONLY these, never a
+// `cf942-*` glob, because a sibling seat running the suite as the same unix user shares `$TMPDIR`
+// and its live fixtures match the same prefix. `everCreated` is never emptied: it is the
+// denominator for the regression case at the end of this file.
+const created: string[] = [];
+const everCreated: string[] = [];
+afterEach(() => {
+  for (const d of created.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
 function fixture(body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "cf942-"));
+  created.push(dir);
+  everCreated.push(dir);
   const path = join(dir, "wrangler.toml");
   writeFileSync(path, body);
   return path;
@@ -157,5 +169,16 @@ describe("the traps that produce a plausible WRONG answer rather than an error",
     );
     expect(JSON.stringify(readWorkflows(a))).toBe(JSON.stringify(readWorkflows(b)));
     expect(readWorkflows(a)[0].binding).toBe("ALPHA");
+  });
+});
+
+describe("cf#1239: the run leaves no fixture dir behind", () => {
+  // Declared LAST, so every fixture case above has run and had its afterEach. Vitest runs the cases
+  // of one file in declaration order unless a case opts into concurrency, and none here does.
+  it("removed every cf942-* dir this run created, and only checks dirs it created", () => {
+    // DENOMINATOR: with no fixtures created the loop below would pass vacuously.
+    expect(everCreated.length).toBeGreaterThanOrEqual(8);
+    const survivors = everCreated.filter((d) => existsSync(d));
+    expect(survivors).toEqual([]);
   });
 });

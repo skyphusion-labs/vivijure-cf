@@ -13,7 +13,9 @@ topmost heading" -- is what the version-already-present refusal and the explicit
 below exist to prove: assemble() takes version as data, never infers it from CHANGELOG.md's
 existing structure.
 """
+import atexit
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -207,8 +209,22 @@ with tempfile.TemporaryDirectory() as root:
 HELD = "<!-- HELD: this belongs to a later release -->\n### feat: held body\n"
 
 
+# cf#1239: every holds fixture dir, by exact path. Removed below and again at exit (covers a crash
+# mid-script); never by an `asm-holds-*` glob, which would hit a sibling run's live fixtures.
+HOLDS_ROOTS = []
+
+
+def remove_holds_roots():
+    for r in HOLDS_ROOTS:
+        shutil.rmtree(r, ignore_errors=True)
+
+
+atexit.register(remove_holds_roots)
+
+
 def holds_fixture(fragments, holds_text):
     root = pathlib.Path(tempfile.mkdtemp(prefix="asm-holds-"))
+    HOLDS_ROOTS.append(root)
     (root / "changelog.d").mkdir()
     (root / "scripts").mkdir()
     (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n## v1.0.0 -- 2026-01-01\n\nold\n")
@@ -244,6 +260,10 @@ for label, frags, holds_text in (
           proc.returncode == 1 and "Nothing was written" in proc.stderr
           and "v1.1.0" not in (root / "CHANGELOG.md").read_text()
           and (root / "changelog.d" / "983-held.md").exists())
+
+remove_holds_roots()
+check("cf#1239: every holds fixture dir is removed (%d created)" % len(HOLDS_ROOTS),
+      len(HOLDS_ROOTS) >= 3 and not any(r.exists() for r in HOLDS_ROOTS))
 
 print("")
 print("  %d passed, %d failed" % (len(passes), len(failures)))
