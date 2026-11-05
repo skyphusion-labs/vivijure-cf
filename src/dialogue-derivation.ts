@@ -35,3 +35,20 @@ export function dialogueUndeterminedMessage(e: unknown): string {
     + "rather than risk shipping a silent film: " + reason
   );
 }
+
+// cf#1056: the spoken-line gate is about the shots THIS render makes. The render doors derived lines
+// from the whole bundle, and a render of a few shots (`processShotIds`, a scenes list shorter than
+// the board, or the keyframes picked for a finalize) was judged on every line in the board: a render
+// of only silent shots was refused on a silent door because some other shot speaks.
+//
+// The bundle scenes are kept to the rendered shots ONLY when the mapping is proven: every rendered
+// shot id is a shot id in the bundle. If any rendered id is missing from the bundle, the ids do not
+// describe the same board, and dropping lines on a guess could ship a voiced film silent, which is
+// the failure fc#2250 exists to stop. So that case keeps every scene, and the gate stays as strict
+// as before.
+export function bundleScenesForRender<S extends { shot_id: string }>(bundleScenes: S[], renderedShotIds: string[]): S[] {
+  const inBundle = new Set(bundleScenes.map((s) => s.shot_id));
+  if (!renderedShotIds.length || !renderedShotIds.every((id) => inBundle.has(id))) return bundleScenes;
+  const rendered = new Set(renderedShotIds);
+  return bundleScenes.filter((s) => rendered.has(s.shot_id));
+}

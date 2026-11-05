@@ -1185,6 +1185,14 @@ carried a literal seven-door list, which on a hosted tenant sent the filmmaker t
 InfiniteTalk, a door the hosted catalog cannot install. A client MUST NOT match on the old literal;
 match on `spoken lines` if it must match at all. The same three sentences serve all three render
 doors (panel, render-from-keyframes, agent).
+
+**Which lines count (cf#1056).** Lines derived from the bundle count only for the shots this render
+makes: the submitted `scenes` after `processShotIds` on the panel door, `scenes` on the agent door,
+and the picked keyframes on a finalize. So a render of only silent shots is not refused because a
+shot it is not making speaks. This holds only when every rendered shot id is a shot id in the bundle;
+if any is not, every line in the bundle counts, as before, so a voiced film is never sent silent on
+a guess. Explicit `dialogue_lines` are not filtered: they always win. The motion door is still one
+door for the whole render.
 The third sentence is for a native-audio door. A driving-only door is not refused for
 having talking audio off.
 

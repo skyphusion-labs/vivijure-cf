@@ -8,7 +8,7 @@ import {
 } from "@skyphusion-labs/vivijure-core";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
-import { dialogueUndeterminedMessage } from "./dialogue-derivation";
+import { bundleScenesForRender, dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { voiceRefKeysFromScenes } from "./cast-voice-sample";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -174,7 +174,9 @@ export async function animateFromPreview(
   } catch (e) {
     return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
   }
-  const previewSpoken = bundleScenesHaveLines(previewBundleScenes);
+  // cf#1056: only the shots this finalize makes decide whether it must speak.
+  const renderedBundleScenes = bundleScenesForRender(previewBundleScenes, scenes.map((s) => s.shot_id));
+  const previewSpoken = bundleScenesHaveLines(renderedBundleScenes);
 
   let motionBackend: string | undefined;
   let perShotMotion: Record<string, string> | undefined;
@@ -275,7 +277,7 @@ export async function animateFromPreview(
   let voice_ref_keys: Record<string, string> | undefined;
   try {
     const resolved = await resolveCastLoras(env, args.castLoras ?? {});
-    let lines = dialogueLinesFromBundleScenes(previewBundleScenes, resolved.voices);
+    let lines = dialogueLinesFromBundleScenes(renderedBundleScenes, resolved.voices);
     if (lines.length) {
       lines = resolveExplicitLineVoices(lines, previewBundleScenes, resolved.voices);
       dialogue_lines = lines;
