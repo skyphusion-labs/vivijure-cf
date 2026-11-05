@@ -518,7 +518,7 @@ Responses wrapped: list -> `{ cast: [...] }`, item -> `{ cast: {...} }`. The per
 
 | Route | Body | Response | Errors |
 |-------|------|----------|--------|
-| GET `/api/cast` | none | `200 { cast: CastMember[] }` | -- |
+| GET `/api/cast` | none | `200 { cast: CastMember[], wan_lora_trainable: boolean }` (`wan_lora_trainable` is true only when this host has `RUNPOD_WAN_TRAIN_ENDPOINT_ID` wired; the id itself is never returned) | -- |
 | POST `/api/cast` | `{ name (req), bible? }` | `201 { cast }` | 400 if `name` missing |
 | GET `/api/cast/:id` | none | `200 { cast }` | 404 if unknown |
 | PATCH `/api/cast/:id` | `{ name?, bible?, voice_id? }` | `200 { cast }` | 400 if `voice_id` invalid; 404 if unknown |
