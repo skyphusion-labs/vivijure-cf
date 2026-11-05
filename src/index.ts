@@ -29,7 +29,7 @@ import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from 
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
 import { studioPageAsset, whoamiBody } from "./panel-home";
-import { saveFilmProject } from "./film-project";
+import { saveBundleFilmProject, saveFilmProject, storeBundleBoard } from "./film-project";
 import { isPublicId } from "@skyphusion-labs/vivijure-core/public-id";
 
 import {
@@ -1877,7 +1877,7 @@ function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: 
 
 const hStartFilm: Handler = async (req, env) => {
   const submitted = await req.clone().text();
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown }>(req);
+  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown }>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -2057,13 +2057,24 @@ const hStartFilm: Handler = async (req, env) => {
   // hSubmitRender / hRenderFromKeyframes already do for the storyboard render path. hPollFilm
   // keeps the row's status in sync as the job advances.
   await storeSubmitArgs(env, job.film_id, "film", submitted);
-  await insertRenderBestEffort(env, filmRowFromJob(job));
+  // cf#1251: save the board this film renders to a project, from the copy the bundle route kept, so the
+  // panel can reopen it. Never from the YAML. A part of a long film renders a slice; its parent saves the
+  // whole board (cf#1241), so a part saves nothing.
+  const filmProject = isParentPartProject(project)
+    ? null
+    : await saveBundleFilmProject(env, { bundleKey: filmBundleKey, filmName: project, projectRef: a.projectId });
+  const filmRow = filmRowFromJob(job);
+  const linkedProject = filmProject?.saved ? filmProject.id : a.projectId;
+  const linkedProjectId = await resolveProjectRef(env, linkedProject).catch(() => null);
+  if (linkedProjectId !== null) filmRow.projectId = linkedProjectId;
+  await insertRenderBestEffort(env, filmRow);
   // cf#1067: say on the way out when the door will not make a shot at its planned length.
   const filmNotes = durationNotesForShots(filmScenes, filmMotionMod);
   return json({
     ok: true,
     ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))),
     ...(filmNotes.length ? { duration_notes: filmNotes } : {}),
+    ...(filmProject ? { project: filmProject } : {}),
   }, 201);
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
@@ -2532,6 +2543,13 @@ const hBundle: Handler = async (req, env) => {
   const a = await readBody<AssembleBundleArgs>(req);
   if (!a.storyboard || !a.characterRefs) throw badRequest("storyboard and characterRefs required");
   const r = await assembleBundle(env, a);
+  // cf#1251: keep the whole board beside the bundle, so a film started from it can save the board the
+  // caller wrote. A failed write does not fail the bundle: the film door then says the board was not saved.
+  if (r.ok) {
+    await storeBundleBoard(env, r.bundleKey, a.storyboard).catch((e) => {
+      console.warn(`bundle ${r.bundleKey}: board not kept: ${String(e)}`);
+    });
+  }
   return json(r, r.ok ? 201 : 400);
 };
 const hAudioAnalyze: Handler = async (req, env) => {

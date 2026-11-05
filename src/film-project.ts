@@ -85,3 +85,58 @@ export async function saveFilmProject(
     return { saved: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
+
+// cf#1251: the single-film door (POST /api/render/film, MCP submit_film) takes a bundle, not a board,
+// and the bundle's storyboard.yaml is a lossy render snapshot. Rebuilding a board from it would save a
+// DIFFERENT board from the one the caller wrote, so it is never done. Instead the bundle route, which
+// does receive the whole board, keeps it losslessly beside the bundle, and the film door reads it.
+//
+// The name is `<bundleKey>.board.json` on purpose: the reclaim's sidecar sweep lists every key that
+// starts with an artifact's key, so the board is freed with its bundle and is never an orphan.
+//
+// A bundle is content-addressed by its tar. Two boards that differ only in fields the YAML drops make
+// the same tar, so the board kept is the last one bundled under that key.
+
+type BoardBucket = {
+  R2_RENDERS: {
+    put(key: string, body: string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
+    get(key: string): Promise<{ text(): Promise<string> } | null>;
+  };
+};
+
+export const boardKeyFor = (bundleKey: string): string => `${bundleKey}.board.json`;
+
+export async function storeBundleBoard(env: BoardBucket, bundleKey: string, storyboard: unknown): Promise<void> {
+  await env.R2_RENDERS.put(boardKeyFor(bundleKey), JSON.stringify({ version: 1, storyboard }), {
+    httpMetadata: { contentType: "application/json" },
+  });
+}
+
+/** The board kept beside a bundle, or null when there is none (a bundle made before cf#1251). */
+export async function readBundleBoard(env: BoardBucket, bundleKey: string): Promise<unknown | null> {
+  const object = await env.R2_RENDERS.get(boardKeyFor(bundleKey));
+  if (!object) return null;
+  const parsed = JSON.parse(await object.text()) as { storyboard?: unknown };
+  return parsed && typeof parsed.storyboard === "object" && parsed.storyboard !== null ? parsed.storyboard : null;
+}
+
+export const OLD_BUNDLE_NOT_SAVED =
+  "this bundle was made before the studio kept boards beside bundles, so the storyboard was not saved to a project. "
+  + "The film still started. Bundle the board again to keep it.";
+
+/** The film door's project save: the kept board, never the YAML. */
+export async function saveBundleFilmProject(
+  env: DbEnv & BoardBucket,
+  args: { bundleKey: string; filmName: string; projectRef?: unknown },
+): Promise<FilmProjectResult> {
+  let board: unknown | null;
+  try {
+    board = await readBundleBoard(env, args.bundleKey);
+  } catch (e) {
+    return { saved: false, error: `the kept board could not be read: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (board === null) return { saved: false, error: OLD_BUNDLE_NOT_SAVED };
+  const named = (board as { projectName?: unknown }).projectName;
+  const filmName = typeof named === "string" && named.trim() ? named.trim() : args.filmName;
+  return saveFilmProject(env, { filmName, board, projectRef: args.projectRef });
+}
