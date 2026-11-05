@@ -126,7 +126,7 @@ import { bundleScenesForRender, dialogueUndeterminedMessage } from "./dialogue-d
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
-import { checkDoorDurations } from "./door-duration-preflight";
+import { checkDoorDurations, durationNotesForShots } from "./door-duration-preflight";
 import { spokenLinesPresent, bundleScenesHaveLines, hostedMotionFallback, prepareSpokenClip, withMotionBackend } from "./motion-scatter";
 import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./default-keyframe";
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
@@ -1254,7 +1254,9 @@ const hSubmitRender: Handler = async (req, env) => {
   } as NewRenderRow;
   await storeSubmitArgs(env, job.film_id, "render", submitted);
   await insertRenderBestEffort(env, row);
-  return json(view, 201);
+  // cf#1067: say on the way out when the door will not make a shot at its planned length.
+  const panelNotes = b.keyframesOnly ? [] : durationNotesForShots(scenes, panelMotionMod);
+  return json(panelNotes.length ? { ...view, duration_notes: panelNotes } : view, 201);
 };
 const hRenderFromKeyframes: Handler = async (req, env) => {
   const b = await readBody<{
@@ -2056,7 +2058,13 @@ const hStartFilm: Handler = async (req, env) => {
   // keeps the row's status in sync as the job advances.
   await storeSubmitArgs(env, job.film_id, "film", submitted);
   await insertRenderBestEffort(env, filmRowFromJob(job));
-  return json({ ok: true, ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))) }, 201);
+  // cf#1067: say on the way out when the door will not make a shot at its planned length.
+  const filmNotes = durationNotesForShots(filmScenes, filmMotionMod);
+  return json({
+    ok: true,
+    ...(await withFilmDownloadUrlBestEffort(env, summarizeFilmWithProjection(job, null))),
+    ...(filmNotes.length ? { duration_notes: filmNotes } : {}),
+  }, 201);
 };
 const hPollFilm: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.id)) {
