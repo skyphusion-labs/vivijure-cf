@@ -229,6 +229,11 @@
       cost_usd_per_shot_est: Number($("new-per-shot").value),
       pause_after_first_part: $("new-pause").checked,
     };
+    // cf#1241: the studio saves every film's board to a project. While the board is still exactly the
+    // one picked from a project, name that project, so the studio keeps it there and makes no copy.
+    // An edited board is a new board: the studio gives it a project of its own and the original stays.
+    const from = projects.find((row) => String(row.id) === $("new-from-project").value);
+    if (from && JSON.stringify(from.last_storyboard) === JSON.stringify(b)) req.project_id = from.id;
     const breaks = $("new-breaks").value.trim();
     if (breaks) req.breaks = breaks.split(",").map(Number);
     else req.part_size = Number($("new-part-size").value);
