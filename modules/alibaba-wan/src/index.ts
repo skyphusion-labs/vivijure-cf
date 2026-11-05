@@ -59,7 +59,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 70,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://docs.runpod.io/public-endpoints/models/wan-2-6-i2v
+    cost: "$0.10/s at 720p, $0.15/s at 1080p",
+    cost_usd_per_second: [0.10, 0.15],
     // cf#929: the blurb used to stop at "Mouth follows the storyboard line", which reads as a promise
     // that the mouth TRACKS the line. It does not stop when the line does. Measured: a 1.4s line in a
     // 5s clip left the speaker mouthing silence for 3.6s, 72% of the clip.
@@ -74,6 +76,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: true,
     voice: "cast_tts",
     scatter_native_audio: false,

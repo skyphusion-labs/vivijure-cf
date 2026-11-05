@@ -88,7 +88,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 90,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://developers.cloudflare.com/ai/models/black-forest-labs/flux-3-video/ (unit per second from https://bfl.ai/pricing)
+    cost: "$0.15/s at hd, $0.24/s at fhd",
+    cost_usd_per_second: [0.15, 0.24],
     blurb: "Stylized talking clips from your stills. Faces drift. 5-20 seconds.",
     limits: [
       "5, 10, 15, or 20 second clips",
@@ -100,6 +102,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "drift",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,

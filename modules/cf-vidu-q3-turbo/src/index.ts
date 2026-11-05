@@ -100,6 +100,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "two",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,
