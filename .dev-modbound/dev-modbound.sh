@@ -64,6 +64,9 @@ for ln in src:
 t = "\n".join(out)
 t = t.replace("\${D1_DATABASE_ID}","dev-local-modbound")
 t = t.replace("\${AUTH_MODE}","").replace("\${ACCESS_TEAM_DOMAIN}","").replace("\${ACCESS_AUD}","")
+# cf#839 put ALLOW_UNAUTHENTICATED = "" in the template, so drop that line before injecting ours:
+# TOML refuses a key defined twice, and wrangler dev would not start (found during cf#1242).
+t = "\n".join(l for l in t.split("\n") if not l.strip().startswith("ALLOW_UNAUTHENTICATED ="))
 t = t.replace("[vars]\n","[vars]\nALLOW_UNAUTHENTICATED = \"true\"\nPLANNER_AI_MOCK = \"true\"\n",1)
 
 # The planning catalog is projected from the INSTALLED plan.enhance modules, so each scenario is
@@ -153,4 +156,7 @@ fi
 npx wrangler d1 migrations apply DB --local >/dev/null 2>&1 || true
 FLAGS=""; for f in "$D"/mods/*.toml; do FLAGS="$FLAGS -c $f"; done
 echo "launching module-bound dev on http://127.0.0.1:$PORT ..."
-exec npx wrangler dev -c wrangler.toml $FLAGS --port "$PORT" --ip 127.0.0.1
+# Containers off: the rendered config declares the media-stack containers, and a laptop without Docker
+# cannot start them, so wrangler dev refused to launch (found during cf#1242). This dev fleet runs no
+# finish step anyway (binding-free modules, zero spend).
+exec npx wrangler dev -c wrangler.toml $FLAGS --enable-containers=false --port "$PORT" --ip 127.0.0.1
