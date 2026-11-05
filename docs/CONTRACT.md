@@ -1071,7 +1071,7 @@ Runs the `plan.enhance` **chain** (LLM auto-direction) over a storyboard.
 | GET `/api/storyboard/models` | none | `200 { models: ModelEntry[] }` (the planning catalog) | -- |
 | POST `/api/storyboard/yaml` | `{ storyboard (req) }` | `200 { ok: true, yaml: string }` | 400 if missing; 400 `storyboard invalid: <shape errors>` if it fails validation (#731) |
 | POST `/api/storyboard/markers` | `{ storyboard (req), format (req), fps? }` | `200` raw file download (`content-disposition: attachment`) | 400 if `storyboard` or `format` missing; 400 naming the enum on an unknown `format` (#731) |
-| POST `/api/storyboard/bundle` | `AssembleBundleArgs` `{ storyboard (req), characterRefs (req), ... }` | `201 { ok: true, bundleKey }` or `400 { ok: false, error }` | 400 if `storyboard` or `characterRefs` missing |
+| POST `/api/storyboard/bundle` | `AssembleBundleArgs` `{ storyboard (req), characterRefs (req), ... }` | `201 { ok: true, bundleKey }` or `400 { ok: false, error }` | 400 if `storyboard` or `characterRefs` missing. **cf#1251:** the whole `storyboard` is also kept, as sent, at `<bundleKey>.board.json`, so a film started from the bundle can save it to a project. It is freed with the bundle. A failed write does not fail the bundle. |
 
 `markers.format` enum: `"premiere_csv" | "resolve_csv"`. The markers response is a CSV file, not JSON.
 The yaml route runs the same storyboard validator as preflight and serializes the normalized value,
@@ -1380,6 +1380,15 @@ and its talking audio is on. When a song is attached, the song-read `400` in 2.1
 
 **Response 201:** `{ ok: true, ...FilmSummary, download_url?, duration_notes? }` (see 2.21). A renders-table row is
 inserted so the film shows in history. `duration_notes` is as on the panel door above.
+
+**Project (cf#1251).** The film saves the board it renders to a storyboard project, so the panel can
+reopen it: the board kept beside the bundle by `POST /api/storyboard/bundle`, never one rebuilt from
+the bundle's `storyboard.yaml`. An optional body field `projectId` (a project's public id) names the
+project; otherwise the board's `projectName`, or the film's project, picks or makes one by the rule in
+2.22a (`project_id` there). The renders row carries the project, so history links to it. The answer
+carries `project: {saved: true, id, name, created}`, or `{saved: false, error}` for a bundle made before
+boards were kept: that film still starts, and its board is not saved. A part of a long film saves
+nothing here; its parent saves the whole board. A bundle that never renders makes no project.
 
 `FilmScene`: `{ shot_id: string, prompt: string, seconds: number }`.
 
