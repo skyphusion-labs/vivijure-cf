@@ -70,6 +70,7 @@ function baselineHeaders(h: Headers): Headers {
 const STUDIO_PAGE_PATHS = new Set([
   "/", "/index.html",
   "/planner", "/planner/", "/planner.html",
+  "/make", "/make/", "/make.html",
   "/cast", "/cast/", "/cast.html",
   "/films", "/films/", "/films.html",
   "/modules", "/modules/", "/modules.html",

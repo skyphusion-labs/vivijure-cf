@@ -59,8 +59,16 @@ const DECLARED: Record<string, { sites: string[]; why: string }> = {
     why: "suppressed from the projected config list and from the cloud-keyframe default; predates cf#780",
   },
   "alibaba-wan-lora": {
-    sites: ["cast.js"],
-    why: "Cast shows Wan training only where this door exists. Retires when Wan training is removed",
+    sites: ["cast.js", "make-style.js"],
+    why: "Cast shows Wan training only where this door exists. Retires when Wan training is removed. make-style.js (cf#1242): its face-hold grade and its need for a trained Wan look are prose only (provides label, docs/motion-door-limits.md); retires when a manifest field such as usage.face_hold says so",
+  },
+  "cf-hh1-r2v": {
+    sites: ["make-style.js"],
+    why: "cf#1242 face rule: the look-hold claim is prose only (ui.blurb, docs/motion-door-limits.md). Retires when a manifest field such as usage.face_hold carries it",
+  },
+  "cf-flux-3-video": {
+    sites: ["make-style.js"],
+    why: "cf#1242 face rule: \"Faces drift\" is prose only (ui.blurb, docs/motion-door-limits.md), and the door declares usage.first_last, so the generic rule would rank it consistent. Retires with usage.face_hold",
   },
   "infinitetalk": {
     sites: ["planner-render-config.js"],

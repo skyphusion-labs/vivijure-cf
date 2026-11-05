@@ -817,6 +817,25 @@ the new studio's account/bucket and recreate the container to clear it.
 
 ---
 
+## Landing page (optional): `PANEL_HOME`
+
+A `[vars]` entry, unset by default. It only decides which page the studio opens on.
+
+| Value | `/` serves | Nav |
+|---|---|---|
+| unset, or anything but `simple` | the planner (today's behaviour, exactly) | Planner, Cast, Films |
+| `simple` | Make a video (`public/make.html`) | Make a video, Advanced (the planner), Cast, Films |
+
+The Make a video page is always at `/make`, and the planner is always at `/planner`. The nav learns
+the setting from `GET /api/whoami` (`docs/CONTRACT.md`). See `docs/make-a-video.md` for the page.
+
+```toml
+[vars]
+PANEL_HOME = "simple"
+```
+
+---
+
 ## 7. Email notifications (optional)
 
 The `notify-email` module sends "your film is done" mail via Cloudflare Email. It is the **only**

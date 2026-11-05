@@ -329,8 +329,10 @@ function codeOnly(src: string): string {
 describe("cf#581: every self-rescheduling poll loop has a visibility pause with a resume", () => {
   it("the loops that had NO hidden guard now own one through the shared primitive", () => {
     // Was FOUR. demo-steer.js was the public demo door and was removed with it (pr1019).
+    // make.js (cf#1242) was born on the shared primitive rather than migrated onto it.
     const MIGRATED = [
       "cast.js",
+      "make.js",
       "planner-audio.js",
       "planner-history-row.js",
     ];

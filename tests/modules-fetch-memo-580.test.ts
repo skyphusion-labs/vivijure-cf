@@ -151,6 +151,8 @@ describe("cf#580 the PER-PAGE claim, made against what a page actually loads", (
     "cast.html": 3,
     "films.html": 1,
     "settings.html": 3,
+    // cf#1242: born on the shared memo, so it never had a second fetcher. 0 is "none before", not a count.
+    "make.html": 0,
   };
 
   it("every studio page now makes exactly ONE GET /api/modules per load", () => {

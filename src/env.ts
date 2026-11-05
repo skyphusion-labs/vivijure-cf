@@ -162,6 +162,10 @@ export interface Env {
   // STUDIO_API_TOKEN and every consumer token, or the route refuses it. Mint:
   // openssl rand -hex 32 | npx wrangler secret put SWEEP_TOKEN
   SWEEP_TOKEN?: string;
+  // cf#1242: the landing page, a [vars] entry. "simple" puts the one-screen Make a video page
+  // (public/make.html) at "/" and the nav, with the planner kept as "Advanced". Unset, or any other
+  // value, keeps today's behaviour exactly. See src/panel-home.ts and docs/DEPLOYMENT.md.
+  PANEL_HOME?: string;
 
   // Dev-only planner AI mock (#411 dev-parity). When "1"/"true", planStoryboard/refineStoryboard
   // return deterministic canned completions instead of a live model call, so the planner re-prompt

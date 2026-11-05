@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Make a video -- Vivijure Studio</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="favicon-16.png" type="image/png" sizes="16x16">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0E1730">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="make.css">
+</head>
+<body class="planner-body filmmaker-surface" data-studio-page="make">
+  <header class="topbar">
+    <a class="brand brand-vivijure" href="planner" aria-label="Vivijure studio">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Vivijure</span>
+    </a>
+    <nav class="studio-nav" data-studio-nav aria-label="Studio pages"></nav>
+    <span class="topbar-spacer"></span>
+    <div class="account">
+      <button id="account-toggle" type="button" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-label="Account &amp; tools">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </button>
+      <div id="account-menu" class="account-menu" role="menu" hidden>
+        <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="signed in">
+          <span class="account-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
+          <span class="account-email" id="account-email">loading&#8230;</span>
+        </button>
+        <div class="account-prefs" role="group" aria-label="Preferences">
+          <div class="account-prefs-head">Preferences</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="planner-layout make-layout">
+    <section id="make-form" class="make-form" aria-labelledby="make-title">
+      <h1 id="make-title">Make a video</h1>
+      <p id="make-unavailable" class="make-warn" hidden></p>
+
+      <section class="make-step" aria-labelledby="make-who-title">
+        <h2 id="make-who-title"><span class="make-num">1</span> Who's in it?</h2>
+        <p class="make-hint">Up to 4 people. Pick a face, or add someone with one selfie.</p>
+        <ul id="make-chosen" class="make-chosen" aria-label="In this video"></ul>
+        <div id="make-faces" class="make-faces" role="group" aria-label="People you can pick"></div>
+        <details id="make-add" class="make-add">
+          <summary>Add someone</summary>
+          <label class="planner-field"><span>Their name</span>
+            <input id="make-add-name" type="text" maxlength="60" autocomplete="off"></label>
+          <label class="planner-field"><span>One clear selfie, face to the camera</span>
+            <input id="make-add-photo" type="file" accept="image/png,image/jpeg,image/webp" capture="user"></label>
+          <button id="make-add-go" type="button" class="planner-secondary">Add</button>
+          <p id="make-add-note" class="make-note" role="status"></p>
+        </details>
+      </section>
+
+      <section class="make-step" aria-labelledby="make-idea-title">
+        <h2 id="make-idea-title"><span class="make-num">2</span> Your idea</h2>
+        <label class="planner-field"><span>What happens? Where? How should it feel?</span>
+          <textarea id="make-idea" rows="5" maxlength="4000" placeholder="Me and Sam race shopping carts across an empty parking lot at sunset. Fun and a bit silly."></textarea></label>
+      </section>
+
+      <section class="make-step" aria-labelledby="make-shape-title">
+        <h2 id="make-shape-title"><span class="make-num">3</span> Where will you post it?</h2>
+        <div id="make-shapes" class="make-options" role="radiogroup" aria-labelledby="make-shape-title"></div>
+      </section>
+
+      <section class="make-step" aria-labelledby="make-quality-title">
+        <h2 id="make-quality-title"><span class="make-num">4</span> Quality</h2>
+        <div id="make-qualities" class="make-options" role="radiogroup" aria-labelledby="make-quality-title"></div>
+      </section>
+
+      <section class="make-step make-total" aria-labelledby="make-total-title">
+        <h2 id="make-total-title"><span class="make-num">5</span> Total</h2>
+        <p id="make-total" class="make-total-figure">price unknown</p>
+        <p id="make-total-note" class="make-hint"></p>
+        <p class="make-style"><span id="make-style-line"></span> <a id="make-style-change" href="planner">change</a></p>
+      </section>
+
+      <button id="make-go" type="button" class="planner-primary make-go" disabled>Make my video</button>
+      <p id="make-why" class="make-note" role="status"></p>
+    </section>
+
+    <section id="make-progress" class="make-progress" hidden aria-live="polite">
+      <h2>Making your video</h2>
+      <div class="make-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="make-bar"><span id="make-bar-fill"></span></div>
+      <p id="make-progress-words"></p>
+      <p id="make-progress-eta" class="make-hint"></p>
+      <p id="make-progress-error" class="make-warn" hidden></p>
+      <button id="make-again" type="button" class="planner-secondary" hidden>Start over</button>
+    </section>
+
+    <section id="make-result" class="make-result" hidden>
+      <h2>Your video is ready</h2>
+      <video id="make-player" controls playsinline preload="metadata"></video>
+      <div class="make-actions">
+        <a id="make-download" class="planner-primary" download="my-video.mp4">Download</a>
+        <a id="make-edit" class="planner-secondary" href="planner">Edit in advanced planner</a>
+      </div>
+      <p id="make-saved" class="make-hint"></p>
+      <p id="make-result-note" class="make-warn" hidden></p>
+    </section>
+  </main>
+
+  <dialog id="make-confirm" class="make-confirm">
+    <form method="dialog">
+      <h2>Make this video?</h2>
+      <p id="make-confirm-what"></p>
+      <p id="make-confirm-style"></p>
+      <p id="make-confirm-total" class="make-total-figure"></p>
+      <p id="make-confirm-note" class="make-hint"></p>
+      <p id="make-confirm-faces" class="make-hint"></p>
+      <div class="make-actions">
+        <button value="cancel" class="planner-secondary">Go back</button>
+        <button value="go" class="planner-primary">Make it</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="auth-token.js"></script>
+  <script src="module-registry.js"></script>
+  <script src="abuse-link-checks.js"></script>
+  <script src="abuse-link.js"></script>
+  <script src="studio-chrome.js"></script>
+  <script src="topbar.js"></script>
+  <script src="render-eta.js"></script>
+  <script src="poll-schedule.js"></script>
+  <script src="finish-degrade.js"></script>
+  <script src="make-style.js"></script>
+  <script src="make.js"></script>
+</body>
+</html>

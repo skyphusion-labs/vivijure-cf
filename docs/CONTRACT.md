@@ -1608,7 +1608,7 @@ route; not part of the module hook contract.)
 
 | Route | Body | Response |
 |-------|------|----------|
-| GET `/api/whoami` | none | `200 { user: "studio" }` (the fixed studio identity; see 1.1) |
+| GET `/api/whoami` | none | `200 { user: "studio" }` (the fixed studio identity; see 1.1). With `PANEL_HOME=simple` the body is `{ user: "studio", panel_home: "simple" }`, which the nav reads (cf#1242); unset, the field is absent and the body is unchanged. |
 | GET `/api/prefs` | none | `200 { ok: true, prefs: object }` |
 | PATCH `/api/prefs` | a prefs object | `200 { ok: true, prefs }`; `400` if the body is not an object |
 

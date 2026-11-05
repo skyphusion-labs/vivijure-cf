@@ -78,6 +78,7 @@ of these areas, update the matching doc.
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
 - `docs/finish-capacity.md` -- the FIFO finish queue, step failures, `finish_incomplete` and retry.
+- `docs/make-a-video.md` -- the one-screen Make a video page (cf#1242): its face-consistency default-style rule, shapes, price, and `PANEL_HOME`.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
 - Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
