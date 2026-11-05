@@ -72,6 +72,9 @@ assets = { directory = "./public", binding = "ASSETS", html_handling = "none", r
 AUTH_MODE = "${AUTH_MODE}"
 ACCESS_TEAM_DOMAIN = "${ACCESS_TEAM_DOMAIN}"
 ACCESS_AUD = "${ACCESS_AUD}"
+# PANEL_HOME (cf#1242, src/panel-home.ts): "simple" serves the one-screen Make a video page at /
+# and names the planner "Advanced". Empty (the self-host default) keeps the planner home.
+PANEL_HOME = "${PANEL_HOME}"
 # ALLOW_UNAUTHENTICATED (cf#839): live code reads it (src/access-auth.ts) and until now it appeared
 # in NO committed wrangler example, so the one security-relevant knob in this file was the one an
 # operator could not see here. It is documented in docs/SECURITY.md and docs/CONTRACT.md; this is the
