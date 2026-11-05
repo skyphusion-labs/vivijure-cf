@@ -144,10 +144,10 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
 
 // ---- stopped with a failed part, and one still running.
 {
-  const state = { film: film({ phase: "stopped", stop_reason: "part 2 failed", parts: [part(0, "done"), part(1, "failed", { error: "shot 40 failed" }), part(2, "running")] }) };
+  const state = { film: film({ phase: "stopped", stop_reason: "part 1 failed", parts: [part(0, "done"), part(1, "failed", { error: "shot 40 failed" }), part(2, "running")] }) };
   const { ctx, page, seen } = await open(state);
   await page.waitForSelector(".films-part");
-  check("stopped: reason shown verbatim", (await text(page, "#film-stop-reason")) === "part 2 failed");
+  check("stopped: reason counts parts from 1", (await text(page, "#film-stop-reason")) === "part 2 failed");
   const note = await text(page, "#film-stop-note");
   check("stopped: says no new parts and what is running", note.includes("No new parts") && note.includes("1 part is still rendering"), note);
   check("stopped: part error shown", (await text(page, ".films-part-failed")).includes("shot 40 failed"));

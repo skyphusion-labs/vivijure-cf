@@ -109,7 +109,7 @@ function deleteScene(idx) {
   const scenes = planState.storyboard.scenes || [];
   if (idx < 0 || idx >= scenes.length) return;
   const scene = scenes[idx];
-  const label = scene.id ? scene.id : "scene " + (idx + 1);
+  const label = "Scene " + (idx + 1);
   if (!window.confirm("delete " + label + "? this cannot be undone (but discard all edits will restore it).")) return;
   scenes.splice(idx, 1);
   renderSceneEditor(planState.storyboard);
@@ -132,7 +132,7 @@ function buildSceneRow(scene, idx, useChars) {
   const head = document.createElement("div");
   head.className = "planner-scene-head";
   const idLabel = document.createElement("strong");
-  idLabel.textContent = scene.id || "scene " + (idx + 1);
+  idLabel.textContent = "Scene " + (idx + 1);
   head.appendChild(idLabel);
   if (scene.act) {
     const act = document.createElement("span");
@@ -170,7 +170,7 @@ function buildSceneRow(scene, idx, useChars) {
   const secField = document.createElement("label");
   secField.className = "planner-field";
   const secLabel = document.createElement("span");
-  secLabel.textContent = "target seconds";
+  secLabel.textContent = "Length (seconds)";
   secField.appendChild(secLabel);
   const secInput = document.createElement("input");
   secInput.type = "number";
@@ -217,7 +217,7 @@ function buildSceneRow(scene, idx, useChars) {
     const slotsField = document.createElement("div");
     slotsField.className = "planner-field";
     const slotsLabel = document.createElement("span");
-    slotsLabel.textContent = "character_slots (in this shot)";
+    slotsLabel.textContent = "Who's in this scene";
     slotsField.appendChild(slotsLabel);
     const slotsRow = document.createElement("div");
     slotsRow.className = "planner-scene-slots";
@@ -288,7 +288,7 @@ function buildSceneRow(scene, idx, useChars) {
     const dlgField = document.createElement("div");
     dlgField.className = "planner-field";
     const dlgLabel = document.createElement("span");
-    dlgLabel.textContent = "spoken line (voice is the Cast member you pick)";
+    dlgLabel.textContent = "What they say (voice is the Cast member you pick)";
     dlgField.appendChild(dlgLabel);
     const dlgRow = document.createElement("div");
     dlgRow.className = "planner-scene-dialogue";

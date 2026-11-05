@@ -16,6 +16,18 @@
   const STATUS_LABELS = { pending: "Waiting", running: "Rendering", done: "Done", failed: "Failed" };
 
   const $ = (id) => document.getElementById(id);
+  // A project name is a slug (my_film); people read it with spaces.
+  const niceTitle = (s) => String(s || "").replace(/_+/g, " ").trim();
+  // The studio counts parts from 0 in a stop reason; people count from 1.
+  const plainReason = (s) => String(s || "").replace(/\bpart (\d+)\b/gi, (_m, n) => "part " + (Number(n) + 1));
+  function listStatus(f) {
+    if (f.phase !== "stopped" && f.phase !== "failed") {
+      const stop = f.stop_reason ? ", " + plainReason(f.stop_reason) : "";
+      return (PHASE_LABELS[f.phase] || f.phase) + ", " + (f.shots_done ?? 0) + " of " + (f.shots_total ?? 0) + " shots" + stop;
+    }
+    const m = /\bpart (\d+)\b/i.exec(f.stop_reason || "");
+    return "Didn't finish" + (m ? " (part " + (Number(m[1]) + 1) + ")" : "") + ". Try again?";
+  }
   const el = (tag, props, ...kids) => {
     const node = Object.assign(document.createElement(tag), props || {});
     node.append(...kids.filter((k) => k !== null && k !== undefined));
@@ -65,7 +77,7 @@
     list.textContent = "";
     $("films-recent-empty").hidden = rows.length > 0;
     for (const r of rows) {
-      list.append(el("li", {}, el("a", { href: filmHref(r.film_id), textContent: r.project || r.film_id })));
+      list.append(el("li", {}, el("a", { href: filmHref(r.film_id), textContent: niceTitle(r.project || r.film_id) })));
     }
   }
 
@@ -87,11 +99,9 @@
     $("films-recent-wrap").hidden = true;
     $("films-all-empty").hidden = films.length > 0;
     for (const f of films) {
-      const stop = f.stop_reason ? ", " + f.stop_reason : "";
       list.append(el("li", {},
-        el("a", { href: filmHref(f.film_id), textContent: f.project || f.film_id }),
-        el("div", { className: "films-muted", textContent:
-          (PHASE_LABELS[f.phase] || f.phase) + ", " + (f.shots_done ?? 0) + " of " + (f.shots_total ?? 0) + " shots" + stop })));
+        el("a", { href: filmHref(f.film_id), textContent: niceTitle(f.project || f.film_id) }),
+        el("div", { className: "films-muted", textContent: listStatus(f) })));
     }
   }
 
@@ -490,7 +500,7 @@
 
   function renderFilm(film) {
     latest = film;
-    $("film-title").textContent = film.project || film.film_id;
+    $("film-title").textContent = niceTitle(film.project || film.film_id);
     const chip = $("film-phase");
     chip.textContent = PHASE_LABELS[film.phase] || film.phase;
     chip.className = "films-chip films-chip-" + film.phase;
@@ -511,7 +521,7 @@
     const stopped = film.phase === "stopped";
     stop.hidden = !stopped && !film.stop_reason;
     if (!stop.hidden) {
-      $("film-stop-reason").textContent = film.stop_reason || "No reason given.";
+      $("film-stop-reason").textContent = film.stop_reason ? plainReason(film.stop_reason) : "No reason given.";
       $("film-stop-note").textContent = stopNote(film);
     }
     // Stopped with nothing failed: a hold or a ceiling. A failed film with every part done: a failed

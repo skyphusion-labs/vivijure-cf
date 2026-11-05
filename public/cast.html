@@ -49,10 +49,15 @@
           <!-- #324: import a portable .vvcast bundle. The picker posts the raw
                file bytes to POST /api/cast/import; the new cast appears in the
                list on success, the server's error message is shown on failure. -->
-          <label class="cast-import-btn" title="import a .vvcast cast bundle">
-            import
-            <input id="cast-import-file" type="file" accept=".vvcast,application/x-tar" hidden />
-          </label>
+          <details class="cast-more-menu">
+            <summary aria-label="More actions" title="More actions">...</summary>
+            <div class="cast-more-items">
+              <label class="cast-import-btn" title="upload a character file (.vvcast)">
+                Upload character
+                <input id="cast-import-file" type="file" accept=".vvcast,application/x-tar" hidden />
+              </label>
+            </div>
+          </details>
           <button id="cast-new-btn" type="button" class="cast-new-btn">+ new character</button>
         </div>
       </header>
@@ -67,13 +72,18 @@
         <!-- #324: export this cast as a portable .vvcast bundle. Plain GET
              download link (href + download filename set per selection in
              cast.js); no JS fetch needed for the happy path. -->
-        <a id="cast-export-link" class="cast-secondary-btn cast-accent-outline" href="" download hidden>export .vvcast</a>
+        <details class="cast-more-menu">
+          <summary aria-label="More actions" title="More actions">...</summary>
+          <div class="cast-more-items">
+            <a id="cast-export-link" class="cast-secondary-btn cast-accent-outline" href="" download hidden>Download character</a>
+          </div>
+        </details>
         <button id="cast-save-btn" type="button" class="cast-save-btn" disabled>save changes</button>
       </header>
       <div id="cast-editor-status" class="cast-list-status cast-editor-status" role="status" aria-live="polite"></div>
 
       <label class="cast-field">
-        <span>character bible</span>
+        <span>Describe how they look</span>
         <textarea id="cast-bible" rows="8" placeholder="describe the character: face, hair, body, wardrobe, signature props, mood. this is fed to keyframe generation and LoRA training."></textarea>
         <small class="cast-field-hint">Cloud keyframes do not hold left and right, so a one-sided mark is not reliable. Use marks that read the same when mirrored: a centered mark, or a matched pair. Make them bold, because a fine line such as a thin scar can drop out.</small>
       </label>

@@ -156,7 +156,7 @@ function renderCastPickerOptions() {
       opt.value = String(c.id);
       const refsCount = Array.isArray(c.ref_keys) ? c.ref_keys.length : 0;
       const portraitNote = c.portrait_key ? "portrait" : "no portrait";
-      opt.textContent = c.name + " (" + portraitNote + ", " + refsCount + " refs)";
+      opt.textContent = c.name + " (" + portraitNote + ", " + refsCount + (refsCount === 1 ? " photo)" : " photos)");
       sel.appendChild(opt);
     }
     sel.value = current;
@@ -428,10 +428,20 @@ function renderFacesPanel() {
     const note = document.createElement("span");
     note.className = "planner-faces-note";
     const hasFace = !!(c.portrait_key || (c.ref_keys && c.ref_keys.length));
-    note.textContent = hasFace ? "has a face" : "no face yet";
+    const faceKey = c.portrait_key || (c.ref_keys && c.ref_keys[0]) || "";
     row.addEventListener("click", () => setCastInFilm(c.id, true));
     row.appendChild(name);
-    row.appendChild(note);
+    if (hasFace) {
+      const thumb = document.createElement("img");
+      thumb.className = "planner-faces-thumb";
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      thumb.src = /^https?:\/\//i.test(faceKey) ? faceKey : "/api/artifact/" + faceKey;
+      row.appendChild(thumb);
+    } else {
+      note.textContent = "no face yet";
+      row.appendChild(note);
+    }
     list.appendChild(row);
   });
   if (shown.length > cap) {

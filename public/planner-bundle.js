@@ -264,7 +264,7 @@ function buildSlotUploadRow(slot, char, bound) {
     linked.textContent =
       bound.name + " is in this film"
       + (portraitCount || refCount
-        ? " (" + (portraitCount ? "has a face" : "no face yet")
+        ? " (" + (portraitCount ? "face photo added" : "no face yet")
           + (refCount ? ", " + refCount + " extra photo" + (refCount === 1 ? "" : "s") : "")
           + ")."
         : " (add a face photo on Cast).")

@@ -302,6 +302,18 @@ body.sw-open .planner-layout { overflow-x: hidden; }
   cursor: pointer; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
 }
 .cast-import-btn:hover { border-color: var(--accent); }
+/* "..." menu holding upload/download character; the items drop below and stay inside the viewport. */
+.cast-more-menu { position: relative; }
+.cast-more-menu > summary {
+  list-style: none; cursor: pointer; border: 1px solid var(--line); background: var(--panel-2);
+  color: var(--ink); border-radius: 999px; padding: 6px 12px; font-weight: 700; user-select: none;
+}
+.cast-more-menu > summary::-webkit-details-marker { display: none; }
+.cast-more-items {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; display: grid; gap: 6px;
+  min-width: max-content; max-width: calc(100vw - 32px); padding: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+}
 .cast-list-status { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .cast-list-status.is-error { color: #ff7a8a; }
 .cast-editor-status { min-height: 1.2em; margin: 6px 0 2px; }
@@ -769,6 +781,7 @@ details.planner-bundle-consistent {
 .planner-faces-pick:hover { background: var(--panel-2); border-color: var(--line); }
 .planner-faces-name { font-weight: 600; }
 .planner-faces-note { color: var(--muted); font-size: 12px; }
+.planner-faces-thumb { width: 36px; height: 36px; flex: 0 0 auto; object-fit: cover; border-radius: 50%; border: 1px solid var(--line); }
 .planner-faces-none { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
 .planner-bundle-consistent { margin-top: 8px; }
 
@@ -1429,6 +1442,8 @@ body.filmmaker-surface #planner-render-advanced { display: none !important; }
 }
 .films-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .films-link { display: inline-block; text-decoration: none; }
+/* "Start a film": solid accent with black text, so it reads on a phone in daylight. */
+.planner-primary.films-link { background: var(--accent); color: #000; font-weight: 700; border-color: var(--accent); }
 .films-watch { margin-top: 8px; }
 .films-watch video { display: block; width: 100%; max-height: 60vh; border-radius: 8px; background: #000; }
 

@@ -71,7 +71,7 @@ const M = [
   ["thumb falls back", "      img.src = artifact(key);\n", ""],
   ["fallback cannot loop", "      img.onerror = null;\n", ""],
   ["basis shown", '$("film-basis").textContent = film.spend_ceiling_basis || "";', ""],
-  ["stop reason shown", 'film.stop_reason || "No reason given."', '"Stopped."'],
+  ["stop reason shown", 'film.stop_reason ? plainReason(film.stop_reason) : "No reason given."', '"Stopped."'],
   ["limit shown", "$(\"film-degraded\").hidden = !degraded;", "$(\"film-degraded\").hidden = true;"],
   ["part filter", 'parts.filter((p) => p.status === "failed" || p.status === "running")', "parts"],
   ["remembers films", "remember(film);", ""],

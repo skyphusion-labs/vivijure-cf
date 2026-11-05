@@ -254,7 +254,7 @@
       const sub = document.createElement("div");
       sub.className = "cast-list-sub";
       const parts = [];
-      if (c.ref_keys.length > 0) parts.push(c.ref_keys.length + " refs");
+      if (c.ref_keys.length > 0) parts.push(c.ref_keys.length + (c.ref_keys.length === 1 ? " photo" : " photos"));
       if (!c.portrait_key) parts.push("no portrait");
       sub.textContent = parts.join(" · ") || "ready";
       meta.appendChild(sub);
@@ -316,7 +316,7 @@
       a.rel = "noopener";
       const img2 = document.createElement("img");
       img2.src = artifactUrl(r.key);
-      img2.alt = "ref";
+      img2.alt = "photo";
       img2.loading = "lazy";
       a.appendChild(img2);
       li.appendChild(a);

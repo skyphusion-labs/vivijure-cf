@@ -613,7 +613,7 @@
     cap.className = "planner-backend-caption";
     const capTitle = document.createElement("span");
     capTitle.className = "planner-backend-caption-title";
-    capTitle.textContent = "Render backend";
+    capTitle.textContent = "Video style";
     cap.appendChild(capTitle);
     const capHint = document.createElement("span");
     capHint.className = "planner-backend-caption-hint";
