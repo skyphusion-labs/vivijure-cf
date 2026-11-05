@@ -64,7 +64,8 @@ old module keeps working.
 
 ### Chunked assemble and the `partialUrls` pool (#784)
 
-`/finish` normalizes every clip through libx264 before the cheap `-c copy` join, and the single-pass
+`/finish` normalizes every clip through libx264 before the cheap join (video `-c copy`; on a talking
+film the per-clip dialogue is encoded once across the joins, as `/async/join-films` does, cf#1167), and the single-pass
 path keeps the downloads, the normalized copies, the concat and the muxed film in ONE work dir until
 the job ends. Peak disk is therefore 3-4x total input.
 
