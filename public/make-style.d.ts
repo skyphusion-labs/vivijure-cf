@@ -17,7 +17,7 @@ export interface Registry {
 }
 export interface Shape { id: string; label: string; hint: string; ratio: string; width: number; height: number }
 export interface Quality { id: string; label: string; tier: string; res: string }
-export interface Host { wanTrainable?: boolean; wanReady?: boolean }
+export interface Host { wanTrainable?: boolean; wanReady?: boolean; voicesReady?: boolean }
 export interface Opts { shape?: string; quality?: string; talks?: boolean | null; host?: Host }
 export interface Price { usd: number | null; kind: string; perSecond?: number; exact?: boolean }
 export interface Choice {
@@ -38,6 +38,7 @@ export const DEFAULT_SHAPE: string;
 export const FACE_EVIDENCE: Record<string, { grade: number; why: string; needs?: string }>;
 export function faceGrade(mod: Mod | null | undefined): number;
 export function canSpeak(mod: Mod | null | undefined): boolean;
+export function voiceLock(mod: Mod | null | undefined): number;
 export function stillsDoor(reg: Registry): Mod | null;
 export function candidates(reg: Registry, opts?: Opts): Mod[];
 export function offeredShapes(reg: Registry, opts?: Opts): Shape[];

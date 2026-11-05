@@ -4,6 +4,7 @@
 //   who      GET /api/cast; add = POST /api/cast, POST /api/upload, POST /api/cast/:id/portrait,
 //            POST /api/cast/:id/generate-refs (+ GET refs-job), GET /api/cast/:id/lora-status
 //   style    GET /api/modules through moduleRegistry, decided by make-style.js (the face rule)
+//   voices   for a plan that talks: GET /api/voices, PATCH /api/cast/:id { voice_id } (no voice yet)
 //   plan     POST /api/storyboard/plan with the first planning model GET /api/storyboard/models lists
 //   save     POST /api/storyboard/projects, then POST /api/storyboard/projects/:id/storyboard
 //   make     POST /api/storyboard/bundle, then POST /api/storyboard/render (the planner's film door)
@@ -112,9 +113,20 @@
     return true;
   }
 
+  // A person is BOUND to the video (castLoras) only when the server will accept it: a stills door
+  // that trains the look refuses a person whose look is not ready. An unbound person speaks in the
+  // studio's one default voice, so "voices ready" means every person can be bound.
+  function bindable(c) {
+    return !!c && (!stillsTrainLook() || c.lora_status === "ready");
+  }
+
   function hostFacts() {
     const people = state.chosen.map(findCast).filter(Boolean);
-    return { wanTrainable: state.wanTrainable, wanReady: people.length > 0 && people.every(hasWanLook) };
+    return {
+      wanTrainable: state.wanTrainable,
+      wanReady: people.length > 0 && people.every(hasWanLook),
+      voicesReady: people.every(bindable),
+    };
   }
 
   // ---------- who's in it ----------
@@ -464,9 +476,11 @@
     $("make-confirm-total").textContent = "Total: " + $("make-total").textContent;
     $("make-confirm-note").textContent = $("make-total-note").textContent;
     const needWan = state.choice.needs === "wan_lora" ? state.chosen.map(findCast).filter((c) => c && !hasWanLook(c)) : [];
-    $("make-confirm-faces").textContent = needWan.length
-      ? "First this style learns " + needWan.map((c) => c.name).join(", ") + "'s face (about " + PREP_MINUTES.wan + " min each)."
-      : "";
+    const voiceless = style.hasSpokenLines(state.board) ? state.chosen.map(findCast).filter(needsVoice) : [];
+    $("make-confirm-faces").textContent = [
+      needWan.length ? "First this style learns " + needWan.map((c) => c.name).join(", ") + "'s face (about " + PREP_MINUTES.wan + " min each)." : "",
+      voiceless.length ? voiceless.map((c) => c.name).join(", ") + (voiceless.length === 1 ? " gets a voice of their own. You can change it on the Cast page." : " each get a voice of their own. You can change them on the Cast page.") : "",
+    ].filter(Boolean).join(" ");
     $("make-confirm").showModal();
   }
 
@@ -490,6 +504,35 @@
       return project;
     } catch (e) {
       return { error: e.message };
+    }
+  }
+
+  // Everyone who talks needs a voice of their own. A person with none would speak in the studio's
+  // one default voice, the same as everyone else, so each gets the next unused one from
+  // GET /api/voices, saved on them (PATCH /api/cast/:id voice_id) where the cast page shows it.
+  function needsVoice(c) {
+    return !!c && !c.voice_id;
+  }
+
+  async function giveVoices(people) {
+    const lacking = people.filter(needsVoice);
+    if (!lacking.length) return;
+    showProgress("Giving everyone their own voice", 0.02);
+    const data = await getJson("/api/voices");
+    const ids = (Array.isArray(data.voices) ? data.voices : []).map((v) => v && v.id).filter(Boolean);
+    const used = new Set(people.map((c) => c.voice_id).filter(Boolean));
+    for (const c of lacking) {
+      const id = ids.find((v) => !used.has(v));
+      if (!id) throw new Error("there are not enough voices for everyone");
+      used.add(id);
+      const r = await fetch("/api/cast/" + encodeURIComponent(c.id), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ voice_id: id }),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok || !out.cast) throw new Error("could not give " + c.name + " a voice");
+      putCast(out.cast);
     }
   }
 
@@ -526,14 +569,16 @@
     const project = await saveBoard();
     try {
       if (choice.needs === "wan_lora") await learnWanLooks(people.filter((c) => !hasWanLook(c)));
+      if (style.hasSpokenLines(state.board)) await giveVoices(people);
       showProgress("Getting everyone's faces ready", 0.02);
       const characterRefs = {};
       const castLoras = {};
       people.forEach((c, i) => {
         const row = findCast(c.id) || c;
         characterRefs[SLOTS[i]] = { name: row.name, prompt: row.bible || "", trainingImages: imageKeys(row).map((key) => ({ key })) };
-        // Bind only a trained look that is ready: a bound look that is not ready fails the video.
-        if (row.lora_status === "ready") castLoras[SLOTS[i]] = row.id;
+        // Bind only what the server accepts (see bindable): a bound look that is not ready fails the
+        // video when the stills door uses the look. The binding also carries the person's voice.
+        if (bindable(row)) castLoras[SLOTS[i]] = row.id;
       });
       const packed = await postJson("/api/storyboard/bundle", { storyboard: state.board, characterRefs });
       const config = {};

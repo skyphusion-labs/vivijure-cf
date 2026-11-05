@@ -57,7 +57,11 @@ const DOORS: Record<string, Mod> = {
   }),
   wanLora: motion("alibaba-wan-lora", { native_audio: false }, { ui: { order: 75 } }),
   flux: motion("cf-flux-3-video", { native_audio: true, first_last: true }, { ui: { order: 90 }, config_schema: { resolution: enumOf(["hd", "fhd"]) } }),
-  infinitetalk: motion("infinitetalk", { native_audio: false, driving_audio: true }, { ui: { order: 1 } }),
+  infinitetalk: motion("infinitetalk", { native_audio: false, driving_audio: true }, { ui: { order: 15 }, config_schema: {} }),
+  pva: motion("cf-p-video-avatar", { native_audio: false, driving_audio: true }, {
+    ui: { order: 92, cost_usd_per_second: [0.025, 0.045] },
+    config_schema: { resolution: enumOf(["720p", "1080p"]) },
+  }),
   veo: motion("cf-veo", { native_audio: true }, { ui: { order: 55 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } }),
   grok: motion("cf-grok-video", { native_audio: true }, { ui: { order: 80 } }),
 };
@@ -117,8 +121,35 @@ describe("chooseStyle: consistency first, not price", () => {
     expect(c?.door.name).toBe("cf-seedance");
     expect(chooseStyle(reg([silent, DOORS.seedance]), { shape: "wide", talks: false })?.door.name).toBe("a-silent");
   });
-  it("a door that only plays a voice file is never the default", () => {
-    expect(candidates(reg([DOORS.infinitetalk]), { shape: "wide", talks: true })).toEqual([]);
+  it("wide plus talking picks InfiniteTalk: the face is our still and the voice is the person's own", () => {
+    const c = chooseStyle(ALL, { shape: "wide", talks: true });
+    expect(c?.door.name).toBe("infinitetalk");
+    expect(c?.grade).toBe(GRADE.HOLD);
+    expect(styleLine(c?.door)).toBe("Talking in their own voices, faces locked");
+  });
+  it("vertical plus talking does not pick a voice-file door, it takes the best native-audio door", () => {
+    expect(chooseStyle(ALL, { shape: "vertical", talks: true })?.door.name).toBe("cf-vidu-q3-turbo");
+    expect(chooseStyle(ALL, { shape: "square", talks: true })?.door.name).toBe("cf-vidu-q3-turbo");
+    expect(candidates(reg([DOORS.infinitetalk, DOORS.pva]), { shape: "vertical", talks: true })).toEqual([]);
+  });
+  it("the higher-resolution voice-file door wins wide talking when InfiniteTalk is not installed", () => {
+    expect(chooseStyle(reg([DOORS.vidu, DOORS.seedance, DOORS.pva]), { shape: "wide", talks: true })?.door.name).toBe("cf-p-video-avatar");
+    expect(chooseStyle(reg([DOORS.pva, DOORS.infinitetalk]), { shape: "wide", talks: true })?.door.name).toBe("infinitetalk");
+  });
+  it("a voice-file door is never picked before the plan, or for a plan with no lines", () => {
+    expect(chooseStyle(ALL, { shape: "wide" })?.door.name).toBe("cf-hh1-r2v");
+    expect(chooseStyle(ALL, { shape: "wide", talks: false })?.door.name).toBe("cf-hh1-r2v");
+    expect(candidates(reg([DOORS.infinitetalk]), { shape: "wide", talks: false })).toEqual([]);
+  });
+  it("among talking doors of one face grade, the person's own voice wins over an invented one", () => {
+    // The rival takes hh1's evidence row (HOLD) with talking audio and ui.order 1, so ui.order alone
+    // would pick it. Both are HOLD; the voice lock decides first.
+    const rival = motion("cf-hh1-r2v", { native_audio: true, first_last: true }, { ui: { order: 1 } });
+    expect(chooseStyle(reg([rival, DOORS.infinitetalk]), { shape: "wide", talks: true })?.door.name).toBe("infinitetalk");
+  });
+  it("a voice-file door is skipped when someone cannot be bound, since they would speak in the default voice", () => {
+    expect(chooseStyle(ALL, { shape: "wide", talks: true, host: { voicesReady: false } })?.door.name).toBe("cf-vidu-q3-turbo");
+    expect(chooseStyle(ALL, { shape: "wide", talks: true, host: { voicesReady: true } })?.door.name).toBe("infinitetalk");
   });
   it("one start still is not consistency grade, so it is never picked", () => {
     expect(chooseStyle(reg([DOORS.veo, DOORS.grok]), { shape: "wide" })).toBeNull();

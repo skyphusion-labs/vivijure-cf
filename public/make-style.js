@@ -14,13 +14,21 @@
 //        0  DRIFT  docs/motion-door-limits.md says faces drift on this door
 //      Only grade 2 and 3 are "consistency grade". A shape that no consistency-grade door can make is
 //      not offered at all, rather than silently handed to a grade 1 door.
-//   3. A door that only plays a voice file (usage.driving_audio, no usage.native_audio) is never the
-//      default: it refuses or freezes a shot with no line (docs/motion-door-limits.md), and a short
-//      video from an idea will usually have shots with no line.
+//   3. A VOICE-FILE door (usage.driving_audio, no usage.native_audio: the mouth follows the person's
+//      own Cast voice on every line) is graded HOLD for a plan that talks. The picture is our still,
+//      drawn from the cast photos, and only the mouth moves; the voice is the person's own, where the
+//      native-audio doors invent one ("Cannot lock the Cast voice sample"). A shot with no line still
+//      works: core mints silence for it (core#342, wantsPreClipDialogue). It is NOT eligible before
+//      the plan exists or for a plan with no lines, because an all-silent video on it is a still
+//      picture. No voice-file door declares an aspect choice and none has proven a frame other than
+//      wide (one is "480p only (832x464)", the other says its shape "is unknown until a real
+//      render"), so a voice-file door is offered for Wide only. That retires when a door declares an
+//      aspect enum.
 //   4. When the video has spoken lines, only doors that can speak are eligible. Before the plan
 //      exists nobody knows, so the pick is made on face grade alone and redone once the plan is back.
-//   5. Ties: a door that can speak (only while talking is unknown), then ui.order, then name.
-//      Price never breaks a tie.
+//   5. Ties: the stronger voice lock (the person's own voice, then everything else), then a door
+//      that can speak (only while talking is unknown), then ui.order, then name. Price never breaks
+//      a tie.
 //
 // SHAPES. An image-to-video door makes the clip at the shape of its start still (the keyframe
 // manifests say so: "Image-to-video backends conform the clip to the KEYFRAME's aspect ratio"). So a
@@ -97,13 +105,20 @@
     if (!mod) return GRADE.DRIFT;
     var ev = FACE_EVIDENCE[mod.name];
     if (ev) return ev.grade;
+    if (voiceFileOnly(mod)) return GRADE.HOLD;
     return usage(mod).first_last === true ? GRADE.TWO : GRADE.ONE;
+  }
+
+  // 1 when the door speaks in the person's own Cast voice (usage.driving_audio), else 0.
+  function voiceLock(mod) {
+    return usage(mod).driving_audio === true ? 1 : 0;
   }
 
   function evidence(mod) {
     if (!mod) return "";
     var ev = FACE_EVIDENCE[mod.name];
     if (ev) return ev.why;
+    if (voiceFileOnly(mod)) return "usage.driving_audio: our still, mouth only, in the person's own voice";
     return usage(mod).first_last === true
       ? "usage.first_last: a start and an end still on every clip"
       : "one start still per clip";
@@ -156,6 +171,7 @@
   function doorCanShape(mod, shape) {
     if (!mod || !shape) return false;
     var aspect = schemaField(mod, ASPECT_FIELDS);
+    if (!aspect && voiceFileOnly(mod)) return shape.id === "wide"; // see rule 3
     if (!aspect) return true; // follows the still
     return aspect.field.values.indexOf(shape.ratio) !== -1;
   }
@@ -177,7 +193,10 @@
 
   // host.wanTrainable: GET /api/cast wan_lora_trainable. host.wanReady: every chosen person already
   // has the trained look for that door. Either one makes the door usable.
+  // host.voicesReady === false: some person cannot be bound to the video, so the studio would speak
+  // their line in its one default voice; a voice-file door then loses its whole point and is skipped.
   function usable(mod, host) {
+    if (voiceFileOnly(mod) && host && host.voicesReady === false) return false;
     if (needs(mod) === "wan_lora") {
       var h = host || {};
       return h.wanTrainable === true || h.wanReady === true;
@@ -195,7 +214,7 @@
     for (var i = 0; i < doors.length; i++) {
       var m = doors[i];
       if (faceGrade(m) < CONSISTENT) continue;
-      if (voiceFileOnly(m)) continue;
+      if (voiceFileOnly(m) && o.talks !== true) continue;
       if (o.talks === true && !canSpeak(m)) continue;
       if (!doorCanShape(m, shape)) continue;
       if (!usable(m, o.host)) continue;
@@ -205,6 +224,8 @@
     out.sort(function (a, b) {
       var g = faceGrade(b) - faceGrade(a);
       if (g) return g;
+      var v = voiceLock(b) - voiceLock(a);
+      if (v) return v;
       if (talkUnknown) {
         var s = (canSpeak(b) ? 1 : 0) - (canSpeak(a) ? 1 : 0);
         if (s) return s;
@@ -318,6 +339,7 @@
 
   function styleLine(mod) {
     if (!mod) return "";
+    if (voiceFileOnly(mod)) return "Talking in their own voices, faces locked";
     var grade = faceGrade(mod);
     var talk = canSpeak(mod) ? "Talking" : "No talking";
     return talk + (grade >= GRADE.HOLD ? ", faces locked" : ", consistent faces");
@@ -358,6 +380,7 @@
     FACE_EVIDENCE: FACE_EVIDENCE,
     faceGrade: faceGrade,
     canSpeak: canSpeak,
+    voiceLock: voiceLock,
     stillsDoor: stillsDoor,
     candidates: candidates,
     offeredShapes: offeredShapes,

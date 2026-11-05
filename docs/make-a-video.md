@@ -13,6 +13,7 @@ The page adds no API. Every step calls a route the planner or the cast page alre
 | Style | `GET /api/modules`, read by `public/make-style.js` |
 | Plan | `POST /api/storyboard/plan`, with the first model `GET /api/storyboard/models` lists |
 | Save | `POST /api/storyboard/projects`, then `POST /api/storyboard/projects/:id/storyboard` |
+| Voices | for a plan that talks: `GET /api/voices`, then `PATCH /api/cast/:id` `{ voice_id }` for each person with no voice |
 | Make | `POST /api/storyboard/bundle`, then `POST /api/storyboard/render` |
 | Progress | `GET /api/storyboard/render/:jobId`, read with `public/render-eta.js` |
 
@@ -32,14 +33,25 @@ is `public/make-style.js` (pure, unit tested in `tests/make-style.test.ts`). In 
    | 0 | DRIFT | Faces drift | `docs/motion-door-limits.md` |
 
    Only grades 2 and 3 are consistency grade. Grade 1 and 0 are never picked.
-3. A module that only plays a voice file (`usage.driving_audio` without `usage.native_audio`) is
-   never the default. It refuses or freezes a shot with no line, and a short video from an idea
-   usually has some.
+3. A **voice-file** module (`usage.driving_audio` without `usage.native_audio`, today InfiniteTalk
+   and `cf-p-video-avatar`) is graded 3 for a plan that talks. The picture is our still from the cast
+   photos and only the mouth moves, and the voice is the person's own Cast voice on every line. The
+   native-audio modules invent a voice ("Cannot lock the Cast voice sample"). A shot with no line still
+   works, because core mints silence for it (core#342). It is not eligible before the plan exists, or
+   for a plan with no lines, because an all-silent video on it is a still picture. No voice-file
+   module declares an aspect choice, and none has proven a frame other than wide (InfiniteTalk: "480p
+   only (832x464)"; `cf-p-video-avatar`: its shape "is unknown until a real render"), so a voice-file
+   module is offered for **Wide only**. Vertical and Square talking plans take the best native-audio
+   module. It is also skipped when someone cannot be bound to the video (next section), because that
+   person would speak in the studio's one default voice.
 4. When the plan has spoken lines, only modules that can speak are eligible. The pick is made on
    face grade before the plan exists and made again once the plan is back, so the confirm always
    shows the style that will run.
-5. Ties go to a module that can speak (only while talking is unknown), then `ui.order`, then name.
-   **Price never breaks a tie.**
+5. Ties go to the stronger voice lock (the person's own voice), then a module that can speak (only
+   while talking is unknown), then `ui.order`, then name. **Price never breaks a tie.**
+
+So a talking plan in Wide gets InfiniteTalk (then `cf-p-video-avatar` when InfiniteTalk is not
+installed), and Vertical or Square gets `cf-vidu-q3-turbo`, then `cf-seedance`.
 
 Three modules are graded from prose rather than from a manifest field, because no manifest field
 carries a face-hold fact yet. They are declared in `tests/panel-no-hardcoded-modules.test.ts`:
@@ -100,6 +112,19 @@ When the stills module uses the trained look (`trains_loras`), making the video 
 waits use the cast page's figures: about 2-4 min for pictures, about 15-25 min for the look. A
 trained look is bound to the video only when it is `ready`, because a bound look that is not ready
 fails the video.
+
+## Voices
+
+A person's voice reaches the video through their binding (`castLoras`), which carries the cast row's
+`voice_id`. Core speaks an unbound person, or one with no `voice_id`, in the default voice
+(`DEFAULT_VOICE_ID`, `angus`), so two such people would share one voice. Two rules follow:
+
+- For a plan that talks, everyone with no voice gets the next voice from `GET /api/voices` that no one
+  else in the video has, saved on their cast row before the video starts. The confirm names them, and
+  the Cast page can change it.
+- A person is bound only when the server accepts it: a stills module that trains the look
+  (`trains_loras`) refuses a person whose look is not ready. If anyone cannot be bound, the
+  voice-file modules are skipped for that video.
 
 ## Plain words
 

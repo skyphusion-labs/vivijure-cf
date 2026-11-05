@@ -36,6 +36,7 @@ const KF = { name: "keyframe", hooks: ["keyframe"], trains_loras: true, config_s
 const HH1 = door("cf-hh1-r2v", { native_audio: false, first_last: true }, { ui: { order: 60 }, config_schema: { ratio: enumOf(["16:9", "9:16", "1:1"]), resolution: enumOf(["720P", "1080P"]) } });
 const VIDU = door("cf-vidu-q3-turbo", { native_audio: true, first_last: true }, { ui: { order: 58, cost_usd_per_second: [0.04, 0.07] }, config_schema: { resolution: enumOf(["540p", "720p", "1080p"], "720p") } });
 const SEED = door("cf-seedance", { native_audio: true, first_last: true }, { ui: { order: 70 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
+const ITALK = door("infinitetalk", { native_audio: false, driving_audio: true }, { ui: { order: 15 }, config_schema: {} });
 const WIDE = door("wide-only", { native_audio: true, first_last: true }, { config_schema: { ratio: enumOf(["16:9"]) } });
 const VEO = door("cf-veo", { native_audio: true }, { config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
 const registry = (doors) => ({
@@ -46,6 +47,10 @@ const registry = (doors) => ({
   host: {},
 });
 const castRows = () => [{ id: "c1", name: "Mara", bible: "grey coat", portrait_key: "cast/c1/p.png", ref_keys: ["cast/c1/r1.png"], source_keys: [], lora_status: "ready" }];
+const twoRows = () => [
+  { id: "c1", name: "Mara", portrait_key: "cast/c1/p.png", ref_keys: ["cast/c1/r1.png"], source_keys: [], lora_status: "ready", voice_id: "angus" },
+  { id: "c2", name: "Sam", portrait_key: "cast/c2/p.png", ref_keys: ["cast/c2/r1.png"], source_keys: [], lora_status: "ready" },
+];
 const spokenBoard = { title: "Cart race", clip_seconds: 5, use_characters: ["A"], scenes: [
   { id: "s1", prompt: "two friends at a parking lot", target_seconds: 6, character_slots: ["A"] },
   { id: "s2", prompt: "the race", target_seconds: 8, character_slots: ["A"], dialogue: { slot: "A", text: "Go!" } },
@@ -60,7 +65,7 @@ const browser = await chromium.launch({
 });
 
 async function open(opts = {}) {
-  const doors = opts.doors ?? [HH1, VIDU, SEED];
+  const doors = opts.doors ?? [HH1, VIDU, SEED, ITALK];
   const viewport = opts.viewport ?? { width: 390, height: 844 };
   const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 600 });
   await ctx.addInitScript(() => { try { localStorage.setItem("vivijure_api_token", "test"); } catch {} });
@@ -89,6 +94,8 @@ async function open(opts = {}) {
     if (pathname === "/api/cast/c9/generate-refs") return json({ ok: true, job_id: "refs-1", phase: "generating", registered: 0, images: [] }, 201);
     if (pathname === "/api/cast/c9/refs-job/refs-1") { refsPolls++; if (refsPolls < 2) return json({ ok: true, job_id: "refs-1", phase: "generating", registered: 1 }); Object.assign(cast[0], { ref_keys: ["cast/c9/r1.png"] }); return json({ ok: true, job_id: "refs-1", phase: "done", registered: 4 }); }
     if (pathname === "/api/cast/c9") return json({ cast: cast[0] });
+    if (pathname === "/api/voices") return json({ voices: [{ id: "angus", label: "Angus" }, { id: "asteria", label: "Asteria" }, { id: "arcas", label: "Arcas" }], talking_doors: [] });
+    if (/^\/api\/cast\/c\d+$/.test(pathname) && method === "PATCH") { const row = cast.find((c) => "/api/cast/" + c.id === pathname); Object.assign(row, body); return json({ cast: row }); }
     if (pathname === "/api/storyboard/models") return json({ models: opts.noModel ? [] : [{ id: "plan-model-1", label: "Planner" }] });
     if (pathname === "/api/storyboard/plan") return opts.planFail ? json({ ok: false, errors: ["the model said no"] }, 422) : json({ ok: true, storyboard: opts.board ?? spokenBoard });
     if (pathname === "/api/storyboard/projects" && method === "POST") return json({ project: { id: 41, name: body.name } }, 201);
@@ -146,7 +153,7 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   check("plan used the idea and the person", post("/api/storyboard/plan")?.brief.includes("shopping cart") && post("/api/storyboard/plan")?.characters?.[0]?.name === "Mara" && post("/api/storyboard/plan")?.model === "plan-model-1");
   check("faces packed from the person's pictures", post("/api/storyboard/bundle")?.characterRefs?.A?.trainingImages?.length === 2);
   const r = post("/api/storyboard/render") ?? {};
-  check("submitted on the chosen style", r.motion_backend === "cf-vidu-q3-turbo" && r.renderOverrides?.motion_backend === "cf-vidu-q3-turbo", JSON.stringify(r));
+  check("vertical talking with InfiniteTalk installed still takes the native-audio style", r.motion_backend === "cf-vidu-q3-turbo" && r.renderOverrides?.motion_backend === "cf-vidu-q3-turbo", JSON.stringify(r));
   check("vertical pictures and the quality's resolution", r.renderOverrides?.config?.keyframe?.width === 768 && r.renderOverrides?.config?.keyframe?.height === 1344 && r.renderOverrides?.config?.["cf-vidu-q3-turbo"]?.resolution === "720p", JSON.stringify(r.renderOverrides));
   check("good is the standard tier", r.qualityTier === "standard");
   check("the trained look is used when ready", r.castLoras?.A === "c1");
@@ -158,6 +165,28 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   check("says where it was saved", (await text(page, "#make-saved")).includes("Cart race"));
   check("result is plain words", !JARGON.test(await page.locator("#make-result").innerText()), (await page.locator("#make-result").innerText()).match(JARGON)?.[0]);
   check("no script errors through the whole run", errors.length === 0, errors.join(" | "));
+  await ctx.close();
+}
+{
+  // Wide plus talking, with InfiniteTalk installed: it is chosen, and the person with no voice gets one.
+  const { ctx, page, calls } = await open({ cast: twoRows() });
+  await page.click('#make-faces button[aria-label="Add Mara"]');
+  await page.click('#make-faces button[aria-label="Add Sam"]');
+  await page.fill("#make-idea", "Mara and Sam argue about pizza.");
+  await page.check("#make-shape-wide");
+  await page.click("#make-go");
+  await page.waitForSelector("#make-confirm[open]");
+  check("wide talking: own-voice style", (await text(page, "#make-confirm-style")) === "Style: Talking in their own voices, faces locked.", await text(page, "#make-confirm-style"));
+  check("confirm says who gets a voice", (await text(page, "#make-confirm-faces")).includes("Sam gets a voice of their own"), await text(page, "#make-confirm-faces"));
+  await page.click('#make-confirm button[value="go"]');
+  await page.waitForSelector("#make-result:not([hidden])", { timeout: 15000 });
+  const patch = calls.filter((c) => c.method === "PATCH");
+  check("only the voiceless person is changed, to an unused voice", patch.length === 1 && patch[0].pathname === "/api/cast/c2" && patch[0].body.voice_id === "asteria", JSON.stringify(patch));
+  const r = calls.find((c) => c.method === "POST" && c.pathname === "/api/storyboard/render")?.body ?? {};
+  check("submitted on InfiniteTalk, wide pictures", r.motion_backend === "infinitetalk" && r.renderOverrides?.config?.keyframe?.width === 1344, JSON.stringify(r.renderOverrides));
+  check("both people bound, so both voices reach the video", r.castLoras?.A === "c1" && r.castLoras?.B === "c2", JSON.stringify(r.castLoras));
+  const order = calls.map((c) => c.method + " " + c.pathname);
+  check("voice set before the faces are packed", order.indexOf("PATCH /api/cast/c2") < order.indexOf("POST /api/storyboard/bundle"));
   await ctx.close();
 }
 {
