@@ -304,7 +304,7 @@ function startNewSession(opts) {
   if (!opts || !opts.skipConfirm) {
     const hasWork = planState.storyboard || $("#planner-brief").value.trim() ||
       bundleState.bundleKey || renderState.jobId;
-    if (hasWork && !window.confirm("Start a new session? Unsaved work on this page will be cleared.")) {
+    if (hasWork && !window.confirm("Start over? Unsaved work on this page will be cleared.")) {
       return;
     }
   }
