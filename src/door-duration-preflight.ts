@@ -69,3 +69,35 @@ export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationSha
   });
   return issues;
 }
+
+// cf#1067 part 1: a door that clamps a shot does it with no word, and submit does not run preflight.
+// So the render doors run the same check on the shots they submit and say so in the answer. It never
+// refuses: a caller that wants a refusal runs preflight, where a shot over the door's ceiling is an
+// error. This is the word on the way out, for a caller that skipped it. `clip_deliveries` shows the
+// delivered length afterwards, and only for a door that reports numbers; this is before any spend.
+export interface DurationNote {
+  shot_id: string;
+  planned_seconds: number;
+  level: "error" | "warning";
+  message: string;
+}
+
+export function durationNotesForShots(
+  shots: { shot_id: string; seconds: number }[],
+  door: DoorDurationShape | undefined,
+): DurationNote[] {
+  if (!door) return [];
+  const planned = new Map(shots.map((s) => [s.shot_id, s.seconds]));
+  return checkDoorDurations({ scenes: shots.map((s) => ({ id: s.shot_id, target_seconds: s.seconds })) }, door)
+    .map((issue) => {
+      const shot_id = issue.scope.replace(/^scene\[/, "").replace(/\]$/, "");
+      return {
+        shot_id,
+        planned_seconds: planned.get(shot_id) ?? 0,
+        level: issue.level === "error" ? "error" as const : "warning" as const,
+        message: issue.level === "error"
+          ? issue.message.replace(/ Shorten the shot, or pick another door\.$/, ` The clip will be cut to fit. Shorten the shot, or pick another door.`)
+          : issue.message,
+      };
+    });
+}

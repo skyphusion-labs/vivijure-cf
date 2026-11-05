@@ -1198,7 +1198,7 @@ line whose word count divided by 2.5 exceeds 12 seconds answers
 `<shot>` is the line's `shot_id`, or `a shot` when that id is blank. The seconds figure is the
 word-count estimate, not a measured WAV. A client that must match should match on `beats were not read`
 or `does not fit one`. There is no song, so no refusal, when `audioKey` is absent.
-**Response 201:** the RunPod-shaped poll view (2.24.1).
+**Response 201:** the RunPod-shaped poll view (2.24.1), plus `duration_notes` when it applies. `duration_notes` (cf#1067) is present only when the chosen door will not make a shot at its planned length: `[{shot_id, planned_seconds, level, message}]`, from the door's `usage` bounds, the same check preflight runs. `error` means the shot is over the door's ceiling and the clip will be cut to fit; `warning` means it runs longer than planned or snaps to one of the door's step lengths. It never refuses: run preflight first for a refusal.
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
 (default final), renderOverrides?, audioKey?, projectId?, motion_backend?, castLoras?,
@@ -1370,8 +1370,8 @@ missing-SDXL message) when a bound cast has no SDXL keyframe adapter; and, when 
 door ... Silent look doors cannot say the script."` unless the chosen motion module can speak lines
 and its talking audio is on. When a song is attached, the song-read `400` in 2.18 applies here too.
 
-**Response 201:** `{ ok: true, ...FilmSummary, download_url? }` (see 2.21). A renders-table row is
-inserted so the film shows in history.
+**Response 201:** `{ ok: true, ...FilmSummary, download_url?, duration_notes? }` (see 2.21). A renders-table row is
+inserted so the film shows in history. `duration_notes` is as on the panel door above.
 
 `FilmScene`: `{ shot_id: string, prompt: string, seconds: number }`.
 
@@ -2236,7 +2236,7 @@ conformance harness (`checkManifest`) proves a candidate module honors it.
 | `finish_scales_frame?` | boolean | no | A `finish` module whose output has a different frame from its input. It reads a positive `scale` in its config as a factor and otherwise aims at `delivery_width` and `delivery_height`. The core prices the film at that frame and refuses the step by name, code `assemble_budget`, before it spends, if the film could not be assembled (vivijure-core#389). Declared by `finish-upscale`. |
 | `finish_consumes_audio?` | boolean | no | NO SHIPPED MODULE DECLARES THIS SINCE cf#783 removed finish-lipsync; the mechanism is live in vivijure-core and unchanged. A `finish` module that drives its output from `FinishInput.audio_key` (lip-sync) and so must run on the native-fps clip (3.0.1). |
 | `duration_grid?` | `{ fps: number, tiers: { [tier]: { max_frames: number } } }` | no | A `motion.backend` module whose engine renders on a FIXED grid; a tier's max deliverable seconds = `max_frames / fps`. Drives the preflight clamp warning (2.12, #707). Relayed from the backend, never fabricated. |
-| `usage?` | `MotionUsageDecl` | no | How the studio actually calls this `motion.backend` door: `{ native_audio: boolean, voice: "prompt_lock" \| "seed_and_prompt" \| "cast_tts" \| "prev_clip", scatter_native_audio: boolean, min_seconds: number, max_seconds: number, duration_steps?: number[], first_last?: boolean, seed?: boolean, voice_ref?: boolean, driving_audio?: boolean }`. `driving_audio: true` puts the film through `pre_clip_dialogue` (2.21). A malformed value is refused at load. |
+| `usage?` | `MotionUsageDecl` | no | How the studio actually calls this `motion.backend` door: `{ native_audio: boolean, voice: "prompt_lock" \| "seed_and_prompt" \| "cast_tts" \| "prev_clip", scatter_native_audio: boolean, min_seconds: number, max_seconds: number, duration_steps?: number[], first_last?: boolean, seed?: boolean, voice_ref?: boolean, driving_audio?: boolean }`. `driving_audio: true` puts the film through `pre_clip_dialogue` (2.21). `first_last: true` means the door sends the end still to its model; core keeps the end frame only for such a door, and `tests/first-last-honesty-1067.test.ts` runs each door's builder to hold the two together (cf#1067). A malformed value is refused at load. |
 | `participation?` | `"default"` \| `"opt_in"` | no | cf#537. Whether the module runs when a render carries NO selection for its hook: `"default"` / absent = yes; `"opt_in"` = only when named. Honoured for `SELECTABLE_HOOKS` (`finish`). Any other value is refused at load; conformance (`checkManifest`) FAILS a module serving a selectable hook without an explicit value. |
 | `max_invocation_seconds?` | number | no | core#182. The module's OWN enforced per-invocation wall-clock ceiling, in seconds (positive, finite); the core sizes its stall ceiling for `CEILING_DERIVED_HOOKS` (`finish`, `speech`) from it. Declare the whole invocation or nothing; absence is reported (`film.ceiling_undeclared`), never substituted. Conformance FAILS a `finish` / `speech` module that omits it; load stays permissive. |
 
