@@ -168,6 +168,8 @@ export interface ParentDoc {
 
 export interface CreateParentBody {
   project?: unknown;
+  /** cf#1241: the storyboard project this board came from. Absent: the film's name picks or makes one. */
+  project_id?: unknown;
   idempotency_key?: unknown;
   storyboard?: unknown;
   character_refs?: unknown;

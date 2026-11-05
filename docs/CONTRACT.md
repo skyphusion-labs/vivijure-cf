@@ -1435,12 +1435,13 @@ A long film is built as ordinary film jobs (parts) under one parent, joined at t
 | `spend_ceiling_usd` | number | yes | No new part is submitted if its estimate would cross this. |
 | `cost_usd_per_shot_est` | number | yes | The caller's estimate per shot. The ceiling works from this, so it is only as good as this number. |
 | `pause_after_first_part` | boolean | no | Default `true`: after the first part the film stops until resumed, so a person can watch it. `false` carries on by itself. |
+| `project_id` | string | no | The storyboard project the board came from (its public id). The board is saved there. Omitted, the board goes to a project named `project`: one with no board, or already this exact board, is reused; any other is left alone and a new project is made (cf#1241). |
 
 `keyframe_backend`, if omitted, comes from `style`: `anime` uses `cloud-keyframe`, `photoreal` uses `keyframe`.
 
 Limits are on `GET /api/modules` under `render`: `max_scenes_per_part`, `max_parts`.
 
-Returns `201 {ok, film_id, phase, parts, created}`. It only writes. The next cron tick, within a minute, starts the film. Errors: `400` naming the field, including a board predicted over the 5,363,466,240 bytes one upload carries. `409` for a repeat key with a different request. `429` and the storage refusal as on `POST /api/render/film`.
+Returns `201 {ok, film_id, phase, parts, created, project}`. It only writes. `project` is `{saved: true, id, name, created}` for the storyboard project that now holds the board, so the panel can reopen it, or `{saved: false, error}`: the film still starts, and repeating the same request tries the save again without making a second project. The next cron tick, within a minute, starts the film. Errors: `400` naming the field, including a board predicted over the 5,363,466,240 bytes one upload carries. `409` for a repeat key with a different request. `429` and the storage refusal as on `POST /api/render/film`.
 
 **`GET /api/film`** lists films, newest first, at most 50: `{ok, films:[{film_id, project, phase, stop_reason, stop_code?, created_at, shots_done, shots_total}]}`. It advances nothing.
 

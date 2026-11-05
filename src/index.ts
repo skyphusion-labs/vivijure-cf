@@ -29,6 +29,7 @@ import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from 
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
 import { studioPageAsset, whoamiBody } from "./panel-home";
+import { saveFilmProject } from "./film-project";
 import { isPublicId } from "@skyphusion-labs/vivijure-core/public-id";
 
 import {
@@ -2277,7 +2278,10 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
     doc = stored.doc;
     await repairListRow(env, doc);
   }
-  return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
+  // cf#1241: the board goes to a storyboard project, so the panel can reopen it. On a repeat of the
+  // same request this finds the project it made before, so it also heals a save that failed once.
+  const project = await saveFilmProject(env, { filmName: doc.project, board: a.storyboard, projectRef: a.project_id });
+  return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created, project }, created ? 201 : 200);
 };
 
 const hListParentFilms: Handler = async (_req, env) => {

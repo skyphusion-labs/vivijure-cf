@@ -1,0 +1,3 @@
+### fix(film): every long film saves its board to a project
+
+A film started through `POST /api/film` (the API, MCP and the new-film page) now saves its master board to a storyboard project, so the planner and the new-film page can reopen it. Before, only the film doc held the board, sliced into parts, and two films had to be rebuilt by hand. The film names the project with `project_id`, or the studio uses the film's name: a project with no board, or with this exact board, is reused, and a project holding a different board is never overwritten. The answer carries `project: {saved, id, name, created}`. The new-film page sends `project_id` while the board is still the one it loaded from a project.
