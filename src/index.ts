@@ -29,6 +29,7 @@ import type { PlanEnhanceInput, PlanEnhanceOutput, PlanEnhanceStoryboard } from 
 import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
 import { studioPageAsset, whoamiBody } from "./panel-home";
+import { saveFilmProject } from "./film-project";
 import { isPublicId } from "@skyphusion-labs/vivijure-core/public-id";
 
 import {
@@ -121,7 +122,7 @@ import {
 import { stageBundleInjectedKeyframes } from "./bundle-keyframes";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
-import { dialogueUndeterminedMessage } from "./dialogue-derivation";
+import { bundleScenesForRender, dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { readKeyframeDone } from "./render-progress";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
 import { isScatterJobId } from "@skyphusion-labs/vivijure-core/scatter-orchestrator";
@@ -1167,7 +1168,8 @@ const hSubmitRender: Handler = async (req, env) => {
       // So every panel render spoke in DEFAULT_VOICE_ID even when the cast member had a voice
       // resolved -- the #582 shape, re-entered through the panel door.
       const voiceMap = panelPre.cast.voices;
-      let lines = dialogueLinesFromBundleScenes(bundleScenes, voiceMap);
+      // cf#1056: judged on the shots this render makes, not the whole board.
+      let lines = dialogueLinesFromBundleScenes(bundleScenesForRender(bundleScenes, scenes.map((s) => s.shot_id)), voiceMap);
       if (lines.length) {
         lines = resolveExplicitLineVoices(lines, bundleScenes, voiceMap);
         panelDialogue = lines;
@@ -1950,7 +1952,11 @@ const hStartFilm: Handler = async (req, env) => {
     if (!dialogue_lines || !dialogue_lines.length) {
       const bundleScenes = await readBundleScenes(env, filmBundleKey);
       if (bundleScenes.some((s) => s.dialogue)) {
-        dialogue_lines = dialogueLinesFromBundleScenes(bundleScenes, resolvedLoras.voices);
+        // cf#1056: judged on the shots this film makes, not the whole board.
+        dialogue_lines = dialogueLinesFromBundleScenes(
+          bundleScenesForRender(bundleScenes, filmScenes.map((s) => s.shot_id)),
+          resolvedLoras.voices,
+        );
       }
     } else if (
       // #582: EXPLICIT lines used to skip voice resolution entirely, so a line without a voice_id fell
@@ -2285,7 +2291,10 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
     doc = stored.doc;
     await repairListRow(env, doc);
   }
-  return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created }, created ? 201 : 200);
+  // cf#1241: the board goes to a storyboard project, so the panel can reopen it. On a repeat of the
+  // same request this finds the project it made before, so it also heals a save that failed once.
+  const project = await saveFilmProject(env, { filmName: doc.project, board: a.storyboard, projectRef: a.project_id });
+  return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created, project }, created ? 201 : 200);
 };
 
 const hListParentFilms: Handler = async (_req, env) => {

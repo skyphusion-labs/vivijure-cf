@@ -101,6 +101,7 @@ const text = (page, sel) => page.locator(sel).innerText();
   check("request carries shared", p.shared.motion_backend === "talk" && p.shared.style === "photoreal" && p.shared.delivery_width === 1920 && p.shared.delivery_height === 1080 && p.shared.qualityTier === "final" && !("audio_key" in p.shared), JSON.stringify(p.shared));
   check("cast as the bundle route takes it", p.character_refs.A.trainingImages.length === 2 && p.character_refs.A.name === "Mara" && p.shared.cast_loras.A === "c1", JSON.stringify(p.character_refs));
   check("has an idempotency key", typeof p.idempotency_key === "string" && p.idempotency_key.length > 8);
+  check("a pasted board names no project", !("project_id" in p), String(p.project_id));
   check("goes to the film", page.url().endsWith("films?id=feature-9"));
   await ctx.close();
 }
@@ -161,7 +162,23 @@ const text = (page, sel) => page.locator(sel).innerText();
   check("no hold is stated plainly", (await text(page, "#new-confirm-hold")).includes("Every part runs"));
   await page.click('#new-confirm button[value="go"]');
   await page.waitForURL("**/films?id=feature-9");
+  check("the film names the project its board came from", posts[0].project_id === 7, String(posts[0].project_id));
   check("breaks and no hold are sent", posts[0].breaks?.join() === "2" && !("part_size" in posts[0]) && posts[0].pause_after_first_part === false, JSON.stringify({ ...posts[0], storyboard: 0 }));
+  await ctx.close();
+}
+{
+  // cf#1241: an edited board is a different board, so it must not claim the project it came from.
+  const { ctx, page, posts } = await open();
+  await page.selectOption("#new-from-project", "7");
+  const edited = JSON.parse(await page.inputValue("#new-board"));
+  edited.scenes[0].prompt = "changed by hand";
+  await page.fill("#new-board", JSON.stringify(edited));
+  await page.fill("#new-per-shot", "1");
+  await page.fill("#new-ceiling", "10");
+  await page.click("#new-start");
+  await page.click('#new-confirm button[value="go"]');
+  await page.waitForURL("**/films?id=feature-9");
+  check("an edited board names no project", !("project_id" in posts[0]), String(posts[0].project_id));
   await ctx.close();
 }
 // ---- a reload after a lost response reuses the key. A success or a 409 ends it.
