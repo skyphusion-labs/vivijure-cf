@@ -113,9 +113,11 @@ const MANIFEST: ModuleManifest = {
       "Same description and seed on every shot. The voice can still vary.",
       "1080p and 4k are Seedance 2.0 only. 2.5, Fast, and Mini stay at 480p or 720p.",
       "9:21 is not on 2.5. With a first and last still, 2.5 uses adaptive ratio: a vertical clip needs a 9:16 keyframe.",
+      "No price shown: the Cloudflare model page lists none (read 2026-11-05). A price from another provider is not ours.",
     ],
   },
   usage: {
+    face_hold: "two",
     native_audio: true,
     voice: "seed_and_prompt",
     scatter_native_audio: false,

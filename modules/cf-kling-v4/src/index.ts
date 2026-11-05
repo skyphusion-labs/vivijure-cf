@@ -105,6 +105,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "two",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,

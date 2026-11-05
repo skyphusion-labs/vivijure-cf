@@ -101,7 +101,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 80,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://developers.cloudflare.com/ai/models/xai/grok-imagine-video-1.5-preview/ and https://developers.cloudflare.com/ai/models/xai/grok-imagine-video/
+    cost: "$0.08/s at 480p, $0.14/s at 720p (grok-imagine-video-1.5-preview; grok-imagine-video is $0.05/s and $0.07/s)",
+    cost_usd_per_second: [0.08, 0.14],
     blurb: "Quick talking drafts from a still. 1-15 seconds.",
     limits: [
       "1-15 second clips",
@@ -110,6 +112,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,

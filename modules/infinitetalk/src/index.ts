@@ -56,7 +56,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 15,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://docs.runpod.io/public-endpoints/models/infinitetalk
+    cost: "$0.25 per clip (480p)",
+    cost_usd_per_clip: [{ usd: 0.25 }],
     blurb: "Portrait plus Cast audio. The speaker is ours, not invented.",
     limits: [
       "Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet.",
@@ -68,6 +70,7 @@ const MANIFEST: ModuleManifest = {
   // measured: the metered price is per clip.
   cancelable: true,
   usage: {
+    face_hold: "hold",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,
