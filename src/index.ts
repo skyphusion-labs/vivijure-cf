@@ -30,6 +30,7 @@ import type { Env } from "./env";
 import { studioEnv, type StudioEnv } from "./orchestrator-env";
 import { studioPageAsset, whoamiBody } from "./panel-home";
 import { saveFilmProject } from "./film-project";
+import { deleteParentFilm } from "./film-delete";
 import { isPublicId } from "@skyphusion-labs/vivijure-core/public-id";
 
 import {
@@ -2289,6 +2290,16 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   return json({ ok: true, film_id: filmId, phase: doc.phase, parts: doc.parts.length, created, project }, created ? 201 : 200);
 };
 
+// cf#1206: a film built as parts is deleted as a whole. See src/film-delete.ts for the order.
+const hDeleteParentFilm: Handler = async (_req, env, _ctx, p) => {
+  const r = await deleteParentFilm(env, p.id);
+  if (r.kind === "not_found") throw notFound("film");
+  if (r.kind === "busy") return json({ ok: false, error: r.error }, 409);
+  if (r.kind === "changed") return json({ ok: false, error: "the film changed; read it and try again" }, 409);
+  if (r.kind === "incomplete") return reclaimRefusal(r.report);
+  return json({ ok: true, objects_freed: r.objects_freed, objects_retained: r.objects_retained, renders_removed: r.renders_removed });
+};
+
 const hListParentFilms: Handler = async (_req, env) => {
   const docs = await listParents(env, FILM_LIST_LIMIT);
   return json({ ok: true, films: docs.map(parentListRow) });
@@ -2809,6 +2820,7 @@ export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
   { method: "GET",    pattern: "/api/film/:id/parts/:n/shots",          scope: "consumer",    handler: hParentPartShots },
   { method: "GET",    pattern: "/api/film/:id",                         scope: "consumer",    handler: hGetParentFilm },
+  { method: "DELETE", pattern: "/api/film/:id",                         scope: "consumer",    handler: hDeleteParentFilm },
   { method: "POST",   pattern: "/api/film/:id/parts/:n/retry",          scope: "consumer",    handler: hRetryParentPart },
   { method: "POST",   pattern: "/api/film/:id/ceiling",                 scope: "consumer",    handler: hRaiseParentCeiling },
   { method: "POST",   pattern: "/api/film/:id/shots/:shot/retake",      scope: "consumer",    handler: hRetakeParentShot },

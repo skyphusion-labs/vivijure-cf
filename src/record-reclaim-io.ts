@@ -368,6 +368,18 @@ export async function deleteShotRecords(env: StudioEnv, filmIds: string[]): Prom
   }
 }
 
+/** cf#1206: render rows by project, narrowed to their key columns. A part of a long film owns its
+ *  project name (the film's tag is in it), so this is every render the part ever made. */
+export async function renderKeyRowsByProjects(env: StudioEnv, projects: string[]): Promise<RenderKeyRow[]> {
+  if (projects.length === 0) return [];
+  const holes = projects.map((_, n) => `?${n + 1}`).join(",");
+  const rs = await env.DB.prepare(
+    `SELECT id, job_id, project, bundle_key, output_key, keyframes_json, output_json
+       FROM renders WHERE project IN (${holes})`,
+  ).bind(...projects).all<RenderKeyRow>();
+  return rs.results ?? [];
+}
+
 /** Render rows by internal id, narrowed to their key columns. */
 export async function renderKeyRowsByIds(env: StudioEnv, ids: number[]): Promise<RenderKeyRow[]> {
   if (ids.length === 0) return [];

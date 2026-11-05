@@ -121,6 +121,14 @@ export async function overlayLiveProgress(env: StudioEnv, doc: ParentDoc): Promi
   }));
 }
 
+/** cf#1206: the film's own records. The doc goes LAST: while it is there, a delete that failed part
+ *  way can be run again, and a list row with no doc would read as a film that is not there. */
+export async function deleteParentRecords(env: StudioEnv, doc: ParentDoc): Promise<void> {
+  await env.R2_RENDERS.delete(listKey(doc.film_id, doc.created_at));
+  await env.R2_RENDERS.delete(activeKey(doc.film_id));
+  await env.R2_RENDERS.delete(docKey(doc.film_id));
+}
+
 export async function clearActiveMarker(env: StudioEnv, id: string): Promise<void> {
   await env.R2_RENDERS.delete(activeKey(id));
 }

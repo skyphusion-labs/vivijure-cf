@@ -378,6 +378,7 @@ unchanged.
 | 46h | POST | `/api/film/:id/parts/:n/retake/cancel` | 2.22a |
 | 46j | GET | `/api/film/:id/parts/:n/shots` | 2.22a |
 | 46i | GET | `/api/film` | 2.22a |
+| 46k | DELETE | `/api/film/:id` | 2.22a |
 | 47 | POST | `/api/storyboard/renders/:id/regen-shot` | 2.22 |
 | 48 | POST | `/api/storyboard/render-from-keyframes` | 2.18 |
 | 50 | GET | `/api/storyboard/render/:jobId` | 2.24 |
@@ -1482,6 +1483,8 @@ A join that fails for good ends the film in `failed` with every part kept, and `
 **`POST /api/film/:id/parts/:n/retake/cancel`** drops a retake that is waiting or failed, and puts the part's film, prompts and lines back. If the delivered film still matches every part, the film returns to `done` with no join. A take that already ran stays paid for. `400` if the part has no such retake. `409` if the film changed during the call.
 
 **`POST /api/film/:id/resume`** carries on past the hold after the first part, or joins again after a failed join. On a film that can already act it changes nothing but puts its cron marker back, so it also rescues a film whose marker was lost. Every 10 minutes the cron does the same for the 50 newest films. `400` if there is nothing to resume. `409` if the film changed during the call.
+
+**`DELETE /api/film/:id`** (cf#1206) removes a film built as parts, as a whole: every part's renders, through the same reclaim `DELETE /api/storyboard/renders/:id` uses, then every joined version (`film-v*.mp4`) and its captions (`.srt`), then the film's list row, its cron marker and its doc, the doc last. An object a surviving render still names stays. A film that could still start a part is stopped first by a write guarded on the doc's etag, so the cron cannot start one during the delete. It spends nothing. **200:** `{ok, objects_freed, objects_retained, renders_removed}`. **409** while a part is `running` or `submitting`, a join is out, or a new still is being drawn, with the reason in `error`; also when the film changed during the call. **409** with `freed`, `retained`, `failed`, `unreached` (as on the render delete) when storage could not be fully reclaimed: the film is kept, so the same call can be repeated and carries on from where it stopped. **404:** no such film. A part on its own is still refused by the render delete.
 
 **`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 

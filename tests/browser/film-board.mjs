@@ -51,7 +51,7 @@ async function open(state, url = "/films?id=feature-1") {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await ctx.addInitScript(() => { try { localStorage.setItem("vivijure_api_token", "test"); } catch {} });
   const page = await ctx.newPage();
-  const seen = { retries: [], films: [], gets: 0, errors: [], resumes: 0, ceilings: [], shotReads: [], retakes: [], cancels: 0, thumbs: [], artifacts: [] };
+  const seen = { deletes: 0, retries: [], films: [], gets: 0, errors: [], resumes: 0, ceilings: [], shotReads: [], retakes: [], cancels: 0, thumbs: [], artifacts: [] };
   page.on("pageerror", (e) => seen.errors.push(String(e)));
   page.on("request", (r) => { if (/\.mp4/.test(r.url())) seen.films.push(r.url()); });
   await page.route("**/api/**", (r) => {
@@ -59,6 +59,11 @@ async function open(state, url = "/films?id=feature-1") {
     const json = (o, status = 200) => r.fulfill({ status, contentType: "application/json", body: JSON.stringify(o) });
     if (pathname === "/api/modules") return json({ modules: [], hooks: {}, catalog: [], render: {}, host: {} });
     if (pathname === "/api/film") return state.list ? json({ ok: true, films: state.list }) : json({ error: "not found" }, 404);
+    if (pathname === "/api/film/feature-1" && r.request().method() === "DELETE") {
+      seen.deletes++;
+      if (state.deleteRefuse) return json({ ok: false, error: state.deleteRefuse }, 409);
+      return json({ ok: true, objects_freed: 9, objects_retained: 1, renders_removed: 2 });
+    }
     if (pathname === "/api/film/feature-1") { seen.gets++; return state.film ? json(state.film) : json({ error: "film" }, 404); }
     const retry = /^\/api\/film\/feature-1\/parts\/(\d+)\/retry$/.exec(pathname);
     if (retry) {
@@ -636,6 +641,40 @@ for (const [name, extra] of [
   await none.page.waitForFunction(() => document.querySelector(".films-sheet")?.textContent.includes("Could not load"));
   check("sheet says when it cannot load", true);
   await none.ctx.close();
+}
+
+// ---- cf#1206: delete a film as a whole.
+{
+  const busy = await open({ film: film() });
+  await busy.page.waitForSelector("#film-detail:not([hidden])");
+  check("no delete while a part renders", await busy.page.locator("#film-delete").isHidden());
+  await busy.ctx.close();
+
+  const done = film({ phase: "done", parts: [part(0, "done"), part(1, "done")] });
+  const { ctx, page, seen } = await open({ film: done });
+  await page.waitForSelector("#film-delete:not([hidden])");
+  check("a finished film offers delete", (await page.locator("#film-delete").textContent()) === "Delete this film");
+  await page.click("#film-delete");
+  check("delete asks first, in plain words", (await page.locator("#film-retry-body").textContent()).includes("cannot undo"));
+  await page.click('#film-retry-dialog button[value="cancel"]');
+  await page.waitForTimeout(100);
+  check("going back deletes nothing", seen.deletes === 0);
+  await page.click("#film-delete");
+  await page.click("#film-retry-go");
+  await page.waitForURL("**/films?deleted=1");
+  check("delete sends one request and goes to all films", seen.deletes === 1);
+  check("all films says it was deleted", (await page.locator("#film-load-note").textContent()) === "The film was deleted.");
+  check("the deleted film leaves the recent list", await page.evaluate(() => !(localStorage.getItem("skyphusion.films.recent") || "").includes("feature-1")));
+  await ctx.close();
+
+  const refused = await open({ film: done, deleteRefuse: "This film is being put together. Wait until that ends, then delete it." });
+  await refused.page.waitForSelector("#film-delete:not([hidden])");
+  await refused.page.click("#film-delete");
+  await refused.page.click("#film-retry-go");
+  await refused.page.waitForFunction(() => document.querySelector("#film-load-note")?.textContent.startsWith("Not deleted"));
+  check("a refusal is shown and the film stays", (await refused.page.locator("#film-load-note").textContent()).includes("being put together") && refused.page.url().includes("id=feature-1"));
+  check("no page errors on delete", refused.seen.errors.length === 0 && seen.errors.length === 0, String(refused.seen.errors.concat(seen.errors)));
+  await refused.ctx.close();
 }
 
 await browser.close();

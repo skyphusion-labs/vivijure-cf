@@ -140,6 +140,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/film", scope: "consumer" },
   { method: "GET", pattern: "/api/film/:id/parts/:n/shots", scope: "consumer" },
   { method: "GET", pattern: "/api/film/:id", scope: "consumer" },
+  { method: "DELETE", pattern: "/api/film/:id", scope: "consumer" },
   { method: "POST", pattern: "/api/film/:id/parts/:n/retry", scope: "consumer" },
   { method: "POST", pattern: "/api/film/:id/ceiling", scope: "consumer" },
   { method: "POST", pattern: "/api/film/:id/shots/:shot/retake", scope: "consumer" },
