@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 
 // vivijure-cf#1139. A Worker's execution context ends when its client disconnects, and a poll cut off

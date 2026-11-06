@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { installVfFetch } from "./install-vf-fetch";
 import worker from "../src/index";
-import { ARTIFACT_PREFIXES, safeArtifactContentType } from "../src/index";
+import { ARTIFACT_PREFIXES } from "../src/shared";
+import { safeArtifactContentType } from "../src/studio";
 import {
   buildFramesSheet, clampFrameCount, parseFrameAt, deriveFramesKey, gridFor,
   requestFramesFromContainer, framesFailure, FRAMES_CONTENT_TYPE,

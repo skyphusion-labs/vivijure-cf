@@ -224,7 +224,7 @@ handed out.
   `operator` or `consumer` is DENIED (never guessed) and logs an `authz.token_scope_invalid` event.
 
 **Scope: `operator` or `consumer` (cf#520).** Admission (WHO is calling) is followed by
-authorization (WHAT the route requires). Every row of the route table (`API_ROUTES`, `src/index.ts`)
+authorization (WHAT the route requires). Every row of the route table (`API_ROUTES`, `src/studio.ts`)
 declares a required scope, and `authorizeRoute` (`src/authz.ts`) admits a `consumer` route for any
 admitted credential and an `operator` route ONLY for an `operator` credential. The scope each
 credential carries:
@@ -308,7 +308,7 @@ not in this regex. Do not mistake loosening/tightening the regex for an entropy 
 
 ## 3. Intentionally public surfaces, and the `/api/modules` projection
 
-The auth gate covers exactly `/api/*` (`routeRequest`, `src/index.ts`). Reachable without
+The auth gate covers exactly `/api/*` (`routeRequest`, `src/studio.ts`). Reachable without
 authentication, by design:
 
 - **`/welcome`** (a 301 redirect to the marketing storefront at https://vivijure.com/; #617 moved

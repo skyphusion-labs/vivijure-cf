@@ -66,14 +66,14 @@ const HTML = new TextEncoder().encode("<script>alert(1)</script>");
 // import ONCE. Paid from inside a test case it lands on that case's 5000ms testTimeout, so the
 // case measures the import rather than the code under test and flips to red on a busy machine.
 // Paid in beforeAll it lands on hookTimeout (10000ms) and is charged to no case at all.
-// Measured on this file's own suite: a case whose entire body is `await import("../src/index")`
+// Measured on this file's own suite: a case whose entire body is `await import("../src/studio")`
 // takes 2049ms, a second import takes 0ms, and every sibling case here runs in 0-3ms.
 // The other 41 suites that touch src/index import it STATICALLY, which is also off the case
 // budget. That is not available here: vi.mock is hoisted above the module body, so a static
 // import would run the mock factory before the vi.fn consts it closes over are initialised.
-let API_ROUTES: (typeof import("../src/index"))["API_ROUTES"];
+let API_ROUTES: (typeof import("../src/studio"))["API_ROUTES"];
 beforeAll(async () => {
-  ({ API_ROUTES } = await import("../src/index"));
+  ({ API_ROUTES } = await import("../src/studio"));
 });
 
 async function handlerFor(method: string, pattern: string) {

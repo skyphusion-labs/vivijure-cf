@@ -5,7 +5,7 @@
 // route (or a rename that drops a pin) fails CI instead of compiling and passing.
 //
 // THIS IS A SNAPSHOT OF THE LIVE TABLE, not a tighter policy. Reclassifying a route is a
-// deliberate one-line change here plus the matching change in src/index.ts. Adding a route
+// deliberate one-line change here plus the matching change in src/studio.ts. Adding a route
 // requires a new line AND a bump of PINNED_ROUTE_COUNT. A list that regenerates itself from
 // API_ROUTES would absorb a slip silently, which is the defect this pin exists to catch.
 

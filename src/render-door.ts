@@ -24,7 +24,7 @@
 // between the two states this whole issue is about.
 //
 // REFUSALS ARE RETURNED, NOT THROWN. The caller owns HTTP: it decides whether a refusal becomes a
-// thrown 400 or a `json(..., 503)` body. It also keeps this module importable by index.ts with no cycle.
+// thrown 400 or a `json(..., 503)` body. It also keeps this module importable by studio.ts with no cycle.
 import { keyframeDoorUsesCastLora } from "./default-keyframe";
 import type { HookSelection, RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import {

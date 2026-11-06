@@ -12,7 +12,7 @@
 // anything.
 
 import { describe, it, expect } from "vitest";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { studioEnv } from "../src/orchestrator-env";
 import { videoFinishDoorOf } from "../src/video-finish-binding";
 import type { Env } from "../src/env";

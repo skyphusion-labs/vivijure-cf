@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 
 // cf#331 removed a dead panel control that POSTed a route that did not exist.
 // cf#353 landed the REAL route and restored the button. These tests lock that the

@@ -12,7 +12,7 @@ const STATE = readFileSync(`${process.cwd()}/public/planner-state.js`, "utf8");
 const RENDER = readFileSync(`${process.cwd()}/public/planner-render.js`, "utf8");
 const BUNDLE = readFileSync(`${process.cwd()}/public/planner-bundle.js`, "utf8");
 const ROW = readFileSync(`${process.cwd()}/public/planner-history-row.js`, "utf8");
-const INDEX = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
+const INDEX = readFileSync(`${process.cwd()}/src/studio.ts`, "utf8");
 const FINALIZE = readFileSync(`${process.cwd()}/src/finalize-from-keyframes.ts`, "utf8");
 const RETRY = readFileSync(`${process.cwd()}/src/render-retry.ts`, "utf8");
 

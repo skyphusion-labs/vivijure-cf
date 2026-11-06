@@ -435,7 +435,7 @@ no-dashboard onboarding the doctrine asks for.
 > only as the rollback of a failed install), so the WfP script-evict step is not implemented: an
 > uninstalled script stays resident in the namespace until removed out of band.
 
-**The routes (as shipped).** All four are in `API_ROUTES` (`src/index.ts`) with `scope: "operator"`:
+**The routes (as shipped).** All four are in `API_ROUTES` (`src/studio.ts`) with `scope: "operator"`:
 the caller must pass the `/api/*` auth gate AND hold operator scope (an Access identity in access
 mode, or the `STUDIO_API_TOKEN` secret / a named API token whose row grants `operator` in token mode;
 a consumer-scoped credential gets `403`). JSON bodies; errors are `{ "error": "<message>" }` unless

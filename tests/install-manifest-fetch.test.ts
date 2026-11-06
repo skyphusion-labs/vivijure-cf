@@ -72,7 +72,7 @@ describe("fetchInstallManifestText (cf#600)", () => {
 
 describe("hInstallModule wiring (cf#600)", () => {
   it("the install handler calls fetchInstallManifestText, not a bare fetcher.fetch", () => {
-    const src = readFileSync(join(import.meta.dirname, "..", "src", "index.ts"), "utf8");
+    const src = readFileSync(join(import.meta.dirname, "..", "src", "studio.ts"), "utf8");
     expect(src, "install path no longer imports the helper").toContain("fetchInstallManifestText");
     // A bare fetch of the same URL is the defect: no timeout, no retry.
     expect(src).not.toMatch(/fetcher\.fetch\(\s*["']https:\/\/module\/module\.json["']\s*\)/);

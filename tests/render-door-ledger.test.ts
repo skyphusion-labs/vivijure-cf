@@ -75,7 +75,8 @@ vi.mock("../src/bundle-keyframes", async (orig) => {
   };
 });
 
-import worker, { API_ROUTES } from "../src/index";
+import worker from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";

@@ -20,7 +20,7 @@
 // fps_default is 24; bundle assembly writes 24 unless explicitly
 // overridden).
 //
-// Pure: no I/O, no env, no D1. The Worker route in src/index.ts wraps
+// Pure: no I/O, no env, no D1. The Worker route in src/studio.ts wraps
 // this with the validator + a Content-Type/Content-Disposition response.
 
 interface StoryboardSceneLike {

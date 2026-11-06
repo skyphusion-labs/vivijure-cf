@@ -21,7 +21,7 @@ shape change fails CI.
 
 | # | Surface | Shape | Where the code reads it |
 |---|---------|-------|-------------------------|
-| A | `POST /api/render/film` (`hStartFilm` / MCP `submit_film`) -- `keyframe_config`, `motion_config` | **FLAT** knob map: `{ quality_tier: "draft", ... }` (scalars at the top level) | `src/index.ts` `hStartFilm` `configMaps` entries with `deep: false`, checked by `checkRenderRequestShape` / `moduleConfigMapError` in `src/render-door.ts` |
+| A | `POST /api/render/film` (`hStartFilm` / MCP `submit_film`) -- `keyframe_config`, `motion_config` | **FLAT** knob map: `{ quality_tier: "draft", ... }` (scalars at the top level) | `src/studio.ts` `hStartFilm` `configMaps` entries with `deep: false`, checked by `checkRenderRequestShape` / `moduleConfigMapError` in `src/render-door.ts` |
 | B | Same door -- `finish_config`, `speech_config`, `film_finish_config`, `master_config` | **NESTED** per-module map: `{ [moduleName]: { knob: value } }` | same `configMaps` with `deep: true`; unknown finish modules rejected by `finishSelectPreflightError` (`src/render-door.ts`, via `preflightRenderModules`) |
 | C | `POST /api/storyboard/score-bed` (alias `/music-generate`) | Nested **`config`** object beside top-level fields (`kind`, `prompt`, `module`, ...) | `hScoreBedGenerate` -> `startScoreBedGenerate({ config })` |
 | D | `POST /api/audio/analyze` | **Top-level camelCase** fields (`clipSeconds`, `mode`, `forceShots`, ...), **no** `config` object | `hAudioAnalyze` -> `analyzeAudioBeats(env, a, ...)` |

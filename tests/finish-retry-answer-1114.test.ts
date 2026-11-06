@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 
 // cf#1114. The real route over core's real retryFilmFinish: only the bucket is faked.

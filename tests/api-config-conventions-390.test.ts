@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 
 const DOC = "docs/api-config-conventions.md";
-const INDEX = "src/index.ts";
+const INDEX = "src/studio.ts";
 const SCORE_BED = "src/score-bed.ts";
 
 function src(path: string): string {

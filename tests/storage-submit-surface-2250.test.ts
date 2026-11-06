@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isStorageSubmitRoute, storageSubmitPatterns } from "@skyphusion-labs/vivijure-core/storage-quota";
 import { isPanelStorageSubmitRoute, PANEL_STORAGE_SUBMIT_PATTERNS } from "../src/storage-submit-routes";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 
 // fc#2250 item 5 -- THE STORAGE CEILING MISSED FOUR BYTE-WRITING ROUTES.
 //

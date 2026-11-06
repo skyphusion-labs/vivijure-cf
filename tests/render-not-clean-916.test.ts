@@ -277,7 +277,7 @@ describe("the planner history strip asks for the warnings of every still", () =>
 
 describe("cf#1282: a retake drops the report of the still it replaced", () => {
   it("the retake keyframe map deletes plate_count only where a new still lands", () => {
-    const src = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    const src = readFileSync(join(ROOT, "src/studio.ts"), "utf8");
     expect(src).toContain("const next = retake.stills?.[k.shot_id];\n          if (!next) return k;");
     expect(src).toContain("delete copy.plate_count;");
   });

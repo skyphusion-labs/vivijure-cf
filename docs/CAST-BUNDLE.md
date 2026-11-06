@@ -211,5 +211,5 @@ on the portrait first, then refs, then sources; the first failure is returned.
 | Image MIME allowlist + magic-byte sniff | `src/cast-media.ts` (`resolveCastImageMime`) |
 | Public cast projection | `src/cast-public.ts` (`toPublicCast`) |
 | Voice catalog | `@skyphusion-labs/vivijure-core/voices` (`VOICE_IDS`, `isValidVoiceId`) |
-| Route wiring + handlers | `src/index.ts` (`hExportCast`, `hImportCast`, `resolveCastId`) |
+| Route wiring + handlers | `src/studio.ts` (`hExportCast`, `hImportCast`, `resolveCastId`) |
 | Tests | `tests/tar.test.ts`, `tests/cast-bundle.test.ts` |

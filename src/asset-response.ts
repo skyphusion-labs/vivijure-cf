@@ -65,7 +65,7 @@ function baselineHeaders(h: Headers): Headers {
 
 // --------------------------------------------------------------------------- page classification
 
-/** Studio app page routes (mirror STUDIO_PAGE_ASSETS in index.ts) + the SPA root + direct .html hits.
+/** Studio app page routes (mirror STUDIO_PAGE_ASSETS in studio.ts) + the SPA root + direct .html hits.
  *  ONLY these HTML responses get the permissive studio CSP; every other response is locked down. */
 const STUDIO_PAGE_PATHS = new Set([
   "/", "/index.html",

@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 //
 // The population is derived from the API_ROUTES table at test time, not from a list maintained here.
 
-const SRC = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
+const SRC = readFileSync(`${process.cwd()}/src/studio.ts`, "utf8");
 const DOC = readFileSync(`${process.cwd()}/docs/CONTRACT.md`, "utf8");
 // The document is hard-wrapped, so a phrase can straddle a newline. Flatten before matching.
 const FLAT = DOC.replace(/\s+/g, " ");
@@ -23,7 +23,7 @@ interface Route {
 
 function studioRoutes(): Route[] {
   const start = SRC.indexOf("export const API_ROUTES: Route[] = [");
-  expect(start, "API_ROUTES table not found in src/index.ts").toBeGreaterThan(-1);
+  expect(start, "API_ROUTES table not found in src/studio.ts").toBeGreaterThan(-1);
   const end = SRC.indexOf("\n];", start);
   expect(end, "API_ROUTES terminator not found").toBeGreaterThan(start);
   const out: Route[] = [];
@@ -138,7 +138,7 @@ describe("cf#317 every route the router serves is in CONTRACT.md", () => {
     );
     expect(
       missingFromDoc,
-      `routes served by src/index.ts but absent from the CONTRACT.md table:\n  ${missingFromDoc.join("\n  ")}`,
+      `routes served by src/studio.ts but absent from the CONTRACT.md table:\n  ${missingFromDoc.join("\n  ")}`,
     ).toEqual([]);
     expect(
       missingFromCode,

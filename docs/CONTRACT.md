@@ -91,7 +91,7 @@ Each kind of change moves the same set of artifacts together, in one PR, with th
 | **New hook** | Add to `HookName` union + `HOOK_NAMES` + `HOOK_CARDINALITY` + `HOOK_BLURBS`; add a named `XInput` / `XOutput` interface in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add a branch to `HOOK_OUTPUT_CHECKS` in `<vivijure-core>/src/modules/conformance.ts` (tsc's `Record<HookName, ...>` FORCES this, so a missing branch fails the typecheck gate); orchestrate it; add a section here. |
 | **New manifest config field type** | Add to the `ConfigField` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_TYPES` + a `checkConfigField` branch in `<vivijure-core>/src/modules/conformance.ts`; document it in section 4.1 here. |
 | **New config field scope** | Add to the `ConfigScope` union in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`); add to `FIELD_SCOPES` in `<vivijure-core>/src/modules/conformance.ts`; if it needs a new value source, wire it into the invoke path; document it in section 4.1.1 here. |
-| **New / changed API route** | Add to `API_ROUTES` (or the inline dispatch) in `src/index.ts` with its handler; document the full request/response schema + status codes in section 2 here. |
+| **New / changed API route** | Add to `API_ROUTES` (or the inline dispatch) in `src/studio.ts` with its handler; document the full request/response schema + status codes in section 2 here. |
 | **New hook field** | Add to the `XInput`/`XOutput` interface; if required, add to the conformance validator; update the field table here. |
 | **New render quality tier / render projection field** | Edit `QUALITY_TIERS` in `<vivijure-core>/src/render-module-config.ts` / `RenderConfigProjection` in `<vivijure-core>/src/modules/types.ts` (package `@skyphusion-labs/vivijure-core`; this host has no copy); update section 2.3.1 / 2.3 here. |
 
@@ -214,7 +214,7 @@ does not prompt the user to re-paste a token that is fine. The `code` (and heade
 authorization deny, never on an authentication 403 (2.0), so a client can tell "re-issue with
 operator scope" from "paste a live token" without parsing prose.
 
-**Where the classification lives.** On the `Route` entry in `API_ROUTES` (`src/index.ts`), as a
+**Where the classification lives.** On the `Route` entry in `API_ROUTES` (`src/studio.ts`), as a
 REQUIRED field -- omitting it is a compile error, so a route cannot be added without being
 classified. This document deliberately does NOT carry a per-route copy of the scope: a
 hand-maintained duplicate of a compiler-enforced authority drifts by construction, and the drift
@@ -259,7 +259,7 @@ the same deny reason as any other bad token so a prober learns nothing, and a
   `castBindings` on `POST /api/storyboard/preflight` (2.12, #576); no `:id` route accepts one.
 - No route requires a request auth field (see 1.1).
 
-**Request gates, in dispatch order** (`routeRequest`, `src/index.ts`). Every `/api/*` request passes
+**Request gates, in dispatch order** (`routeRequest`, `src/studio.ts`). Every `/api/*` request passes
 these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body.
 
 1. **Auth gate** (`gateApi`, `src/auth-gate.ts`; every `/api/*` path, before route matching).
@@ -1533,7 +1533,7 @@ started. This route runs the same pass the cron runs, so an external scheduler c
   cron path. Nothing about the pass is reported to the caller; read the `@event render_sweep` and
   `film.cron_pass` log lines (`docs/observability.md`). A Worker gives `waitUntil` work after a fetch
   response about 30 seconds; the cron path has the scheduled-event budget instead.
-- **One pass at a time.** The cron and this route share one pass (`runSweepPass`, `src/index.ts`) under
+- **One pass at a time.** The cron and this route share one pass (`runSweepPass`, `src/studio.ts`) under
   one R2 lease (`src/sweep-lease.ts`, `film-parents/sweep-lease.json`, 90 s). A call while a pass is
   running still answers `202` and logs `sweep.skipped`. The cron had no pass-level guard before this
   route; the per-row guards (the film job advance lease and the parent film etag compare) are
@@ -2704,7 +2704,7 @@ points unless marked **host**.
 | Hook names / cardinality / blurbs, all hook I/O, manifest + ConfigField, invoke envelopes | `@skyphusion-labs/vivijure-core` `modules/types` |
 | Registry projection (`indexByHook`, `hookCatalog`, `modulesResponse`, `toPublic`), dispatch (`dispatchChain`, `dispatchPickOne`, `servingForHook`) | `@skyphusion-labs/vivijure-core` `modules/registry` |
 | Conformance checks (manifest, invoke response, per-hook output) | `@skyphusion-labs/vivijure-core` `modules/conformance` |
-| Router (`API_ROUTES`), all HTTP handlers (`GET /api/modules` is a table route, `hModules`, since cf#520) | **host** `src/index.ts` |
+| Router (`API_ROUTES`), all HTTP handlers (`GET /api/modules` is a table route, `hModules`, since cf#520) | **host** `src/studio.ts` |
 | Film job (`FilmJob`, phases), `applyFilmFinish`, `transitionToDone`, summaries | `@skyphusion-labs/vivijure-core` `film-orchestrator` |
 | Per-shot clip job (`ClipJob`, `JobSummary`, `summarizeJob`) | `@skyphusion-labs/vivijure-core` `render-orchestrator` |
 | Render-override parsing, quality tiers, `RenderConfigProjection` | `@skyphusion-labs/vivijure-core` `render-module-config` |

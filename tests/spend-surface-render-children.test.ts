@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { isSpendRoute } from "../src/rate-limit";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 
 // cf#423 -- THE RENDER-CHILD SPEND SURFACE, DERIVED FROM THE ROUTER.
 //

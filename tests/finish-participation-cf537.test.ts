@@ -199,13 +199,13 @@ const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
 describe("cf#537 door sweep: every site that hands a finish_config to a mint also hands finish_select", () => {
   // DERIVED from the shape, not transcribed: any cf source file passing a resolved finish_config
   // into startFilmJob / startFilmFromKeyframes is a door that must forward the selection too.
-  const FILES = ["index.ts", "finalize-from-keyframes.ts"];
+  const FILES = ["studio.ts", "finalize-from-keyframes.ts"];
 
   it("CONTROL: the matcher can find a known-present token AND come back empty", () => {
     // Run first. Every row below is "this file contains X"; a matcher that cannot find something it
     // should, or cannot miss something it should not, makes the rest of this block decorative.
-    const idx = readFileSync(resolve(SRC, "index.ts"), "utf8");
-    expect(idx.includes("startFilmJob("), "index.ts must mint films").toBe(true);
+    const idx = readFileSync(resolve(SRC, "studio.ts"), "utf8");
+    expect(idx.includes("startFilmJob("), "studio.ts must mint films").toBe(true);
     expect(idx.includes("no_such_token_cf537"), "the matcher must be able to return false").toBe(false);
   });
 
@@ -214,7 +214,7 @@ describe("cf#537 door sweep: every site that hands a finish_config to a mint als
     for (const f of FILES) {
       const src = readFileSync(resolve(SRC, f), "utf8");
       // TOKEN match, not substring: `finish_config` is a SUBSTRING of `film_finish_config`, and the
-      // first draft of this sweep counted 6 mint sites in index.ts where there are 3 -- every extra
+      // first draft of this sweep counted 6 mint sites in studio.ts where there are 3 -- every extra
       // hit was the film.finish field. A loose matcher that returns almost everything has failed as
       // completely as one returning nothing; it was caught only because the count disagreed with the
       // prediction and the count was chased instead of the prediction being adjusted.
@@ -229,14 +229,14 @@ describe("cf#537 door sweep: every site that hands a finish_config to a mint als
     }
     // DENOMINATOR. A zero here means the sweep matched nothing and every row above is vacuous --
     // which is exactly how a guard stops guarding after a rename, silently and in the green direction.
-    expect(mints, `${mints} finish_config mint arguments found across ${FILES.length} files`).toBe(5); // 5th: the parent film's retake, src/index.ts
+    expect(mints, `${mints} finish_config mint arguments found across ${FILES.length} files`).toBe(5); // 5th: the parent film's retake, src/studio.ts
   });
 
   it("the AGENT door validates rather than trusts its body field", () => {
     // The panel door's selection is parsed by the core on the way through the overrides bag. The
     // agent door has no bag, so if it forwarded `a.finish_select` raw, an untrusted body would reach
     // the job doc unvalidated. Pin that it goes through the shared parser.
-    const idx = readFileSync(resolve(SRC, "index.ts"), "utf8");
+    const idx = readFileSync(resolve(SRC, "studio.ts"), "utf8");
     expect(idx.includes("resolveAgentFinishSelect(a.finish_select, a.finish_config)")).toBe(true);
     expect(idx, "the raw body field must never be forwarded directly").not.toMatch(/finish_select: a\.finish_select\b/);
     // cf#386: the resolved selection is what is minted, never the raw body and never a silent default.

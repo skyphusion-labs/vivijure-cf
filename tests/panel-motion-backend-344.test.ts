@@ -100,7 +100,7 @@ describe("cf#344 the panel resolves the SAME gpu door the core would default to"
 
 describe("cf#344 the wire field name", () => {
   const BUNDLE = readFileSync(`${process.cwd()}/public/planner-bundle.js`, "utf8");
-  const INDEX = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
+  const INDEX = readFileSync(`${process.cwd()}/src/studio.ts`, "utf8");
 
   it("the panel sets snake_case motion_backend, which is what the route reads", () => {
     // This line's failure mode is SILENCE: a camelCase guess is ignored and the render still

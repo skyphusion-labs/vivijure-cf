@@ -32,7 +32,8 @@ The public demo is removed entirely, in two steps: the `demo.vivijure.com` custo
 
 | Path | Role |
 |------|------|
-| `src/index.ts` | Worker `fetch` + `scheduled()` |
+| `src/index.ts` | Worker entry: the default handler and the classes wrangler binds (`FinishContainer`, `ShotWorkflow`) |
+| `src/studio.ts` | The studio: route table (`API_ROUTES`), handlers, `fetch` + `scheduled()` bodies, the sweep pass |
 | `src/platform/` | Platform ICD adapter (`cfPlatformFromEnv`) |
 | `src/env.ts` | Hand-authored `Env` (mirror `wrangler.toml`) |
 | `modules/` | Opt-in module workers (`MODULE_*` bindings) |

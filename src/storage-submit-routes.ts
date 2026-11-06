@@ -1,6 +1,6 @@
 // fc#2250 item 5: the storage ceiling missed four byte-writing POST routes.
 //
-// `checkStorageQuota` is enforced at src/index.ts against core's `isStorageSubmitRoute`, and core's
+// `checkStorageQuota` is enforced at src/studio.ts against core's `isStorageSubmitRoute`, and core's
 // `STORAGE_SUBMIT_PATTERNS` does not cover:
 //
 //   POST /api/storyboard/renders/:id/retry     a full startFilmJob -- an entire film of clips
@@ -15,7 +15,7 @@
 // wrong answer and this file should not be read as endorsing one:
 //
 //   * All four routes are defined in THIS repo (src/render-retry.ts, src/cast-voice-sample.ts, and
-//     hRenderFrames in src/index.ts). Core's list is a published package; adding them there means a
+//     hRenderFrames in src/studio.ts). Core's list is a published package; adding them there means a
 //     cross-repo change, a version bump, a publish and a dependency bump before the live money hole
 //     closes.
 //   * Core already exports `storageSubmitPatterns()` "for the panel route-drift tests", so core
@@ -67,7 +67,7 @@ export const PANEL_STORAGE_SUBMIT_PATTERNS: RegExp[] = [
 /**
  * True for a request whose product is stored bytes, and so must pass the storage ceiling.
  *
- * Core's list UNION the panel supplement above. This is what src/index.ts enforces, so the ceiling
+ * Core's list UNION the panel supplement above. This is what src/studio.ts enforces, so the ceiling
  * covers every byte-writing route the panel serves rather than only those core happens to know.
  */
 export function isPanelStorageSubmitRoute(method: string, pathname: string): boolean {

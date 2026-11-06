@@ -6,7 +6,7 @@
 // config) got a 201 and a render at `final` and at the motion door's default size. Nothing in the
 // record showed the difference. A misspelt field is now a 400 that names it, before any spend.
 //
-// THE LISTS ARE EXACT. Each one is the set of fields its handler reads, and index.ts holds each list
+// THE LISTS ARE EXACT. Each one is the set of fields its handler reads, and studio.ts holds each list
 // equal to its handler's body type at compile time, so a field added to a handler and not to its
 // list (or the reverse) is a type error. Two documented aliases stay accepted and ignored on purpose:
 // `shardCount` / `shard_count` (CONTRACT 2.23, film scatter is retired).
