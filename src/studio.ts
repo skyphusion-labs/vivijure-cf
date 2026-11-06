@@ -70,6 +70,7 @@ import {
 import { isClipJobId } from "./record-reclaim";
 import { clipJobRowSeed, clipJobToPollView, isStandaloneClipJob, writeClipJobOwner } from "./clip-job-row";
 import { ensureClipJobRow, readClipJobDoc, withClipJobLease } from "./clip-job-lease";
+import { sweepStandaloneClipJobs } from "./clip-job-sweep";
 import {
   talkingVoiceHonorFor,
   startCastVoiceSample,
@@ -3061,9 +3062,10 @@ export const studioWorker = {
 };
 
 /** The one sweep pass, shared by the cron and POST /api/internal/sweep. It advances film and scatter jobs
- *  nobody is polling (core render-sweep) and is the only driver of parent films. The two sweeps run side by
- *  side, as they did as two separate waitUntil calls, and one failing never stops the other. The pass lease
- *  (src/sweep-lease.ts) keeps a second pass from starting while one runs. */
+ *  nobody is polling (core render-sweep), is the only driver of parent films, and since cf#1316 advances
+ *  standalone clip jobs nobody polls (src/clip-job-sweep.ts). The sweeps run side by side and one failing
+ *  never stops the others. The pass lease (src/sweep-lease.ts) keeps a second pass from starting while one
+ *  runs. */
 export async function runSweepPass(env: StudioEnv, ctx: ExecutionContext, source: "cron" | "route"): Promise<void> {
   const lease = await acquireSweepLease(env.R2_RENDERS, Date.now());
   if (lease === "busy") {
@@ -3071,10 +3073,11 @@ export async function runSweepPass(env: StudioEnv, ctx: ExecutionContext, source
     return;
   }
   try {
-    const results = await Promise.allSettled([sweepUnresolvedJobs(env, ctx), sweepFilmParents(env, ctx)]);
+    const names = ["render", "film_parents", "clip_jobs"] as const;
+    const results = await Promise.allSettled([sweepUnresolvedJobs(env, ctx), sweepFilmParents(env, ctx), sweepStandaloneClipJobs(env)]);
     results.forEach((r, i) => {
       if (r.status === "rejected") {
-        console.error(JSON.stringify({ ev: "sweep.failed", source, sweep: i === 0 ? "render" : "film_parents", reason: String(r.reason) }));
+        console.error(JSON.stringify({ ev: "sweep.failed", source, sweep: names[i], reason: String(r.reason) }));
       }
     });
   } finally {

@@ -1283,8 +1283,10 @@ advance lease, keyed by the clip job id (the conditional UPDATE on its `renders`
 while the tick runs). A GET that overlaps another does not advance: it answers `200` from the job doc as
 it stands, with `advanced: false`. The GET that advanced answers `advanced: true`. A missing row is
 written before the lease is asked, so the guard holds even when POST could not write it. A film's clip
-job (no `owner.json`) is not guarded here; its driver is the film tick. A second driver of standalone
-clip jobs takes the same lease (`withClipJobLease`, `src/clip-job-lease.ts`).
+job (no `owner.json`) is not guarded here; its driver is the film tick. **cf#1316:** the cron sweep
+also advances standalone clip jobs nobody polls, up to 5 a pass (`src/clip-job-sweep.ts`), under the same
+lease (`withClipJobLease`, `src/clip-job-lease.ts`), so a job keeps advancing and its row reaches a
+terminal status after its client stops polling. A job a poll holds is skipped that pass.
 
 Both respond `200 { ok: true, job_id, motion_backend, total, done, failed, pending, complete,
 shots: [...] }` where each shot is `{ shot_id, status, error }` (POST) or `{ shot_id, status,
