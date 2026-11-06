@@ -18,7 +18,7 @@
 // Soft degrade (a polish step never fails the chain): no cues -> pass the film through unchanged
 // (noop:no-dialogue); disabled -> noop:disabled; a sidecar-only run with no sidecar URL ->
 // passthrough degraded; a container failure -> passthrough the original film tagged
-// "passthrough:container-failed", degraded. A film.finish module must never drop the film it was handed.
+// "passthrough:container-http-error" or "passthrough:container-refused", degraded (cf#909). A film.finish module must never drop the film it was handed.
 
 import {
   MODULE_API,
@@ -63,7 +63,7 @@ const ROUTE = "subtitle";
 
 const MANIFEST: ModuleManifest = {
   name: "subtitle",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["film.finish"],
   provides: [{ id: "subtitle", label: "Time-synced dialogue captions (burned-in + .srt)" }],
@@ -150,14 +150,16 @@ async function invokeSync(
   );
   if (timed.err || !timed.resp) return withFailure(passthrough(input, "passthrough:container-unreachable", true), FAILURE_UNREACHABLE);
   const resp = timed.resp;
-  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), failureFromStatus(resp.status));
+  // cf#909: an HTTP refusal and a handler that answered ok:false are two failures with two tags. The
+  // first is the transport or the route; the second is the handler inside the container.
+  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-http-error", true), failureFromStatus(resp.status));
   let body: { ok?: boolean; key?: string; burned?: boolean; sidecar?: boolean; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
     return withFailure(passthrough(input, "passthrough:container-bad-response", true), FAILURE_BAD_RESPONSE);
   }
-  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), FAILURE_REFUSED);
+  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-refused", true), FAILURE_REFUSED);
   // Compose an honest `applied`: "subtitle" only when captions were actually burned (film_key then
   // points at the burned film); "subtitle:sidecar" when a .srt was written. A sidecar-only run burns
   // nothing, so film_key stays the original (no fake burn tag).

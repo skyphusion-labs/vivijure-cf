@@ -92,7 +92,8 @@ ALLOW_UNAUTHENTICATED = ""
 # in this repo -- the hosted control plane projects it onto a tenant studio so the panel can say
 # "unprovisionable" instead of "not installed". A self-hoster leaves it unset and loses nothing; it
 # is listed so an operator who finds it in a log or a diff knows whose it is, rather than concluding
-# the studio ignores a var it reads.
+# the studio ignores a var it reads. `unprovisionable` WINS over a typed VIDEO_FINISH_URL, and the
+# studio then hands core no URL; only a bound FINISH_CONTAINER beats it (cf#871).
 VIDEO_FINISH_TIER_STATE = ""
 # R2 S3-API presign identifiers (src/r2-presign.ts). NOT secrets: R2_S3_ENDPOINT is the public
 # account-scoped R2 S3 host (https://<account-id>.r2.cloudflarestorage.com), R2_S3_BUCKET is the

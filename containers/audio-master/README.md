@@ -71,7 +71,8 @@ Config (the module's `config_schema`, clamped by the core): `target_lufs` (float
 
 A polish step never fails the render. A missing binding, an unreachable container, a non-2xx response, an
 unreadable / `ok:false` body, or a result with no mastered key passes the INPUT bed through unchanged with
-`degraded` set to the honest reason (e.g. `passthrough:container-failed`) -- never a fake "applied" tag,
+`degraded` set to the honest reason (e.g. `passthrough:container-http-error` for a non-2xx, `passthrough:container-refused` for an
+`ok:false` body) -- never a fake "applied" tag,
 so a degrade is never silent. A master miss therefore ships the un-mastered (but intact) audio; it never
 drops a fully-rendered film.
 

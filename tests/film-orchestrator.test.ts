@@ -1570,8 +1570,16 @@ describe("ceilingAgeSeconds (#704)", () => {
     expect(ceilingAgeSeconds(job, now)).toBe(60);
   });
 
-  it("the batch keyframe phase ignores last_progress_at (phase-age semantics unchanged)", () => {
+  // vivijure-core 1.35.0 (core#453): keyframe joined the progress clock. A split keyframe pass lands one
+  // job's stills at a time and each re-stamps last_progress_at, so a long pass that keeps finishing jobs
+  // is not killed at 90 min from its start. This case used to assert the opposite.
+  it("the keyframe phase measures from last_progress_at when it is newer (core#453)", () => {
     const job = { ...base, phase: "keyframe", last_progress_at: now - 60 * 1000 } as FilmJob;
+    expect(ceilingAgeSeconds(job, now)).toBe(60);
+  });
+
+  it("a phase with no per-shot fan-out still ignores last_progress_at (phase-age semantics unchanged)", () => {
+    const job = { ...base, phase: "assemble", last_progress_at: now - 60 * 1000 } as FilmJob;
     expect(ceilingAgeSeconds(job, now)).toBe(100 * 60);
   });
 });

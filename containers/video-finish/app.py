@@ -50,7 +50,7 @@ MAX_CLIP_BYTES = 256 * 1024 * 1024   # 256 MB per clip
 # needs a part URL pool from the Worker. tests/film-byte-cap-1129.test.ts holds this equal to core's admission.
 #
 # PEAK DISK AT THIS CAP, for a film F. /subtitle: source + burn, 2F. /film-titles: source + normalized, then the
-# source goes and it is normalized + output, so 2F plus the cards. Mux: source + bed + output, 2F + 256 MB. Frames:
+# source goes and it is normalized + output, so 2F plus the cards. Mux: source + bed + output, 2F + 768 MiB. Frames:
 # F plus stills. F is at most 5.36 GB, so 2F is 10.7 GB, about 13 GB with the 2 GB image reserve, against 20 GB.
 # That assumes a re-encode at crf 18 is about the size of its source. An assembled film is already at those settings.
 MAX_FILM_BYTES = 5_363_466_240
@@ -60,11 +60,16 @@ FILM_TRANSFER_STALL_S = 120
 # An encode is bounded by the film's length. FFMPEG_TIMEOUT stays the floor. The factor is a budget, not a
 # measurement on standard-4: x264 medium at 1080p is expected to run about real time on 4 vCPU.
 ENCODE_SECONDS_PER_FILM_SECOND = 3
-MAX_AUDIO_BYTES = 256 * 1024 * 1024   # 256 MB: match the per-clip bound. A lossless film-length bed
-# shares a clip's size envelope, and the bed is ALWAYS trimmed to the video duration downstream
+# vivijure-cf#1122: 768 MiB, from 256 MB. 60 minutes of 16 bit 48 kHz stereo WAV is 691 MB, and core 1.36.0 admits
+# a 60 minute film. Core reserves the same number on disk (CONTAINER_AUDIO_BED_BYTES).
+# The bed is ALWAYS trimmed to the video duration downstream
 # (_assemble / _remux_audio_only, `-t vdur`), so a long source yields a film-length track, not a bloated one.
 # A too-tight 64 MB cap silently dropped a legitimate multi-minute lossless bed -> silent film (the #77/#249 bug).
-MAX_CLIPS = 80
+MAX_AUDIO_BYTES = 768 * 1024 * 1024
+# vivijure-cf#1122: 600, from 80. Chunked assemble (cf#784) bounds disk to a fixed working set, so the count no
+# longer protects the disk. Core 1.36.0 admits at most ASSEMBLE_MAX_CLIPS (600); tests/clip-cap-equality-1122.test.ts
+# holds core at or under this number, so core never admits a film this route refuses.
+MAX_CLIPS = 600
 # POST /async/join-films: how many finished films one join takes. A guard on the request, not a measured limit.
 MAX_JOIN_FILMS = 64
 
@@ -829,7 +834,7 @@ def _parse_partial_urls(raw):
     """The cf#784 URL pool: [{put, get}, ...] minted by the Worker.
 
     The container holds no R2 credentials by design (see README), so it can only write a partial
-    to a URL it was handed. The Worker mints at most MAX_CLIPS pairs and the container consumes
+    to a URL it was handed. The Worker mints at most ASSEMBLE_MAX_POOL_PAIRS (core, 80) pairs and the container consumes
     only as many as its byte-batching needs; the rest go unused and expire. Returns [] when absent,
     which selects the single-pass path.
     """
@@ -2083,7 +2088,9 @@ ASYNC_WORKS = {
 KEYED_ASYNC_JOBS = {"join-films": _join_job_id}
 
 app = web.Application(
-    client_max_size=1024 * 1024,  # JSON bodies are small (URLs + a short SRT)
+    # JSON bodies are small. The largest is an assemble body: one presigned URL per clip plus the partial pool,
+    # about 0.46 MB at MAX_CLIPS (600). tests/clip-cap-equality-1122.test.ts holds it under this limit.
+    client_max_size=1024 * 1024,
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)

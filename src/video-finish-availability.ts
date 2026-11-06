@@ -159,8 +159,9 @@ export const VIDEO_FINISH_UNAVAILABLE_REASON =
  * reader is a silent no-op, which is why the plane route REFUSES rather than writes when the target
  * studio does not serve `capability:video-finish`. And a studio that HAS the tier bound cannot
  * display these words at all, by construction: `videoFinishState` checks the binding first, so an
- * observation beats a label. Do not read the presence of this constant as evidence any particular
- * studio is displaying it.
+ * observation beats a label. A typed `VIDEO_FINISH_URL` is NOT that observation (cf#871): it is a
+ * string, so the explicit declaration beats it. Do not read the presence of this constant as
+ * evidence any particular studio is displaying it.
  *
  * The swap is ONE constant on purpose. Everything deciding WHEN a studio is in this state lives in
  * the plane, so this file only has to be right about what to say.
@@ -203,7 +204,8 @@ export function usableVideoFinishUrl(value: unknown): string | undefined {
   return trimmed;
 }
 
-/** Which state this studio is in. A bound container, or a usable public URL, is available.
+/** Which state this studio is in, read in this order: a bound container is available; then an
+ *  explicit `VIDEO_FINISH_TIER_STATE=unprovisionable` wins; then a usable public URL is available.
  *
  *  cf#810: THE BINDING IS CHECKED FIRST, and this is not a preference, it is the file's own rule
  *  applied to a case that did not exist when it was written. The header above says a studio that has
@@ -215,11 +217,25 @@ export function usableVideoFinishUrl(value: unknown): string | undefined {
  *  This is load-bearing for the repoint, not a tidy-up. The end state of cf#810 UNSETS
  *  VIDEO_FINISH_URL, because the door replaces it. Without this line that unset would flip a working
  *  film tier to "unavailable" and the panel would grey out capability that works -- the exact
- *  failure this file exists to prevent, arriving through the change meant to fix the tier. */
+ *  failure this file exists to prevent, arriving through the change meant to fix the tier.
+ *
+ *  cf#871: THE DECLARATION IS READ BEFORE THE URL. A URL is a string someone typed, so it is a
+ *  label too, and of the two labels the explicit one wins. Before this, a non-empty URL returned
+ *  "available" first, so `unprovisionable` was read only when the URL was empty: a studio whose
+ *  tier was declared dead kept offering controls the tier could not serve. The door stays first,
+ *  because the door is the observation. studioEnv applies the same order to the env it hands core
+ *  (`declaredUnprovisionable`), so the panel and the film path agree. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
   if (videoFinishDoorOf(env)) return "available";
+  if (declaredUnprovisionable(env)) return "unprovisionable";
   if (usableVideoFinishUrl(env.VIDEO_FINISH_URL)) return "available";
-  return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
+  return "provisionable";
+}
+
+/** True when the env declares the tier unprovisionable. Exact value only: anything else, including
+ *  a typo, is not a declaration and falls back to the default (cf#240 lane D). */
+export function declaredUnprovisionable(env: Pick<VideoFinishEnv, "VIDEO_FINISH_TIER_STATE">): boolean {
+  return env.VIDEO_FINISH_TIER_STATE === "unprovisionable";
 }
 
 /** The sentence for a state. `available` has no sentence: the host reports nothing at all. */

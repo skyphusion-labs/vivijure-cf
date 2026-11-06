@@ -180,12 +180,13 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     ).toBe("unprovisionable");
   });
 
-  it("an OBSERVATION beats a label: a bound tier is available whatever the var says", () => {
-    // The failure this forbids is a stale var outliving the provisioning it described, with the
-    // panel then telling a studio that HAS a working tier that it has none.
+  it("cf#871: a typed URL is a LABEL, so the explicit declaration beats it", () => {
+    // This case used to assert "available": the URL was read as the observation. It is not one, a
+    // URL is a string someone typed. The observation is the bound door, asserted in the cf#810
+    // block below, and the door still wins over the declaration.
     expect(
-      videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org", VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
-    ).toBe("available");
+      videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.example", VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
+    ).toBe("unprovisionable");
   });
 
   it("an unrecognised var value falls back to the default rather than inventing a state", () => {
