@@ -73,3 +73,78 @@ deleted (a read-only directory):
   exited 1;
 - CONTROL: with the marker hold disabled, the same run deleted the marker, printed "verified: orphan
   set is empty" and exited 0 with the stuck file still present. The hold is what makes the check honest.
+
+## Dry-run report from files (no R2 access in the tool)
+
+`scripts/r2-render-orphan-report.ts` applies the same rules, but it reads three local files and writes a
+report. It holds no delete call, no network call and no subprocess, and
+`tests/r2-render-orphan-report-1009.test.ts` fails if one appears in it or in anything it imports. The
+operator produces the inputs read-only. The sweep's rule is the #779 code ruling ("delete R2 artifacts on
+project/render delete, gated by `countOtherRowsWithOutputKey`, plus a real orphan sweep"), as narrowed in
+#1009: a key is an orphan only when no live owner is found, and anything unrecognised is out of scope.
+
+The inputs go in one directory, for example `/Users/joan/scratch/sweep1106/live/`:
+
+```sh
+OUT=/Users/joan/scratch/sweep1106/live; mkdir -p "$OUT/docs"; cd <vivijure-cf checkout>
+```
+
+**1. Owner snapshot.** Three SELECTs, the ones the core exports (`RENDER_OWNER_SQL`, `SHOT_OWNER_SQL`,
+`PROJECT_NAME_SQL`), each read-only:
+
+```sh
+for q in \
+  "SELECT id, job_id, project, bundle_key, output_key, keyframes_json, output_json FROM renders" \
+  "SELECT film_id, still_key, wav_key, clip_key FROM shot_records" \
+  "SELECT name FROM storyboard_projects"; do
+  npx wrangler d1 execute vivijure-studio --remote --json --command "$q"
+done > "$OUT/d1.json"
+jq -s '{renderRows: .[0][0].results, shotRows: .[1][0].results, projectNames: [.[2][0].results[].name]}' \
+  "$OUT/d1.json" > "$OUT/owners.json"
+```
+
+**2. Listing** of `renders/`, as JSON lines of key, size and upload time. Take it right after the snapshot,
+because a row created after the snapshot reads as dead, and only the grace window protects it. Either
+S3 ListObjectsV2 (the CLI paginates):
+
+```sh
+aws s3api list-objects-v2 --endpoint-url "https://<account-id>.r2.cloudflarestorage.com" \
+  --bucket vivijure --prefix renders/ --output json \
+  | jq -c '.Contents[] | {key: .Key, size: .Size, uploaded: .LastModified}' > "$OUT/listing.jsonl"
+```
+
+or rclone, with a read-only R2 remote:
+
+```sh
+rclone lsjson --files-only --recursive r2:vivijure/renders/ \
+  | jq -c '.[] | {key: ("renders/" + .Path), size: .Size, uploaded: .ModTime}' > "$OUT/listing.jsonl"
+```
+
+**3. Live job docs.** The tool names the ones it needs. A film doc names its clip job, so this takes two
+rounds, and exit 3 means "fetch these, then run again":
+
+```sh
+node scripts/r2-render-orphan-report.ts --listing "$OUT/listing.jsonl" --owners "$OUT/owners.json" \
+  --docs "$OUT/docs" --needed-docs > "$OUT/needed.txt"
+while read -r k; do
+  mkdir -p "$OUT/docs/$(dirname "$k")"
+  npx wrangler r2 object get "vivijure/$k" --remote --file "$OUT/docs/$k"
+done < "$OUT/needed.txt"
+# repeat the two commands above until --needed-docs exits 0
+```
+
+**4. The report:**
+
+```sh
+node scripts/r2-render-orphan-report.ts --listing "$OUT/listing.jsonl" --owners "$OUT/owners.json" \
+  --docs "$OUT/docs" --out "$OUT/report.json" > "$OUT/report.md"
+```
+
+`report.md` is ready to post. It gives the counts and bytes per rule, and the first 10 keys of each rule
+in key order. `report.json` holds the same, plus every would-delete object with its rule and its reason.
+
+| rule | decision |
+| --- | --- |
+| `job-dead`, `log-dead`, `clips-marked-dead` | would delete |
+| `named`, `grace`, `no-mtime`, `job-live`, `log-live`, `clips-live` | keep |
+| `not-renders`, `not-job-tree`, `project-name`, `clips-unmarked` | out of scope |

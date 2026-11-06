@@ -168,11 +168,30 @@ export async function buildRenderOwnerIndex(input: RenderOwnerInput): Promise<Re
 }
 
 export type RenderDecision = "keep" | "orphan" | "out-of-scope";
+
+/** cf#1009: a stable code per rule, so a report can count and sample by rule. `reason` carries ids and is
+ *  for reading; `rule` never does. Every return in classifyRenderKey sets exactly one. */
+export type RenderRule =
+  | "not-renders"            // out of scope: outside renders/
+  | "named"                  // keep: named by a live record or a live job doc
+  | "no-mtime"               // keep: no readable mtime
+  | "grace"                  // keep: inside the grace window
+  | "log-live"               // keep: render log of a live job
+  | "log-dead"               // orphan: render log of a job with no live owner
+  | "not-job-tree"           // out of scope: project-keyed or unrecognised
+  | "project-name"           // out of scope: job-shaped segment that is also a live project name
+  | "clips-live"             // keep: clip job of a live film or a live clip job row
+  | "clips-marked-dead"      // orphan: standalone clip job with an owner marker and no live row
+  | "clips-unmarked"         // out of scope: clip job with no owner marker and no live owner
+  | "job-live"               // keep: under a live film or scatter job
+  | "job-dead";              // orphan: film or scatter job with no live owner
+
 export interface RenderClassification {
   key: string;
   size: number;
   decision: RenderDecision;
   reason: string;
+  rule: RenderRule;
 }
 
 export function classifyRenderKey(
@@ -182,34 +201,34 @@ export function classifyRenderKey(
   graceMs: number = DEFAULT_GRACE_MS,
 ): RenderClassification {
   const { key, size } = obj;
-  const mk = (decision: RenderDecision, reason: string): RenderClassification => ({ key, size, decision, reason });
+  const mk = (decision: RenderDecision, rule: RenderRule, reason: string): RenderClassification => ({ key, size, decision, reason, rule });
 
-  if (!key.startsWith("renders/")) return mk("out-of-scope", "not under renders/");
-  if (idx.referencedKeys.has(key)) return mk("keep", "named by a live record or a live job doc");
+  if (!key.startsWith("renders/")) return mk("out-of-scope", "not-renders", "not under renders/");
+  if (idx.referencedKeys.has(key)) return mk("keep", "named", "named by a live record or a live job doc");
   const mtime = typeof obj.mtimeMs === "number" && Number.isFinite(obj.mtimeMs) ? obj.mtimeMs : null;
-  if (mtime === null) return mk("keep", "no readable mtime; too young to judge");
-  if (nowMs - mtime < graceMs) return mk("keep", "inside the grace window; may be in flight");
+  if (mtime === null) return mk("keep", "no-mtime", "no readable mtime; too young to judge");
+  if (nowMs - mtime < graceMs) return mk("keep", "grace", "inside the grace window; may be in flight");
 
   const log = LOG_KEY_RE.exec(key);
   if (log) {
     return idx.liveJobIds.has(log[1])
-      ? mk("keep", `render log of live job ${log[1]}`)
-      : mk("orphan", `render log of job ${log[1]}, which has no live owner`);
+      ? mk("keep", "log-live", `render log of live job ${log[1]}`)
+      : mk("orphan", "log-dead", `render log of job ${log[1]}, which has no live owner`);
   }
 
   const seg = key.split("/")[1] ?? "";
   const kind = jobKindOf(seg);
-  if (!kind) return mk("out-of-scope", "not a job tree (project-keyed or unrecognised)");
-  if (idx.projectSegments.has(seg)) return mk("out-of-scope", `segment ${seg} is also a live project name`);
+  if (!kind) return mk("out-of-scope", "not-job-tree", "not a job tree (project-keyed or unrecognised)");
+  if (idx.projectSegments.has(seg)) return mk("out-of-scope", "project-name", `segment ${seg} is also a live project name`);
   if (kind === "clips") {
-    if (idx.liveClipJobIds.has(seg)) return mk("keep", `clip job ${seg} of a live film or a live clip job row`);
+    if (idx.liveClipJobIds.has(seg)) return mk("keep", "clips-live", `clip job ${seg} of a live film or a live clip job row`);
     return idx.markedClipJobIds?.has(seg)
-      ? mk("orphan", `standalone clip job ${seg} has an owner marker and no live renders row (cf#1309)`)
-      : mk("out-of-scope", `clip job ${seg} has no owner marker and no live owner; a film clip job or a standalone job from before cf#1309`);
+      ? mk("orphan", "clips-marked-dead", `standalone clip job ${seg} has an owner marker and no live renders row (cf#1309)`)
+      : mk("out-of-scope", "clips-unmarked", `clip job ${seg} has no owner marker and no live owner; a film clip job or a standalone job from before cf#1309`);
   }
   return idx.liveJobIds.has(seg)
-    ? mk("keep", `under live ${kind} ${seg}`)
-    : mk("orphan", `${kind} ${seg} has no live renders row, shot record or scatter parent`);
+    ? mk("keep", "job-live", `under live ${kind} ${seg}`)
+    : mk("orphan", "job-dead", `${kind} ${seg} has no live renders row, shot record or scatter parent`);
 }
 
 export interface RenderReconcileResult {
@@ -251,4 +270,85 @@ export function refuseOversizedSweep(count: number, cap: number): string | null 
   return count > cap
     ? `listing has ${count} objects, over the cap of ${cap}. Nothing was deleted. Raise --max-objects deliberately, or narrow the run.`
     : null;
+}
+
+// ---- cf#1009 dry-run report: a pure function of a listing, an owner snapshot and the job docs it names ----
+
+/** One line of the listing input: what a paginated S3 ListObjectsV2 gives per object. `uploaded` is an
+ *  ISO-8601 time or epoch milliseconds. Anything else in a line is ignored. */
+export interface ListingLine {
+  key: string;
+  size: number;
+  uploaded: string | number | null;
+}
+
+/** Parse the listing (JSON lines). A line that is not a usable object FAILS the whole parse: a report built
+ *  on a listing it partly could not read would count the unread part as absent. Blank lines are skipped. */
+export function parseListingLines(text: string): RenderObjectLite[] {
+  const out: RenderObjectLite[] = [];
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) return;
+    let o: unknown;
+    try { o = JSON.parse(line); } catch { throw new Error(`listing line ${i + 1} is not JSON`); }
+    const r = o as Partial<ListingLine>;
+    if (!r || typeof r.key !== "string" || !r.key || typeof r.size !== "number" || !Number.isFinite(r.size)) {
+      throw new Error(`listing line ${i + 1} needs a string key and a numeric size`);
+    }
+    const t = typeof r.uploaded === "number" ? r.uploaded : typeof r.uploaded === "string" ? Date.parse(r.uploaded) : NaN;
+    out.push({ key: r.key, size: r.size, mtimeMs: Number.isFinite(t) ? t : null });
+  });
+  return out;
+}
+
+export interface RuleSummary {
+  rule: RenderRule;
+  decision: RenderDecision;
+  count: number;
+  bytes: number;
+  /** Up to SAMPLE_PER_RULE keys, in key order, so two runs on one input agree. */
+  sample: string[];
+}
+
+export const SAMPLE_PER_RULE = 10;
+
+export interface DryRunReport {
+  scanned: number;
+  wouldDelete: { count: number; bytes: number };
+  kept: number;
+  outOfScope: number;
+  rules: RuleSummary[];
+  /** Every object the sweep WOULD delete, with its reason. Nothing is deleted: this is a list. */
+  wouldDeleteObjects: Array<{ key: string; size: number; rule: RenderRule; reason: string }>;
+}
+
+/** Pure. The dry-run report for one reconcile result. */
+export function buildDryRunReport(r: RenderReconcileResult, sample: number = SAMPLE_PER_RULE): DryRunReport {
+  const all = [...r.orphans, ...r.kept, ...r.outOfScope];
+  const byRule = new Map<RenderRule, RenderClassification[]>();
+  for (const c of all) {
+    const list = byRule.get(c.rule) ?? [];
+    list.push(c);
+    byRule.set(c.rule, list);
+  }
+  const order: RenderDecision[] = ["orphan", "keep", "out-of-scope"];
+  const rules = [...byRule.entries()]
+    .map(([rule, list]) => ({
+      rule,
+      decision: list[0].decision,
+      count: list.length,
+      bytes: list.reduce((n, c) => n + (c.size || 0), 0),
+      sample: list.map((c) => c.key).sort().slice(0, sample),
+    }))
+    .sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision) || b.count - a.count || a.rule.localeCompare(b.rule));
+  return {
+    scanned: all.length,
+    wouldDelete: { count: r.orphanCount, bytes: r.orphanBytes },
+    kept: r.kept.length,
+    outOfScope: r.outOfScope.length,
+    rules,
+    wouldDeleteObjects: [...r.orphans]
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .map((c) => ({ key: c.key, size: c.size, rule: c.rule, reason: c.reason })),
+  };
 }
