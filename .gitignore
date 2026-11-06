@@ -31,6 +31,10 @@ __pycache__/
 # out of the public repo. Edit the .example; render locally to work. (#52)
 /wrangler.control-plane.toml
 
+# deploy.sh renders each module config to a copy next to it and deploys that (cf#880); the committed
+# module wrangler.toml keeps its placeholders. The copy holds account ids, never secrets.
+modules/*/.deploy.wrangler.toml
+
 # Real deploy.env holds the operator keys (rendered from deploy.env.example); never commit it.
 /deploy.env
 

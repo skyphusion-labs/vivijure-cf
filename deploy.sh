@@ -9,12 +9,13 @@
 #   standard   -> studio core + cloud/own-GPU render + the media stack (5 always-on CPU containers
 #                 reached over VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL). deploy.sh writes
 #                 the compose tunnel token only; it does not create Workers VPC services. You set
-#                 the Traefik URLs + MEDIA_FINISH_TOKEN, then `docker compose up` (#519 leftover).
+#                 the media URLs + MEDIA_FINISH_TOKEN, then `docker compose up` (#519 leftover).
 #   satellites -> also the 1 opt-in GPU satellite (upscale), on
 #                 its own RunPod endpoint.
 # The render strips the wrangler.toml.example blocks this deploy does not want: SATELLITE blocks
-# unless the satellites profile, the LOCAL-GPU block unless INSTALL_LOCAL_GPU=1, and SELFHOST-SKIP
-# (our-fleet-only) blocks always. The media-stack bindings are unconditional (standard).
+# unless the satellites profile, the LOCAL-GPU block unless INSTALL_LOCAL_GPU=1, the BLENDER block
+# unless BLENDER_RUNPOD_ENDPOINT_ID is set, and SELFHOST-SKIP (our-fleet-only) blocks always. The
+# module workers it deploys are exactly the ones the stripped core config binds (cf#880).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -117,35 +118,34 @@ SPEND_RATE_LIMITER_NS_ID="${SPEND_RATE_LIMITER_NS_ID:-1001}"
 
 export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
 
-# The module workers this profile deploys. Explicit (not a glob) so a work-in-progress module in
-# modules/ is never picked up by accident, and the list matches the profile boundary in the docs.
-# STANDARD = core render modules + the media-stack finish modules (film-titles /
-# subtitle / beat-sync / audio-master), reached over Traefik URL vars (not Workers VPC).
+# The module workers this deploy ships: EXACTLY the ones the core config binds, after the same strip
+# step 5 renders it with (cf#880, DP-3). A [[services]] binding to a module that is not deployed fails
+# the core deploy, and the old hand list drifted from the template both ways (it named a module that
+# no longer exists and left out eight the core binds). Deriving it means a binding cannot dangle and a
+# work-in-progress module in modules/ that nothing binds is never shipped by accident.
 #
-# image-generate (cf#129 phase 2) is load-bearing for the CHAT IMAGE path, not an optional extra:
-# the studio hardcodes no image model names, so GET /api/models projects its image rows from this
-# module's manifest. Omit it and the studio deploys with an honestly EMPTY image catalog and an image
-# picker that offers nothing -- which is what this list did until the omission was caught.
-STANDARD_MODULES="own-gpu kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
-image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo \
-alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video cf-vidu-q3-turbo film-titles subtitle beat-sync audio-master"
-# alibaba-wan-lora is DELISTED for v1.0 (#771): custom-LoRA path unverified; source kept, re-add when fixed.
-# SATELLITES = the 1 opt-in GPU finish module, on its own separate RunPod endpoint.
+# SATELLITES = the 1 opt-in GPU finish module, on its own separate RunPod endpoint. This is the module
+# inside the SATELLITE markers; tests/deploy-plan-cf880.test.ts holds the two equal.
 # finish-lipsync was the third; MuseTalk is ruled out permanently (cf#783) and its endpoint
 # no longer exists. Audio-driven lip-sync is infinitetalk, a motion.backend door, not a
 # finish satellite.
 SATELLITE_MODULES="finish-upscale"
-MODULES="$STANDARD_MODULES"
-[ "$VIVIJURE_PROFILE" = satellites ] && MODULES="$STANDARD_MODULES $SATELLITE_MODULES"
-# Optional finish-blender: only when the endpoint id is present (not part of the required triad).
-if [ -n "${BLENDER_RUNPOD_ENDPOINT_ID:-}" ]; then
-  case " $MODULES " in
-    *" finish-blender "*) ;;
-    *) MODULES="$MODULES finish-blender" ;;
-  esac
-fi
+KEEP_SAT=0; [ "$VIVIJURE_PROFILE" = satellites ] && KEEP_SAT=1
+KEEP_LGPU=0; [ "$INSTALL_LOCAL_GPU" = "1" ] && KEEP_LGPU=1
+# finish-blender binds, deploys and seeds only when its endpoint id is set: one decision (DP-18).
+KEEP_BLENDER=0; [ -n "${BLENDER_RUNPOD_ENDPOINT_ID:-}" ] && KEEP_BLENDER=1
+MODULES="$(sh scripts/deploy-plan.sh modules wrangler.toml.example "$KEEP_SAT" "$KEEP_LGPU" "$KEEP_BLENDER" | tr '\n' ' ')"
+[ -n "${MODULES// /}" ] || die "the core template binds no vivijure-module-* service -- refusing to deploy a studio with no modules"
 # Opt-in: the local-GPU door module (only deployed when you run your own local backend).
 [ "$INSTALL_LOCAL_GPU" = "1" ] && MODULES="$MODULES local-gpu"
+MISSING_TOML=""
+for m in $MODULES; do [ -f "modules/$m/wrangler.toml" ] || MISSING_TOML="$MISSING_TOML $m"; done
+[ -z "$MISSING_TOML" ] || die "the core config binds module(s) with no modules/<name>/wrangler.toml:$MISSING_TOML"
+if [ "$KEEP_SAT" = 1 ]; then
+  for sat in $SATELLITE_MODULES; do
+    case " $MODULES " in *" $sat "*) ;; *) die "satellites profile: the core config does not bind $sat";; esac
+  done
+fi
 
 say "Vivijure Studio deploy -- profile: $VIVIJURE_PROFILE, auth: $AUTH_MODE, hostname: $DEPLOY_HOSTNAME"
 
@@ -244,16 +244,8 @@ if [ "$INSTALL_LOCAL_GPU" = "1" ]; then
   seed_secret LOCAL_BACKEND_TOKEN "$LOCAL_BACKEND_TOKEN"
 fi
 
-# Point every module we are about to deploy at YOUR store. The committed configs ship the
-# REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID placeholder (no real store id in the public repo); this
-# rewrite fills it. The pattern matches whatever is inside the quotes (placeholder OR a prior id),
-# so a re-run is idempotent.
-info "wiring your store id into the module configs"
-for m in $MODULES; do
-  f="modules/$m/wrangler.toml"
-  [ -f "$f" ] || die "missing $f"
-  sed -i -E "s/store_id = \"[^\"]*\"/store_id = \"$STORE_ID\"/g" "$f"
-done
+# The module configs are pointed at YOUR store in step 5, on rendered copies (cf#880): the committed
+# configs keep their placeholders, so a re-run starts from the template every time.
 
 # ---- 3 (cont.). resolve + seed the AI Gateway planner token BEFORE any deploy ---------------
 # CF_AIG_TOKEN (core) and PLAN_ENHANCE_CF_AIG_TOKEN (plan-enhance) are load-bearing store bindings
@@ -350,11 +342,11 @@ fi
 
 # ---- 4. media stack: compose tunnel token (no Workers VPC) -------------------
 # The studio reaches media over VIDEO_FINISH_URL / IMAGE_PREP_URL / AUDIO_*_URL
-# (public HTTPS / Traefik) plus MEDIA_FINISH_TOKEN. This step only writes the
+# (public HTTPS origins you set) plus MEDIA_FINISH_TOKEN. This step only writes the
 # cloudflared connector token to containers/tunnel.env (0600) for compose.
 # It does NOT create video-finish / image-prep / audio-beat-sync / audio-mix VPC
 # services and it does not mint or inject those service ids.
-say "Step 4/9: media stack -- compose tunnel token (hosted uses Traefik URL vars + MEDIA_FINISH_TOKEN)"
+say "Step 4/9: media stack -- compose tunnel token (the studio uses the media URL vars + MEDIA_FINISH_TOKEN)"
 media_args=(--token-file containers/tunnel.env)
 [ -n "${VIVIJURE_TUNNEL_NAME:-}" ] && media_args+=(--tunnel-name "$VIVIJURE_TUNNEL_NAME")
 if ! python3 scripts/setup-media-vpc.py "${media_args[@]}" >/dev/null; then
@@ -376,18 +368,10 @@ VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$PANEL_HOME \$KEYFRAME_PARA
 #   SATELLITE     -- the 1 opt-in GPU finish module; stripped unless VIVIJURE_PROFILE=satellites.
 #   LOCAL-GPU     -- the local-GPU door binding; stripped unless INSTALL_LOCAL_GPU=1 (else it dangles
 #                    10143, the local-gpu module being deployed only with a local backend).
-# The media-stack bindings are unconditional (standard, #519) -- nothing strips them.
-KEEP_SAT=0; [ "$VIVIJURE_PROFILE" = satellites ] && KEEP_SAT=1
-KEEP_LGPU=0; [ "$INSTALL_LOCAL_GPU" = "1" ] && KEEP_LGPU=1
-awk -v sat="$KEEP_SAT" -v lgpu="$KEEP_LGPU" '
-  /^# >>> SELFHOST-SKIP:/ { skip=1; next }
-  /^# <<< SELFHOST-SKIP:/ { skip=0; next }
-  /^# >>> SATELLITE:/      { skip=(sat==1?0:1); next }
-  /^# <<< SATELLITE:/      { skip=0; next }
-  /^# >>> LOCAL-GPU:/      { skip=(lgpu==1?0:1); next }
-  /^# <<< LOCAL-GPU:/      { skip=0; next }
-  !skip { print }
-' wrangler.toml.example > .wrangler.stage.toml
+#   BLENDER       -- finish-blender; stripped unless BLENDER_RUNPOD_ENDPOINT_ID is set (cf#880).
+# The media-stack bindings are unconditional (standard, #519) -- nothing strips them. The same strip
+# chose MODULES above, so the core binds exactly what step 7 deploys.
+sh scripts/deploy-plan.sh strip wrangler.toml.example "$KEEP_SAT" "$KEEP_LGPU" "$KEEP_BLENDER" > .wrangler.stage.toml
 envsubst "$VARS" < .wrangler.stage.toml > wrangler.toml
 rm -f .wrangler.stage.toml
 # retarget the route: the template ships OUR production hostname; point it at yours.
@@ -420,6 +404,55 @@ if [ "$AUTH_MODE" = access ]; then
     || die "F2 Access vars are empty after render -- refusing to deploy an unauthenticated studio"
 fi
 info "rendered wrangler.toml ($(wc -l < wrangler.toml) lines), route -> $DEPLOY_HOSTNAME"
+
+# ---- 5 (cont.). render the module configs, then check the store holds every bound secret ---------
+# cf#880 (DP-3). Each module deploys from a RENDERED copy, filled by scripts/fill-module-placeholders.sh,
+# the same seam the tag deploy uses: store id, D1 id, R2 S3 ids, and the media URL / door vars (unset
+# is empty, the honest off state). It refuses any placeholder that survives. The committed configs are
+# never edited, so a re-run renders from the template again instead of keeping last run's values.
+say "Step 5/9 (cont.): render the $(printf "%s" "$MODULES" | wc -w | tr -d " ") module config(s)"
+export SECRETS_STORE_ID="$STORE_ID" D1_DATABASE_ID CLOUDFLARE_ACCOUNT_ID
+for m in $MODULES; do
+  cp "modules/$m/wrangler.toml" "modules/$m/.deploy.wrangler.toml"
+  sh scripts/fill-module-placeholders.sh "modules/$m/.deploy.wrangler.toml" >/dev/null \
+    || die "module $m: its config has a placeholder this deploy cannot fill (see the error above)"
+done
+info "rendered modules/<name>/.deploy.wrangler.toml for each module"
+
+# Every config about to deploy binds secrets from the store, and wrangler fails a deploy whose store
+# secret is not seeded (code 10182), one worker at a time, after the ones before it have shipped. So
+# check them ALL now, before any deploy. A missing secret whose name is also set in deploy.env is
+# seeded from it; the rest stop the run, by name, with the configs that bind them.
+STORE_LIST="$(mktemp 2>/dev/null || printf '/tmp/vivijure-store-list.%s' "$$")"
+$WR secrets-store secret list "$STORE_ID" --remote --per-page 100 > "$STORE_LIST" 2>/dev/null || true
+DEPLOY_TOMLS="wrangler.toml"
+for m in $MODULES; do DEPLOY_TOMLS="$DEPLOY_TOMLS modules/$m/.deploy.wrangler.toml"; done
+plan_rc=0
+# shellcheck disable=SC2086
+MISSING_SECRETS="$(sh scripts/deploy-plan.sh missing "$STORE_LIST" $DEPLOY_TOMLS)" || plan_rc=$?
+[ "$plan_rc" = 2 ] && { rm -f "$STORE_LIST"; die "could not list Secrets Store $STORE_ID, so the bound secrets cannot be checked before deploy"; }
+UNSEEDED=""
+for name in $MISSING_SECRETS; do
+  case "$name" in *[!A-Za-z0-9_]*) die "unexpected store secret name in a config: $name";; esac
+  eval "val=\${$name:-}"
+  if [ -n "$val" ]; then
+    seed_secret "$name" "$val"
+  else
+    # shellcheck disable=SC2086
+    where="$(sh scripts/deploy-plan.sh secrets $DEPLOY_TOMLS | awk -v n="$name" '$1 == n { print $2 }' | tr '\n' ' ')"
+    UNSEEDED="$UNSEEDED\n      $name   bound by: $where"
+  fi
+done
+rm -f "$STORE_LIST"
+if [ -n "$UNSEEDED" ]; then
+  printf "\n  The Secrets Store %s does not hold these secrets, and a config about to deploy binds them:" "$STORE_ID"
+  printf "%b\n" "$UNSEEDED"
+  printf "  Set each one in deploy.env under the same name (deploy.sh seeds it), or seed it yourself with\n"
+  printf "  wrangler secrets-store secret create, then re-run ./deploy.sh. Nothing has been deployed.\n"
+  printf "  (The check reads the first 100 store secrets; a larger store can show a secret as missing.)\n\n"
+  die "store secrets missing before deploy (listed above)"
+fi
+info "every store secret the $(printf "%s" "$DEPLOY_TOMLS" | wc -w | tr -d " ") config(s) bind is in the store"
 
 # ---- ALLOW_UNAUTHENTICATED loudness (S9 W4) ---------------------------------------------------
 # (a) NO normal deploy.sh path sets ALLOW_UNAUTHENTICATED: it is not in the [vars] block of
@@ -458,7 +491,7 @@ for m in $MODULES; do
   # Retry a transient Cloudflare API flake (e.g. 10013 on the per-worker /subdomain call) so a
   # single hiccup does not abort the whole ordered deploy under set -e.
   n=0
-  until $WR deploy -c "modules/$m/wrangler.toml"; do
+  until $WR deploy -c "modules/$m/.deploy.wrangler.toml"; do
     n=$((n+1)); [ "$n" -ge 3 ] && die "module $m failed to deploy after 3 attempts"
     info "  transient deploy failure for $m -- retry $n/3"; sleep 3
   done
