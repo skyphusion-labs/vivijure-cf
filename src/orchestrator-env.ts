@@ -9,6 +9,7 @@ import { meteredR2Bucket } from "@skyphusion-labs/vivijure-core/storage-quota";
 import { cfPlatformFromEnv } from "./platform/cf-platform.js";
 import { videoFinishDoor, type VideoFinishDoorHost } from "./video-finish-binding.js";
 import { RESERVED_JOB_INSTANCES } from "./video-finish-binding";
+import { usableVideoFinishUrl } from "./video-finish-availability.js";
 import { finishQueueSlots, sqlFinishQueue, type FinishQueue } from "@skyphusion-labs/vivijure-core/finish-queue";
 import type { Env } from "./env.js";
 
@@ -51,6 +52,12 @@ export function studioEnv(raw: Env): StudioEnv {
   // Retry inside the meter, so the meter's own head on a stream put is retried too. Both wraps are idempotent.
   if (raw.R2_RENDERS) raw.R2_RENDERS = retryingBucket(raw.R2_RENDERS);
   if (raw.R2_RENDERS && raw.DB) meterStudioWrites(raw);
+  // cf#964: a VIDEO_FINISH_URL that names no origin (an unrendered placeholder, a bare word) is the
+  // same as no URL. Core treats any non-empty string as an installed tier, so clear it here and core
+  // takes the documented degrade path instead of failing a paid-for film at its finish step.
+  if (raw.VIDEO_FINISH_URL !== undefined && !usableVideoFinishUrl(raw.VIDEO_FINISH_URL)) {
+    raw.VIDEO_FINISH_URL = undefined;
+  }
   const { PRESIGNER } = orchestratorEnv(raw);
   return Object.assign(raw, { PRESIGNER, ...mediaDoorFetchersField(raw), ...finishQueueField(raw) }) as StudioEnv;
 }
