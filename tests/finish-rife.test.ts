@@ -8,7 +8,7 @@ import {
 // this replaced could not report anything about the artifact that deploys -- proven on this
 // very change, where adding `participation` made finish-lipsync (which reads the real one)
 // pass while these two stayed red against their own stale transcriptions.
-import { MANIFEST } from "../modules/finish-rife/src/index";
+import { MANIFEST } from "../modules/finish-rife/src/manifest";
 import { checkManifest, checkInvokeResponse, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import type { FinishInput } from "../modules/finish-rife/src/contract";
 

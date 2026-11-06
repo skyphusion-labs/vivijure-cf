@@ -32,7 +32,6 @@ import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
 // MANIFEST is data-only in ./manifest (cf#285) so quality-tier-drift can import it without
 // this entrypoint's runpod-job-log graph. Re-exported for callers that still load index.
 import { MANIFEST } from "./manifest";
-export { MANIFEST };
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;

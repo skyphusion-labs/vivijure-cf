@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import worker from "../modules/cloud-keyframe/src/index";
 import { emitTar } from "@skyphusion-labs/vivijure-core/tar";
 import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
-import { MANIFEST } from "../modules/cloud-keyframe/src/index";
+import { MANIFEST } from "../modules/cloud-keyframe/src/manifest";
 import {
   MODELS,
   clampModel,

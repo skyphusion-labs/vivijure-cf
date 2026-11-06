@@ -41,24 +41,31 @@ function moduleDirs(): string[] {
     .sort();
 }
 
+/** The files a module's manifest can live in: the Worker entry, or the data-only leaf it imports
+ *  (cf#1308 moved every manifest out of the entry, so scanning the entry alone sees nothing). */
+function sourceFiles(name: string): string[] {
+  return ["index.ts", "manifest.ts"]
+    .map((f) => join(MODULES_DIR, name, "src", f))
+    .filter((f) => existsSync(f));
+}
+
 /** Every module whose worker source so much as MENTIONS the field. The denominator. */
 function mentioningModules(): string[] {
-  return moduleDirs().filter((name) => {
-    const f = join(MODULES_DIR, name, "src", "index.ts");
-    return existsSync(f) && readFileSync(f, "utf8").includes("max_invocation_seconds");
-  });
+  return moduleDirs().filter((name) =>
+    sourceFiles(name).some((f) => readFileSync(f, "utf8").includes("max_invocation_seconds")),
+  );
 }
 
 function declarations(): Declaration[] {
   const out: Declaration[] = [];
   for (const name of moduleDirs()) {
-    const file = join(MODULES_DIR, name, "src", "index.ts");
-    if (!existsSync(file)) continue;
-    const lines = readFileSync(file, "utf8").split("\n");
-    lines.forEach((text, line) => {
-      const m = /^\s*max_invocation_seconds:\s*(\d+)\s*,/.exec(text);
-      if (m) out.push({ module: name, file, seconds: Number(m[1]), line });
-    });
+    for (const file of sourceFiles(name)) {
+      const lines = readFileSync(file, "utf8").split("\n");
+      lines.forEach((text, line) => {
+        const m = /^\s*max_invocation_seconds:\s*(\d+)\s*,/.exec(text);
+        if (m) out.push({ module: name, file, seconds: Number(m[1]), line });
+      });
+    }
   }
   return out;
 }
@@ -79,7 +86,7 @@ describe("cf#762: the 1800 crossover is enforced, not just commented", () => {
   it("the crossover is derived from core, and it is 1800", () => {
     expect(CEILING_CROSSOVER_SECONDS).toBe(PHASE_HARD_DEADLINE_SECONDS / FINISH_STEP_MAX_ATTEMPTS);
     // Pinned so a core change cannot move the threshold silently: every declaration-site comment in
-    // modules/finish-*/src/index.ts names 1800. If this goes red, core moved its floor or its
+    // modules/finish-*/src/manifest.ts names 1800. If this goes red, core moved its floor or its
     // attempt cap; re-derive, then rewrite those comments before changing this number.
     expect(CEILING_CROSSOVER_SECONDS, "core moved the crossover; the module comments now lie").toBe(1800);
   });

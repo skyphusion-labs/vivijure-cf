@@ -168,7 +168,12 @@ describe("drift guard: no module serialises its own invoke request or input", ()
     // Declaring it hands a live tenant credential to a worker with no use for one. This is the check
     // that stops the field spreading by copy-paste; finish-upscale reaches a satellite endpoint and
     // must stay clean.
-    const text = readFileSync(join(MODULES_DIR, "finish-upscale", "src", "index.ts"), "utf8");
+    // cf#1308 moved finish-upscale's MANIFEST into manifest.ts, where needs_tenant_r2 would be
+    // declared. Read both, or this control passes on a file that cannot contain the declaration.
+    const text =
+      readFileSync(join(MODULES_DIR, "finish-upscale", "src", "index.ts"), "utf8") +
+      readFileSync(join(MODULES_DIR, "finish-upscale", "src", "manifest.ts"), "utf8");
+    expect(text).toContain("max_invocation_seconds"); // the manifest is in the scanned text
     expect(text).not.toContain("needs_tenant_r2");
     expect(text).not.toContain("takeTenantR2");
   });

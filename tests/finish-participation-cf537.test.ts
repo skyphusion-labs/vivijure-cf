@@ -3,9 +3,9 @@ import { checkManifest, allPass, failures } from "@skyphusion-labs/vivijure-core
 import { parseHookSelection, resolveModuleRenderConfigs } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { selectForChain } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { MODULE_API, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
-import { MANIFEST as BLENDER } from "../modules/finish-blender/src/index";
-import { MANIFEST as RIFE } from "../modules/finish-rife/src/index";
-import { MANIFEST as UPSCALE } from "../modules/finish-upscale/src/index";
+import { MANIFEST as BLENDER } from "../modules/finish-blender/src/manifest";
+import { MANIFEST as RIFE } from "../modules/finish-rife/src/manifest";
+import { MANIFEST as UPSCALE } from "../modules/finish-upscale/src/manifest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
