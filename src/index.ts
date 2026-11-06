@@ -6,7 +6,7 @@ import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure
 import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledModules } from "./installed-modules";
 import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
-import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
+import { startClipJob, advanceClipJob, summarizeJob, type ClipJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { FilmBusyError, FilmNotStartedError, startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
@@ -62,6 +62,8 @@ import {
   renderKeyRowsByIds,
   type ReclaimReport,
 } from "./record-reclaim-io";
+import { isClipJobId } from "./record-reclaim";
+import { clipJobRowSeed, clipJobToPollView, isStandaloneClipJob, writeClipJobOwner } from "./clip-job-row";
 import {
   talkingVoiceHonorFor,
   startCastVoiceSample,
@@ -1038,6 +1040,11 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
     acceptRederive = b.accept_rederive === true;
   } catch { /* empty body ok (pre-cf#528 clients) */ }
   if (isParentPartProject(row.project)) return partOfLongFilm();
+  // cf#1309: a clip job row has no bundle and no stored film request, so neither retry path can repeat it.
+  // Re-deriving a film from it would start a different job. Refuse with the door that can.
+  if (isClipJobId(row.job_id)) {
+    return json({ ok: false, error: "a clip job is not retried from history; submit its shots again with POST /api/render/clips" }, 400);
+  }
   // cf#1177: a full retry replays the original request, or does not start. Finalize has its own path, from its
   // parent preview.
   if (row.mode !== "finalized" && row.mode !== "cloud-finalized") {
@@ -1855,10 +1862,30 @@ const hRenderPlan: Handler = async (req, env) => {
 
 // --- render-execution: orchestrate the motion.backend module per shot (async run/poll, across
 // requests). POST starts the job + submits each shot; GET advances it (polls the pending shots).
+// cf#1309: a standalone clip job gets a renders row, so it is in history, render delete reaches it, and
+// the #1009 sweep can judge its tree. Order and failure posture: src/clip-job-row.ts. Once startClipJob
+// returns the GPU is spending, so the bookkeeping is best effort (#695): a throw is logged, never a 5xx
+// that would bait a retry into a second job. The poll heals what is missing.
+async function recordStandaloneClipJob(env: StudioEnv, job: ClipJob): Promise<void> {
+  try {
+    await writeClipJobOwner(env, job.job_id);
+  } catch (e) {
+    // No marker: the tree reads as legacy to the sweep, which keeps it. Still insert the row, which owns it.
+    console.log(JSON.stringify({ ev: "render.bookkeeping_deferred", op: "writeClipJobOwner", job_id: job.job_id, reason: e instanceof Error ? e.message : String(e) }));
+  }
+  await insertRenderBestEffort(env, clipJobRowSeed(job));
+  try {
+    await updateRenderFromView(env, clipJobToPollView(job));
+  } catch (e) {
+    console.log(JSON.stringify({ ev: "render.bookkeeping_deferred", op: "updateRenderFromView", job_id: job.job_id, reason: e instanceof Error ? e.message : String(e) }));
+  }
+}
+
 const hStartClips: Handler = async (req, env) => {
   const a = await readBody<{ project?: string; shots?: ClipShotInput[]; motion_backend?: string; config?: Record<string, unknown> }>(req);
   if (!Array.isArray(a.shots) || a.shots.length === 0) throw badRequest("shots[] required");
   const job = await startClipJob(env, { project: a.project ?? "clips", shots: a.shots, motion_backend: a.motion_backend, config: a.config });
+  await recordStandaloneClipJob(env, job);
   return json({
     ok: true, job_id: job.job_id, motion_backend: job.motion_backend, ...summarizeJob(job),
     shots: job.shots.map((sh) => ({ shot_id: sh.shot_id, status: sh.status, error: sh.error })),
@@ -1867,6 +1894,13 @@ const hStartClips: Handler = async (req, env) => {
 const hPollClips: Handler = async (_req, env, _c, p) => {
   const job = await advanceClipJob(env, p.id);
   if (!job) throw notFound("clip job");
+  // cf#1309: keep the row current, and insert it if the start could not. Only for a job born standalone:
+  // a film's clip job has no owner marker and its film row is its record, so it never gets a row here.
+  // A poll is idempotent and retried, so this throws like hPollFilm rather than hiding a failure.
+  if (await isStandaloneClipJob(env, job.job_id)) {
+    await insertRender(env, clipJobRowSeed(job));
+    await updateRenderFromView(env, clipJobToPollView(job));
+  }
   return json({
     ok: true, job_id: job.job_id, motion_backend: job.motion_backend, ...summarizeJob(job),
     shots: job.shots.map((sh) => ({ shot_id: sh.shot_id, status: sh.status, clip_key: sh.clip_key, error: sh.error })),

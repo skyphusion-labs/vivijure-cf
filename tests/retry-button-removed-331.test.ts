@@ -28,8 +28,10 @@ describe("cf#353 the retry control is real (supersedes dead cf#331)", () => {
     expect(start, "the re-render section anchor is gone; re-anchor this test").toBeGreaterThan(-1);
     const block = ROW_JS.slice(start, ROW_JS.indexOf("actions.appendChild(rerun)", start));
     expect(block).toContain('rerun.textContent = "re-render"');
-    expect(block, "re-render became status-gated; a failed row now has no recovery path")
-      .not.toMatch(/if\s*\(/);
+    // cf#1309: the one gate allowed is the clip-job row, which has no bundle to re-render. Any other
+    // condition (a status gate above all) would leave a failed film row with no recovery path.
+    const gates = block.match(/if\s*\(([^)]*)\)/g) ?? [];
+    expect(gates, "re-render became gated on something other than the clip-job row").toEqual(["if (!clipJob)"]);
   });
 
   it("POSITIVE CONTROL: the matchers can see the files they are reading", () => {
