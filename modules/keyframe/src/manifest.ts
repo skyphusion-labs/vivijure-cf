@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.8",
+  version: "0.3.9",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -96,6 +96,16 @@ export const MANIFEST: ModuleManifest = {
       min: 0,
       max: 1.5,
       label: "two-person body placement strength",
+    },
+    // cf#1281: whether a two-person still draws under the pose skeleton. "auto" sends nothing, so the backend
+    // picks per path (backend#596: a scene-lock plate draws without it while the plate count guard runs; the
+    // plain regional path draws with it). "on" or "off" sets both paths. An enum, not a bool, because the core
+    // fills every schema default, so a bool could never be left unset.
+    pose_conditioning: {
+      type: "enum",
+      values: ["auto", "on", "off"],
+      default: "auto",
+      label: "two-person pose skeleton",
     },
     // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
     // That checkpoint is not in the default bake. A worker without it fails honest.
