@@ -10,14 +10,16 @@ Vivijure has three pieces:
 2. **The GPU backend** (`vivijure-backend`) -- a container on **RunPod Serverless** that does the
    heavy lifting: LoRA training, SDXL keyframes, image-to-video.
 3. **The media-stack CPU containers** (`video-finish`, `image-prep`, `audio-beat-sync`,
-   `audio-mix`, `audio-master`) -- ffmpeg/CPU work that runs always-on on your own box. The studio
+   `audio-mix`, `audio-master`) -- ffmpeg/CPU work. On the reference deploy each runs as its own
+   Cloudflare Container app from `containers/<name>/cf-container/`; a self-host can run the same
+   images with `docker compose` on its own box (section 5). The studio
    reaches them over **public HTTPS origins** you configure (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`,
    `AUDIO_BEAT_SYNC_URL`, `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`), authenticated with the
    `MEDIA_FINISH_TOKEN` binding (store secret `FINISH_DOOR_TOKEN`); Workers VPC is no longer used for
    media. As of #519 these are part of the **standard** install: the film assembly step runs in
    `video-finish`, so without the media stack you get a folder of separate clips, not one finished
-   film. `deploy.sh` writes the compose tunnel token for you; you set the URLs in `deploy.env` and
-   bring the containers up with `docker compose` (section 5). At render time, if the media tier is
+   film. You set the URLs in `deploy.env`; section 5 covers both the Cloudflare Container apps and
+   the compose path (for compose, `deploy.sh` writes the tunnel token for you). At render time, if the media tier is
    unreachable the film still COMPLETES with the rendered clips delivered and a loud "finish
    unavailable" status (#519 / #524), never a hard-fail after the GPU spend.
 
@@ -695,15 +697,126 @@ pull).
 
 ## 5. The media-stack CPU containers (STANDARD)
 
-`video-finish` / `image-prep` / `audio-beat-sync` / `audio-mix` / `audio-master` run always-on as
-Docker on your own box. The studio reaches them over **public HTTPS origins**, not Workers VPC: the
-core and the media finish modules read `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
-`AUDIO_MIX_URL` and `AUDIO_MASTER_URL` (empty = that service is off) and send the `MEDIA_FINISH_TOKEN`
-bearer (store secret `FINISH_DOOR_TOKEN`; the `video-finish`, `audio-mix` and `audio-beat-sync`
-containers check it as `LOCAL_FINISH_TOKEN`). **Every media container now REFUSES TO START when
-`LOCAL_FINISH_TOKEN` is unset** (cf#893, GHSA-v8g8-gmcm-22gr) -- it used to leave the gate open, which
-was defensible behind the private Workers VPC that no longer exists and is not defensible on the
-public HTTPS origins above. Set it in the environment `compose.yaml` reads:
+The studio reaches the media doors over **public HTTPS origins**, not Workers VPC: the core and the
+media finish modules read `VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`,
+`AUDIO_MIX_URL` and `AUDIO_MASTER_URL` (empty = that service is off) and send the
+`MEDIA_FINISH_TOKEN` bearer (store secret `FINISH_DOOR_TOKEN`). Each container checks that bearer as
+`LOCAL_FINISH_TOKEN`. **Every media container REFUSES TO START when `LOCAL_FINISH_TOKEN` is unset**
+(cf#893, GHSA-v8g8-gmcm-22gr; `require_bearer_config` in `containers/<name>/bearer.py`, called from
+each `app.py` entry point). It used to leave the gate open, which was defensible behind the private
+Workers VPC that no longer exists and is not defensible on public HTTPS origins.
+
+There are two ways to run these doors. The **reference deploy runs them as Cloudflare Container
+apps** (5a). **Compose on your own box is the self-host path** (5b). Both serve the same images
+and the same routes; pick one per door and point its `*_URL` var at it.
+
+### 5a. Cloudflare Container apps (the reference deploy)
+
+Each media door is its own Worker, deployed from `containers/<name>/cf-container/`. The Worker
+fronts a Durable Object that starts the container. It is not the studio Worker, and nothing in
+`containers/compose.yaml` runs it. Each app builds `containers/<name>/Dockerfile`
+(`image = "../Dockerfile"`, `image_build_context = ".."`), so the image is the same one compose
+builds.
+
+| Door | Worker name | DO class / binding | `instance_type` | `max_instances` | Container instance | `sleepAfter` |
+| --- | --- | --- | --- | --- | --- | --- |
+| video-finish | `vivijure-video-finish` | `VideoFinishDoor` / `FINISH` | standard-4 | 20 | one per film (`x-vivijure-finish-affinity` header; none = `subtitle`) | 10m |
+| image-prep | `vivijure-image-prep` | `ImagePrepDoor` / `PREP` | standard-1 | 2 | `portrait` | 5m |
+| audio-mix | `vivijure-audio-mix` | `AudioMixDoor` / `MIX` | standard-1 | 2 | `mix` | 5m |
+| audio-beat-sync | `vivijure-audio-beat-sync` | `AudioBeatSyncDoor` / `BEATS` | standard-1 | 2 | `beats` | 5m |
+| audio-master | `vivijure-audio-master` | `AudioMasterDoor` / `MASTER` | standard-1 | 2 | `master` | 5m |
+
+The source of each row is that door's `cf-container/wrangler.toml` and `cf-container/src/index.ts`
+(video-finish routing is `cf-container/src/routing.ts`). If this table and those files disagree,
+the files win; fix the table.
+
+A sixth door, **blender**, is also a separate host on the reference deploy. It is not built from
+this repo's `containers/` (there is no `containers/blender`). The studio reaches it through the
+`vivijure-module-finish-blender` module worker.
+
+**The gate, twice.** Each door Worker checks `Authorization: Bearer <token>` itself, in constant
+time, against its `LOCAL_FINISH_TOKEN` wrangler secret before it forwards anything
+(`cf-container/src/gate.ts`, vendored byte-for-byte into each door). A missing or wrong bearer is
+401 from the Worker. Two routes skip that check: `GET /health` is forwarded to the container, which
+also leaves it open, and `GET /ready` is answered by the Worker itself with
+`{"ok":true,"token_configured":<bool>}` and nothing derived from the token's value. The Worker
+passes the same secret into the container through `envVars` as `LOCAL_FINISH_TOKEN`, so the
+container's own `bearer.py` checks the request again. A door with no secret set therefore 401s at
+the Worker, and its container would refuse to start.
+
+**Secret.** `LOCAL_FINISH_TOKEN` is declared required (`[secrets] required = ["LOCAL_FINISH_TOKEN"]`)
+and is a wrangler secret, never a `[vars]` entry. Its value must equal the store secret
+`FINISH_DOOR_TOKEN` that the studio sends as `MEDIA_FINISH_TOKEN`. A wrangler secret persists across
+deploys, so a redeploy does not need it again. Check that it is set by NAME only:
+
+```bash
+cd containers/<name>/cf-container
+npx wrangler secret list            # names only; LOCAL_FINISH_TOKEN must be listed
+# first time only (hidden prompt):
+npx wrangler secret put LOCAL_FINISH_TOKEN
+```
+
+**Deploy.** Docker must be running, because `wrangler deploy` builds the image before it uploads
+anything.
+
+```bash
+cd containers/<name>/cf-container
+npm ci
+npx wrangler deploy --containers-rollout=immediate
+```
+
+- **video-finish** is deployed by CI: a `v*` tag runs the `deploy-video-finish-door` job in
+  `.github/workflows/ci.yml` on a GitHub-hosted runner, under the same gates as the studio deploy.
+  That job runs plain `npx wrangler deploy` and does not set the secret. Deploy it by hand only to
+  recover.
+- **image-prep, audio-mix, audio-beat-sync, audio-master** have no CI deploy job. Deploy them by
+  hand, as above.
+- **Build host.** wrangler builds these images for `linux/amd64`. The video-finish config says any
+  host with a running Docker works, an arm64 Mac included (`cf-container/wrangler.toml` header,
+  #1097). The other four configs still say to deploy from an amd64 host. Until one of those four is
+  deployed from an arm64 host and proven by its selftest, treat the amd64 rule as the one that holds
+  for them.
+- **Prove it** after each deploy. `GET /health` 200 and `GET /ready` with `"token_configured":true`
+  show the Worker is up and has a secret. They do NOT show that the secret matches the studio's
+  `MEDIA_FINISH_TOKEN`. Only a bearer-authenticated `POST /selftest` with the deploy's token proves
+  that (each `app.py` registers it; the result lists `selftest:<stage>:<op>` in `applied`).
+
+**Token rotation restarts the containers.** A container reads `LOCAL_FINISH_TOKEN` from its
+environment, which is fixed when the instance starts. `wrangler secret put` updates the Worker but
+does not restart a running container. After a rotation the Worker accepts and forwards the new
+token to an instance that still holds the old one, and every call is 401 until that instance
+restarts. A redeploy with an unchanged image rolls nothing out (`ci.yml`, the comment above
+`deploy-video-finish-door`), so it does not fix this. A rotation must therefore restart each door's
+containers, or move the door to a new container instance name in the same deploy so fresh
+instances start with the current secret. Rotate `FINISH_DOOR_TOKEN` and every door's
+`LOCAL_FINISH_TOKEN` together, then run each door's selftest.
+
+**`vivijure-video-finish` is NOT the studio's `FinishContainer`.** They run the same image
+(`containers/video-finish/Dockerfile`) as two separate container apps:
+
+- **`FinishContainer`** belongs to the studio Worker (`vivijure-studio`). It is declared in the
+  studio's `wrangler.toml` (`[[containers]] class_name = "FinishContainer"`, standard-4,
+  `max_instances = 20`, bound as `FINISH_CONTAINER`) and is reached through that binding, never over
+  HTTPS. The studio starts it with the `MEDIA_FINISH_TOKEN` value as `LOCAL_FINISH_TOKEN`
+  (`src/finish-container.ts`, cf#911). With no readable token the studio answers 503 for that door,
+  logs `finish_container.no_token`, and never starts the container. There is no opt-out on this
+  door. A request that reaches it without the header is logged as `finish_container.bearer_absent`
+  and is 401 from the container.
+- **`vivijure-video-finish`** is the public door at `VIDEO_FINISH_URL`. The `film-titles` and
+  `subtitle` module workers reach it over HTTPS, because a module worker has no `FINISH_CONTAINER`
+  binding.
+
+**A studio deploy that changes `containers/video-finish` needs a container rollout.** The tag's
+`deploy` job runs `npm run deploy` (`wrangler deploy`) with no rollout flag. When a change under
+`containers/video-finish` must reach `FinishContainer` at once, deploy the studio with
+`npx wrangler deploy --containers-rollout=immediate`, which rolls the new image to 100% of
+instances in one step. `--containers-rollout=none` deploys the Worker without building or updating
+any container, so never use it to ship a container change. The standalone `vivijure-video-finish`
+door is a separate deploy (above) and needs its own rollout.
+
+### 5b. Self-host: compose on your own box
+
+Run the same images with Docker. Set the token in the environment `compose.yaml` reads:
 
 ```bash
 export LOCAL_FINISH_TOKEN="$(openssl rand -hex 32)"   # must match the store secret FINISH_DOOR_TOKEN
@@ -713,18 +826,10 @@ docker compose -f containers/compose.yaml up -d
 A container with no token exits at startup naming both this variable and the opt-out; it does not
 come up and serve. If your deployment is genuinely loopback-only and wants no authentication, ask
 for that **by name** with `LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true`. Unset is not a request for it.
-`GET /health` stays open either way, so swarm and Traefik healthchecks are unaffected.
+`GET /health` stays open either way, so container healthchecks are unaffected.
 
-**The Cloudflare Container door (`FINISH_CONTAINER`).** The studio starts that container itself,
-with the `MEDIA_FINISH_TOKEN` value as `LOCAL_FINISH_TOKEN` and nothing else (src/finish-container.ts,
-cf#911). Core attaches the same bearer on the bound path. If no token is readable, the studio answers
-503 for that door, logs `finish_container.no_token`, and never starts the container. There is no
-opt-out on this door. A request that reaches it without the header is logged as
-`finish_container.bearer_absent` and is 401 from the container.
-
-As of #519
-this is part of the **standard** install: `deploy.sh` (`scripts/setup-media-vpc.py`) reuses or creates
-one Cloudflare tunnel (default name `vivijure-media`, override with `VIVIJURE_TUNNEL_NAME`) and writes
+As of #519 the media stack is part of the **standard** install. For the compose path,
+`deploy.sh` (`scripts/setup-media-vpc.py`) reuses or creates one Cloudflare tunnel (default name `vivijure-media`, override with `VIVIJURE_TUNNEL_NAME`) and writes
 its connector token to `containers/tunnel.env` (0600). It creates NO Workers VPC services and renders
 no service ids. Expose each container at a public HTTPS origin, set the `*_URL` vars in `deploy.env`
 (re-run `./deploy.sh` after changing them), and bring the containers up:
