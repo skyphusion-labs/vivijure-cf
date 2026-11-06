@@ -294,7 +294,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**101 route entries** (distinct `method` + `pattern`) over **81 distinct path patterns**. Those two
+**102 route entries** (distinct `method` + `pattern`) over **82 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -360,6 +360,7 @@ unchanged.
 | 36 | POST | `/api/storyboard/markers` | 2.16 |
 | 37 | POST | `/api/storyboard/bundle` | 2.16 |
 | 38 | POST | `/api/storyboard/audio-upload` | 2.10 |
+| 38a | DELETE | `/api/storyboard/audio-upload/:name` | 2.10 |
 | 39 | POST | `/api/storyboard/character-ref` | 2.10 |
 | 40 | POST | `/api/audio/analyze` | 2.17 |
 | 41 | POST | `/api/storyboard/render` | 2.18 |
@@ -729,6 +730,15 @@ refusal, not a `.bin` object.
 
 The returned `key` is then registered (e.g. onto a cast member via 2.7, or passed as `audioKey` to a
 render route).
+
+**DELETE `/api/storyboard/audio-upload/:name`** (cf#1016) deletes an uploaded audio bed. `:name` is
+the part of the key after `audio/`, exactly as the upload minted it (`<uuid>.<mp3|wav|aac|m4a|ogg|webm>`);
+any other name is `400`, so the route can delete nothing but an uploaded bed. Responses:
+`200 { ok: true, key, deleted: true }`; `404 { ok: false, error, key }` when the file is not in storage;
+`409 { ok: false, error, key, renders }` while a film render that has not finished selects this bed as
+its `audio_key` (`renders` lists those job ids); `503` when more than 200 film renders are in flight,
+so the check could not read them all. A finished render keeps its sound: it is already in the film.
+The render delete still never frees a bed (it is shared; see `src/record-reclaim.ts`).
 
 **The image routes differ ONLY in the key namespace, and the namespaces are interchangeable.**
 `/api/upload` and `/api/storyboard/character-ref` run the same logic (same mime table, same 25 MB
