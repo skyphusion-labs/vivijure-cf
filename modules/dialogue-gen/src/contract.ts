@@ -85,7 +85,7 @@ export interface DialogueShotAudio {
   voice_id: string;
   /** OPTIONAL, additive: the gain the line was given, in dB. Also on the object as `gain_db`. */
   gain_db?: number;
-  /** OPTIONAL, additive: seconds of the written WAV after pad/trim. */
+  /** OPTIONAL, additive: seconds of the written WAV after the 15s cap and the trailing-silence cut (cf#957). */
   duration_s?: number;
 }
 

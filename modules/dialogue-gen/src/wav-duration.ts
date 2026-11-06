@@ -1,116 +1,36 @@
-// Vendored RIFF/WAVE helpers (Aura writes linear16 PCM). Modules do not import core.
-// Pad short lines to Wan's 3s floor; cap at 15s (both driving-audio doors).
-export const LINE_WAV_MIN_SECONDS = 3;
+// RIFF/WAVE helpers (Aura writes linear16 PCM). The parser and writer are shared with chatterbox in
+// modules/_shared/wav-pcm.ts. Cap at 15s (both driving-audio doors).
+//
+// cf#957: no pad. A line used to be padded to 3.0s for Wan, so every door billed and animated about
+// 1.66s of silence per short line. Wan declares that floor itself (usage.driving_audio_min_seconds) and
+// the core pads for that door only. Here a line ends TAIL_SECONDS after its last speech.
+import {
+  parseWav,
+  pcmBytesFor,
+  writeWav,
+  trimTrailingSilencePcm,
+  type WavFormat,
+} from "../../_shared/wav-pcm";
+
+export { parseWav, SPEECH_FLOOR_DBFS, TAIL_SECONDS, type WavFormat, type WavDuration } from "../../_shared/wav-pcm";
+
 export const LINE_WAV_MAX_SECONDS = 15;
 export const SILENCE_WAV_SAMPLE_RATE = 24_000;
 export const SILENCE_WAV_CHANNELS = 1;
 export const SILENCE_WAV_BITS = 16;
-
-const encoder = new TextEncoder();
-
-export interface WavFormat {
-  channels: number;
-  sampleRate: number;
-  byteRate: number;
-  blockAlign: number;
-  bitsPerSample: number;
-  dataOffset: number;
-  dataSize: number;
-}
-
-export interface WavDuration {
-  seconds: number;
-  format: WavFormat;
-}
-
-function u32(view: DataView, offset: number, value: number): void {
-  view.setUint32(offset, value >>> 0, true);
-}
-function u16(view: DataView, offset: number, value: number): void {
-  view.setUint16(offset, value & 0xffff, true);
-}
-function readFourCC(bytes: Uint8Array, offset: number): string {
-  return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
-}
-
-/** Parse a linear16 (PCM) WAVE. Returns null when the buffer is not a usable RIFF PCM file. */
-export function parseWav(bytes: Uint8Array): WavDuration | null {
-  if (bytes.length < 12) return null;
-  if (readFourCC(bytes, 0) !== "RIFF" || readFourCC(bytes, 8) !== "WAVE") return null;
-  let offset = 12;
-  let format: Omit<WavFormat, "dataOffset" | "dataSize"> | null = null;
-  let dataOffset = -1;
-  let dataSize = 0;
-  while (offset + 8 <= bytes.length) {
-    const id = readFourCC(bytes, offset);
-    const size = new DataView(bytes.buffer, bytes.byteOffset + offset + 4, 4).getUint32(0, true);
-    const body = offset + 8;
-    if (id === "fmt " && size >= 16 && body + 16 <= bytes.length) {
-      const view = new DataView(bytes.buffer, bytes.byteOffset + body, size);
-      const audioFormat = view.getUint16(0, true);
-      if (audioFormat !== 1) return null;
-      const channels = view.getUint16(2, true);
-      const sampleRate = view.getUint32(4, true);
-      const byteRate = view.getUint32(8, true);
-      const blockAlign = view.getUint16(12, true);
-      const bitsPerSample = view.getUint16(14, true);
-      if (!channels || !sampleRate || !byteRate || !blockAlign || !bitsPerSample) return null;
-      format = { channels, sampleRate, byteRate, blockAlign, bitsPerSample };
-    } else if (id === "data") {
-      dataOffset = body;
-      dataSize = size;
-      break;
-    }
-    offset = body + size + (size % 2);
-  }
-  if (!format || dataOffset < 0) return null;
-  const available = Math.max(0, bytes.length - dataOffset);
-  const usable = Math.min(dataSize, available);
-  const aligned = usable - (usable % format.blockAlign);
-  if (aligned < 0 || format.byteRate <= 0) return null;
-  return {
-    seconds: aligned / format.byteRate,
-    format: { ...format, dataOffset, dataSize: aligned },
-  };
-}
 
 export function parseWavDurationSeconds(bytes: Uint8Array): number | null {
   const parsed = parseWav(bytes);
   return parsed ? parsed.seconds : null;
 }
 
-function pcmBytesFor(seconds: number, format: { byteRate: number; blockAlign: number }): number {
-  const raw = Math.round(seconds * format.byteRate);
-  const aligned = raw - (raw % format.blockAlign);
-  return Math.max(0, aligned);
-}
-
-function writeWav(format: { channels: number; sampleRate: number; byteRate: number; blockAlign: number; bitsPerSample: number }, pcm: Uint8Array): Uint8Array {
-  const header = 44;
-  const out = new Uint8Array(header + pcm.length);
-  const view = new DataView(out.buffer);
-  out.set(encoder.encode("RIFF"), 0);
-  u32(view, 4, 36 + pcm.length);
-  out.set(encoder.encode("WAVE"), 8);
-  out.set(encoder.encode("fmt "), 12);
-  u32(view, 16, 16);
-  u16(view, 20, 1);
-  u16(view, 22, format.channels);
-  u32(view, 24, format.sampleRate);
-  u32(view, 28, format.byteRate);
-  u16(view, 32, format.blockAlign);
-  u16(view, 34, format.bitsPerSample);
-  out.set(encoder.encode("data"), 36);
-  u32(view, 40, pcm.length);
-  out.set(pcm, header);
-  return out;
-}
-
 export interface NormalizedLineWav {
   bytes: Uint8Array;
   seconds: number;
-  padded: boolean;
+  /** Cut at the 15s cap. */
   trimmed: boolean;
+  /** Seconds of trailing silence removed after the last speech (cf#957). 0 when nothing was cut. */
+  tail_trimmed_s: number;
   /** Gain applied to the line, in dB. 0 when nothing was changed. */
   gain_db: number;
 }
@@ -171,34 +91,29 @@ function levelPcm(pcm: Uint8Array, format: WavFormat): { pcm: Uint8Array; gain_d
   return { pcm: copy, gain_db };
 }
 
-/** Level the line, pad PCM under 3.0s with silence, trim above 15.0s. Returns null when the buffer is not PCM WAV. */
+/** Trim above 15.0s, cut trailing silence to TAIL_SECONDS, then level the line. Never pads (cf#957).
+ *  Returns the original bytes when nothing changes, and null when the buffer is not PCM WAV. */
 export function normalizeLineWav(bytes: Uint8Array): NormalizedLineWav | null {
   const parsed = parseWav(bytes);
   if (!parsed) return null;
   const { format } = parsed;
-  const minBytes = pcmBytesFor(LINE_WAV_MIN_SECONDS, format);
   const maxBytes = pcmBytesFor(LINE_WAV_MAX_SECONDS, format);
   const whole = bytes.subarray(format.dataOffset, format.dataOffset + format.dataSize);
-  // Trim first: a click in audio that is thrown away must not set the gain of what is kept.
+  // Cap first: a click in audio that is thrown away must not set the gain, or the speech end, of what is kept.
   const trimmed = whole.length > maxBytes;
-  const { pcm, gain_db } = levelPcm(trimmed ? whole.subarray(0, maxBytes) : whole, format);
-  let next = pcm;
-  let padded = false;
-  if (pcm.length < minBytes) {
-    const grown = new Uint8Array(minBytes);
-    grown.set(pcm);
-    next = grown;
-    padded = true;
+  const capped = trimmed ? whole.subarray(0, maxBytes) : whole;
+  const spoken = trimTrailingSilencePcm(capped, format);
+  const tail_trimmed_s = (capped.length - spoken.length) / format.byteRate;
+  const { pcm, gain_db } = levelPcm(spoken, format);
+  if (!trimmed && tail_trimmed_s === 0 && gain_db === 0) {
+    return { bytes, seconds: parsed.seconds, trimmed: false, tail_trimmed_s: 0, gain_db: 0 };
   }
-  if (!padded && !trimmed && gain_db === 0) {
-    return { bytes, seconds: parsed.seconds, padded: false, trimmed: false, gain_db: 0 };
-  }
-  const out = writeWav(format, next);
-  return { bytes: out, seconds: next.length / format.byteRate, padded, trimmed, gain_db };
+  const out = writeWav(format, pcm);
+  return { bytes: out, seconds: pcm.length / format.byteRate, trimmed, tail_trimmed_s, gain_db };
 }
 
-/** 3s (or `seconds`) of linear16 silence. Same encoding Aura writes. */
-export function mintSilenceWav(seconds: number = LINE_WAV_MIN_SECONDS): Uint8Array {
+/** `seconds` of linear16 silence. Same encoding Aura writes. */
+export function mintSilenceWav(seconds: number): Uint8Array {
   const sampleRate = SILENCE_WAV_SAMPLE_RATE;
   const channels = SILENCE_WAV_CHANNELS;
   const bits = SILENCE_WAV_BITS;

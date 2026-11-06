@@ -79,7 +79,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "dialogue-gen",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["dialogue"],
   provides: [{ id: "aura1", label: "Dialogue voices (Deepgram Aura-1)" }],
@@ -140,7 +140,7 @@ async function synthLine(env: Env, project: string, line: NormalizedLine): Promi
   // On the object, so the gain a line was given can be read back from the line itself.
   await env.R2_RENDERS.put(key, body, {
     httpMetadata: { contentType: AUDIO_MIME },
-    ...(norm ? { customMetadata: { gain_db: norm.gain_db.toFixed(2) } } : {}),
+    ...(norm ? { customMetadata: { gain_db: norm.gain_db.toFixed(2), tail_trimmed_s: norm.tail_trimmed_s.toFixed(3) } } : {}),
   });
   return {
     shot_id: line.shot_id,

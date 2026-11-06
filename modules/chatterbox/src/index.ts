@@ -16,6 +16,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { trimTrailingSilence } from "../../_shared/wav-pcm";
 import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
@@ -82,7 +83,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "chatterbox",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["dialogue"],
   provides: [{ id: "chatterbox", label: "Cast voices (Chatterbox Turbo)" }],
@@ -214,8 +215,21 @@ async function storeLine(env: Env, project: string, line: NormalizedLine, url: s
   const bytes = await audio.arrayBuffer();
   if (bytes.byteLength === 0) throw new Error(`empty audio for ${line.shot_id}`);
   const key = audioKey(project, line.shot_id);
-  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: AUDIO_MIME } });
-  return { shot_id: line.shot_id, audio_key: key, voice_id: line.voice };
+  // cf#957: cut trailing silence here, at the producer, so no door bills or animates it. A file that is
+  // not 16-bit PCM WAV is stored as bought.
+  const trim = trimTrailingSilence(new Uint8Array(bytes));
+  const body = trim ? copyToArrayBuffer(trim.bytes) : bytes;
+  await env.R2_RENDERS.put(key, body, {
+    httpMetadata: { contentType: AUDIO_MIME },
+    ...(trim ? { customMetadata: { tail_trimmed_s: trim.tail_trimmed_s.toFixed(3) } } : {}),
+  });
+  return { shot_id: line.shot_id, audio_key: key, voice_id: line.voice, ...(trim ? { duration_s: trim.seconds } : {}) };
+}
+
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(out).set(bytes);
+  return out;
 }
 
 /** Per-shot step config. A single short line synth is fast; a generous timeout + a couple of retries

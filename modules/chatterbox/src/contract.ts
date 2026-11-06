@@ -83,6 +83,8 @@ export interface DialogueShotAudio {
   shot_id: string;
   audio_key: string;
   voice_id: string;
+  /** OPTIONAL, additive (cf#957): seconds of the written WAV after the trailing-silence cut. */
+  duration_s?: number;
 }
 
 export interface DialogueOutput {

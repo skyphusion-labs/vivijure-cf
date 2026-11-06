@@ -14,7 +14,6 @@ import {
   mintSilenceWav,
   normalizeLineWav,
   parseWavDurationSeconds,
-  LINE_WAV_MIN_SECONDS,
   LINE_WAV_MAX_SECONDS,
   LINE_TARGET_DBFS,
   LINE_PEAK_LIMIT_DBFS,
@@ -65,20 +64,19 @@ describe("dialogue-gen helpers", () => {
   });
 });
 
-describe("dialogue-gen WAV pad/trim", () => {
-  it("pads a short line to 3.0s and trims past 15.0s", () => {
+describe("dialogue-gen WAV cap", () => {
+  it("never pads a short line (cf#957) and trims past 15.0s", () => {
     const short = mintSilenceWav(1.5);
-    const padded = normalizeLineWav(short);
-    expect(padded).not.toBeNull();
-    expect(padded!.padded).toBe(true);
-    expect(padded!.trimmed).toBe(false);
-    expect(padded!.seconds).toBeCloseTo(LINE_WAV_MIN_SECONDS, 5);
+    const kept = normalizeLineWav(short);
+    expect(kept).not.toBeNull();
+    expect(kept!.trimmed).toBe(false);
+    expect(kept!.seconds).toBeCloseTo(1.5, 5);
+    expect(kept!.bytes).toBe(short);
 
     const long = mintSilenceWav(16);
     const trimmed = normalizeLineWav(long);
     expect(trimmed).not.toBeNull();
     expect(trimmed!.trimmed).toBe(true);
-    expect(trimmed!.padded).toBe(false);
     expect(trimmed!.seconds).toBeCloseTo(LINE_WAV_MAX_SECONDS, 5);
   });
 
@@ -86,7 +84,7 @@ describe("dialogue-gen WAV pad/trim", () => {
     const ok = mintSilenceWav(4);
     const kept = normalizeLineWav(ok);
     expect(kept).not.toBeNull();
-    expect(kept!.padded).toBe(false);
+    expect(kept!.tail_trimmed_s).toBe(0);
     expect(kept!.trimmed).toBe(false);
     expect(kept!.seconds).toBeCloseTo(4, 5);
     expect(parseWavDurationSeconds(kept!.bytes)).toBeCloseTo(4, 5);
@@ -335,12 +333,13 @@ describe("dialogue-gen: each line is brought to one level", () => {
     expect(rmsDb(r.bytes)).toBeCloseTo(LINE_TARGET_DBFS, 0);
   });
 
-  it("pauses and the pad after the line do not count as quiet", () => {
+  it("pauses and the silence after the line do not count as quiet", () => {
     const short = normalizeLineWav(wav([[0.5, -30], [0.5, null], [0.5, -30]]))!;
     const long = normalizeLineWav(wav([[4, -30]]))!;
     expect(short.gain_db).toBeCloseTo(long.gain_db, 0);
-    expect(short.padded).toBe(true);
-    expect(short.seconds).toBe(LINE_WAV_MIN_SECONDS);
+    // No pad (cf#957): 1.5s of line, and the last 0.5s is speech, so nothing is cut.
+    expect(short.tail_trimmed_s).toBe(0);
+    expect(short.seconds).toBe(1.5);
     expect(rmsDb(short.bytes, 0.5)).toBeCloseTo(LINE_TARGET_DBFS, 0);
   });
 
