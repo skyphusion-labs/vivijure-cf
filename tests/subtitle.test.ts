@@ -228,6 +228,32 @@ describe("subtitle module invoke (#602 async + honest degrade)", () => {
     expect(json.output.degraded).toBe("passthrough:container-unreachable");
   });
 
+  it("cf#909: a non-2xx and an ok:false body are two tags, not one", async () => {
+    const run = async (over: { syncStatus?: number; syncBody?: unknown }) => {
+      const { env } = vpcEnv({ asyncSupported: false, ...over });
+      const json = (await (await worker.fetch(invoke(baseInput()), env)).json()) as {
+        ok: boolean; output: { film_key: string; applied: string[]; degraded?: string; failure?: { kind: string; code: string; detail?: string } };
+      };
+      expect(json.ok).toBe(true);
+      expect(json.output.film_key).toBe("renders/film-x/film.mp4"); // the original film survives
+      return json.output;
+    };
+    const http4 = await run({ syncStatus: 400, syncBody: { ok: false, error: "bad spec" } });
+    expect(http4.degraded).toBe("passthrough:container-http-error");
+    expect(http4.applied).toContain("passthrough:container-http-error");
+    expect(http4.failure).toEqual({ kind: "permanent", code: "refused", detail: "HTTP 400" });
+    const http5 = await run({ syncStatus: 500 });
+    expect(http5.degraded).toBe("passthrough:container-http-error");
+    expect(http5.failure).toEqual({ kind: "transient", code: "server_error", detail: "HTTP 500" });
+    const refused = await run({ syncBody: { ok: false, error: "libass refused" } });
+    expect(refused.degraded).toBe("passthrough:container-refused");
+    expect(refused.applied).toContain("passthrough:container-refused");
+    expect(refused.failure).toEqual({ kind: "permanent", code: "refused" });
+    // The tag alone tells a reader which half to look at, even where both codes are `refused`.
+    expect(http4.degraded).not.toBe(refused.degraded);
+    for (const o of [http4, http5, refused]) expect(o.applied).not.toContain("passthrough:container-failed");
+  });
+
   it("no-ops without round-tripping the container when there are no captions", async () => {
     const { env, calls } = vpcEnv();
     const res = await worker.fetch(invoke(baseInput({ captions: [] })), env);

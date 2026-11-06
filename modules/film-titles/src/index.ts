@@ -13,7 +13,8 @@
 // R2 or holds S3 creds.
 //
 // Soft degrade: no title and no credits -> pass the film through unchanged (noop:no-cards). A
-// container failure -> passthrough the original film tagged "passthrough:container-failed", degraded.
+// container failure -> passthrough the original film tagged "passthrough:container-http-error" or
+// "passthrough:container-refused", degraded (cf#909).
 // A film.finish module must never drop the film it was handed.
 
 import {
@@ -59,7 +60,7 @@ const ROUTE = "film-titles";
 
 const MANIFEST: ModuleManifest = {
   name: "film-titles",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["film.finish"],
   provides: [{ id: "film-titles", label: "Title + credit cards on the finished film" }],
@@ -143,14 +144,16 @@ async function invokeSync(
   );
   if (timed.err || !timed.resp) return withFailure(passthrough(input, "passthrough:container-unreachable", true), FAILURE_UNREACHABLE);
   const resp = timed.resp;
-  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), failureFromStatus(resp.status));
+  // cf#909: an HTTP refusal and a handler that answered ok:false are two failures with two tags. The
+  // first is the transport or the route; the second is the handler inside the container.
+  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-http-error", true), failureFromStatus(resp.status));
   let body: { ok?: boolean; key?: string; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
     return withFailure(passthrough(input, "passthrough:container-bad-response", true), FAILURE_BAD_RESPONSE);
   }
-  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-failed", true), FAILURE_REFUSED);
+  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-refused", true), FAILURE_REFUSED);
   // Report prepend_seconds only when an opening TITLE card was actually rendered (it shifts the final
   // film`s timeline); credits are appended at the end and never shift cues (#663). titleSeconds is 0 when
   // there is no title card, so this passes through as no prepend.
