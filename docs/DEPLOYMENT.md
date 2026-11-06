@@ -114,18 +114,18 @@ vars (empty = that service is off), with `MEDIA_FINISH_TOKEN` bound from store s
 `FINISH_BLENDER_DOORS` (comma-separated origins; empty = RunPod path). The local-GPU door stays
 opt-in because it needs your own local GPU box.
 
-> **Known deviation (#764, DP-3):** today `deploy.sh` cannot complete a fresh-account deploy. The
-> core template binds `MODULE_INFINITETALK`, `MODULE_CHATTERBOX`,
-> `MODULE_CF_HAILUO`, `MODULE_CF_VEO`, `MODULE_CF_P_VIDEO_AVATAR`, `MODULE_CF_KLING_V4`, `MODULE_CF_MINIMAX_H3` and `MODULE_ALIBABA_WAN_LORA`, which `STANDARD_MODULES` never
-> deploys; `deploy.sh` fills only `store_id` in module configs (it never runs
-> `scripts/fill-module-placeholders.sh`, so `REPLACE_WITH_D1_DATABASE_ID`, `REPLACE_WITH_R2_S3_*` and
-> the `${*_URL}` / `${*_DOORS}` placeholders stay unfilled); and it never seeds `FINISH_DOOR_TOKEN` or
-> `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID`, which the core binds unconditionally.
+> **Which modules `deploy.sh` deploys (cf#880).** Exactly the ones the rendered core config binds.
+> `scripts/deploy-plan.sh` derives the list from `wrangler.toml.example` after the same strip step 5
+> applies, so a `[[services]]` binding cannot dangle. Each module deploys from a rendered copy,
+> `modules/<name>/.deploy.wrangler.toml`, filled by `scripts/fill-module-placeholders.sh`. Before any
+> worker ships, `deploy.sh` checks that the Secrets Store holds every secret those configs bind. A
+> missing one is seeded from a same-named value in `deploy.env` (for example `FINISH_DOOR_TOKEN` and
+> `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID`, which the core binds and no other step seeds). Anything
+> still missing stops the run by name.
 
-> **Known deviation (#764, DP-18):** the `finish-blender` SATELLITE block in `wrangler.toml.example`
-> carries a "DISABLED 2026-08-07" comment, but its `MODULE_FINISH_BLENDER` binding is live inside the
-> markers: the satellites profile keeps it (while `deploy.sh` deploys `finish-blender` only when
-> `BLENDER_RUNPOD_ENDPOINT_ID` is set), and the hosted CI render does not strip it.
+> **finish-blender (cf#880, DP-18).** Its block in `wrangler.toml.example` has its own `BLENDER`
+> markers. `deploy.sh` keeps the binding, deploys the module and seeds its endpoint secret only when
+> `BLENDER_RUNPOD_ENDPOINT_ID` is set, in either profile.
 
 > **Open question (#764, DP-9):** since cf#560 the template's `# >>> LOCAL-GPU:` block contains only
 > comments (no `MODULE_LOCAL_GPU` binding), so keeping it binds nothing; see section 6.
@@ -133,7 +133,7 @@ opt-in because it needs your own local GPU box.
 **Cloudflare plan: free vs Workers Paid (#521).** The full standard install runs on Cloudflare's
 **free** plan: install free, render free. This is live-proven -- a brand-new free-plan account stood up
 the whole standard bundle of the time (27 MODULE_* service bindings in wrangler.toml.example then; the
-template carries 34 as of v1.33.9, see the DP-3 note above) (plus core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
+template now binds more, and `deploy.sh` deploys every one it binds, cf#880) (plus core, D1, R2, Secrets Store, AI Gateway, tunnel, and the 5-service
 media stack) and rendered finished 1080p24 films on all three render paths (own GPU on RunPod, cloud
 i2v, and a local-GPU door). You pay only usage: RunPod GPU seconds, cloud render API calls, AI Gateway
 credits for the planner, or $0 on your own hardware. **Workers Paid ($5/month) is required only for the
@@ -464,22 +464,14 @@ npx wrangler d1 execute vivijure-studio --remote \
 
 # 3d. Deploy. Module workers MUST deploy before the core (the core binds each as a service;
 #     a binding to a not-yet-deployed module makes the core deploy fail).
-# The standard modules (this list mirrors STANDARD_MODULES in deploy.sh as of v1.33.9; the last four
-# are the media-stack finish modules, reached over the media *_URL vars):
-for m in own-gpu kling keyframe cloud-keyframe finish-rife plan-enhance cast-image \
-         image-generate notify-email music-gen narration-gen dialogue-gen minimax-hailuo \
-         alibaba-wan cf-hh1-r2v cf-seedance cf-grok-video cf-flux-3-video cf-vidu-q3-turbo \
-         film-titles subtitle beat-sync audio-master; do
-  sh scripts/fill-module-placeholders.sh modules/$m/wrangler.toml
-  npx wrangler deploy -c modules/$m/wrangler.toml
-done
-# The satellites profile also deploys (SATELLITE_MODULES in deploy.sh; each needs a separate RunPod
-# endpoint): finish-upscale. finish-blender is added only when
+# Deploy every module the rendered core config binds, and nothing else. This is the list deploy.sh
+# derives (scripts/deploy-plan.sh): SAT=1 for the satellites profile, BLENDER=1 when
 # BLENDER_RUNPOD_ENDPOINT_ID is set.
-# NOTE (#764, DP-3): the core template ALSO binds infinitetalk, chatterbox, cf-hailuo,
-# cf-veo, cf-p-video-avatar, cf-kling-v4, cf-minimax-h3 and alibaba-wan-lora, which this list (and deploy.sh) does not deploy; deploy them too, or
-# the core deploy fails on a dangling [[services]] binding. Derive the full set from the uncommented
-# `service = "vivijure-module-..."` lines of your rendered wrangler.toml.
+for m in $(sh scripts/deploy-plan.sh modules wrangler.toml.example 0 0 0); do
+  cp modules/$m/wrangler.toml modules/$m/.deploy.wrangler.toml
+  sh scripts/fill-module-placeholders.sh modules/$m/.deploy.wrangler.toml
+  npx wrangler deploy -c modules/$m/.deploy.wrangler.toml
+done
 npm run deploy   # the core Studio Worker
 ```
 
@@ -495,8 +487,7 @@ never touch CI or GitHub. See **Module secrets via the Secrets Store** below.
 > `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, `SPEND_RATE_LIMITER_NS_ID` (plus `ACCESS_TEAM_DOMAIN` /
 > `ACCESS_AUD` in access mode) and the repo variables `AUTH_MODE`, `SECRETS_STORE_ID` and the media
 > `*_URL` / `*_DOORS` vars; the full list is in [deploy-config-injection.md](deploy-config-injection.md)
-> section 3c. CI deploys every `modules/*/wrangler.toml` (minus an explicit `EXCLUDE`), so it has no
-> STANDARD_MODULES gap.
+> section 3c. CI deploys every `modules/*/wrangler.toml` (minus an explicit `EXCLUDE`).
 
 ### Module secrets via the Secrets Store
 
