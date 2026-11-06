@@ -1,0 +1,3 @@
+### fix(modules): seven more RunPod doors say why a /run was refused, and a 409 is tried again
+
+After the keyframe door was fixed (cf#1271), local-gpu (both `/run` calls), minimax-hailuo, narration-gen, infinitetalk, alibaba-wan-lora, own-gpu and alibaba-wan still reported a refused `/run` as a bare status such as `infinitetalk /run -> 409`, and core read that as final. Each now uses the shared `modules/_shared/runpod-submit-error.ts` helper: the provider's own reason (its `error` or `message` field only, URLs and long token-like runs replaced, one line, capped) is carried, and 409 and 5xx are declared `upstream-unavailable` and 429 `rate-limited`, so core submits again on a later tick. Other statuses stay final. Module versions are bumped one patch each.

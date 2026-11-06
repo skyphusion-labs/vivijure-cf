@@ -12,7 +12,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // the Wan datacenter backend maps the tiers to its steps.
 export const MANIFEST: ModuleManifest = {
   name: "local-gpu",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["motion.backend", "keyframe"],
   provides: [

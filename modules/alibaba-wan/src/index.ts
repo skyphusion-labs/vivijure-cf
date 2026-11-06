@@ -25,6 +25,7 @@ import { buildWanBody, extractVideoUrl, clipKey, clampDuration, encodePoll, deco
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -44,7 +45,7 @@ const ENDPOINT_ID = "wan-2-6-i2v";
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.2.2",
+  version: "0.2.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
@@ -137,7 +138,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildWanBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "alibaba-wan /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("alibaba-wan", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "alibaba-wan /run returned no job id" };
     const submittedAt = Date.now();
