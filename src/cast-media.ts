@@ -11,7 +11,8 @@ import {
 } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "./cast-public";
-import { ownsVoiceRefKey } from "./record-reclaim";
+import { castOwnedPrefixes, isLegacySharedVoiceSampleKey, ownsVoiceRefKey } from "./record-reclaim";
+import { isOwnGeneratedSampleKey, voiceSampleStateKey } from "./cast-voice-sample";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 import { getServedArtifact } from "./shared";
@@ -368,29 +369,70 @@ export async function handleCastSourceRemove(
 }
 
 // Issue #298: deleting a cast member must reclaim ALL of its R2 artifacts, not just the D1 row.
-// Mirrors the per-key best-effort delete the portrait/ref/source handlers already use. Collects the
-// portrait, every ref (the LoRA training set), every source (raw uploads), and the trained lora_key,
-// then issues one delete per key. Each delete is best-effort: an already-absent key is not a failure
-// (R2 delete is idempotent), and one transient miss must not abort the rest of the cleanup.
+// Each delete is best-effort: an already-absent key is not a failure (R2 delete is idempotent), and one
+// transient miss must not abort the rest of the cleanup.
+//
+// cf#1008: the member's own trees are SWEPT, not enumerated from columns. `cast/<id>/voice-line.wav` is
+// named by no column, so a column list could never reach it, and any key a future writer adds under the
+// member's tree is freed without this list learning about it. Column keys outside those trees (the
+// LoRA files) are still deleted by name. The sample-in-flight doc and its clip are freed too. A legacy
+// shared generated `voice_ref_key` is freed only when no surviving cast row names it.
 export async function deleteCastArtifacts(env: Env, cast: CastMember): Promise<void> {
-  const keys = [
-    cast.portrait_key,
-    ...cast.ref_keys.map((r) => r.key),
-    ...cast.source_keys.map((s) => s.key),
-    cast.lora_key,
-    // cf#779: THREE key columns were added to cast_members after #298 and never reached this list,
-    // so every cast delete has leaked them since. `wan_lora_key_high` / `wan_lora_key_low` are the
-    // Wan expert adapters beside the single-file `lora_key` (migration 0012); each is written per
-    // cast per training run, so they are this member's alone. A key column added to the row and not
-    // added here is a silent leak by construction, which is what this list is for.
-    cast.wan_lora_key_high,
-    cast.wan_lora_key_low,
-    // `voice_ref_key` (migration 0021) only when it is this member's OWN object. The generated-sample
-    // shape is one key SHARED by every cast member; see ownsVoiceRefKey for why it is left behind
-    // rather than deleted. Still a leak, and reported as one.
-    ownsVoiceRefKey(cast.id, cast.voice_ref_key) ? cast.voice_ref_key : null,
-  ].filter((k): k is string => typeof k === "string" && k.length > 0);
+  const keys = new Set<string>();
+  const add = (k: unknown) => { if (typeof k === "string" && k.length > 0) keys.add(k); };
+  add(cast.portrait_key);
+  for (const r of cast.ref_keys) add(r.key);
+  for (const s of cast.source_keys) add(s.key);
+  add(cast.lora_key);
+  add(cast.wan_lora_key_high);
+  add(cast.wan_lora_key_low);
+  if (ownsVoiceRefKey(cast.id, cast.voice_ref_key)) add(cast.voice_ref_key);
+  else if (isLegacySharedVoiceSampleKey(cast.voice_ref_key) && (await countCastRowsNamingVoiceRef(env, cast.voice_ref_key as string)) === 0) {
+    add(cast.voice_ref_key);
+  }
+  for (const prefix of castOwnedPrefixes(cast.id)) for (const k of await listPrefixKeys(env, prefix)) add(k);
+  const stateKey = voiceSampleStateKey(cast.public_id);
+  let state: R2ObjectBody | null = null;
+  try { state = await env.R2_RENDERS.get(stateKey); } catch { /* unread: nothing named, nothing freed */ }
+  if (state) {
+    add(stateKey);
+    try {
+      const clip = (JSON.parse(await state.text()) as { clip_key?: unknown }).clip_key;
+      if (typeof clip === "string" && isOwnGeneratedSampleKey(cast.public_id, clip)) add(clip);
+    } catch { /* a corrupt doc is still this member's; its clip, if any, is not named */ }
+  }
   for (const key of keys) {
     try { await env.R2_RENDERS.delete(key); } catch { /* ignore: best-effort GC */ }
   }
+}
+
+/** Surviving rows that name `key` as their voice_ref_key. A failed count reads as "still named", so a
+ *  shared object is never deleted on an error. */
+async function countCastRowsNamingVoiceRef(env: Env, key: string): Promise<number> {
+  try {
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM cast_members WHERE voice_ref_key = ?").bind(key).first<{ n: number }>();
+    const n = row ? Number(row.n) : NaN;
+    return Number.isFinite(n) ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Every key under `prefix`, following the list cursor. A failed page stops the sweep there. */
+async function listPrefixKeys(env: Env, prefix: string): Promise<string[]> {
+  const out: string[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 100; page++) {
+    let res: R2Objects;
+    try {
+      res = await env.R2_RENDERS.list({ prefix, cursor });
+    } catch {
+      break;
+    }
+    for (const o of res.objects) out.push(o.key);
+    if (!res.truncated) break;
+    cursor = (res as { cursor?: string }).cursor;
+    if (!cursor) break;
+  }
+  return out;
 }
