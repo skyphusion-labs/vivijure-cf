@@ -2650,6 +2650,7 @@ The validated storyboard returned by `POST /api/storyboard/plan` / `refine`:
 | `duration_seconds` | number \| undefined | Total film length. |
 | `clip_seconds` | number \| undefined | Per-clip length. |
 | `style_prefix` / `style_category` / `style_preset` | string | Style fields. |
+| `setting?` | string | vivijure-cf#1145 (vivijure-core#435). Where the film takes place, one short place phrase of at most 100 characters and one line. Present only when the board sets a non-empty one; absent, the board and its `storyboard.yaml` are byte for byte what they were before the field existed. Both keyframe doors say it after any shot whose own prompt and `style_prefix` do not already contain it (case-insensitive). The GPU `keyframe` door says it only if it still fits after the character descriptions in the token budget, so it can never cost a person their look. `cloud-keyframe` appends `Setting: <setting>.` to the shot. |
 | `use_characters` | SlotId[] | Character slots in use. |
 | `cast_rules` | string | Cast guidance. |
 | `refs_dir?` | string | Reference dir. |

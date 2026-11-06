@@ -130,8 +130,19 @@ export function parseScenes(yaml: string): BundleScene[] {
  *  prompt so cloud keyframes carry the project's intended style, the way the GPU path's
  *  background_prompt() leans on style_prefix. */
 export function parseStylePrefix(yaml: string): string {
+  return topLevelString(yaml, "style_prefix");
+}
+
+/** vivijure-cf#1145: the board's optional `setting`, where the film takes place (empty when absent). The
+ *  core writes it only when set, as one double-quoted line, the same form as style_prefix. */
+export function parseSetting(yaml: string): string {
+  return topLevelString(yaml, "setting").trim();
+}
+
+function topLevelString(yaml: string, key: string): string {
+  const re = new RegExp(`^${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"\\s*$`);
   for (const line of yaml.split(/\r?\n/)) {
-    const m = line.match(/^style_prefix:\s*"((?:[^"\\]|\\.)*)"\s*$/);
+    const m = line.match(re);
     if (m) return m[1].replace(/\\(.)/g, "$1");
   }
   return "";
