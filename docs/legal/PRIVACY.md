@@ -260,6 +260,9 @@ laws apply to them and their own users, and configuring their instance according
     still names it. From 2026-11-06 a kept sample is copied into the member's own folder.
   - **Render delete** frees that render's own files (keyframes, clips, finished video, narration,
     bundles). Before 2026-10-19 it removed the record only and left the files in storage.
+  - **Clip jobs started on their own** (per-shot clips, not part of a film) have a render history
+    entry from 2026-11-06, and render delete frees their files like any render. Before 2026-11-06
+    such a job made no record, so it had no delete action and its files stayed in storage.
   - **Project delete cascades.** Deleting a project deletes every render under it and frees their
     files. Before 2026-10-19 those renders survived a project delete. If you want to keep a film,
     download it before you delete its project.
@@ -282,8 +285,9 @@ laws apply to them and their own users, and configuring their instance according
   - files orphaned by project or render deletes made before 2026-10-19, which no record points to
     and which the delete path therefore cannot see (#1009). Since 2026-11-06 an operator-run sweep
     can reclaim the part whose owner is provable from records: a deleted render's own job files and
-    its log. Files shared across a project's renders (clips, stills, dialogue) and files no record
-    names at all are not swept.
+    its log. From 2026-11-06 it can also reclaim the files of a clip job started on its own whose
+    history entry is gone. Files shared across a project's renders (clips, stills, dialogue), clip
+    jobs started on their own before 2026-11-06, and files no record names at all are not swept.
 - **Content is kept while it is useful** (so projects and render history persist) and is not retained
   for any other purpose. That is the commitment. Its one known exception is the orphan backlog above:
   files stranded by deletes made before 2026-10-19 are still in storage until a broader sweep
