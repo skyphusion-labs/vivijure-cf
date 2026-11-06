@@ -1279,6 +1279,18 @@ Both respond `200 { ok: true, job_id, motion_backend, total, done, failed, pendi
 shots: [...] }` where each shot is `{ shot_id, status, error }` (POST) or `{ shot_id, status,
 clip_key, error }` (GET). `status` is `"pending" | "done" | "failed"`.
 
+**cf#1309: a clip job started here has a render history row.** POST writes, after the job doc,
+`renders/<job_id>/owner.json` and then a `renders` row with `job_id` = the clip job id, `bundle_key`
+empty and `status` `IN_PROGRESS`, `COMPLETED` (at least one clip; failed shots are named in `error`) or
+`FAILED` (no clip). The row's `output` is `{ mode: "clips", clips: [{ shot_id, key, model }], summary }`
+and the D1 `mode` column reads `clips`; the list projection reports `mode` as `full`, so a client tells a
+clip job row by its `clips-` job id. GET keeps the row current and inserts it if POST could not, but only
+for a job whose `owner.json` exists: a film's clip job has none and never gets a row here. The row
+bookkeeping on POST is best effort (a D1 failure is logged, never a `5xx`, since the job is already
+spending). `DELETE /api/storyboard/renders/:id` frees the job's tree, its log, its clips and archived
+takes (each kept while another record names it). `POST /api/storyboard/renders/:id/retry` on a clip job
+row answers `400`: submit the shots here again.
+
 **Transient poll tolerance (#719, v0.20.1).** A single failed round-trip to the module's `/poll`
 does NOT fail the shot. The shared classifier (`classifyTransientFailure`, core
 `render-orchestrator`; `classifyFinishFailure` delegates to it) separates TRANSPORT blips

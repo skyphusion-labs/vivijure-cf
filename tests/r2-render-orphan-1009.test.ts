@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   buildRenderOwnerIndex,
   classifyRenderKey,
+  clipJobOwnerMarkerOf,
   jobKindOf,
   PROJECT_NAME_SQL,
   reconcileRenders,
@@ -35,6 +36,8 @@ const FILM_N = "film-" + u(10);    // dead, but a live row names one of its keys
 const FILM_P = "film-" + u(11);    // dead, but also a live project name
 const FILM_Q = "film-" + u(12);    // dead, but a live film doc names a still in it
 const FILM_R = "film-" + u(13);    // dead, but a live render row uses it as its project
+const CLIPS_S = "clips-" + u(15);  // standalone clip job with a live row (cf#1309)
+const CLIPS_M = "clips-" + u(16);  // standalone clip job, owner marker, row gone (cf#1309)
 const NOW = Date.parse("2026-11-06T12:00:00Z");
 const OLD = NOW - 30 * 24 * 3600 * 1000;
 
@@ -48,6 +51,7 @@ function realDb() {
   render(SCAT_S, "p");
   render(FILM_C, "p", { output_key: `renders/${FILM_N}/film.mp4` });
   render("film-" + u(14), FILM_R);
+  render(CLIPS_S, "harbor");
   db.prepare("INSERT INTO shot_records (film_id, shot_id, still_key, step, updated_at) VALUES (?, ?, ?, ?, ?)").run(FILM_D, "shot_01", null, "still", 1);
   db.prepare("INSERT INTO storyboard_projects (slug, name) VALUES (?, ?)").run("odd", FILM_P);
   return db;
@@ -77,6 +81,7 @@ const DOCS = {
   [`renders/${SCAT_S}/scatter-job.json`]: { scatter_id: SCAT_S, shard_film_ids: [FILM_B] },
   [`renders/${FILM_C}/film-job.json`]: { film_id: FILM_C, clip_job_id: CLIPS_C, shots: [{ clip_key: "renders/p/clips/shot_01_x.mp4", still_key: `renders/${FILM_Q}/kf.png` }] },
   [`renders/${CLIPS_C}/clips-job.json`]: { shots: [{ takes: [{ key: `renders/${FILM_X}/kept-take.mp4` }] }] },
+  [`renders/${CLIPS_S}/clips-job.json`]: { shots: [{ takes: [{ key: `renders/${FILM_X}/standalone-take.mp4` }] }] },
 };
 
 async function index(docs: Record<string, unknown> = DOCS) {
@@ -128,8 +133,49 @@ describe("cf#1009 orphans", () => {
   });
 });
 
+describe("cf#1309 standalone clip jobs: owned by their row, judged by their marker", () => {
+  const marked = async () => ({ ...(await index()), markedClipJobIds: new Set([CLIPS_M, CLIPS_S]) });
+  it("a clip job tree a live renders row owns is kept, and so is every key its doc names", async () => {
+    expect(await verdict(`renders/${CLIPS_S}/clips-job.json`)).toBe("keep");
+    expect(await verdict(`renders/${CLIPS_S}/owner.json`)).toBe("keep");
+    expect(await verdict(`renders/${FILM_X}/standalone-take.mp4`)).toBe("keep");
+    // Positive control: the dead tree around that take is still judged dead.
+    expect(await verdict(`renders/${FILM_X}/film.mp4`)).toBe("orphan");
+  });
+  it("a MARKED clip job tree with no live row is an orphan once out of the grace window", async () => {
+    const idx = await marked();
+    expect(classifyRenderKey(obj(`renders/${CLIPS_M}/clips-job.json`), idx, NOW).decision).toBe("orphan");
+    expect(classifyRenderKey(obj(`renders/${CLIPS_M}/owner.json`), idx, NOW).decision).toBe("orphan");
+    expect(classifyRenderKey(obj(`renders/${CLIPS_M}/clips-job.json`, NOW - 3600 * 1000), idx, NOW).decision).toBe("keep");
+    expect(classifyRenderKey(obj(`renders/${CLIPS_M}/clips-job.json`, null), idx, NOW).decision).toBe("keep");
+  });
+  it("an UNMARKED clip job tree with no owner stays out of scope at any age (a film's, or from before cf#1309)", async () => {
+    const idx = await marked();
+    expect(classifyRenderKey(obj(`renders/${CLIPS_Z}/clips-job.json`, 0), idx, NOW).decision).toBe("out-of-scope");
+    expect(await verdict(`renders/${CLIPS_M}/clips-job.json`)).toBe("out-of-scope"); // no marker passed
+  });
+  it("the marker is read from the LISTING, and goes last in the orphan set", async () => {
+    const listing = [
+      obj(`renders/${CLIPS_M}/owner.json`), obj(`renders/${CLIPS_M}/clips-job.json`), obj(`renders/logs/${CLIPS_M}.txt`),
+      obj(`renders/${CLIPS_Z}/clips-job.json`), obj(`renders/${CLIPS_S}/clips-job.json`),
+    ];
+    const r = reconcileRenders(listing, await index(), NOW);
+    expect(r.orphans.map((c) => c.key)).toEqual([
+      `renders/${CLIPS_M}/clips-job.json`, `renders/logs/${CLIPS_M}.txt`, `renders/${CLIPS_M}/owner.json`,
+    ]);
+    expect(r.kept.map((c) => c.key)).toEqual([`renders/${CLIPS_S}/clips-job.json`]);
+    expect(r.outOfScope.map((c) => c.key)).toEqual([`renders/${CLIPS_Z}/clips-job.json`]);
+  });
+  it("a marker key is recognised only at its exact place", () => {
+    expect(clipJobOwnerMarkerOf(`renders/${CLIPS_M}/owner.json`)).toBe(CLIPS_M);
+    for (const k of [`renders/${CLIPS_M}/x/owner.json`, `renders/${FILM_X}/owner.json`, "renders/p/owner.json", `renders/${CLIPS_M}/owner.json.bak`]) {
+      expect(clipJobOwnerMarkerOf(k), k).toBeNull();
+    }
+  });
+});
+
 describe("cf#1009 out of scope, never deleted", () => {
-  it("a clip job no live film names (may be standalone, cf#1309)", async () => {
+  it("a clip job no live film or row names, with no owner marker (cf#1309)", async () => {
     expect(await verdict(`renders/${CLIPS_Z}/clips-job.json`)).toBe("out-of-scope");
   });
   it("project-keyed trees, renders/cast/, and a project slugged logs", async () => {
