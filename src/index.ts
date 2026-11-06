@@ -1520,6 +1520,24 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
   });
   return json({ ok: true, jobId: view.jobId, status: view.status });
 };
+/**
+ * A film tick that finishes even when the client that started it goes away (vivijure-cf#1139).
+ *
+ * A Worker's execution context ends when its client disconnects, and every pending await ends with it.
+ * A poll cut off mid-tick then never wrote the film doc and never released the advance lease, so the film
+ * waited for the lease to expire. `waitUntil` keeps the tick alive for up to 30 s after a disconnect, so it
+ * can write its doc and release. Core bounds the rest: a tick longer than that stops renewing its lease,
+ * and the film is free again within one lease TTL.
+ *
+ * The caller still awaits the tick and sees its errors. The copy handed to `waitUntil` swallows them, so a
+ * failed tick is not reported twice.
+ */
+function advanceFilmJobOutlivingClient(env: StudioEnv, ctx: ExecutionContext, filmId: string) {
+  const tick = advanceFilmJob(env, filmId);
+  ctx.waitUntil(tick.then(() => undefined, () => undefined));
+  return tick;
+}
+
 const hPollRender: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.jobId)) {
     return json({ error: "Scatter is retired. Start a single film.", jobId: p.jobId }, 410);
@@ -1527,7 +1545,7 @@ const hPollRender: Handler = async (_req, env, ctx, p) => {
   if (!isFilmJobId(p.jobId)) {
     return json({ error: "unknown or legacy render job id (film-* only)", jobId: p.jobId }, 404);
   }
-  const r = await advanceFilmJob(env, p.jobId);
+  const r = await advanceFilmJobOutlivingClient(env, ctx, p.jobId);
   if (!r) throw notFound("render job");
   const job = jobAfterSkippedJoin(r.job);
   const kfDone = job.phase === "keyframe" && job.keyframe_job_id
@@ -2092,7 +2110,7 @@ const hPollFilm: Handler = async (_req, env, ctx, p) => {
   if (isScatterJobId(p.id)) {
     return json({ error: "Scatter is retired. Start a single film.", jobId: p.id }, 410);
   }
-  const r = await advanceFilmJob(env, p.id);
+  const r = await advanceFilmJobOutlivingClient(env, ctx, p.id);
   if (!r) throw notFound("film job");
   // A missed join is a failed film even when the published package still marked the job done.
   const job = jobAfterSkippedJoin(r.job);

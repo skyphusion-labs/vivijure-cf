@@ -1,0 +1,3 @@
+### fix(film): a film poll that is cut off still finishes its tick
+
+A Worker's execution context ends when its client disconnects, and every pending await in it ends too. A `GET /api/render/film/:id` or `GET /api/storyboard/render/:jobId` cut off mid-tick never wrote the film doc and never released the advance lease, so the film waited for the lease to expire. Both routes now hand the tick to `ctx.waitUntil`, which keeps it alive for up to 30 s after a disconnect. The caller still sees the tick's errors. A tick longer than that is bounded in core: it stops renewing its lease and the film is free again within one lease TTL (vivijure-cf#1139).
