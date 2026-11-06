@@ -30,7 +30,9 @@ import { countOtherRowsWithOutputKey } from "@skyphusion-labs/vivijure-core/rend
 import type { StudioEnv } from "./orchestrator-env";
 import {
   buildLiveKeyIndex,
+  clipJobDocKey,
   clipJobIdOf,
+  isClipJobId,
   isForeignRef,
   parseJobDocKeys,
   planReclaim,
@@ -270,9 +272,15 @@ export async function reclaimRenderRows(
     const filmDoc = await readJobDoc(env, `${renderDocPrefix(row.job_id)}film-job.json`, budget);
     candidates.push(...parseJobDocKeys(filmDoc));
 
+    // cf#1309: a standalone clip job row IS the clip job. Its doc names its clips and takes, and its
+    // own tree (doc and owner marker) is the `ownTree` listing below.
+    if (isClipJobId(row.job_id)) {
+      candidates.push(...parseJobDocKeys(await readJobDoc(env, clipJobDocKey(row.job_id), budget)));
+    }
+
     const clipJobId = clipJobIdOf(filmDoc);
     if (clipJobId) {
-      const clipDocKey = `${renderDocPrefix(clipJobId)}clips-job.json`;
+      const clipDocKey = clipJobDocKey(clipJobId);
       candidates.push(...parseJobDocKeys(await readJobDoc(env, clipDocKey, budget)));
       const clipTree = await listAllKeys(env, renderDocPrefix(clipJobId), budget);
       candidates.push(...clipTree.keys);
