@@ -39,6 +39,14 @@ def arg(cmd, flag):
     return cmd[cmd.index(flag) + 1] if flag in cmd else None
 
 
+def tpad_stop_duration(vf):
+    """The stop_duration of a tpad clone in a -vf chain, or None. stop_duration is how much the clone may add,
+    so a hold to N seconds needs it to be at least N; a 0 adds nothing and the clip stays short."""
+    import re
+    m = re.search(r"tpad=stop_mode=clone:stop_duration=([0-9.]+)", vf or "")
+    return float(m.group(1)) if m else None
+
+
 def main():
     # ---- the decision, pure.
     H = app._hold_extension
@@ -81,6 +89,8 @@ def main():
         cmd = capture_normalize(cap=None, ensure_audio=True, extend_to=2.0)
         vf = arg(cmd, "-vf") or ""
         check("the video holds its last frame (tpad clone)", "tpad=stop_mode=clone" in vf, vf)
+        sd = tpad_stop_duration(vf)
+        check("the clone may add at least the whole hold (stop_duration >= 2.0)", sd is not None and sd >= 2.0, sd)
         check("the audio is padded to the same length, never cut", arg(cmd, "-af") == "apad=whole_dur=2.000", arg(cmd, "-af"))
         check("the clip is bounded at the held length", arg(cmd, "-t") == "2.000", arg(cmd, "-t"))
         cmd = capture_normalize(cap=1.96, ensure_audio=True, extend_to=2.0)
@@ -89,6 +99,7 @@ def main():
         check("no hold: no tpad and no apad, as before", "tpad" not in (arg(cmd, "-vf") or "") and "-af" not in cmd, cmd)
         cmd = capture_normalize(cap=None, extend_to=2.0)
         check("a silent film is held with its audio dropped", "tpad=stop_mode=clone" in (arg(cmd, "-vf") or "") and "-an" in cmd and "-af" not in cmd, cmd)
+        check("a silent film's clone may add the whole hold too", (tpad_stop_duration(arg(cmd, "-vf")) or 0) >= 2.0, arg(cmd, "-vf"))
     finally:
         app._probe_audio = real_audio
 
