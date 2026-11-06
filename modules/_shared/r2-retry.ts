@@ -23,6 +23,21 @@ export function isTemporaryR2Error(e: unknown): boolean {
   return TEMPORARY.test(e instanceof Error ? e.message : String(e));
 }
 
+/** cf#1346: when this isolate last had to retry an R2 call (ms epoch). Per isolate, never shared, and not a
+ *  health check: it says only that a call from this isolate failed with a temporary error recently. The
+ *  studio reads it to hold a paid submit while R2 is retrying (r2RetriedWithin). */
+let lastRetryAt = Number.NEGATIVE_INFINITY;
+
+/** True when this isolate retried an R2 call within the last `ms`. */
+export function r2RetriedWithin(ms: number, now: number = Date.now()): boolean {
+  return now - lastRetryAt < ms;
+}
+
+/** Test seam: forget any retry this isolate saw. */
+export function _resetR2RetryClock(): void {
+  lastRetryAt = Number.NEGATIVE_INFINITY;
+}
+
 type Sleep = (ms: number) => Promise<void>;
 const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -32,6 +47,7 @@ async function withRetry<T>(op: string, call: () => Promise<T>, sleep: Sleep): P
       return await call();
     } catch (e) {
       if (attempt >= R2_RETRY_DELAYS_MS.length || !isTemporaryR2Error(e)) throw e;
+      lastRetryAt = Date.now();
       console.warn(JSON.stringify({ ev: "r2.retry", op, attempt: attempt + 1, error: String(e).slice(0, 200) }));
       await sleep(R2_RETRY_DELAYS_MS[attempt] * (1 + Math.random() * 0.25));
     }

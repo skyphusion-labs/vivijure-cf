@@ -71,6 +71,7 @@ import { isClipJobId } from "./record-reclaim";
 import { clipJobRowSeed, clipJobToPollView, isStandaloneClipJob, writeClipJobOwner } from "./clip-job-row";
 import { ensureClipJobRow, readClipJobDoc, withClipJobLease } from "./clip-job-lease";
 import { sweepStandaloneClipJobs } from "./clip-job-sweep";
+import { r2RetriedWithin } from "../modules/_shared/r2-retry";
 import {
   talkingVoiceHonorFor,
   startCastVoiceSample,
@@ -2334,6 +2335,13 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
       return started.film_id;
     },
     async admitSubmit() {
+      // cf#1346: a first submit makes about 17 R2 calls, two of them conditional puts the retry never repeats.
+      // While R2 is retrying, one such tick was measured at 52 to 65 s, past the 30 s a cron pass has, and a
+      // cut after the claim strands the part (and after the invoke, also pays for work nobody records). So no
+      // part is claimed while this isolate has had to retry R2 recently. The part stays pending and asks again.
+      if (r2RetriedWithin(SUBMIT_HOLD_AFTER_R2_RETRY_MS)) {
+        return "storage is retrying, so no part starts until it answers first time again";
+      }
       const spend = await enforceSpendLimit(internalRequest("/api/render/film", {}), env);
       if (!spend.ok) return spend.message;
       const quota = await checkStorageQuota(env);
@@ -2568,6 +2576,8 @@ const FILM_RECONCILE_EVERY_MINUTES = 10;
  *  more: 15 s plus that is about 29 s. Parents the pass does not reach are reached on a later pass, because
  *  the list is rotated by the minute. tests/cron-pass-r2-outage-1302.test.ts measures it. */
 export const FILM_PASS_START_BUDGET_MS = 15_000;
+/** cf#1346: how long after an R2 retry a parent part is not submitted. Two minutes: two cron passes. */
+export const SUBMIT_HOLD_AFTER_R2_RETRY_MS = 120_000;
 // Three times the cron's own minute, so one slow pass does not read as a dead cron.
 const FILM_CRON_STALE_MS = 3 * 60_000;
 
