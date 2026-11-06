@@ -177,6 +177,7 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   const output = {
     content_validation: { checked: 2, unmeasured: 1, reasons: ["video-finish /inspect unreachable or errored"] },
     plate_check: { checked: 2, unclean: [{ shot_id: "s2", expected: 2, faces: 3 }] },
+    keyframes_incomplete: { adopted: 2, expected: 3, dropped: ["s3"] },
   };
   const { ctx, page, errors } = await open({ output, simple: true });
   await page.click('#make-faces button[aria-label="Add Mara"]');
@@ -186,9 +187,10 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   await page.click('#make-confirm button[value="go"]');
   await page.waitForSelector("#make-result:not([hidden])", { timeout: 15000 });
   const lines = await page.$$eval("#make-result-note p.make-warn", (els) => els.map((e) => e.textContent));
-  check("the warnings show under the video", !(await page.locator("#make-result-note").isHidden()) && lines.length === 2, JSON.stringify(lines));
-  check("unchecked clips are named plainly", lines[0] === "Some clips could not be checked for picture problems.", lines[0]);
-  check("the extra person warning says how to fix it", lines[1] === "One picture may show an extra person. To fix it, open the advanced planner and regenerate that picture.", lines[1]);
+  check("the warnings show under the video", !(await page.locator("#make-result-note").isHidden()) && lines.length === 3, JSON.stringify(lines));
+  check("missing pictures are named plainly", lines[0] === "Some pictures could not be made, so this video leaves out part of your idea.", lines[0]);
+  check("unchecked clips are named plainly", lines[1] === "Some clips could not be checked for picture problems.", lines[1]);
+  check("the extra person warning says how to fix it", lines[2] === "One picture may show an extra person. To fix it, open the advanced planner and regenerate that picture.", lines[2]);
   check("warnings are plain words", !JARGON.test(await page.locator("#make-result").innerText()), (await page.locator("#make-result").innerText()).match(JARGON)?.[0]);
   check("no script errors with warnings", errors.length === 0, errors.join(" | "));
   if (process.env.SHOTS) {
