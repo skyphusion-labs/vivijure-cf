@@ -29,6 +29,7 @@ import {
   type KeyframeOutput,
 } from "./contract";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
+import { FILM_DOC_GRACE_MS } from "./film-doc";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import {
   generateImage,
@@ -134,11 +135,6 @@ async function filmRunId(filmId: string, shotIds: string[]): Promise<string> {
   const hex = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
   return "kf-" + filmId.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 70) + "-" + hex;
 }
-
-/** How long a film run draws before its film doc must exist. The core writes the doc once, right after
- *  it invokes this module, so a doc still missing after this means the tick that started the run died.
- *  Longer than the 300 s film advance lease, so a live tick always gets to write it. */
-export const FILM_DOC_GRACE_MS = 6 * 60 * 1000;
 
 /** True when the film no longer wants keyframes: failed, cancelled, or past this phase. A missing doc
  *  counts as over only after the grace period, because a new film writes its doc after this run starts. */

@@ -6,7 +6,8 @@ vi.mock("../modules/cloud-keyframe/src/image-gen", async (orig) => {
   return { ...real, generateImage: vi.fn() };
 });
 
-import worker, { CloudKeyframeWorkflow, FILM_DOC_GRACE_MS } from "../modules/cloud-keyframe/src/index";
+import worker, { CloudKeyframeWorkflow } from "../modules/cloud-keyframe/src/index";
+import { FILM_DOC_GRACE_MS } from "../modules/cloud-keyframe/src/film-doc";
 import { generateImage } from "../modules/cloud-keyframe/src/image-gen";
 import { decodePoll, stateKey, encodePoll } from "../modules/cloud-keyframe/src/keyframe";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
