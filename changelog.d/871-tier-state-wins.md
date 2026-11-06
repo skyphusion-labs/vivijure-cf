@@ -1,0 +1,3 @@
+### fix(finish): an unprovisionable declaration wins over a typed VIDEO_FINISH_URL
+
+`videoFinishState` read a non-empty `VIDEO_FINISH_URL` before `VIDEO_FINISH_TIER_STATE`, so `unprovisionable` counted only when the URL was empty. A studio declared unprovisionable with a URL set kept offering the mux and add-audio controls. The order is now: a bound container is available; then `VIDEO_FINISH_TIER_STATE=unprovisionable` wins; then a usable URL is available. `studioEnv` clears the URL it hands core in the same case, so the film path degrades the same way the panel reports. A bound container still wins over the declaration. Only the exact value `unprovisionable` counts (cf#871).

@@ -119,14 +119,25 @@ describe("GET /api/modules with VIDEO_FINISH_TIER_STATE set (control-plane#136)"
     expect(VIDEO_FINISH_UNPROVISIONABLE_REASON).not.toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
   });
 
-  it("an OBSERVED tier beats the label: a bound studio reports nothing at all", async () => {
-    // The plane can set the var on a studio that later gets the binding. The panel must not then
-    // tell a tenant a working capability can never be turned on for them.
+  it("an OBSERVED tier beats the label: a studio with the container BOUND reports nothing at all", async () => {
+    // The var can outlive the provisioning it described. The panel must not then tell a studio a
+    // working capability can never be turned on for it. The observation is the bound door (cf#810).
+    const door = { fetch: async () => new Response("{}") };
     const map = await modulesHost({
       VIDEO_FINISH_TIER_STATE: "unprovisionable",
-      VIDEO_FINISH_URL: "https://video-finish.skyphusion.org",
+      MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door },
     });
     expect(map[VIDEO_FINISH_CAPABILITY_KEY]).toBeUndefined();
+  });
+
+  it("cf#871: a typed URL is NOT an observation, so the declaration wins over it", async () => {
+    // This case used to assert silence, which let a non-empty URL hide the declaration: the panel
+    // kept offering controls on a studio declared dead.
+    const map = await modulesHost({
+      VIDEO_FINISH_TIER_STATE: "unprovisionable",
+      VIDEO_FINISH_URL: "https://video-finish.example",
+    });
+    expect(map[VIDEO_FINISH_CAPABILITY_KEY]).toBe(VIDEO_FINISH_UNPROVISIONABLE_REASON);
   });
 
   it("an unrecognised value falls back to the CONSERVATIVE sentence, never to silence", async () => {
