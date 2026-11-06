@@ -37,7 +37,7 @@ import {
   type ModuleConfig,
 } from "./params";
 import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
-import { namingGatewayLog } from "../../_shared/gateway-log";
+import { callWithRefusals, failOnRefusal, type GatewayLogReader } from "../../_shared/gateway-log";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -49,6 +49,8 @@ interface AiRun {
   run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
   // Set by the binding after a gateway call. Absent on a stub or an unrouted call.
   aiGatewayLogId?: string | null;
+  // cf#1154: the binding's gateway handle, used only to read one failed call's own log entry.
+  gateway?: GatewayLogReader["gateway"];
 }
 
 interface WorkflowInstance {
@@ -77,7 +79,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-p-video-avatar",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (higher resolution)" }],
@@ -150,8 +152,9 @@ export async function generateClip(env: Env, params: WorkflowParams): Promise<un
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  // cf#1154: a provider 7003 carries no detail. The error names the gateway log that holds the request.
-  return namingGatewayLog(env.AI, () => env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } }));
+  // A refusal its gateway log names (content policy, credit, a provider failure) comes back as { refused } and
+  // fails in parse, so it is never bought again. Anything else keeps the provider's own error and its log id.
+  return callWithRefusals(env.AI, gatewayId, () => env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } }));
 }
 
 /** Download and write. Retries on its own step, and never reaches the provider. */
@@ -185,7 +188,10 @@ export class CfPVideoAvatarWorkflow extends WorkflowEntrypoint<Env, WorkflowPara
     try {
       await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
         generate: () => generateClip(this.env, p),
-        parse: (raw) => requireVideoUrl(parseVideoUrl(raw)),
+        parse: (raw) => {
+          failOnRefusal(raw);
+          return requireVideoUrl(parseVideoUrl(raw));
+        },
         store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
