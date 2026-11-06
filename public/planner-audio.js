@@ -646,7 +646,7 @@ if (typeof window !== "undefined") {
 // (librosa on the fleet audio-beat-sync container over its Traefik HTTPS door) and returns the beat plan
 // inline (one synchronous request, no jobId/poll), then we apply its per-scene beat-aligned
 // target_seconds.
-const PLANNER_MAX_SCENES = 50; // mirrors STORYBOARD_MAX_SCENES in src/storyboard-validate.ts
+const PLANNER_MAX_SCENES = 600; // mirrors core STORYBOARD_MAX_SCENES; tests/clip-cap-equality-1122.test.ts holds them equal
 let lastBeatPlan = null;
 
 function setBeatStatus(text, kind) {
