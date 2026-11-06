@@ -138,6 +138,7 @@ import {
 } from "@skyphusion-labs/vivijure-core/runpod-submit";
 import { resolveProjectForBundle } from "../modules/_shared/bundle-project";
 import { validateStoryboard } from "@skyphusion-labs/vivijure-core/storyboard-validate";
+import { planCharactersRefusal } from "./plan-characters";
 import { checkStoryboardShape, checkCastBindingsReady, checkDurationGrid, resolveCastBindings, summarize, type PreflightIssue } from "@skyphusion-labs/vivijure-core/preflight";
 import {
   planStoryboard, refineStoryboard, chatComplete,
@@ -1685,6 +1686,9 @@ const hPreflight: Handler = async (req, env) => {
 const hPlan: Handler = async (req, env) => {
   const a = await readBody<PlanStoryboardArgs>(req);
   if (!a.brief || !a.model) throw badRequest("brief and model required");
+  // cf#1137: an entry without slot / name / bible made core throw a 500. Refuse it here, by name.
+  const castRefusal = planCharactersRefusal(a.characters);
+  if (castRefusal) throw badRequest(castRefusal);
   // v0.165.0 (#143): a new project sends no characters field; default to []
   // so buildPlanningUserMessage does not throw "characters is not iterable".
   if (!Array.isArray(a.characters)) a.characters = [];
