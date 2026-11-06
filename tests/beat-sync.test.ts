@@ -75,13 +75,14 @@ describe("beat-sync pure logic", () => {
 });
 
 describe("beat-analyze helpers", () => {
-  it("beatSyncScoreModules keeps score modules with clip_seconds only", () => {
+  it("beatSyncScoreModules keeps score modules that declare kind beat (vivijure-cf#878)", () => {
     const beat = {
       name: "beat-sync",
       version: "0.1.0",
       api: "vivijure-module/2" as const,
       binding: "MODULE_BEAT_SYNC",
       hooks: ["score" as const],
+      score_kind: "beat",
       config_schema: { clip_seconds: { type: "float" as const, default: 8 } },
     } as unknown as RegisteredModule;
     const music = {
@@ -93,6 +94,9 @@ describe("beat-analyze helpers", () => {
       config_schema: { prompt: { type: "string" as const, default: "" } },
     } as unknown as RegisteredModule;
     expect(beatSyncScoreModules([beat, music])).toEqual([beat]);
+    // CONTROL: the old key alone no longer selects a module; only the declared kind does.
+    const keyOnly = { ...beat, name: "old-beat", score_kind: undefined } as unknown as RegisteredModule;
+    expect(beatSyncScoreModules([keyOnly, music])).toEqual([]);
   });
 
   it("beatPlanFromModuleOutput reads camelCase beat_plan", () => {

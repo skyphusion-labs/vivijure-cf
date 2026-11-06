@@ -21,6 +21,8 @@ export interface ModuleManifest {
   provides?: Provides[];
   config_schema?: ConfigSchema;
   ui?: ModuleUi;
+  /** vivijure-cf#878: what this score module produces. Vendored from core's SCORE_KINDS. */
+  score_kind?: "music" | "narration" | "beat";
 }
 
 export interface InvokeContext { project: string; job_id: string; }

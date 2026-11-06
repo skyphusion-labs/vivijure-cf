@@ -43,7 +43,7 @@ Shapes live in `@skyphusion-labs/vivijure-core` (`modules/types`).
 | `keyframe` | Storyboard -> start keyframes. Backend-selectable: GPU SDXL or GPUless cloud (e.g. cloud-keyframe) are modules. | pick one |
 | `motion.backend` | Keyframe (+ motion prompt) -> shot clip. GPU/RunPod and cloud providers are modules. | pick one per shot |
 | `finish` | Post-process a clip: frame interpolation, color grade, upscale (CUDA Real-ESRGAN), face restore. | chain (0..n, ordered) |
-| `score` | Add audio to a film: music, narration, beat-sync. | chain (0..n) |
+| `score` | Add audio to a film: music, narration, beat-sync. | one per kind (`score_kind`) |
 | `dialogue` | Per-shot dialogue lines -> speech audio (TTS, one voice per cast member). Runs after clips, before finish; its audio becomes the shot's spoken track, and is offered to any finish module that declares `finish_consumes_audio`. | pick one |
 | `speech` | Per-shot dialogue AUDIO -> cleaned/enhanced dialogue audio (e.g. speech upscale). Runs after `dialogue`, before `finish`, so the improved track is what the film carries. | chain (0..n) |
 | `plan.enhance` | Expand a storyboard before render: LLM auto-direction, camera/lighting enrichment. | chain (0..n) |
@@ -74,12 +74,15 @@ depends on the hook, not on the module:
 | `dialogue` | A submit failure on the pre-clip path fails the film; on the post-clip path the film finishes silent. |
 | `keyframe`, `motion.backend` | Fails that phase / shot (motion retries transient provider failures per shot). |
 
-> **Known deviation (#764, MA-13):** `score` is declared `chain`, but no render path folds a score
-> chain today. The host invokes exactly ONE score module per request from the planner
-> (`src/score-bed.ts`, core `beat-analyze`), classifying modules by which config key they declare:
-> `config_schema.prompt` = music bed, `config_schema.text` = narration, `config_schema.clip_seconds` =
-> beat analysis (first by `ui.order` unless the caller names one). The generated bed is read from an
-> `audio:<r2-key>` tag in `ScoreOutput.applied`, not from `film_key`.
+> **`score` is one module per KIND (vivijure-cf#878, MA-13 resolved).** The hook carries three products a
+> film can use together: a music bed, narration, and a beat plan. A score module MUST declare which one
+> it produces, as `score_kind`: `"music"`, `"narration"` or `"beat"`. The host picks one module within
+> the kind it needs (core `pickScoreModule`): the module the caller names, else the first of that kind
+> by `ui.order`. A score module that declares no kind is never selected, and the refusal names it; core
+> `checkManifest` fails conformance for it. Config keys never decide the kind any more (before #878,
+> `prompt` meant music, `text` narration and `clip_seconds` beat). The catalog reports the cardinality as
+> `pick_one_per_kind`. The generated bed is read from an `audio:<r2-key>` tag in `ScoreOutput.applied`,
+> not from `film_key`.
 
 ## The module manifest (`module.json`)
 
@@ -440,7 +443,7 @@ permanent failure.
 | `image.generate` | No: a `pending` answer is rejected. |
 | `notify` | No: the host never polls a notifier; answer inline. |
 | `score` music / narration bed (planner) | MUST answer `pending` (a synchronous answer is rejected). |
-| `score` beat analysis (`config_schema.clip_seconds`) | No: answer inline. |
+| `score` beat analysis (`score_kind: "beat"`) | No: answer inline. |
 
 ### Credential readiness (`GET /ready`, optional + additive)
 
@@ -848,7 +851,7 @@ the hook's failure policy). Optional output fields are validated only when prese
 | out | `images[]` | yes | each `{ key, mime }` strings (already written to R2) |
 | out | `applied` | yes | `string[]` |
 
-**`score`** (see the MA-13 note under "The hooks" for how the host calls it today)
+**`score`** (declare `score_kind`; see the note under "The hooks" for how the host picks a module)
 
 | | Field | Req | Notes |
 |---|---|---|---|
@@ -930,7 +933,8 @@ GET /api/modules
 
 - `modules`: each manifest as served (the internal `binding` ref is stripped; topology never leaves
   the core). `hooks`: hook -> module names, in fold order.
-- `catalog`: EVERY hook (installed or not) with its `blurb`, `cardinality` (`pick_one` | `chain`) and
+- `catalog`: EVERY hook (installed or not) with its `blurb`, `cardinality` (`pick_one` | `chain` |
+  `pick_one_per_kind`, the last for `score` only) and
   display `order`; the UI renders the pipeline panel from it. `render`: host-owned render config
   (quality tiers, see CONTRACT.md 2.3.1).
 - `host` (optional, the host describing itself): `dispatch` (this deploy binds the WfP namespace),

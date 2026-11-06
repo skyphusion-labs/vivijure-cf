@@ -1,0 +1,5 @@
+### feat(modules): a score module declares its kind, and the studio picks one per kind (#878)
+
+Core moves to `^1.38.0`. The `score` hook carries three products a film can use together: a music bed, narration and a beat plan. The studio picked the module for each by sniffing config keys (`prompt`, `text`, `clip_seconds`). Now `music-gen`, `narration-gen` and `beat-sync` each declare `score_kind` (`music`, `narration`, `beat`) in the manifest they serve, and the studio picks one module within the kind it needs with core's `pickScoreModule`: a named module first, then `ui.order`. A score module that declares no kind is never used, and the error names it. The panel's score filters read `score_kind`, and the pipeline page labels the hook "one per kind" (`pick_one_per_kind`). `docs/module-api.md`, `docs/module-authoring.md` and `docs/CONTRACT.md` state the rule; the MA-13 deviation note is gone.
+
+**Deploy order.** Deploy the three score module workers first, and check that each `GET /module.json` carries `score_kind`. Then deploy the studio. A studio on core 1.38.0 in front of an old score module refuses it by name rather than guessing.

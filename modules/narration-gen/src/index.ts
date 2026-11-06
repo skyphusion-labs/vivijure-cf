@@ -72,6 +72,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.2.2",
   api: MODULE_API,
   hooks: ["score"],
+  score_kind: "narration", // vivijure-cf#878: the host selects by this, never by config keys
   // Tier-honest identity + knob labels (cf#211): this manifest is canonical + drift-locked (synced
   // into vivijure-local/dev/manifests/ by scripts/sync-module-manifests.ts, checked by
   // check-module-manifest-drift.sh), so it has to read true on BOTH panels. Hosted (vivijure-cf)

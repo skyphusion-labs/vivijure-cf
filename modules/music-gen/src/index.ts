@@ -89,6 +89,7 @@ const MANIFEST: ModuleManifest = {
   version: "0.1.2",
   api: MODULE_API,
   hooks: ["score"],
+  score_kind: "music", // vivijure-cf#878: the host selects by this, never by config keys
   provides: [{ id: "minimax-music", label: "MiniMax Music 2.6 (Workers AI)" }],
   config_schema: {
     prompt: {
