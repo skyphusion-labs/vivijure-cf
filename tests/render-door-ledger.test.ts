@@ -206,14 +206,14 @@ const DOORS: DoorDecl[] = [
   {
     id: "3 panel render-from-keyframes", route: "/api/storyboard/render-from-keyframes",
     path: "/api/storyboard/render-from-keyframes", seam: "fromKeyframes",
-    body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "seedance", audioKey: "audio/bed.mp3",
-            film_titles: { title: { text: "T" } } },
-    caps: { dialogue: "internal", quality_tier: "no", audio_key: "yes", film_titles: "no" },
+    body: { bundleKey: BUNDLE, qualityTier: "draft", motion_backend: "seedance", audioKey: "audio/bed.mp3" },
+    caps: { dialogue: "internal", quality_tier: "no", audio_key: "yes", film_titles: "n/a" },
     // C2 landed here with the shared pre-flight. #500 did NOT and the gap is declared, not hidden.
     guards: { config_shape: "yes", unsafe_bundle_key: "yes", motion_backend_preflight: "n/a", motion_config_preflight: "yes" },
     na_reasons: {
       motion_backend_preflight: NA_SERVER_NOT_YET_STRICT,
       dialogue: "derived inside hRenderFromKeyframes from the bundle storyboard (cf#334)",
+      film_titles: "this door does not read film_titles, so it refuses the field with a 400 (cf#896) rather than drop it",
     },
   },
   {
