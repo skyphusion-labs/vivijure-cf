@@ -331,6 +331,38 @@
     return false;
   }
 
+  // cf#1067: the studio's preflight says when the chosen style will not make a shot at its planned
+  // length, with the numbers in `detail`. This only puts those numbers in plain words; the rule itself
+  // lives in the studio (src/door-duration-preflight.ts), so the page and the render cannot disagree.
+  function lengthNote(issue) {
+    var d = issue && issue.detail;
+    if (!d || typeof d.planned_seconds !== "number") return "";
+    var scene = "Scene " + d.index + " is " + d.planned_seconds + " seconds";
+    if (typeof d.max_seconds === "number" && d.planned_seconds > d.max_seconds) {
+      return scene + ". This style makes clips of at most " + d.max_seconds + " seconds, so it will be cut to " + d.max_seconds + " seconds.";
+    }
+    if (typeof d.min_seconds === "number" && d.planned_seconds < d.min_seconds) {
+      return scene + ". This style makes clips of at least " + d.min_seconds + " seconds, so it will run a little longer.";
+    }
+    if (Array.isArray(d.steps) && d.steps.length) {
+      var list = d.steps.slice(0, -1).join(", ") + (d.steps.length > 1 ? " or " : "") + d.steps[d.steps.length - 1];
+      return scene + ". This style makes clips of " + list + " seconds, so it will not be exactly " + d.planned_seconds + " seconds.";
+    }
+    return "";
+  }
+
+  // #1253 ruling: one style for the whole video, so the look stays the same from shot to shot.
+  function talkingStyleLine(board, mod) {
+    var scenes = (board && Array.isArray(board.scenes)) ? board.scenes : [];
+    var speaking = 0;
+    for (var i = 0; i < scenes.length; i++) {
+      var dl = scenes[i] && scenes[i].dialogue;
+      if (dl && String(dl.text || "").trim()) speaking++;
+    }
+    if (!speaking || speaking === scenes.length || !canSpeak(mod)) return "";
+    return "Some scenes in this video speak, so the whole video uses a talking style.";
+  }
+
   function priceText(p) {
     if (!p || p.usd === null) return "price unknown";
     var money = "$" + p.usd.toFixed(2);
@@ -388,6 +420,8 @@
     resolutionFor: resolutionFor,
     clipPrice: clipPrice,
     priceText: priceText,
+    lengthNote: lengthNote,
+    talkingStyleLine: talkingStyleLine,
     boardSeconds: boardSeconds,
     hasSpokenLines: hasSpokenLines,
     styleLine: styleLine,
