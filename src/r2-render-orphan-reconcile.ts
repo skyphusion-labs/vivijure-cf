@@ -272,7 +272,34 @@ export function refuseOversizedSweep(count: number, cap: number): string | null 
     : null;
 }
 
-// ---- cf#1009 dry-run summary: counts, bytes and sample keys per rule, for the GC's report ----
+// ---- cf#1009 dry-run report: a pure function of a listing, an owner snapshot and the job docs it names ----
+
+/** One line of the listing input: what a paginated S3 ListObjectsV2 gives per object. `uploaded` is an
+ *  ISO-8601 time or epoch milliseconds. Anything else in a line is ignored. */
+export interface ListingLine {
+  key: string;
+  size: number;
+  uploaded: string | number | null;
+}
+
+/** Parse the listing (JSON lines). A line that is not a usable object FAILS the whole parse: a report built
+ *  on a listing it partly could not read would count the unread part as absent. Blank lines are skipped. */
+export function parseListingLines(text: string): RenderObjectLite[] {
+  const out: RenderObjectLite[] = [];
+  text.split("\n").forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) return;
+    let o: unknown;
+    try { o = JSON.parse(line); } catch { throw new Error(`listing line ${i + 1} is not JSON`); }
+    const r = o as Partial<ListingLine>;
+    if (!r || typeof r.key !== "string" || !r.key || typeof r.size !== "number" || !Number.isFinite(r.size)) {
+      throw new Error(`listing line ${i + 1} needs a string key and a numeric size`);
+    }
+    const t = typeof r.uploaded === "number" ? r.uploaded : typeof r.uploaded === "string" ? Date.parse(r.uploaded) : NaN;
+    out.push({ key: r.key, size: r.size, mtimeMs: Number.isFinite(t) ? t : null });
+  });
+  return out;
+}
 
 export interface RuleSummary {
   rule: RenderRule;
@@ -291,7 +318,7 @@ export interface DryRunReport {
   kept: number;
   outOfScope: number;
   rules: RuleSummary[];
-  /** Every object the sweep would delete, with its reason. The summary itself deletes nothing. */
+  /** Every object the sweep WOULD delete, with its reason. Nothing is deleted: this is a list. */
   wouldDeleteObjects: Array<{ key: string; size: number; rule: RenderRule; reason: string }>;
 }
 
