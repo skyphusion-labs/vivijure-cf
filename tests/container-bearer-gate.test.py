@@ -192,18 +192,11 @@ try:
     check("the scheme is checked, not just the value",
           drive("/finish", "s3cret") == 401)
 
-    # cf#911 rollout stage. It relaxes exactly ONE case, an ABSENT header, and nothing else.
-    set_env(token="s3cret", allow=None, accept_missing="true")
-    check("STAGE: a media route with NO header is served", drive("/finish") == "SERVED")
-    check("STAGE: a WRONG token is still refused 401", drive("/finish", "Bearer wrong") == 401)
-    check("STAGE: a wrong SCHEME is still refused 401 (present is not absent)",
-          drive("/finish", "s3cret") == 401)
-    check("STAGE: the correct token is served", drive("/finish", "Bearer s3cret") == "SERVED")
-    set_env(token="s3cret", allow=None, accept_missing="1")
-    check("STAGE is exact-true only: '1' does not relax anything", drive("/finish") == 401)
-    set_env(token=None, allow=None, accept_missing="true")
-    check("STAGE without a token does not open the door: still 503", drive("/finish") == 503)
-    set_env(token="s3cret", allow=None)
+    # cf#911 stage 2: the stage-1 rollout permit is RETIRED and must relax nothing.
+    os.environ["LOCAL_FINISH_ACCEPT_MISSING_TOKEN"] = "true"
+    check("RETIRED PERMIT: a media route with NO header is still 401", drive("/finish") == 401)
+    os.environ.pop("LOCAL_FINISH_ACCEPT_MISSING_TOKEN", None)
+    check("bearer.py no longer carries the stage-1 permit", not hasattr(bearer, "ACCEPT_MISSING_ENV"))
 
     # Second line of defense: if a future app factory forgets require_bearer_config, the middleware
     # must still refuse rather than reopening the gate. This is the exact state cf#893 closed.
@@ -220,42 +213,24 @@ finally:
     pass
 
 # ---------------------------------------------------------------- THE DEPLOYMENT
-print("\n  DEPLOYMENT: every env FinishContainer can start the container with must satisfy the gate")
+print("\n  DEPLOYMENT: the env FinishContainer starts the container with must satisfy the gate")
 
 # cf#906 closed the seam between the gate and the deployment by CROSSING the language boundary:
 # parse what src/finish-container.ts declares, then drive the actual Python gate with exactly those
-# variables. cf#911 turned the one literal into two shapes, and BOTH are reachable in production:
-#
-#   token mode  FINISH_CONTAINER_TOKEN_VAR=<MEDIA_FINISH_TOKEN> plus FINISH_CONTAINER_STAGE_ENV
-#   open mode   FINISH_CONTAINER_NO_TOKEN_ENV, when no token is readable, and before the first fetch
-#
-# A shape that does not start the container is a dead finish tier, so each is driven, each with a
-# control that removes it.
+# variables. cf#911 stage 2 leaves ONE shape: the token, alone. With no readable token the Durable
+# Object answers 503 and never starts the container, so there is no second shape to drive.
 FC = ROOT / "src" / "finish-container.ts"
 fc_src = FC.read_text()
 
-
-def ts_const_obj(name):
-    m = re.search(r"export const " + name + r"\s*=\s*\{(.*?)\};", fc_src, re.S)
-    if not m:
-        return None
-    return dict(re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"([^"]*)"', m.group(1)))
-
-
 tm = re.search(r'export const FINISH_CONTAINER_TOKEN_VAR\s*=\s*"([A-Za-z_][A-Za-z0-9_]*)";', fc_src)
 token_var = tm.group(1) if tm else None
-stage_env = ts_const_obj("FINISH_CONTAINER_STAGE_ENV")
-open_env = ts_const_obj("FINISH_CONTAINER_NO_TOKEN_ENV")
-print(f"    token var: {token_var}   stage env: {stage_env}   open env: {open_env}")
+print(f"    token var: {token_var}")
 check("finish-container.ts declares the token var, and it is the one the gate reads",
       token_var is not None and token_var == bearer.TOKEN_ENV)
-check("finish-container.ts declares the stage env as a literal", bool(stage_env))
-check("finish-container.ts declares the no-token env as a literal", bool(open_env))
-check("the class starts from the no-token env, so a start before the first fetch is not {}",
-      re.search(r"envVars\s*:\s*Record<string,\s*string>\s*=\s*\{\s*\.\.\.FINISH_CONTAINER_NO_TOKEN_ENV\s*\}",
-                fc_src) is not None)
+check("finish-container.ts names NO opt-out and NO permit anywhere (cf#911 acceptance)",
+      bearer.ALLOW_UNAUTH_ENV not in fc_src and "LOCAL_FINISH_ACCEPT_MISSING_TOKEN" not in fc_src)
 
-AUTH_VARS = (bearer.TOKEN_ENV, bearer.ALLOW_UNAUTH_ENV, bearer.ACCEPT_MISSING_ENV)
+AUTH_VARS = (bearer.TOKEN_ENV, bearer.ALLOW_UNAUTH_ENV, "LOCAL_FINISH_ACCEPT_MISSING_TOKEN")
 
 
 def with_env(declared, fn):
@@ -282,34 +257,27 @@ def starts():
         return type(e).__name__
 
 
-token_env = {token_var or bearer.TOKEN_ENV: "deploy-token", **(stage_env or {})}
+token_env = {token_var or bearer.TOKEN_ENV: "deploy-token"}
 check("TOKEN MODE STARTS THE CONTAINER", with_env(token_env, starts) == "STARTS")
-check("TOKEN MODE: no header is served (stage 1), and logged",
-      with_env(token_env, lambda: drive("/finish")) == "SERVED")
-check("TOKEN MODE: a WRONG token is refused 401",
-      with_env(token_env, lambda: drive("/finish", "Bearer wrong")) == 401)
+check("TOKEN MODE: no header is 401", with_env(token_env, lambda: drive("/finish")) == 401)
+check("TOKEN MODE: a wrong token is 401", with_env(token_env, lambda: drive("/finish", "Bearer wrong")) == 401)
 check("TOKEN MODE: the right token is served",
       with_env(token_env, lambda: drive("/finish", "Bearer deploy-token")) == "SERVED")
-check("CONTROL: the stage env WITHOUT the token refuses to start (it is not an auth mode)",
-      with_env(dict(stage_env or {}), starts) == "BearerConfigError")
-check("OPEN MODE STARTS THE CONTAINER", with_env(dict(open_env or {}), starts) == "STARTS")
 check("CONTROL: with no vars at all the container refuses to start",
       with_env({}, starts) == "BearerConfigError")
 
-# The smoke gate has to run a DEPLOYMENT configuration, or it goes green on an image production
-# cannot start, which it did (cf#906). It now supplies token mode, the shape a deploy with
-# MEDIA_FINISH_TOKEN bound uses; the CI value is a throwaway and /health needs no credential.
+# The smoke gate has to run the DEPLOYMENT configuration (cf#906): the token alone. The CI value is
+# a throwaway and /health needs no credential.
 ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 smoke_line = [l for l in ci.splitlines() if "container-smoke.sh" in l and "sh scripts/" in l]
 check("the smoke gate invokes the smoke script exactly once", len(smoke_line) == 1)
 if smoke_line:
     line = smoke_line[0]
-    check("the smoke gate supplies every var of token mode",
-          all(k + "=" in line for k in token_env))
-    check("the smoke gate does NOT add the no-auth opt-out on top of a token",
-          bearer.ALLOW_UNAUTH_ENV not in line)
+    check("the smoke gate supplies the token var", all(k + "=" in line for k in token_env))
+    check("the smoke gate supplies no opt-out and no permit",
+          bearer.ALLOW_UNAUTH_ENV not in line and "LOCAL_FINISH_ACCEPT_MISSING_TOKEN" not in line)
 smoke_sh = (ROOT / "scripts" / "container-smoke.sh").read_text()
-check("container-smoke.sh forwards every var of token mode into the container",
+check("container-smoke.sh forwards the token var into the container",
       all(f"-e {k}=" in smoke_sh for k in token_env))
 
 for _k, _v in saved.items():

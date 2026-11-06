@@ -658,11 +658,11 @@ jobs:
             [ -n "${tag}" ] || continue
             echo "=== smoking ${tag}"
             # cf#906: supply what the DEPLOYMENT supplies, not what makes the gate pass. cf#911:
-            # FinishContainer now starts the container with the token from MEDIA_FINISH_TOKEN plus
-            # the stage-1 permit, so that is the production configuration; the value here is a
+            # FinishContainer starts the container with the token from MEDIA_FINISH_TOKEN and
+            # nothing else, so that is the production configuration; the value here is a
             # throwaway, and /health needs no credential. tests/container-bearer-gate.test.py pins
-            # this line to every var finish-container.ts declares for token mode.
-            LOCAL_FINISH_TOKEN=ci-smoke-throwaway LOCAL_FINISH_ACCEPT_MISSING_TOKEN=true sh scripts/container-smoke.sh "${tag}" 8000 /health 90
+            # this line to the token var finish-container.ts declares.
+            LOCAL_FINISH_TOKEN=ci-smoke-throwaway sh scripts/container-smoke.sh "${tag}" 8000 /health 90
             n=$((n + 1))
           done < images.txt
           echo "smoked ${n} image(s)"

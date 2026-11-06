@@ -99,7 +99,6 @@ echo "container-smoke: starting ${IMAGE}, expecting ${PATH_} on container port $
 cid="$(docker run -d --pull=never \
   -e LOCAL_FINISH_TOKEN="${LOCAL_FINISH_TOKEN:-}" \
   -e LOCAL_FINISH_ALLOW_UNAUTHENTICATED="${LOCAL_FINISH_ALLOW_UNAUTHENTICATED:-}" \
-  -e LOCAL_FINISH_ACCEPT_MISSING_TOKEN="${LOCAL_FINISH_ACCEPT_MISSING_TOKEN:-}" \
   -p 127.0.0.1::"${PORT}" "${IMAGE}" 2>&1)" || {
   echo "--- docker run output"
   echo "${cid}" | sed 's/^/    /'

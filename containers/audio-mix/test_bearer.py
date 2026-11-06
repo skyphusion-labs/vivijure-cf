@@ -22,6 +22,9 @@ def check(name, cond):
 
 check.failed = 0
 
+# cf#911 stage 1 added this rollout permit; stage 2 removed it from bearer.py.
+RETIRED_PERMIT = "LOCAL_FINISH_ACCEPT_MISSING_TOKEN"
+
 
 async def _client():
     client = TestClient(TestServer(app.app))
@@ -37,11 +40,11 @@ async def main():
     # pass-through and it would pass while asserting nothing. A test about auth configuration has to
     # own its auth configuration.
     prev_allow = os.environ.get(bearer.ALLOW_UNAUTH_ENV)
-    prev_accept = os.environ.get(bearer.ACCEPT_MISSING_ENV)
+    prev_accept = os.environ.get(RETIRED_PERMIT)
     try:
         os.environ.pop(bearer.TOKEN_ENV, None)
         os.environ.pop(bearer.ALLOW_UNAUTH_ENV, None)
-        os.environ.pop(bearer.ACCEPT_MISSING_ENV, None)
+        os.environ.pop(RETIRED_PERMIT, None)
         client = await _client()
         try:
             r = await client.get("/health")
@@ -75,28 +78,20 @@ async def main():
         finally:
             await client.close()
 
-        # cf#911 rollout stage: with a token AND the permit, an ABSENT header is let through, and
-        # only that. A present-but-wrong header is still 401, which is what makes the stage safe.
-        os.environ[bearer.ACCEPT_MISSING_ENV] = "true"
+        # cf#911 stage 2: the rollout permit is RETIRED. Setting it must relax nothing, or a stale
+        # deploy env could quietly keep the door accepting requests with no header.
+        os.environ[RETIRED_PERMIT] = "true"
         client = await _client()
         try:
             r = await client.post("/mix", json={})
-            check("stage: no bearer is NOT 401 (served, and logged)", r.status != 401)
-            r = await client.post("/mix", json={}, headers={"Authorization": "Bearer wrong"})
-            check("stage: wrong bearer -> 401", r.status == 401)
-            r = await client.post("/mix", json={}, headers={"Authorization": "test-token-value"})
-            check("stage: wrong scheme -> 401", r.status == 401)
-            r = await client.post(
-                "/mix", json={}, headers={"Authorization": "Bearer test-token-value"}
-            )
-            check("stage: good bearer is not 401", r.status != 401)
+            check("retired permit: no bearer is still 401", r.status == 401)
         finally:
             await client.close()
     finally:
         if prev_accept is None:
-            os.environ.pop(bearer.ACCEPT_MISSING_ENV, None)
+            os.environ.pop(RETIRED_PERMIT, None)
         else:
-            os.environ[bearer.ACCEPT_MISSING_ENV] = prev_accept
+            os.environ[RETIRED_PERMIT] = prev_accept
         if prev_allow is None:
             os.environ.pop(bearer.ALLOW_UNAUTH_ENV, None)
         else:

@@ -17,9 +17,10 @@ function container(answers: Response[]) {
     sleepAfter: RUNNING_SLEEP_AFTER,
     sleepAfterMs: 0,
     jobTail: new FinishJobTail(),
-    // cf#911: the real fetch resolves the bearer env off this.env first. No token here: these rows
-    // are about the idle tail, and tests/finish-container-bearer-911.test.ts covers the bearer.
-    env: {},
+    // cf#911: the real fetch resolves the bearer env off this.env first, and stage 2 refuses with no
+    // token, so these rows carry one. They are about the idle tail; tests/finish-container-bearer-911
+    // covers the bearer.
+    env: { MEDIA_FINISH_TOKEN: "tail-test-token" },
     containerFetch: async () => answers.shift() as Response,
   });
   return c;

@@ -11,11 +11,6 @@
 - With a token set, every route but /health requires `Authorization: Bearer <token>`. Missing or
   wrong is 401, compared with `hmac.compare_digest` so a length mismatch cannot become a timing
   oracle.
-- **LOCAL_FINISH_ACCEPT_MISSING_TOKEN=true** is a ROLLOUT stage, not an auth mode (cf#911). It only
-  applies WITH a token set: a request that carries NO `Authorization` header at all is served and
-  logged, and a header that is present and wrong is still 401. It lets a deploy arm the token on the
-  container before every caller is proven to send it, and is removed once one is. Without a token
-  it changes nothing: the container still refuses to start.
 
 WHY THIS CHANGED (cf#893, GHSA-v8g8-gmcm-22gr). This gate used to pass every request through when
 the token was unset, and this docstring justified it: *"That is the current VPC path, which sends no
@@ -35,7 +30,6 @@ from aiohttp import web
 
 TOKEN_ENV = "LOCAL_FINISH_TOKEN"
 ALLOW_UNAUTH_ENV = "LOCAL_FINISH_ALLOW_UNAUTHENTICATED"
-ACCEPT_MISSING_ENV = "LOCAL_FINISH_ACCEPT_MISSING_TOKEN"
 
 
 class BearerConfigError(RuntimeError):
@@ -60,22 +54,10 @@ def unauthenticated_requested() -> bool:
     return (os.environ.get(ALLOW_UNAUTH_ENV) or "").strip().lower() == "true"
 
 
-def accept_missing_requested() -> bool:
-    """True only for an exact, explicit `true`, read the same strict way as the opt-out."""
-    return (os.environ.get(ACCEPT_MISSING_ENV) or "").strip().lower() == "true"
-
-
 def require_bearer_config() -> None:
     """Call from the app factory, BEFORE the server binds. Raises unless auth is configured or
     no-auth was explicitly requested by name."""
     if configured_token():
-        if accept_missing_requested():
-            print(
-                f"WARNING: {ACCEPT_MISSING_ENV}=true -- a request with NO Authorization header is "
-                f"served and logged; a wrong token is still refused. This is a rollout stage: "
-                f"remove it once every caller is proven to send the token.",
-                flush=True,
-            )
         return
     if unauthenticated_requested():
         print(
@@ -114,12 +96,6 @@ async def bearer_middleware(req: web.Request, handler):
         return web.json_response(
             {"ok": False, "error": f"server misconfigured: {TOKEN_ENV} is not set"}, status=503
         )
-    if req.headers.get("Authorization") is None and accept_missing_requested():
-        # cf#911 rollout stage. ABSENT only: a header that is present and wrong falls through to the
-        # 401 below. One line per request, so "no caller still omits it" is a reading, not a hope.
-        print(f"bearer: served {req.method} {req.path} with no Authorization header "
-              f"({ACCEPT_MISSING_ENV}=true)", flush=True)
-        return await handler(req)
     got = presented_token(req)
     if not got or not hmac.compare_digest(got, expected):
         return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
