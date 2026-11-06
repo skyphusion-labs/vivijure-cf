@@ -36,11 +36,16 @@
 // range, and (b) the motion door either declares an aspect enum (ratio / aspect_ratio) that contains
 // the shape, or declares none and therefore follows the still.
 //
-// WHY THERE IS A SHORT TABLE OF NAMES. No manifest carries a face-hold fact today; it lives in prose
-// (ui.blurb, provides[].label, docs/motion-door-limits.md). FACE_EVIDENCE is that prose, cited, for the
-// three doors whose grade the generic facts get wrong. It is declared debt in
-// tests/panel-no-hardcoded-modules.test.ts and retires when a manifest field such as usage.face_hold
-// exists. Everything else here is projected from the registry.
+// THE FACE GRADE IS THE DOOR'S OWN WORD (cf#1246). Each motion door declares usage.face_hold
+// ("hold" | "two" | "one" | "drift"), so the grade is read, not computed from door names. A door that
+// predates the field falls back to the generic facts below (a voice-file door holds, first_last is two,
+// else one). The one name left is alibaba-wan-lora's NEED for a trained Wan look, which no manifest
+// field states yet; it is declared debt in tests/panel-no-hardcoded-modules.test.ts.
+//
+// PRICES ARE AT COST (Conrad, 2026-11-05): ui.cost_usd_per_second [low, high] or ui.cost_usd_per_clip
+// [{usd, resolution?, seconds?}], the provider's price with nothing added, until an end-user markup is
+// set. Each scene is priced at the length the door will really make (clamped to its bounds, rounded up
+// to its duration_steps). A missing price is "price unknown", never a guess.
 (function (root, factory) {
   var api = factory();
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -51,22 +56,9 @@
   var GRADE = { DRIFT: 0, ONE: 1, TWO: 2, HOLD: 3 };
   var CONSISTENT = GRADE.TWO;
 
-  // Name -> grade, with the evidence. Read the cited text before changing a row.
-  var FACE_EVIDENCE = {
-    "alibaba-wan-lora": {
-      grade: GRADE.HOLD,
-      needs: "wan_lora",
-      why: "provides label \"Silent, your trained face (Wan)\"; motion-door-limits.md: \"Same family, with your trained face\"",
-    },
-    "cf-hh1-r2v": {
-      grade: GRADE.HOLD,
-      why: "blurb \"Holds a look from reference stills\"; motion-door-limits.md: \"silent look lock\"",
-    },
-    "cf-flux-3-video": {
-      grade: GRADE.DRIFT,
-      why: "blurb and motion-door-limits.md: \"Faces drift\"",
-    },
-  };
+  var FACE_HOLD = { hold: GRADE.HOLD, two: GRADE.TWO, one: GRADE.ONE, drift: GRADE.DRIFT };
+  // The one door that needs a trained Wan look before it can hold a face. No manifest field says so yet.
+  var NEEDS = { "alibaba-wan-lora": "wan_lora" };
 
   // The three places a video gets posted. Sizes sit inside every stills door's declared range today
   // (512..1536) and the check below re-reads that range rather than trusting it.
@@ -103,8 +95,8 @@
 
   function faceGrade(mod) {
     if (!mod) return GRADE.DRIFT;
-    var ev = FACE_EVIDENCE[mod.name];
-    if (ev) return ev.grade;
+    var declared = FACE_HOLD[usage(mod).face_hold];
+    if (typeof declared === "number") return declared;
     if (voiceFileOnly(mod)) return GRADE.HOLD;
     return usage(mod).first_last === true ? GRADE.TWO : GRADE.ONE;
   }
@@ -116,8 +108,7 @@
 
   function evidence(mod) {
     if (!mod) return "";
-    var ev = FACE_EVIDENCE[mod.name];
-    if (ev) return ev.why;
+    if (typeof FACE_HOLD[usage(mod).face_hold] === "number") return "usage.face_hold: " + usage(mod).face_hold;
     if (voiceFileOnly(mod)) return "usage.driving_audio: our still, mouth only, in the person's own voice";
     return usage(mod).first_last === true
       ? "usage.first_last: a start and an end still on every clip"
@@ -125,8 +116,7 @@
   }
 
   function needs(mod) {
-    var ev = mod && FACE_EVIDENCE[mod.name];
-    return ev && ev.needs ? ev.needs : null;
+    return (mod && NEEDS[mod.name]) || null;
   }
 
   function schemaField(mod, names) {
@@ -286,6 +276,24 @@
     return { field: r.name, value: value, pos: pos };
   }
 
+  // The length a door really makes for a planned scene: inside its bounds, then up to its next step.
+  function doorSeconds(mod, seconds) {
+    var u = usage(mod);
+    var s = seconds;
+    if (typeof u.max_seconds === "number" && s > u.max_seconds) s = u.max_seconds;
+    if (typeof u.min_seconds === "number" && s < u.min_seconds) s = u.min_seconds;
+    var steps = Array.isArray(u.duration_steps) ? u.duration_steps.slice().sort(function (a, b) { return a - b; }) : [];
+    for (var i = 0; i < steps.length; i++) if (steps[i] >= s) return steps[i];
+    return steps.length ? steps[steps.length - 1] : s;
+  }
+
+  function perClip(mod) {
+    var list = mod && mod.ui && mod.ui.cost_usd_per_clip;
+    if (!Array.isArray(list) || !list.length) return null;
+    for (var i = 0; i < list.length; i++) if (!list[i] || !(typeof list[i].usd === "number" && list[i].usd > 0)) return null;
+    return list;
+  }
+
   function rate(mod) {
     var r = mod && mod.ui && mod.ui.cost_usd_per_second;
     if (!Array.isArray(r) || r.length !== 2) return null;
@@ -298,15 +306,79 @@
   // the lowest resolution is priced at the first figure, the highest at the second, and anything in
   // between at the second as an upper bound ("up to"). A door with no rate, or no length yet, is
   // "unknown". Never a guess.
+  // `seconds` is either a number (the total, the older form) or a list of each scene's planned seconds,
+  // which is priced scene by scene at the length the door really makes.
   function clipPrice(mod, seconds, quality) {
+    var list = Array.isArray(seconds) ? seconds : null;
+    var clips = perClip(mod);
+    if (clips) {
+      if (!list || !list.length) return { usd: null, kind: "per_clip" };
+      var picked = resolutionFor(mod, quality);
+      var total = 0;
+      for (var c = 0; c < list.length; c++) {
+        var len = doorSeconds(mod, list[c]);
+        var hit = null;
+        for (var k = 0; k < clips.length; k++) {
+          var e = clips[k];
+          if (e.resolution !== undefined && (!picked || e.resolution !== picked.value)) continue;
+          if (e.seconds !== undefined && e.seconds !== len) continue;
+          hit = e;
+          break;
+        }
+        if (!hit) return { usd: null, kind: "unknown" };
+        total += hit.usd;
+      }
+      return { usd: Number(total.toFixed(2)), kind: "about" };
+    }
     var r = rate(mod);
     if (!r) return { usd: null, kind: "unknown" };
+    if (list) {
+      var sum = 0;
+      for (var j = 0; j < list.length; j++) sum += doorSeconds(mod, list[j]);
+      seconds = sum;
+    }
     var res = resolutionFor(mod, quality);
     var low = res ? res.pos === "low" : false;
     var exact = res ? res.pos !== "middle" : false;
     var perSecond = low ? r[0] : r[1];
     if (!(seconds > 0)) return { usd: null, kind: "per_second", perSecond: perSecond, exact: exact };
     return { usd: Number((perSecond * seconds).toFixed(2)), kind: exact ? "about" : "up_to", perSecond: perSecond, exact: exact };
+  }
+
+  // Each scene's planned seconds, the same ones the render submit sends.
+  function sceneSeconds(board) {
+    var scenes = (board && Array.isArray(board.scenes)) ? board.scenes : [];
+    var clip = board && typeof board.clip_seconds === "number" && board.clip_seconds > 0 ? board.clip_seconds : 4;
+    var out = [];
+    for (var i = 0; i < scenes.length; i++) {
+      var s = scenes[i];
+      if (!s || typeof s.prompt !== "string" || !s.prompt.trim()) continue;
+      out.push(typeof s.target_seconds === "number" && s.target_seconds > 0 ? s.target_seconds : clip);
+    }
+    return out;
+  }
+
+  // The door's own price line, at cost, for a door card: "$0.04 to $0.07 a second" or "from $0.28 a
+  // clip", plus the day it was read. "Price unknown" when the door states none.
+  function rateLine(mod) {
+    // Cents, or a tenth of a cent when the provider prices that finely ($0.157).
+    var money = function (n) { var s = n.toFixed(3); return "$" + (s.charAt(s.length - 1) === "0" ? n.toFixed(2) : s); };
+    var asOf = mod && mod.ui && typeof mod.ui.cost_as_of === "string" ? asOfText(mod.ui.cost_as_of) : "";
+    var r = rate(mod);
+    if (r) return (r[0] === r[1] ? money(r[0]) : money(r[0]) + " to " + money(r[1])) + " a second, at cost" + asOf;
+    var clips = perClip(mod);
+    if (clips) {
+      var low = clips.reduce(function (m, e) { return Math.min(m, e.usd); }, Infinity);
+      return (clips.length > 1 ? "from " : "") + money(low) + " a clip, at cost" + asOf;
+    }
+    return "Price unknown";
+  }
+
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function asOfText(day) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+    if (!m || !MONTHS[Number(m[2]) - 1]) return "";
+    return " (price as of " + MONTHS[Number(m[2]) - 1] + " " + Number(m[3]) + ", " + m[1] + ")";
   }
 
   // Length of a planned board: the same seconds the planner's render submit sends.
@@ -377,7 +449,7 @@
     SHAPES: SHAPES,
     QUALITIES: QUALITIES,
     DEFAULT_SHAPE: DEFAULT_SHAPE,
-    FACE_EVIDENCE: FACE_EVIDENCE,
+    FACE_HOLD: FACE_HOLD,
     faceGrade: faceGrade,
     canSpeak: canSpeak,
     voiceLock: voiceLock,
@@ -389,6 +461,9 @@
     clipPrice: clipPrice,
     priceText: priceText,
     boardSeconds: boardSeconds,
+    sceneSeconds: sceneSeconds,
+    doorSeconds: doorSeconds,
+    rateLine: rateLine,
     hasSpokenLines: hasSpokenLines,
     styleLine: styleLine,
     chooseStyle: chooseStyle,

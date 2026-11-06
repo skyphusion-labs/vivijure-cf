@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { faceGrade, GRADE, FACE_EVIDENCE } from "../public/make-style.js";
+import { faceGrade, GRADE } from "../public/make-style.js";
 import alibabaWan from "../modules/alibaba-wan/src/index";
 import alibabaWanLora from "../modules/alibaba-wan-lora/src/index";
 import cfFlux3Video from "../modules/cf-flux-3-video/src/index";
@@ -39,6 +39,18 @@ const UNPRICED: Record<string, string> = {
 
 const FACE_HOLD = ["drift", "one", "two", "hold"] as const;
 
+// The rule make-style.js used BEFORE it read usage.face_hold, frozen here from main at 5a96dff (the
+// FACE_EVIDENCE table plus the generic facts). make-style.js now reads the field, so comparing the
+// field to faceGrade would compare it with itself and could not fail. This is the proof the switch
+// changed no door's grade: the old rule on the real manifest against the new read.
+const OLD_FACE_EVIDENCE: Record<string, number> = { "alibaba-wan-lora": 3, "cf-hh1-r2v": 3, "cf-flux-3-video": 0 };
+function oldFaceGrade(m: { name: string; usage?: Record<string, unknown> }): number {
+  if (m.name in OLD_FACE_EVIDENCE) return OLD_FACE_EVIDENCE[m.name];
+  const u = m.usage ?? {};
+  if (u.driving_audio === true && u.native_audio !== true) return 3;
+  return u.first_last === true ? 2 : 1;
+}
+
 type Manifest = {
   name: string;
   hooks: string[];
@@ -69,10 +81,10 @@ describe("every motion door declares a face grade and a price (cf#1246)", () => 
       expect(FACE_HOLD).toContain(m.usage?.face_hold);
     });
 
-    it(`${name}: face_hold matches the grade the panel computes today`, async () => {
+    it(`${name}: face_hold matches the grade the old rule gave, and the panel now reads it`, async () => {
       const m = await manifest(name);
-      const want = FACE_HOLD[faceGrade(m as never)];
-      expect(m.usage?.face_hold).toBe(want);
+      expect(m.usage?.face_hold).toBe(FACE_HOLD[oldFaceGrade(m)]);
+      expect(faceGrade(m as never)).toBe(oldFaceGrade(m));
     });
 
     it(`${name}: carries exactly one well-formed price, or is named as unpriced`, async () => {
@@ -118,6 +130,6 @@ describe("every motion door declares a face grade and a price (cf#1246)", () => 
 
   it("the face grades agree with the panel's own scale", () => {
     expect(FACE_HOLD.map((_, i) => i)).toEqual([GRADE.DRIFT, GRADE.ONE, GRADE.TWO, GRADE.HOLD]);
-    expect(Object.keys(FACE_EVIDENCE).every((n) => n in DOORS)).toBe(true);
+    expect(Object.keys(OLD_FACE_EVIDENCE).every((n) => n in DOORS)).toBe(true);
   });
 });

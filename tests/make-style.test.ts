@@ -39,31 +39,31 @@ const CLOUD_KF: Mod = {
   config_schema: { width: { type: "int", default: 1344, min: 512, max: 1536 }, height: { type: "int", default: 768, min: 512, max: 1536 } },
 };
 const DOORS: Record<string, Mod> = {
-  seedance: motion("cf-seedance", { native_audio: true, first_last: true, voice_ref: true }, {
+  seedance: motion("cf-seedance", { native_audio: true, first_last: true, voice_ref: true, face_hold: "two" }, {
     ui: { order: 70 },
     config_schema: { aspect_ratio: enumOf(["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"], "16:9"), resolution: enumOf(["480p", "720p", "1080p", "4k"], "720p") },
   }),
-  vidu: motion("cf-vidu-q3-turbo", { native_audio: true, first_last: true }, {
+  vidu: motion("cf-vidu-q3-turbo", { native_audio: true, first_last: true, face_hold: "two" }, {
     ui: { order: 58, cost_usd_per_second: [0.04, 0.07] },
     config_schema: { resolution: enumOf(["540p", "720p", "1080p"], "720p") },
   }),
-  kling: motion("cf-kling-v4", { native_audio: false, first_last: true }, {
+  kling: motion("cf-kling-v4", { native_audio: false, first_last: true, face_hold: "two" }, {
     ui: { order: 94, cost_usd_per_second: [0.157, 0.235] },
     config_schema: { ratio: enumOf(["21:9", "16:9", "9:16", "1:1"], "16:9"), resolution: enumOf(["720p", "1080p"]) },
   }),
-  hh1: motion("cf-hh1-r2v", { native_audio: false, first_last: true }, {
+  hh1: motion("cf-hh1-r2v", { native_audio: false, first_last: true, face_hold: "hold" }, {
     ui: { order: 60 },
     config_schema: { ratio: enumOf(["16:9", "9:16", "3:4", "4:3", "1:1", "21:9", "9:21", "5:4", "4:5"], "16:9"), resolution: enumOf(["720P", "1080P"]) },
   }),
-  wanLora: motion("alibaba-wan-lora", { native_audio: false }, { ui: { order: 75 } }),
-  flux: motion("cf-flux-3-video", { native_audio: true, first_last: true }, { ui: { order: 90 }, config_schema: { resolution: enumOf(["hd", "fhd"]) } }),
-  infinitetalk: motion("infinitetalk", { native_audio: false, driving_audio: true }, { ui: { order: 15 }, config_schema: {} }),
-  pva: motion("cf-p-video-avatar", { native_audio: false, driving_audio: true }, {
+  wanLora: motion("alibaba-wan-lora", { native_audio: false, face_hold: "hold" }, { ui: { order: 75 } }),
+  flux: motion("cf-flux-3-video", { native_audio: true, first_last: true, face_hold: "drift" }, { ui: { order: 90 }, config_schema: { resolution: enumOf(["hd", "fhd"]) } }),
+  infinitetalk: motion("infinitetalk", { native_audio: false, driving_audio: true, face_hold: "hold" }, { ui: { order: 15 }, config_schema: {} }),
+  pva: motion("cf-p-video-avatar", { native_audio: false, driving_audio: true, face_hold: "hold" }, {
     ui: { order: 92, cost_usd_per_second: [0.025, 0.045] },
     config_schema: { resolution: enumOf(["720p", "1080p"]) },
   }),
-  veo: motion("cf-veo", { native_audio: true }, { ui: { order: 55 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } }),
-  grok: motion("cf-grok-video", { native_audio: true }, { ui: { order: 80 } }),
+  veo: motion("cf-veo", { native_audio: true, face_hold: "one" }, { ui: { order: 55 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } }),
+  grok: motion("cf-grok-video", { native_audio: true, face_hold: "one" }, { ui: { order: 80 } }),
 };
 
 function reg(doors: Mod[], stills: Mod[] = [KEYFRAME, CLOUD_KF]): Registry {

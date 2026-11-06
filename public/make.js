@@ -348,9 +348,10 @@
   function priceHint(q) {
     const pick = style.chooseStyle(state.reg, { shape: state.shape, quality: q.id, host: hostFacts() });
     if (!pick) return "price unknown";
-    const seconds = state.board ? style.boardSeconds(state.board) : 0;
+    const seconds = state.board ? style.sceneSeconds(state.board) : 0;
     const p = style.clipPrice(pick.door, seconds, q.id);
     if (p.usd !== null) return style.priceText(p);
+    if (p.kind === "per_clip") return "priced per clip, shown once your idea is planned";
     if (p.kind === "per_second") return (p.exact ? "about $" : "up to $") + (p.perSecond * 10).toFixed(2) + " for each 10 seconds";
     return "price unknown";
   }
@@ -387,11 +388,12 @@
       note.textContent = "You see the total before anything starts.";
       return;
     }
-    const p = style.clipPrice(state.choice.door, style.boardSeconds(state.board), state.quality);
+    const p = style.clipPrice(state.choice.door, style.sceneSeconds(state.board), state.quality);
     total.textContent = style.priceText(p);
+    // cf#1246: at cost until an end-user markup is set (Conrad, 2026-11-05).
     note.textContent = p.usd === null
-      ? "This style states no price, so the studio cannot give a total."
-      : "For the moving video. Pictures and voices are not priced here.";
+      ? "This style states no price for these scenes, so the studio cannot give a total."
+      : "At cost: what the video service charges for the moving video, with nothing added. Pictures and voices are not priced here.";
   }
 
   function blockers() {

@@ -385,8 +385,12 @@
     return moduleLabel(mod);
   }
 
+  // cf#1246: the door's own price at cost, from ui.cost_usd_per_second or ui.cost_usd_per_clip
+  // (make-style.js rateLine, one formatter for both pages). "Price unknown" when it states none.
   function doorCost(mod) {
     if (isQualityDoor(mod)) return "Look only, slower";
+    const style = global.makeStyle;
+    if (style && typeof style.rateLine === "function") return style.rateLine(mod);
     const cost = uiHint(mod, "cost");
     if (typeof cost !== "string") return "";
     return filmmakerCostLine(cost).replace(/\.$/, "");
