@@ -842,3 +842,30 @@ describe("cloud-keyframe /invoke with the drawing workflow bound", () => {
     expect(sub.error).toContain("no quota");
   });
 });
+
+describe("cloud-keyframe film setting (vivijure-cf#1145, integration)", () => {
+  it("a shot with no place is drawn with the board's setting, in every pass", async () => {
+    genCalls.length = 0;
+    const yaml = STORYBOARD_YAML.replace(
+      'style_prefix: "cinematic, moody neon"',
+      'style_prefix: "cinematic, moody neon"\nsetting: "a rain-soaked night market"',
+    );
+    const env = await makeKeyframeEnv(yaml);
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    const cafe = genCalls.filter((c) => c.prompt.includes("two of them in a cafe"));
+    expect(cafe.length).toBeGreaterThan(0);
+    for (const c of cafe) expect(c.prompt).toContain("Setting: a rain-soaked night market.");
+  });
+
+  it("a board with no setting draws exactly as before", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    await drainPolls(env, sub.poll!);
+    expect(genCalls.length).toBeGreaterThan(0);
+    for (const c of genCalls) expect(c.prompt).not.toContain("Setting:");
+  });
+});

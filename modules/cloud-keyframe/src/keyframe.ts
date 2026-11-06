@@ -76,6 +76,19 @@ export function composePrompt(
   return `${lookLead}${lead}${scenePrompt.trim()}${idText} ${NO_TEXT_CLAUSE}`;
 }
 
+/** vivijure-cf#1145: the shot prompt with the film's setting said after it, when the shot and the style prefix
+ *  do not already say it (case-insensitive). A shot that names its own place keeps its own place, and no
+ *  setting leaves the prompt untouched. */
+export function sceneWithSetting(scenePrompt: string, setting: string, stylePrefix = ""): string {
+  const scene = scenePrompt.trim();
+  const place = setting.trim();
+  const low = place.toLowerCase();
+  // An empty setting is contained in any text, so this is also the no-setting case.
+  if (scene.toLowerCase().includes(low) || stylePrefix.toLowerCase().includes(low)) return scene;
+  const sep = /[.!?]$/.test(scene) ? " " : scene ? ". " : "";
+  return `${scene}${sep}Setting: ${place}.`;
+}
+
 /** Edit pass for Workers AI nano-banana-2: the first image is the scene plate, later
  *  images are faces. Do not retouch a portrait into a new still. */
 export function composeEditPrompt(scenePrompt: string, style?: unknown): string {

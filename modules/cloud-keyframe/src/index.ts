@@ -46,6 +46,7 @@ import {
   listTarNames,
   parseScenes,
   parseStylePrefix,
+  parseSetting,
   parseRegistry,
   refsForSlot,
 } from "./bundle";
@@ -56,6 +57,7 @@ import {
   clampRefsPerSlot,
   composePrompt,
   composeEditPrompt,
+  sceneWithSetting,
   clampStyle,
   keyframeKey,
   stageRefKey,
@@ -151,7 +153,7 @@ const WORKFLOW_FINISHED = new Set(["complete", "errored", "terminated"]);
 
 export const MANIFEST: ModuleManifest = {
   name: "cloud-keyframe",
-  version: "0.1.12",
+  version: "0.1.13",
   cancelable: true,
   api: MODULE_API,
   hooks: ["keyframe"],
@@ -324,6 +326,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   if (!yaml) return { ok: false, error: "cloud-keyframe: bundle has no storyboard.yaml" };
   const scenes = parseScenes(yaml);
   const stylePrefix = parseStylePrefix(yaml);
+  const setting = parseSetting(yaml);
   const registryJson = extractTarText(tar, "characters/registry.json");
   const registry = registryJson ? parseRegistry(registryJson) : {};
 
@@ -399,8 +402,8 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
 
   const shots: ShotPlan[] = selected.map((s) => ({
     shot_id: s.shot_id,
-    prompt: composePrompt(stylePrefix, s.prompt, s.slots, registry, style),
-    plate_prompt: composePrompt(stylePrefix, s.prompt, [], registry, style),
+    prompt: composePrompt(stylePrefix, sceneWithSetting(s.prompt, setting, stylePrefix), s.slots, registry, style),
+    plate_prompt: composePrompt(stylePrefix, sceneWithSetting(s.prompt, setting, stylePrefix), [], registry, style),
     slots: s.slots,
   }));
 
