@@ -280,14 +280,18 @@ laws apply to them and their own users, and configuring their instance according
     any render can select it, so deleting a render leaves it in place. Delete it with its own
     action (above).
   - files orphaned by project or render deletes made before 2026-10-19, which no record points to
-    and which the delete path therefore cannot see (#1009).
+    and which the delete path therefore cannot see (#1009). Since 2026-11-06 an operator-run sweep
+    can reclaim the part whose owner is provable from records: a deleted render's own job files and
+    its log. Files shared across a project's renders (clips, stills, dialogue) and files no record
+    names at all are not swept.
 - **Content is kept while it is useful** (so projects and render history persist) and is not retained
   for any other purpose. That is the commitment. Its one known exception is the orphan backlog above:
   files stranded by deletes made before 2026-10-19 are still in storage until a broader sweep
   reclaims them (issue #1009). Removal otherwise is by the delete actions above, or by the operator
-  directly. A separate storage-reclaim script exists for cast files only (the cast, generated-cast
-  and LoRA storage areas); an operator runs it by hand, it reports before it deletes, it is not
-  scheduled, and it does not sweep render files.
+  directly. Two storage-reclaim scripts exist: one for cast files (the cast, generated-cast and
+  LoRA storage areas), and one for a render's own job files and logs. An operator runs each by hand,
+  each reports before it deletes, neither is scheduled, and neither sweeps the files a project's
+  renders share.
 - **On Conrad's private instance, operational logs are the Worker logs Cloudflare retains in that
   Cloudflare account (Section 3.4).** The host that used to keep those logs for up to 90 days is
   deleted. Each operator who runs their own log system sets that system's retention.
