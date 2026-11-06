@@ -52,6 +52,7 @@ function shot(id: string) {
 }
 const SILENT = { native_audio: false, driving_audio: false, voice: "cast_tts", scatter_native_audio: true, min_seconds: 1, max_seconds: 10 };
 const DRIVEN = { native_audio: false, driving_audio: true, voice: "cast_tts", scatter_native_audio: true, min_seconds: 1, max_seconds: 10 };
+const NATIVE = { native_audio: true, driving_audio: false, voice: "cast_tts", scatter_native_audio: true, min_seconds: 1, max_seconds: 10 };
 const AUDIO_SWITCH = { generate_audio: { type: "bool", default: true } };
 function door(name: string, locality: string, usage: Record<string, unknown>, config_schema: Record<string, unknown> = {}) {
   return {
@@ -69,6 +70,7 @@ const env = {
   MODULE_SILENT_B: door("silent-b", "cloud", SILENT),
   MODULE_TALKER: door("talker", "cloud", DRIVEN, AUDIO_SWITCH),
   MODULE_GPU: door("gpu-door", "byo", SILENT),
+  MODULE_NATIVE: door("speaker", "cloud", NATIVE, AUDIO_SWITCH),
 };
 
 const parent = {
@@ -120,11 +122,13 @@ describe("vivijure-cf#1168 lifted by core#442: animate-cloud", () => {
     expect(h.started[0]?.motion_configs).toEqual({ talker: { generate_audio: false } });
     expect(h.started[0]?.dialogue_lines).toEqual([expect.objectContaining({ shot_id: "shot_02", text: "Say it." })]);
   });
-  it("CONTROL: a spoken shot only on the silent door leaves every door config alone", async () => {
+  it("cf#1299: a spoken shot only on the silent door is now refused, and no film starts", async () => {
+    // This case used to start and leave every door config alone. Measured, the line was bought and then
+    // dropped from the film, so the map now refuses it the way finalize does.
     h.lines = { shot_01: "Say it." };
     const r = await cloud("silent-a", { shot_02: "talker" });
-    expect(r.ok, JSON.stringify(r)).toBe(true);
-    expect(h.started[0]?.motion_configs).toBeUndefined();
+    expect(r).toMatchObject({ ok: false, status: 400, error: expect.stringMatching(/^Shot "shot_01" has a spoken line on silent-a\. /) });
+    expect(h.started).toHaveLength(0);
   });
 });
 
@@ -138,22 +142,83 @@ describe("vivijure-cf#1168 lifted by core#442: animate-hybrid", () => {
     expect(r.ok, JSON.stringify(r)).toBe(true);
     expect(h.started[0]?.per_shot_motion).toEqual({ shot_01: "gpu-door", shot_02: "talker" });
   });
+  it("cf#1299: a line only on the audio-driven shot starts, map intact", async () => {
+    h.lines = { shot_02: "This fuel line is cracked." };
+    const r = await hybrid({ shot_02: { backend: "cloud", model: "talker" } }, "silent-a");
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(h.started[0]?.per_shot_motion).toEqual({ shot_01: "gpu-door", shot_02: "talker" });
+    expect(h.started[0]?.motion_configs).toEqual({ talker: { generate_audio: false } });
+  });
+  it("cf#1299: a line on the silent gpu shot is refused at submit with a 400, before the film starts", async () => {
+    h.lines = { shot_01: "The generator quit at midnight.", shot_02: "This fuel line is cracked." };
+    const r = await hybrid({ shot_02: { backend: "cloud", model: "talker" } }, "silent-a");
+    expect(r).toMatchObject({ ok: false, status: 400 });
+    if (r.ok) return;
+    expect(r.error).toMatch(/^Shot "shot_01" has a spoken line on gpu-door\. /);
+    expect(r.error).toMatch(/Pick a talking door \(.*talker.*\)/);
+    expect(h.started).toHaveLength(0);
+  });
+});
+
+describe("cf#1299: animate-cloud map refusals", () => {
+  it("a line on a silent cloud shot in a map is refused, naming the shot and door", async () => {
+    h.lines = { shot_02: "Say it." };
+    const r = await cloud("talker", { shot_02: "silent-a" });
+    expect(r).toMatchObject({ ok: false, status: 400, error: expect.stringMatching(/^Shot "shot_02" has a spoken line on silent-a\. /) });
+    expect(h.started).toHaveLength(0);
+  });
+  it("one silent door for every spoken shot is refused on the map path too", async () => {
+    h.lines = { shot_01: "Say it." };
+    const r = await cloud("silent-a");
+    expect(r).toMatchObject({ ok: false, status: 400, error: expect.stringMatching(/^Shot "shot_01" has a spoken line on silent-a\. /) });
+  });
+  it("CONTROL: a line on a native-audio shot starts, its config and voice samples untouched", async () => {
+    h.lines = { shot_02: "Say it." };
+    const r = await cloud("silent-a", { shot_02: "speaker" });
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(h.started[0]?.motion_configs).toBeUndefined();
+  });
 });
 
 describe("prepareSpokenClipsPerDoor", () => {
   const mods = [
-    { name: "s", usage: SILENT, config_schema: {} },
-    { name: "t", usage: DRIVEN, config_schema: AUDIO_SWITCH },
-    { name: "t2", usage: DRIVEN, config_schema: {} },
+    { name: "s", usage: SILENT, hooks: ["motion.backend"], config_schema: {} },
+    { name: "t", usage: DRIVEN, hooks: ["motion.backend"], config_schema: AUDIO_SWITCH },
+    { name: "t2", usage: DRIVEN, hooks: ["motion.backend"], config_schema: {} },
+    { name: "n", usage: NATIVE, hooks: ["motion.backend"], config_schema: AUDIO_SWITCH },
   ] as unknown as RegisteredModule[];
   const refs = { a: "r/a.wav", b: "r/b.wav" };
   it("turns native audio off and drops voice samples only for a driven door holding a spoken shot", () => {
     const r = prepareSpokenClipsPerDoor(mods, { a: "s", b: "t" }, { x: 1 }, refs, [{ shot_id: "b", text: "hi" }] as never);
     expect(r).toEqual({ ok: true, motionConfigs: { t: { x: 1, generate_audio: false } }, voiceRefs: { a: "r/a.wav" } });
   });
-  it("leaves a driven door with no spoken shot, and a silent door with one, untouched", () => {
-    const r = prepareSpokenClipsPerDoor(mods, { a: "s", b: "t" }, { x: 1 }, refs, [{ shot_id: "a", text: "hi" }] as never);
+  it("leaves a driven door with no spoken shot, and a silent door with none, untouched", () => {
+    const r = prepareSpokenClipsPerDoor(mods, { a: "s", b: "n" }, { x: 1 }, refs, [{ shot_id: "b", text: "hi" }] as never);
     expect(r).toEqual({ ok: true, motionConfigs: undefined, voiceRefs: refs });
+  });
+  it("cf#1299: refuses a spoken shot on a silent door, naming the shot and the door", () => {
+    const r = prepareSpokenClipsPerDoor(mods, { a: "s", b: "t" }, { x: 1 }, refs, [{ shot_id: "a", text: "hi" }] as never);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/^Shot "a" has a spoken line on s\. /);
+    expect(r.error).toContain("Pick a talking door");
+  });
+  it("cf#1299: names every spoken shot on the refused door", () => {
+    const r = prepareSpokenClipsPerDoor(mods, { a: "s", b: "s", c: "t" }, {}, refs,
+      [{ shot_id: "a", text: "hi" }, { shot_id: "b", text: "yo" }, { shot_id: "c", text: "ok" }] as never);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/^Shots "a", "b" have spoken lines on s\. /) });
+  });
+  it("cf#1299: a silent door holding only blank lines is not refused", () => {
+    const r = prepareSpokenClipsPerDoor(mods, { a: "s" }, {}, refs, [{ shot_id: "a", text: "  " }] as never);
+    expect(r).toEqual({ ok: true, motionConfigs: undefined, voiceRefs: refs });
+  });
+  it("cf#1299: a native-audio door with a spoken shot keeps its config and voice samples", () => {
+    const r = prepareSpokenClipsPerDoor(mods, { a: "n", b: "s" }, { x: 1 }, refs, [{ shot_id: "a", text: "hi" }] as never);
+    expect(r).toEqual({ ok: true, motionConfigs: undefined, voiceRefs: refs });
+  });
+  it("cf#1299: a native-audio door with talking audio off is refused, as on finalize", () => {
+    const r = prepareSpokenClipsPerDoor(mods, { a: "n" }, { generate_audio: false }, refs, [{ shot_id: "a", text: "hi" }] as never);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/^Shot "a" has a spoken line on n\. .*talking audio is switched off on n/) });
   });
   it("a blank line is not a spoken shot", () => {
     const r = prepareSpokenClipsPerDoor(mods, { a: "s", b: "t" }, {}, refs, [{ shot_id: "b", text: "   " }] as never);

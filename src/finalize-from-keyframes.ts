@@ -19,6 +19,7 @@ import {
 } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { filmJobToPollView } from "@skyphusion-labs/vivijure-core/film-render-bridge";
 import { mapRenderOverridesToModuleConfigs } from "./film-render-bridge";
+import { moduleLabel } from "./module-catalog";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import {
   insertRender,
@@ -152,11 +153,17 @@ function perShotMotionFromCloud(
  * vivijure-core#442: the spoken-clip prep for a per-shot door map, door by door.
  *
  * Core keeps the map on the film doc and decides each shot's audio from its own door, so a map that mixes
- * a door driven by a line's audio with a silent door now runs. What prepareSpokenClip does on the
- * single-door path is done here for each door driven only by audio (isDrivingOnlyDoor) that holds a
- * spoken shot: that door's config gets native audio off when its schema has the switch, sent as its own
- * entry in `motion_configs`, and its shots carry no voice-sample clip. Every other door, and every shot on
- * it, is left exactly as before; a map was not judged per door until now, and this does not add a refusal.
+ * a door driven by a line's audio with a silent door now runs. Every door that holds a spoken shot goes
+ * through prepareSpokenClip, the same test the single-door path applies:
+ *
+ * - A door driven only by audio (isDrivingOnlyDoor) gets native audio off when its schema has the switch,
+ *   sent as its own entry in `motion_configs`, and its shots carry no voice-sample clip.
+ * - A native-audio door keeps its config and its voice samples, and is refused when talking audio is off.
+ * - A door that can neither speak nor take driving audio is refused (cf#1299). Measured on a hybrid film,
+ *   a line on such a shot was bought and then dropped from the film with no degrade mark. The refusal
+ *   names the shot and its door, and the remedy lists the installed doors that can say a line.
+ *
+ * A door with no spoken shot, and every shot on it, is left exactly as before.
  */
 export function prepareSpokenClipsPerDoor(
   modules: RegisteredModule[],
@@ -173,12 +180,16 @@ export function prepareSpokenClipsPerDoor(
   let refs = voiceRefs ? { ...voiceRefs } : undefined;
   for (const [door, shots] of shotsByDoor) {
     const mod = modules.find((m) => m.name === door);
-    if (!isDrivingOnlyDoor(mod)) continue;
-    const onDoor = new Set(shots);
-    const spoken = spokenLinesPresent((lines ?? []).filter((l) => onDoor.has(l.shot_id)));
-    if (!spoken) continue;
+    const spokenShots = shots.filter((shot) => spokenLinesPresent((lines ?? []).filter((l) => l.shot_id === shot)));
+    if (!spokenShots.length) continue;
     const clip = prepareSpokenClip(modules, mod, config, undefined, true);
-    if (!clip.ok) return clip;
+    if (!clip.ok) {
+      const named = spokenShots.map((shot) => `"${shot}"`).join(", ");
+      const label = mod ? moduleLabel(mod) : door;
+      const what = spokenShots.length === 1 ? `Shot ${named} has a spoken line` : `Shots ${named} have spoken lines`;
+      return { ok: false, error: `${what} on ${label}. ${clip.error}` };
+    }
+    if (!isDrivingOnlyDoor(mod)) continue;
     if (clip.config) motionConfigs[door] = clip.config;
     if (refs) for (const shot of shots) delete refs[shot];
   }
