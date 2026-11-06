@@ -69,7 +69,8 @@ The Privacy policy was written after reading the actual data path:
   tenancy column, leaving no per-user profile model.
 - R2 usage and storage keys (`../../src/`), and the delete path with its storage reclaim
   (`../../src/record-reclaim.ts`, `../../src/record-reclaim-io.ts`, `../../src/cast-media.ts`) plus
-  the operator-run cast-only orphan script (`../../scripts/r2-orphan-gc.ts`).
+  the operator-run orphan scripts: cast (`../../scripts/r2-orphan-gc.ts`) and render job trees
+  (`../../scripts/r2-render-orphan-gc.ts`).
 - The access gate and in-Worker JWT backstop (`../../src/access-auth.ts`, `../SECURITY.md`).
 - The tail/logging consumer (`../../tail/`) is optional. A fresh deploy does not bind it, and console
   lines go to Cloudflare Workers Logs. An operator who runs their own Loki can attach the consumer and

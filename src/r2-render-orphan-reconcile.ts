@@ -1,0 +1,218 @@
+// Pure R2 RENDER-orphan reconciliation core (cf#1009, the second half of the #779 code ruling).
+//
+// No Worker globals. The IO is injected (`readDoc`), so this unit-tests under the tsc + vitest gate
+// against real SQLite rows and an in-memory bucket (tests/r2-render-orphan-1009.test.ts). The live
+// IO is scripts/r2-render-orphan-gc.ts, which lists the bucket with rclone and acts on the verdict.
+//
+// THE RULE IS THE CAST RECONCILER'S, generalised and not replaced (src/r2-orphan-reconcile.ts, the
+// #298 near-miss): a key is an orphan only when NO live owner is found, and anything whose owner
+// cannot be PROVEN from records is out of scope, never deleted. The cast core is untouched.
+//
+// WHAT IS IN SCOPE (lead ruling on #1009, 2026-11-06). Only trees whose owner is a record id:
+//
+//   renders/<film-id>/...        film-<uuid>, owned by a live renders.job_id, a live shot_records
+//                                film_id, or a shard id a live scatter doc names (shard rows can be
+//                                missing until a poll self-heals them).
+//   renders/<scatter-id>/...     scatter-<uuid>, owned by a live renders.job_id.
+//   renders/<clips-id>/...       clips-<uuid>, KEPT when a live film doc names it as clip_job_id.
+//                                Otherwise OUT OF SCOPE, not orphan: a standalone POST /api/clips job
+//                                writes no row and its doc names no film, so an unnamed clips tree is
+//                                not provably dead (cf#1309 proposes giving it an owner).
+//   renders/logs/<job-id>.txt    the render log, owned by the same job id (render-log.js).
+//
+// WHAT IS OUT OF SCOPE, each deliberately:
+//   renders/<project>/...        project-keyed trees. Two sanitisers write that segment and they
+//                                disagree, and project names are mutable, so ownership would be a
+//                                name match. That is the #298 near-miss class.
+//   renders/cast/...             owned by cast delete and the cast reconciler; "cast" is not a job id,
+//                                so the job-tree rule already leaves it alone.
+//   bundles/, audio/, keyframe-stage/, module state docs, everything not under renders/
+//                                named by no record; only an AGE rule could sweep them, and there is
+//                                no ruling for one.
+//
+// THREE GUARDS ON TOP, each failing toward keep:
+//   - any key a live record or a live job doc names is kept, whatever tree it is in;
+//   - anything younger than the grace window, or with no readable mtime, is kept: a film doc is
+//     written before its renders row exists;
+//   - a job-shaped segment that equals a live project name (raw or either sanitised form) is out of
+//     scope, so a project that happens to be named like a job id is never read as one.
+
+import {
+  clipJobIdOf,
+  parseJobDocKeys,
+  renderRowKeys,
+  shotRowKeys,
+  type RenderKeyRow,
+  type ShotKeyRow,
+} from "./record-reclaim.ts";
+
+/** The D1 reads the owner index is built from. Exported so the test runs the SAME SQL the operator
+ *  runs (`wrangler d1 execute ... --json`), not a hand-built row. */
+export const RENDER_OWNER_SQL = "SELECT id, job_id, project, bundle_key, output_key, keyframes_json, output_json FROM renders";
+export const SHOT_OWNER_SQL = "SELECT film_id, still_key, wav_key, clip_key FROM shot_records";
+export const PROJECT_NAME_SQL = "SELECT name FROM storyboard_projects";
+
+export const DEFAULT_GRACE_MS = 48 * 3600 * 1000;
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const JOB_ID_RE = new RegExp(`^(film|scatter|clips)-${UUID}$`);
+const LOG_KEY_RE = new RegExp(`^renders/logs/((?:film|scatter|clips)-${UUID})\\.txt$`);
+
+export type JobKind = "film" | "scatter" | "clips";
+
+/** The kind of a job-id-shaped path segment, or null. */
+export function jobKindOf(seg: string): JobKind | null {
+  const m = JOB_ID_RE.exec(seg);
+  return m ? (m[1] as JobKind) : null;
+}
+
+/** The two sanitisers that write a project segment today, plus the raw name. */
+export function projectSegmentForms(name: string): string[] {
+  const forms = new Set<string>([name]);
+  forms.add((name || "x").replace(/[^a-zA-Z0-9_-]/g, "_"));
+  forms.add(name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120) || "project");
+  return [...forms];
+}
+
+export interface RenderObjectLite {
+  key: string;
+  size: number;
+  /** Last-modified, epoch ms. Missing or unparseable reads as "too young to judge". */
+  mtimeMs?: number | null;
+}
+
+export interface RenderOwnerInput {
+  renderRows: RenderKeyRow[];
+  shotRows: ShotKeyRow[];
+  projectNames?: string[];
+  /** Read one R2 JSON doc. Resolve null when the object does not exist; THROW on any other failure.
+   *  A throw aborts the index: a live doc that cannot be read leaves its keys undetermined. */
+  readDoc: (key: string) => Promise<unknown | null>;
+}
+
+export interface RenderOwnerIndex {
+  liveJobIds: Set<string>;
+  liveClipJobIds: Set<string>;
+  referencedKeys: Set<string>;
+  projectSegments: Set<string>;
+  docsRead: number;
+}
+
+export async function buildRenderOwnerIndex(input: RenderOwnerInput): Promise<RenderOwnerIndex> {
+  const liveJobIds = new Set<string>();
+  const liveClipJobIds = new Set<string>();
+  const referencedKeys = new Set<string>();
+  const projectSegments = new Set<string>();
+  let docsRead = 0;
+
+  const projects = [...(input.projectNames ?? [])];
+  for (const row of input.renderRows) {
+    if (row.job_id) liveJobIds.add(row.job_id);
+    if (row.project) projects.push(row.project);
+    for (const k of renderRowKeys(row)) referencedKeys.add(k);
+  }
+  for (const k of shotRowKeys(input.shotRows)) referencedKeys.add(k);
+  for (const s of input.shotRows) if (s.film_id) liveJobIds.add(s.film_id);
+  for (const p of projects) if (p) for (const f of projectSegmentForms(p)) projectSegments.add(f);
+
+  const harvest = (doc: unknown) => { for (const k of parseJobDocKeys(doc)) referencedKeys.add(k); };
+
+  // Scatter parents first: their shard films are live even when the shard rows are missing.
+  for (const id of [...liveJobIds]) {
+    if (jobKindOf(id) !== "scatter") continue;
+    const doc = await input.readDoc(`renders/${id}/scatter-job.json`);
+    docsRead++;
+    if (doc) harvest(doc);
+    const shards = doc && typeof doc === "object" ? (doc as { shard_film_ids?: unknown }).shard_film_ids : undefined;
+    if (Array.isArray(shards)) for (const s of shards) if (typeof s === "string" && s) liveJobIds.add(s);
+  }
+  for (const id of liveJobIds) {
+    if (jobKindOf(id) !== "film") continue;
+    const doc = await input.readDoc(`renders/${id}/film-job.json`);
+    docsRead++;
+    if (!doc) continue;
+    harvest(doc);
+    const clipId = clipJobIdOf(doc);
+    if (!clipId) continue;
+    liveClipJobIds.add(clipId);
+    const clipDoc = await input.readDoc(`renders/${clipId}/clips-job.json`);
+    docsRead++;
+    if (clipDoc) harvest(clipDoc);
+  }
+  return { liveJobIds, liveClipJobIds, referencedKeys, projectSegments, docsRead };
+}
+
+export type RenderDecision = "keep" | "orphan" | "out-of-scope";
+export interface RenderClassification {
+  key: string;
+  size: number;
+  decision: RenderDecision;
+  reason: string;
+}
+
+export function classifyRenderKey(
+  obj: RenderObjectLite,
+  idx: RenderOwnerIndex,
+  nowMs: number,
+  graceMs: number = DEFAULT_GRACE_MS,
+): RenderClassification {
+  const { key, size } = obj;
+  const mk = (decision: RenderDecision, reason: string): RenderClassification => ({ key, size, decision, reason });
+
+  if (!key.startsWith("renders/")) return mk("out-of-scope", "not under renders/");
+  if (idx.referencedKeys.has(key)) return mk("keep", "named by a live record or a live job doc");
+  const mtime = typeof obj.mtimeMs === "number" && Number.isFinite(obj.mtimeMs) ? obj.mtimeMs : null;
+  if (mtime === null) return mk("keep", "no readable mtime; too young to judge");
+  if (nowMs - mtime < graceMs) return mk("keep", "inside the grace window; may be in flight");
+
+  const log = LOG_KEY_RE.exec(key);
+  if (log) {
+    return idx.liveJobIds.has(log[1])
+      ? mk("keep", `render log of live job ${log[1]}`)
+      : mk("orphan", `render log of job ${log[1]}, which has no live owner`);
+  }
+
+  const seg = key.split("/")[1] ?? "";
+  const kind = jobKindOf(seg);
+  if (!kind) return mk("out-of-scope", "not a job tree (project-keyed or unrecognised)");
+  if (idx.projectSegments.has(seg)) return mk("out-of-scope", `segment ${seg} is also a live project name`);
+  if (kind === "clips") {
+    return idx.liveClipJobIds.has(seg)
+      ? mk("keep", `clip job ${seg} of a live film`)
+      : mk("out-of-scope", `clip job ${seg} named by no live film; may be a standalone clip job (cf#1309)`);
+  }
+  return idx.liveJobIds.has(seg)
+    ? mk("keep", `under live ${kind} ${seg}`)
+    : mk("orphan", `${kind} ${seg} has no live renders row, shot record or scatter parent`);
+}
+
+export interface RenderReconcileResult {
+  orphans: RenderClassification[];
+  kept: RenderClassification[];
+  outOfScope: RenderClassification[];
+  orphanBytes: number;
+  orphanCount: number;
+}
+
+export function reconcileRenders(
+  objects: RenderObjectLite[],
+  idx: RenderOwnerIndex,
+  nowMs: number,
+  graceMs: number = DEFAULT_GRACE_MS,
+): RenderReconcileResult {
+  const orphans: RenderClassification[] = [];
+  const kept: RenderClassification[] = [];
+  const outOfScope: RenderClassification[] = [];
+  for (const o of objects) {
+    const c = classifyRenderKey(o, idx, nowMs, graceMs);
+    (c.decision === "orphan" ? orphans : c.decision === "keep" ? kept : outOfScope).push(c);
+  }
+  return { orphans, kept, outOfScope, orphanBytes: orphans.reduce((n, c) => n + (c.size || 0), 0), orphanCount: orphans.length };
+}
+
+/** Refuse up front, before anything is deleted, when the listing is bigger than the operator's cap. */
+export function refuseOversizedSweep(count: number, cap: number): string | null {
+  return count > cap
+    ? `listing has ${count} objects, over the cap of ${cap}. Nothing was deleted. Raise --max-objects deliberately, or narrow the run.`
+    : null;
+}
