@@ -73,3 +73,34 @@ deleted (a read-only directory):
   exited 1;
 - CONTROL: with the marker hold disabled, the same run deleted the marker, printed "verified: orphan
   set is empty" and exited 0 with the stuck file still present. The hold is what makes the check honest.
+
+## The dry-run report (cf#1009, 2026-11-06)
+
+A dry run, which is any run without `--apply`, prints:
+- every would-delete object, as `DELETE <key> (<size> B) [<rule>: <reason>]`
+- then a per-rule block: decision, rule, object count, bytes, and the first 10 keys of that rule in key order
+
+The rules:
+
+| rule | decision |
+| --- | --- |
+| `job-dead`, `log-dead`, `clips-marked-dead` | would delete |
+| `named`, `grace`, `no-mtime`, `job-live`, `log-live`, `clips-live` | keep |
+| `not-renders`, `not-job-tree`, `project-name`, `clips-unmarked` | out of scope |
+
+The dry run calls rclone only to list (`lsjson`) and to read live job docs (`cat`). A read-only R2 key is enough for it.
+
+```sh
+OUT=/Users/joan/scratch/sweep1106/live
+# owner snapshot: three read-only SELECTs, the core's RENDER_OWNER_SQL, SHOT_OWNER_SQL, PROJECT_NAME_SQL
+for q in \
+  "SELECT id, job_id, project, bundle_key, output_key, keyframes_json, output_json FROM renders" \
+  "SELECT film_id, still_key, wav_key, clip_key FROM shot_records" \
+  "SELECT name FROM storyboard_projects"; do
+  npx wrangler d1 execute vivijure-studio --remote --json --command "$q"
+done > "$OUT/d1.json"
+jq -s '{renderRows: .[0][0].results, shotRows: .[1][0].results, projectNames: [.[2][0].results[].name]}' \
+  "$OUT/d1.json" > "$OUT/owners.json"
+# the dry run (no --apply): rclone remote "r2" holds the read-only key; the report goes to stdout
+R2_REMOTE=r2 R2_BUCKET=vivijure node scripts/r2-render-orphan-gc.ts --owners "$OUT/owners.json" > "$OUT/report.txt"
+```

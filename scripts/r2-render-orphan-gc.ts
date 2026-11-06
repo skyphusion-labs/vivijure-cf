@@ -20,12 +20,14 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 import {
+  buildDryRunReport,
   buildRenderOwnerIndex,
   clipJobOwnerMarkerOf,
   DEFAULT_GRACE_MS,
   jobKindOf,
   reconcileRenders,
   refuseOversizedSweep,
+  SAMPLE_PER_RULE,
   type RenderObjectLite,
 } from "../src/r2-render-orphan-reconcile.ts";
 import type { RenderKeyRow, ShotKeyRow } from "../src/record-reclaim.ts";
@@ -85,7 +87,15 @@ async function main(): Promise<void> {
   const r = reconcileRenders(objects, idx, now, GRACE_MS);
   console.log(`owners: ${idx.liveJobIds.size} live job ids, ${idx.liveClipJobIds.size} live clip jobs, ${idx.referencedKeys.size} named keys, ${idx.docsRead} docs read`);
   console.log(`scanned ${objects.length}: ${r.orphanCount} orphan (${r.orphanBytes} bytes), ${r.kept.length} kept, ${r.outOfScope.length} out of scope\n`);
-  for (const c of [...r.orphans].sort((a, b) => a.key.localeCompare(b.key))) console.log(`  DELETE ${c.key}  (${c.size} B)  [${c.reason}]`);
+  for (const c of [...r.orphans].sort((a, b) => a.key.localeCompare(b.key))) console.log(`  DELETE ${c.key}  (${c.size} B)  [${c.rule}: ${c.reason}]`);
+
+  // cf#1009: counts, bytes and the first keys of every rule, for the report on the issue.
+  const summary = buildDryRunReport(r);
+  console.log(`\nper rule (decision, rule, objects, bytes; first ${SAMPLE_PER_RULE} keys by key order):`);
+  for (const s of summary.rules) {
+    console.log(`  ${s.decision === "orphan" ? "would delete" : s.decision}  ${s.rule}  ${s.count}  ${s.bytes}`);
+    for (const k of s.sample) console.log(`      ${k}`);
+  }
 
   if (!APPLY) {
     console.log("\nDRY RUN -- nothing deleted. Re-run with --apply to delete the orphan set above.");
