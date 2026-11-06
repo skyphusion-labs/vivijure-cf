@@ -1,4 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import { bearerOk, readyBody } from "./gate";
 import { forwardToInstance } from "./routing";
 
 interface Env {
@@ -25,29 +26,15 @@ function unauthorized(): Response {
   return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
 }
 
-function bearer(request: Request): string {
-  const header = request.headers.get("authorization") || "";
-  return header.toLowerCase().startsWith("bearer ") ? header.slice(7) : "";
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/ready") {
-      const expected = env.LOCAL_FINISH_TOKEN || "";
-      return Response.json({
-        ok: true,
-        token_configured: expected.length > 0,
-        token_len: expected.length,
-      });
+      return Response.json(readyBody(env.LOCAL_FINISH_TOKEN));
     }
     const isHealth = request.method === "GET" && url.pathname === "/health";
-    if (!isHealth) {
-      const expected = env.LOCAL_FINISH_TOKEN || "";
-      const got = bearer(request);
-      if (!expected || !got || expected !== got) {
-        return unauthorized();
-      }
+    if (!isHealth && !(await bearerOk(request.headers.get("authorization"), env.LOCAL_FINISH_TOKEN))) {
+      return unauthorized();
     }
     return forwardToInstance(request, (name, req) => getContainer(env.FINISH, name).fetch(req));
   },
