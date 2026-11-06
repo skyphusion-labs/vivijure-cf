@@ -135,9 +135,14 @@ import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-
 import {
   FILM_SUBMIT_FIELDS,
   FROM_KEYFRAMES_FIELDS,
+  FROM_KEYFRAMES_ALIASES,
+  PANEL_IGNORED_FIELDS,
+  PANEL_RENDER_ALIASES,
   PANEL_RENDER_FIELDS,
+  normalizeSubmitBody,
   qualityTierRefusal,
   unknownSubmitFieldsRefusal,
+  type SubmitDoorRules,
 } from "./submit-fields";
 import {
   coerceQualityTier,
@@ -974,16 +979,34 @@ export type PanelRenderFieldsMatch = AssertTrue<SameKeys<keyof PanelRenderBody, 
 export type FromKeyframesFieldsMatch = AssertTrue<SameKeys<keyof FromKeyframesBody, (typeof FROM_KEYFRAMES_FIELDS)[number]>>;
 export type FilmSubmitFieldsMatch = AssertTrue<SameKeys<keyof FilmSubmitBody, (typeof FILM_SUBMIT_FIELDS)[number]>>;
 
+const PANEL_RENDER_RULES: SubmitDoorRules = {
+  door: "POST /api/storyboard/render", fields: PANEL_RENDER_FIELDS, aliases: PANEL_RENDER_ALIASES,
+  ignored: PANEL_IGNORED_FIELDS, keyframeBackendIntoOverrides: true,
+};
+const FROM_KEYFRAMES_RULES: SubmitDoorRules = {
+  door: "POST /api/storyboard/render-from-keyframes", fields: FROM_KEYFRAMES_FIELDS, aliases: FROM_KEYFRAMES_ALIASES,
+  ignored: PANEL_IGNORED_FIELDS, keyframeBackendIntoOverrides: true,
+};
+const FILM_SUBMIT_RULES: SubmitDoorRules = { door: "POST /api/render/film", fields: FILM_SUBMIT_FIELDS };
+
 /** cf#896: refuse a field the door does not read, and a qualityTier it does not know, before the handler
  *  runs. In the route table and not in the handler, like refusingLongFilmProjects below: a retry replays a
  *  stored body through the handler and a long film starts its parts by calling it directly. */
-function refusingUnknownSubmitFields(allowed: readonly string[], door: string, handler: Handler): Handler {
+function refusingUnknownSubmitFields(rules: SubmitDoorRules, handler: Handler): Handler {
+  const allowed = [...rules.fields, ...(rules.ignored ?? [])];
   return async (req, env, ctx, p) => {
     // A bad body is left for the handler to answer.
-    const body = (await req.clone().json().catch(() => null)) as unknown;
-    const refusal = unknownSubmitFieldsRefusal(body, allowed, door) ?? qualityTierRefusal(body);
+    const raw = (await req.clone().json().catch(() => null)) as unknown;
+    const normalized = normalizeSubmitBody(raw, rules);
+    if ("refusal" in normalized) throw badRequest(normalized.refusal);
+    const body = normalized.body;
+    const refusal = unknownSubmitFieldsRefusal(body, allowed, rules.door) ?? qualityTierRefusal(body);
     if (refusal) throw badRequest(refusal);
-    return handler(req, env, ctx, p);
+    if (!normalized.changed) return handler(req, env, ctx, p);
+    // The handler reads, and stores for a retry, the body with the aliases already renamed.
+    const headers = new Headers(req.headers);
+    headers.delete("content-length");
+    return handler(new Request(req.url, { method: req.method, headers, body: JSON.stringify(body) }), env, ctx, p);
   };
 }
 
@@ -2904,11 +2927,11 @@ export const API_ROUTES: Route[] = [
   { method: "DELETE", pattern: "/api/storyboard/audio-upload/:name",   scope: "consumer",    handler: hStoryboardAudioDelete },
   { method: "POST",   pattern: "/api/storyboard/character-ref",        scope: "consumer",    handler: hStoryboardCharacterRef },
   { method: "POST",   pattern: "/api/audio/analyze",                   scope: "consumer",    handler: hAudioAnalyze },
-  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: refusingUnknownSubmitFields(PANEL_RENDER_FIELDS, "POST /api/storyboard/render", refusingLongFilmProjects(hSubmitRender)) },
+  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: refusingUnknownSubmitFields(PANEL_RENDER_RULES, refusingLongFilmProjects(hSubmitRender)) },
   { method: "POST",   pattern: "/api/storyboard/render-plan",          scope: "consumer",    handler: hRenderPlan },
   { method: "POST",   pattern: "/api/render/clips",                     scope: "consumer",    handler: refusingLongFilmProjects(hStartClips) },
   { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
-  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: refusingUnknownSubmitFields(FILM_SUBMIT_FIELDS, "POST /api/render/film", refusingLongFilmProjects(hStartFilm)) },
+  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: refusingUnknownSubmitFields(FILM_SUBMIT_RULES, refusingLongFilmProjects(hStartFilm)) },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
   { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
   { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
@@ -2922,7 +2945,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: refusingLongFilmParts(hRegenShot) },
-  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: refusingUnknownSubmitFields(FROM_KEYFRAMES_FIELDS, "POST /api/storyboard/render-from-keyframes", hRenderFromKeyframes) },
+  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: refusingUnknownSubmitFields(FROM_KEYFRAMES_RULES, hRenderFromKeyframes) },
   { method: "GET",    pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hPollRender },
   { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hCancelRender },
   { method: "GET",    pattern: "/api/storyboard/renders",              scope: "consumer",    handler: hListRenders },

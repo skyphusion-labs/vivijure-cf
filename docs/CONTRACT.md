@@ -1138,7 +1138,7 @@ track is analyzed again.
 Both return, and `GET /api/storyboard/render/:jobId` (2.24) polls, a **RunPod-shaped poll view** so
 the planner's existing poll loop understands a module render identically to a raw RunPod job.
 
-**POST `/api/storyboard/render` body:** A field this door does not read is refused `400`, naming the field, before any spend (cf#896). So is a `qualityTier` that is not `draft`, `standard` or `final`. The shard aliases stay accepted and ignored.
+**POST `/api/storyboard/render` body:** A field this door does not read is refused `400`, naming the field, before any spend (cf#896), and so is a `qualityTier` that is not `draft`, `standard` or `final`. The snake_case spellings `bundle_key`, `quality_tier`, `project_id`, `cast_loras` and `keyframes_only` are accepted and applied as the field they name; both spellings with different values are refused `400`. A top-level `keyframe_backend` is applied as `renderOverrides.keyframe_backend`. `storyboard` and the shard aliases are accepted and ignored.
 
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
@@ -1224,7 +1224,7 @@ or `does not fit one`. There is no song, so no refusal, when `audioKey` is absen
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
 (default final), renderOverrides?, audioKey?, projectId?, motion_backend?, castLoras?,
-idempotency_key? }`. Any other field, or a `qualityTier` that is not `draft`, `standard` or `final`, is refused `400` naming it (cf#896). Reads scenes + injected keyframes from the bundle. `motion_backend` resolves as:
+idempotency_key? }`. The snake_case spellings `bundle_key`, `quality_tier`, `project_id` and `cast_loras` are applied as the field they name, a top-level `keyframe_backend` as `renderOverrides.keyframe_backend`, and `storyboard` is accepted and ignored. Any other field, two spellings with different values, or a `qualityTier` that is not `draft`, `standard` or `final`, is refused `400` naming it (cf#896). Reads scenes + injected keyframes from the bundle. `motion_backend` resolves as:
 the top-level value, else `renderOverrides.motion_backend`, else the hosted door for this bundle.
 A bundle with a spoken line uses installed `infinitetalk` when that module is a cloud driving-only
 door, otherwise the first other cloud driving-only door. A bundle with no spoken line uses the

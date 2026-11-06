@@ -90,10 +90,20 @@ describe("qualityTierRefusal", () => {
 });
 
 describe("the submit routes refuse before any work (cf#896)", () => {
-  it("panel render: quality_tier is a 400 naming qualityTier", async () => {
-    const r = await post(PANEL, { bundleKey: "renders/p/bundle.json", scenes, quality_tier: "draft" });
+  it("panel render: a top-level resolution is a 400 naming where it goes", async () => {
+    const r = await post(PANEL, { bundleKey: "renders/p/bundle.json", scenes, resolution: "480p" });
     expect(r.status).toBe(400);
-    expect(r.error).toContain("POST /api/storyboard/render does not read this field: quality_tier (the field is qualityTier)");
+    expect(r.error).toContain("POST /api/storyboard/render does not read this field: resolution (a motion door setting goes inside renderOverrides.config)");
+  });
+  it("panel render: quality_tier and qualityTier that disagree are a 400", async () => {
+    const r = await post(PANEL, { bundleKey: "renders/p/bundle.json", scenes, quality_tier: "draft", qualityTier: "final" });
+    expect(r.status).toBe(400);
+    expect(r.error).toContain("got quality_tier and qualityTier with different values");
+  });
+  it("panel render: an unknown quality_tier value is refused like an unknown qualityTier", async () => {
+    const r = await post(PANEL, { bundleKey: "renders/p/bundle.json", scenes, quality_tier: "low" });
+    expect(r.status).toBe(400);
+    expect(r.error).toContain("qualityTier must be one of");
   });
   it("panel render: an unknown qualityTier is a 400, not a final render", async () => {
     const r = await post(PANEL, { bundleKey: "renders/p/bundle.json", scenes, qualityTier: "low" });
@@ -143,9 +153,9 @@ describe("the panel's own bodies still pass the field check (control)", () => {
       expect(r.error).not.toContain("qualityTier must be one of");
       // The control is only evidence if the check ran on this request: the same body with one stray
       // field must be refused by it. Without this, a 503 before the check would pass the control.
-      const stray = await post(path, { ...body, quality_tier: "draft" });
+      const stray = await post(path, { ...body, not_a_field: 1 });
       expect(stray.status).toBe(400);
-      expect(stray.error).toContain("does not read this field: quality_tier");
+      expect(stray.error).toContain("does not read this field: not_a_field");
     });
   }
 });
