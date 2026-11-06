@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from bearer import bearer_middleware, require_bearer_config
+from bearer import bearer_middleware, configured_token, require_bearer_config
 from ffmpeg_run import FFMPEG_TIMEOUT, FFPROBE_TIMEOUT, FfmpegTimeout, _run
 from concat_guard import ConcatDropError, assert_no_dropped_parts
 import frame_text
@@ -236,6 +236,38 @@ async def async_status(req):
 async def health(_req):
     # Cheap readiness probe; does not shell out to ffmpeg.
     return web.json_response({"ok": True})
+
+
+async def auth_check(_req):
+    """GET /auth-check (cf#887): answer "this container is serving and accepted your bearer", doing NO
+    work.
+
+    The studio's on-demand readiness read calls this AFTER /health. /health is open by design, so it
+    proves the process is up and nothing about the token; this route sits behind bearer_middleware
+    like every media route, so a 200 here means the middleware ran and accepted the caller's bearer
+    (a wrong or stale token is the middleware's 401 and never reaches this handler).
+
+    NO WORK, on purpose and under test (test_auth_check.py): no JOBS entry, no ffmpeg or ffprobe, no
+    subprocess, no network, no disk. A probe that did work would cost a real encode slot and could
+    fail for reasons that say nothing about serving. The binding routes it like any stateless path,
+    to a sync-pool instance, so it never mints a job instance either.
+
+    `bearer` is honest about WHICH gate let the request in. "verified" means a token is configured
+    and the middleware matched it. "disabled" means the door runs with the explicit
+    LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true opt-out, so nothing was checked; reporting that as
+    accepted would be a green that cannot go red on an open door. Nothing secret is returned: no
+    token, no token length, no environment.
+
+    `liveness_only: true` is part of the contract. A 200 does not mean a finish would succeed.
+    """
+    return web.json_response(
+        {
+            "ok": True,
+            "serving": True,
+            "bearer": "verified" if configured_token() else "disabled",
+            "liveness_only": True,
+        }
+    )
 
 
 async def _download(session, url, path, cap):
@@ -2151,6 +2183,7 @@ app = web.Application(
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)
+app.router.add_get("/auth-check", auth_check)
 app.router.add_post("/selftest", selftest)
 app.router.add_post("/finish", finish)
 app.router.add_post("/overlay", overlay)

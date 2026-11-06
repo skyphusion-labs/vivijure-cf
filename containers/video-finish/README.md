@@ -37,6 +37,7 @@ keeps the credentials.
 | Route | Method | Purpose |
 |---|---|---|
 | `/health` | GET | readiness probe (`{ok:true}`); does not shell out to ffmpeg |
+| `/auth-check` | GET | cf#887: bearer-gated, does NO work. `200 {ok, serving: true, bearer: verified\|disabled, liveness_only: true}` means the process is up and accepted the bearer the caller sent; a wrong or stale token is the gate 401. Liveness only: it does not prove a finish would succeed |
 | `/finish` | POST | concat per-shot clips (cut/xfade) + mux soundtrack -> final MP4 |
 | `/overlay` | POST | **retired** (410) -- text-overlay module gone; use film-titles / subtitle |
 | `/film-titles` | POST | prepend a title card + append credit cards |
