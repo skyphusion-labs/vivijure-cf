@@ -41,7 +41,6 @@ const BASELINE: Record<string, string[]> = {
   "src/index.ts": [
     "API_ROUTES", "ARTIFACT_PREFIXES", "clampArtifactUrlTtl", "runSweepPass", "safeArtifactContentType",
   ],
-  "tail/src/index.ts": ["deriveFields", "reportSinkDrop", "shapeEventsToLoki"],
 };
 
 /** Every wrangler config in the tree (committed `.toml` and `.toml.example`), never node_modules. */

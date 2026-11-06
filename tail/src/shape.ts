@@ -1,0 +1,175 @@
+// vivijure-tail: shape tail events into Loki streams, and report a dropped push (cf#838).
+// A leaf module (vivijure-cf#1308); the label design and the drop contract are described at the
+// top of ./index.ts, the Worker entry that imports this.
+
+interface TailLog { timestamp?: number; level?: string; message?: unknown[]; }
+interface TailException { timestamp?: number; name?: string; message?: string; }
+interface TailEvent { request?: { url?: string; method?: string; path?: string }; response?: { status?: number }; cron?: string; scheduledTime?: number; }
+// Field names verified against the pinned @cloudflare/workers-types TraceItem, NOT guessed: the
+// public tail-worker docs page omits the timing fields entirely, so the type definition is the
+// authority here. All three are machine-generated (durations + a boolean), never user-derived.
+export interface TailItem {
+  scriptName?: string;
+  outcome?: string;
+  eventTimestamp?: number;
+  event?: TailEvent;
+  logs?: TailLog[];
+  exceptions?: TailException[];
+  /** CPU milliseconds burned by the invocation. */
+  cpuTime?: number;
+  /** Elapsed milliseconds from invocation start until the runtime is done (incl. waitUntil). */
+  wallTime?: number;
+  /** True when the runtime DROPPED events from this trace. Without it an under-count reads as calm. */
+  truncated?: boolean;
+}
+
+interface Labels { worker: string; level: string; phase: string; module: string; }
+export interface LokiStream { stream: Labels; values: [string, string][]; }
+
+const PHASES = ["keyframe", "pre_clip_dialogue", "pre_clip_speech", "clips", "dialogue", "speech", "finish", "assemble", "master", "mux", "done", "failed"];
+
+function mapLevel(l?: string): "info" | "warn" | "error" {
+  const v = (l || "").toLowerCase();
+  if (v === "error") return "error";
+  if (v === "warn") return "warn";
+  return "info"; // debug | log | info
+}
+
+function nanos(ms?: number): string {
+  const t = typeof ms === "number" && isFinite(ms) ? Math.floor(ms) : Date.now();
+  return (BigInt(t) * 1000000n).toString();
+}
+
+function flatten(message: unknown[] | undefined): string {
+  if (!message || !message.length) return "";
+  return message
+    .map((m) => {
+      if (typeof m === "string") return m;
+      try { return JSON.stringify(m); } catch { return String(m); }
+    })
+    .join(" ");
+}
+
+interface Derived { job_id?: string; phase: string; module: string; reason?: string; }
+
+// Best-effort parse of the core's console convention. PREFERS a structured logEvent JSON line
+// ({_v:1,...}, the planned fast-follow); falls back to regex over the English line.
+export function deriveFields(text: string): Derived {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const o = JSON.parse(trimmed) as Record<string, unknown>;
+      if (o && o._v === 1) {
+        const phase = typeof o.phase === "string" && PHASES.includes(o.phase) ? o.phase : "unknown";
+        return {
+          job_id: typeof o.job_id === "string" ? o.job_id : undefined,
+          phase,
+          module: typeof o.module === "string" ? o.module : "none",
+          reason: typeof o.reason === "string" ? o.reason : undefined,
+        };
+      }
+    } catch { /* not our structured line; fall through to regex */ }
+  }
+  let job_id: string | undefined;
+  const film = text.match(/\bfilm[\s_-]([A-Za-z0-9-]{4,})/);
+  if (film) job_id = film[1].startsWith("film") ? film[1] : "film-" + film[1];
+  if (!job_id) {
+    const clips = text.match(/\b(clips-[A-Za-z0-9-]+)/);
+    if (clips) job_id = clips[1];
+  }
+  let phase = "unknown";
+  for (const p of PHASES) {
+    if (new RegExp("\\b" + p + "\\b").test(text)) { phase = p; break; }
+  }
+  let module = "none";
+  if (/film\.finish/.test(text)) {
+    module = "film.finish";
+  } else {
+    const colon = text.match(/\b([a-z][a-z0-9-]+):\s/); // "<module>: <reason>"
+    if (colon && !PHASES.includes(colon[1])) module = colon[1];
+  }
+  return { job_id, phase, module };
+}
+
+export function shapeEventsToLoki(events: TailItem[]): LokiStream[] {
+  const map = new Map<string, LokiStream>();
+  const add = (labels: Labels, ts: string, line: string) => {
+    const key = labels.worker + "|" + labels.level + "|" + labels.phase + "|" + labels.module;
+    let s = map.get(key);
+    if (!s) { s = { stream: labels, values: [] }; map.set(key, s); }
+    s.values.push([ts, line]);
+  };
+  for (const item of events || []) {
+    const worker = item.scriptName || "unknown";
+    // Invocation summary -- emitted for EVERY tail event so routine traffic + the live pipeline
+    // are visible even when the request makes no console.* calls (CF's auto invocation record is
+    // NOT in logs[]). Render detail (console.warn degrades/phases) still rides logs[] below.
+    {
+      const ev = item.event || {};
+      let summary: string;
+      if (ev.request) summary = (ev.request.method || "GET") + " " + (ev.request.path || ev.request.url || "/") + (ev.response && ev.response.status != null ? " " + ev.response.status : "");
+      else if (ev.cron) summary = "cron " + ev.cron;
+      else if (ev.scheduledTime != null) summary = "scheduled";
+      else summary = "invocation";
+      const oc = item.outcome || "ok";
+      const ilevel: "info" | "warn" | "error" = oc === "ok" ? "info" : (oc === "exception" || oc === "exceededCpu" ? "error" : "warn");
+      const idf = deriveFields(summary);
+      // Timing rides the invocation LINE, never a Loki label: these are unbounded numerics and
+      // would shatter stream cardinality (the same rule that keeps job_id out of the labels).
+      // Query them by unwrapping instead, e.g.
+      //   quantile_over_time(0.95, {worker="vivijure-studio"} | json | unwrap wall_ms [10m])
+      // Conditionally included: absent stays ABSENT rather than becoming 0, so "the runtime did not
+      // report it" and "it took no time" never collapse into the same value.
+      add({ worker, level: ilevel, phase: idf.phase, module: idf.module }, nanos(item.eventTimestamp),
+        JSON.stringify({
+          msg: summary,
+          kind: "invocation",
+          outcome: oc,
+          status: ev.response?.status,
+          path: ev.request?.path,
+          cpu_ms: typeof item.cpuTime === "number" ? item.cpuTime : undefined,
+          wall_ms: typeof item.wallTime === "number" ? item.wallTime : undefined,
+          truncated: item.truncated === true ? true : undefined,
+        }));
+    }
+    for (const log of item.logs || []) {
+      const text = flatten(log.message);
+      if (!text) continue;
+      const f = deriveFields(text);
+      const labels: Labels = { worker, level: mapLevel(log.level), phase: f.phase, module: f.module };
+      const line = JSON.stringify({ msg: text, job_id: f.job_id, reason: f.reason, outcome: item.outcome });
+      add(labels, nanos(log.timestamp ?? item.eventTimestamp), line);
+    }
+    for (const ex of item.exceptions || []) {
+      const text = (ex.name || "Error") + ": " + (ex.message || "");
+      const f = deriveFields(text);
+      const labels: Labels = { worker, level: "error", phase: f.phase, module: f.module };
+      const line = JSON.stringify({ msg: text, name: ex.name, job_id: f.job_id, outcome: item.outcome ?? "exception" });
+      add(labels, nanos(ex.timestamp ?? item.eventTimestamp), line);
+    }
+  }
+  for (const s of map.values()) {
+    s.values.sort((a, b) => (BigInt(a[0]) < BigInt(b[0]) ? -1 : BigInt(a[0]) > BigInt(b[0]) ? 1 : 0));
+  }
+  return [...map.values()];
+}
+
+/** Report a drop on the ONE surface that is not the sink (cf#838).
+ *
+ *  One line per invocation, never per log line: the drop is a property of the push, and 549
+ *  invocations in six hours (measured 2026-09-27) is the rate this runs at when a studio is busy.
+ *  `lines` is the count that did not arrive, so an under-delivery has a denominator instead of
+ *  being absent. Never throws: a reporting failure must not become a render failure. */
+export function reportSinkDrop(reason: string, streams: LokiStream[], detail?: unknown): void {
+  try {
+    let lines = 0;
+    for (const s of streams) lines += s.values.length;
+    console.warn(JSON.stringify({
+      ev: "tail.sink.drop",
+      reason,
+      streams: streams.length,
+      lines,
+      detail: detail === undefined ? undefined : String(detail),
+    }));
+  } catch { /* nothing left to do if even the report cannot be built */ }
+}
