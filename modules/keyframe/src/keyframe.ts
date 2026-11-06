@@ -46,6 +46,8 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   // wire. Old backend images ignore these; new ones default scene_lock true / 0.70.
   if (typeof cfg.scene_lock === "boolean") o.scene_lock = cfg.scene_lock;
   num("canny_scale", "canny_scale");
+  // cf#1143: the Pass B identity crop padding. The backend clamps it to 0..2.
+  num("face_crop_pad", "face_crop_pad");
   // Anime stills swap the SDXL checkpoint. Photoreal keeps the backend default.
   if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_BASES.anime;
   return o;
