@@ -46,6 +46,8 @@ export function offeredQualities(reg: Registry): Quality[];
 export function resolutionFor(mod: Mod, quality?: string): { field: string; value: string; pos: string } | null;
 export function clipPrice(mod: Mod, seconds: number, quality?: string): Price;
 export function priceText(p: Price): string;
+export function lengthNote(issue: { detail?: { index: number; planned_seconds: number; min_seconds: number | null; max_seconds: number | null; steps: number[] | null } } | null | undefined): string;
+export function talkingStyleLine(board: unknown, mod: Mod | null | undefined): string;
 export function boardSeconds(board: unknown): number;
 export function hasSpokenLines(board: unknown): boolean;
 export function styleLine(mod: Mod | null | undefined): string;

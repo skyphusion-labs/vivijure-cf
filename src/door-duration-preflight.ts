@@ -28,7 +28,19 @@ interface BoardShape {
   scenes?: { id?: string; target_seconds?: unknown }[];
 }
 
-export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationShape): PreflightIssue[] {
+/** The numbers behind a door-length issue, so a page can say it in its own words without copying
+ *  this rule (the Make a video page does). `index` counts scenes from 1, the way people count. */
+export interface DoorDurationDetail {
+  index: number;
+  shot_id: string;
+  planned_seconds: number;
+  min_seconds: number | null;
+  max_seconds: number | null;
+  steps: number[] | null;
+}
+export type DoorDurationIssue = PreflightIssue & { detail: DoorDurationDetail };
+
+export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationShape): DoorDurationIssue[] {
   const usage = door.usage;
   if (!usage || door.duration_grid) return [];
   const steps = Array.isArray(usage.duration_steps) && usage.duration_steps.length
@@ -38,7 +50,7 @@ export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationSha
   const min = typeof usage.min_seconds === "number" ? usage.min_seconds : null;
   const allowed = steps ? `${steps.join(", ")} seconds` : `${min ?? "?"} to ${max ?? "?"} seconds`;
 
-  const issues: PreflightIssue[] = [];
+  const issues: DoorDurationIssue[] = [];
   const scenes = Array.isArray(storyboard.scenes) ? storyboard.scenes : [];
   scenes.forEach((scene, idx) => {
     const sid = scene.id || `scene_${(idx + 1).toString().padStart(2, "0")}`;
@@ -47,22 +59,26 @@ export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationSha
         : undefined;
     if (planned === undefined || !(planned > 0)) return;
     const scope = `scene[${sid}]`;
+    const detail: DoorDurationDetail = { index: idx + 1, shot_id: sid, planned_seconds: planned, min_seconds: min, max_seconds: max, steps };
     if (max !== null && planned > max) {
       issues.push({
         level: "error",
         scope,
+        detail,
         message: `${sid} plans ${planned}s, and ${door.name} renders at most ${max}s (${allowed}). Shorten the shot, or pick another door.`,
       });
     } else if (min !== null && planned < min) {
       issues.push({
         level: "warning",
         scope,
+        detail,
         message: `${sid} plans ${planned}s, and ${door.name} renders at least ${min}s (${allowed}). The clip will run longer than planned.`,
       });
     } else if (steps && !steps.includes(planned)) {
       issues.push({
         level: "warning",
         scope,
+        detail,
         message: `${sid} plans ${planned}s, and ${door.name} renders only ${allowed}. The clip will not be ${planned}s long.`,
       });
     }
