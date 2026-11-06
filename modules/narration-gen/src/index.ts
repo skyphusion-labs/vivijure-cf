@@ -45,6 +45,7 @@ import {
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
@@ -68,7 +69,7 @@ const ENDPOINT_ID = MODEL;
 
 const MANIFEST: ModuleManifest = {
   name: "narration-gen",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["score"],
   // Tier-honest identity + knob labels (cf#211): this manifest is canonical + drift-locked (synced
@@ -167,7 +168,7 @@ async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeR
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) return { ok: false, error: "narration-gen /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("narration-gen", r);
     const runpodJobId = ((await r.json()) as { id?: string }).id;
     if (!runpodJobId) return { ok: false, error: "narration-gen /run returned no job id" };
     const submittedAt = Date.now();

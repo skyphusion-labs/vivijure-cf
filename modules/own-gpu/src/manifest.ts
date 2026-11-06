@@ -13,7 +13,7 @@ export const MANIFEST: ModuleManifest = {
   // of the module, and core must not branch on module identity.
   needs_tenant_r2: true,
   name: "own-gpu",
-  version: "0.2.2",
+  version: "0.2.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-own-gpu", label: "Silent look (studio GPU)" }],

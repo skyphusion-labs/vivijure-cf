@@ -24,6 +24,7 @@ import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, de
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -43,7 +44,7 @@ const ENDPOINT_ID = "infinitetalk";
 
 const MANIFEST: ModuleManifest = {
   name: "infinitetalk",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (InfiniteTalk)" }],
@@ -129,7 +130,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildKlingBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "infinitetalk /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("infinitetalk", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "infinitetalk /run returned no job id" };
     const submittedAt = Date.now();

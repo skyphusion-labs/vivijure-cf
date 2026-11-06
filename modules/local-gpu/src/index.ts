@@ -36,6 +36,7 @@ import {
   parseKeyframes,
   parseTrainedLoras,
 } from "./keyframe";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   // The base URL of the user's local backend (a Cloudflare tunnel hostname terminating at the homelab
@@ -145,7 +146,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       headers: { ...authHeaders(token), "content-type": "application/json" },
       body: JSON.stringify(buildI2vBody(input, req.config, req.context.project, grid)),
     });
-    if (!r.ok) return { ok: false, error: "local-gpu /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("local-gpu", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId || !isSafeJobId(jobId)) return { ok: false, error: "local-gpu /run returned no job id" };
     return {
@@ -235,7 +236,7 @@ async function submitKeyframe(env: Env, req: InvokeRequest<KeyframeInput>): Prom
       headers: { ...authHeaders(token), "content-type": "application/json" },
       body: JSON.stringify(buildPreviewBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "local-gpu keyframe /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("local-gpu keyframe", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId || !isSafeJobId(jobId)) return { ok: false, error: "local-gpu keyframe /run returned no job id" };
     return {

@@ -43,6 +43,7 @@ import {
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -63,7 +64,7 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan-lora",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud-lora", label: "Silent, your trained face (Wan)" }],
@@ -157,7 +158,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildWanLoraBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "alibaba-wan-lora /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("alibaba-wan-lora", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "alibaba-wan-lora /run returned no job id" };
     const submittedAt = Date.now();
