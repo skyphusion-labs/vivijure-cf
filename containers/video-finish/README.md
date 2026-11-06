@@ -121,7 +121,7 @@ working set:
 Peak disk becomes `max(3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES), one film)`.
 
 **Why a pool and not R2 credentials.** The container is credentialless on purpose, so it can only write
-to a URL it was handed; the Worker mints at most `MAX_CLIPS` pairs and the container consumes only as
+to a URL it was handed; the Worker mints at most core's `ASSEMBLE_MAX_POOL_PAIRS` (80) pairs (a film that needs more fails loudly as `partialUrls pool exhausted`), and the container consumes only as
 many as its byte-batching needs. Unused presigns expire harmlessly. **Mint the GET URLs with a TTL that
 covers the WHOLE job**, not just the join: the final pass runs after every batch has encoded, so a TTL
 sized to the join alone will already have expired by the time it is used.
