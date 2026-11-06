@@ -15,10 +15,10 @@
 // window. That last case is the film door's behaviour too (#695: its row insert is best effort).
 //
 // The row reuses the existing columns. job_id carries the kind (clips-*), so nothing new is needed in
-// the schema. Mode: core's NewRenderRow type has no clip value, so the row is inserted as "full" and
-// the poll view's output carries mode "clips", which updateRenderFromView mirrors into the column
-// (COALESCE, the same path a GPU envelope uses). D1 then reads "clips"; core's list projection
-// collapses any value it does not know to "full", so the panel discriminates on the job_id prefix.
+// the schema. Mode: since core 1.41.0 (vivijure-core#458) "clips" is a render mode, so the row is
+// inserted as "clips" and list and get read it back as "clips". The poll view's output.mode is "clips"
+// too, so updateRenderFromView keeps the column as it is. Before #1351 the row was inserted as "full",
+// because core's type had no clip value, and the list projection read it back as "full".
 //
 // No IO except the marker helpers at the bottom, so the row and view shape unit-test.
 
@@ -31,7 +31,7 @@ import type { StudioEnv } from "./orchestrator-env";
 import { clipJobOwnerKey } from "./record-reclaim";
 
 /** The row mode the poll view writes. Raw D1 only; see the header for why the type does not carry it. */
-export const CLIP_JOB_MODE = "clips";
+export const CLIP_JOB_MODE = "clips" as const;
 
 /** A clip job's status in the RunPod vocabulary the renders row uses.
  *  Not complete: IN_PROGRESS. Complete with no clip: FAILED. Otherwise COMPLETED, with the failed
@@ -52,7 +52,7 @@ export function clipJobRowSeed(job: ClipJob): NewRenderRow {
     bundleKey: "",
     qualityTier: "final",
     status: clipJobStatus(job),
-    mode: "full",
+    mode: CLIP_JOB_MODE,
     motionBackend: job.motion_backend ?? null,
   };
 }
