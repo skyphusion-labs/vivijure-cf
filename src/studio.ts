@@ -2562,10 +2562,16 @@ const hRaiseParentCeiling: Handler = async (req, env, _ctx, p) => {
 
 const FILM_SWEEP_LIMIT = 50;
 const FILM_RECONCILE_EVERY_MINUTES = 10;
+/** cf#1302: no new parent tick starts once a pass has run this long. Cloudflare gives `scheduled` work 30 s
+ *  in waitUntil. Under R2 that answers each call only on its fifth try (about 3.7 to 4.6 s a call), a parent
+ *  tick makes about 3 calls, so the tick already running when the budget is reached can take about 14 s
+ *  more: 15 s plus that is about 29 s. Parents the pass does not reach are reached on a later pass, because
+ *  the list is rotated by the minute. tests/cron-pass-r2-outage-1302.test.ts measures it. */
+export const FILM_PASS_START_BUDGET_MS = 15_000;
 // Three times the cron's own minute, so one slow pass does not read as a dead cron.
 const FILM_CRON_STALE_MS = 3 * 60_000;
 
-async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
+export async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<void> {
   const started = Date.now();
   const minute = Math.floor(started / 60_000);
   await writeCronHeartbeat(env, started).catch((e) => console.warn(`film cron heartbeat: ${String(e)}`));
@@ -2579,7 +2585,10 @@ async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<
   // Rotated, so a slow first film does not always take the time the later ones need.
   const active = rotateFrom(await listActiveParents(env, FILM_SWEEP_LIMIT), minute);
   let reached = 0;
+  let cut = 0;
   for (const { id, markedAt } of active) {
+    // cf#1302: stop starting ticks once the pass is near the platform's limit (FILM_PASS_START_BUDGET_MS).
+    if (Date.now() - started >= FILM_PASS_START_BUDGET_MS) { cut = active.length - reached; break; }
     try {
       reached += 1;
       const doc = await tickParent(env, ctx, id);
@@ -2595,7 +2604,7 @@ async function sweepFilmParents(env: StudioEnv, ctx: ExecutionContext): Promise<
       console.warn(`film parent sweep ${id}: ${String(e)}`);
     }
   }
-  console.log(JSON.stringify({ ev: "film.cron_pass", active: active.length, reached, restored, ms: Date.now() - started }));
+  console.log(JSON.stringify({ ev: "film.cron_pass", active: active.length, reached, cut, restored, ms: Date.now() - started }));
 }
 
 const hEnhance: Handler = async (req, env) => {

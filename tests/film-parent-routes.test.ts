@@ -565,7 +565,7 @@ describe("the cron heartbeat", () => {
     const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("film.cron_pass"));
     log.mockRestore();
     expect(line).toBeDefined();
-    expect(Object.keys(JSON.parse(line as string)).sort()).toEqual(["active", "ev", "ms", "reached", "restored"]);
+    expect(Object.keys(JSON.parse(line as string)).sort()).toEqual(["active", "cut", "ev", "ms", "reached", "restored"]); // cut: cf#1302
   });
 });
 
