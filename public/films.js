@@ -498,8 +498,53 @@
     return words.join(" ");
   }
 
+  // cf#1206: a film is deleted as a whole. Not while a part renders or the parts are being joined:
+  // the studio refuses that too, and says why.
+  function canDelete(film) {
+    if (film.phase === "join") return false;
+    return !(film.parts || []).some((p) => p.status === "running" || p.status === "submitting");
+  }
+
+  function forget(id) {
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(readRecent().filter((r) => r.film_id !== id)));
+    } catch (_) {}
+  }
+
+  function askDelete() {
+    pendingAction = deleteFilm;
+    $("film-retry-title").textContent = "Delete this film?";
+    $("film-retry-body").textContent = "This removes the film, all of its parts, every joined version and its captions. You cannot undo it. Pictures and voices your other videos still use are kept.";
+    $("film-retry-note").textContent = "";
+    $("film-retry-go").textContent = "Delete for good";
+    $("film-retry-dialog").showModal();
+  }
+
+  async function deleteFilm() {
+    const note = $("film-load-note");
+    note.textContent = "Deleting...";
+    clearTimeout(pollTimer);
+    let res;
+    try {
+      res = await fetch("/api/film/" + encodeURIComponent(filmId), { method: "DELETE" });
+    } catch (_) {
+      note.textContent = "Could not reach the studio. Nothing was deleted.";
+      return;
+    }
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok && res.status !== 404) {
+      // A delete that stopped part way keeps the film, so pressing Delete again finishes it.
+      note.textContent = "Not deleted: " + (out.error || "the studio answered " + res.status);
+      if (latest) schedule(latest);
+      return;
+    }
+    forget(filmId);
+    location.href = "films?deleted=1";
+  }
+
   function renderFilm(film) {
     latest = film;
+    $("film-delete").hidden = !canDelete(film);
     $("film-title").textContent = niceTitle(film.project || film.film_id);
     const chip = $("film-phase");
     chip.textContent = PHASE_LABELS[film.phase] || film.phase;
@@ -731,6 +776,7 @@
       pendingAction = null;
       if ($("film-retry-dialog").returnValue === "go" && action) action();
     });
+    $("film-delete").addEventListener("click", askDelete);
     $("film-only-trouble").addEventListener("change", (event) => {
       onlyTrouble = event.target.checked;
       if (latest) renderParts(latest);
@@ -748,6 +794,7 @@
       $("films-home").hidden = true;
       load();
     } else {
+      if (new URLSearchParams(location.search).has("deleted")) $("film-load-note").textContent = "The film was deleted.";
       loadAllFilms();
     }
   }

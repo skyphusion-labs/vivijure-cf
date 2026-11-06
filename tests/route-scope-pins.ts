@@ -18,7 +18,7 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 100;
+export const PINNED_ROUTE_COUNT = 101; // cf#1206: DELETE /api/film/:id
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
 export const PINNED_OPERATOR_COUNT = 8;
@@ -140,6 +140,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/film", scope: "consumer" },
   { method: "GET", pattern: "/api/film/:id/parts/:n/shots", scope: "consumer" },
   { method: "GET", pattern: "/api/film/:id", scope: "consumer" },
+  { method: "DELETE", pattern: "/api/film/:id", scope: "consumer" },
   { method: "POST", pattern: "/api/film/:id/parts/:n/retry", scope: "consumer" },
   { method: "POST", pattern: "/api/film/:id/ceiling", scope: "consumer" },
   { method: "POST", pattern: "/api/film/:id/shots/:shot/retake", scope: "consumer" },
