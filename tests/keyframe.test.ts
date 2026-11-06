@@ -70,6 +70,20 @@ describe("keyframe pure logic", () => {
     });
   });
 
+  it("buildPreviewBody forwards plate_people_free_background only as a real boolean (cf#1143 option c)", () => {
+    const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_people_free_background: true });
+    expect(on.input.render_overrides).toEqual({ keyframe: { plate_people_free_background: true } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_people_free_background: "true" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
+  it("buildPreviewBody sends pose_scale where the backend reads it, under multi_char (cf#1143 option d)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.8 });
+    expect(input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.8 } } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: "0.8" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
   it("buildPreviewBody forwards plate_regional_text only as a real boolean (cf#1143 option a)", () => {
     const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_regional_text: true });
     expect(on.input.render_overrides).toEqual({ keyframe: { plate_regional_text: true } });
@@ -251,7 +265,10 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.7");
+    expect(MANIFEST.version).toBe("0.3.8");
+    expect(MANIFEST.config_schema?.plate_people_free_background).toMatchObject({ type: "bool", default: false });
+    // The pose default is the value the backend shipped with, so nothing changes until it is set.
+    expect(MANIFEST.config_schema?.pose_scale).toMatchObject({ type: "float", default: 0.55, min: 0, max: 1.5 });
     expect(MANIFEST.config_schema?.plate_regional_text).toMatchObject({ type: "bool", default: false });
     expect(MANIFEST.config_schema?.plate_ip_adapter_scale).toMatchObject({ type: "float", default: 0, min: 0, max: 1 });
     // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.

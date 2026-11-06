@@ -1,0 +1,3 @@
+### feat(keyframe): a people-free gap and a body placement strength for two-person stills
+
+The `keyframe` module has two more settings for two-person stills (cf#1143). `plate_people_free_background` (default off): with `plate_regional_text` on, the space between the two people reads only the look and the place, not the shot's sentence that names them, so it is not asked to draw a third person (vivijure-backend#582). `pose_scale` (default 0.55, the value shipped before): how firmly the still plants exactly two bodies, sent as `multi_char.controlnet_pose_scale`. Older backend images ignore both.
