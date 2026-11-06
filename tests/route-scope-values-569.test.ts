@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { SCOPES, type Scope } from "../src/authz";
 import {
   EXPECTED_ROUTE_SCOPES,

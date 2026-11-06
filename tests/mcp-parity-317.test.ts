@@ -9,7 +9,7 @@ import type { McpContent } from "@skyphusion-labs/vivijure-mcp/mcp-tools";
 // The issue that filed this listed the MCP's coverage as a paragraph. A paragraph is a claim; this
 // file is the measurement. Everything here is DERIVED at test time from two artifacts:
 //
-//   * the studio route table in src/index.ts (what a caller can ask the studio to do), and
+//   * the studio route table in src/studio.ts (what a caller can ask the studio to do), and
 //   * the TOOL CATALOG of the installed @skyphusion-labs/vivijure-mcp package -- the same code the
 //     deployed MCP Worker runs, not a re-typed list of tool names.
 //
@@ -20,7 +20,7 @@ import type { McpContent } from "@skyphusion-labs/vivijure-mcp/mcp-tools";
 
 // Paths are resolved from the vitest root (the repo root), not from import.meta.url: the workers-types
 // URL in scope here is not node's URL, and readFileSync will not take it.
-const SRC = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
+const SRC = readFileSync(`${process.cwd()}/src/studio.ts`, "utf8");
 
 // cf#332: this WAS a hand-maintained list of 36 filenames against a public/ holding 39 panel files
 // (abuse-link-checks.js, hook-availability-checks.js and planner-state.js were absent). It was
@@ -47,7 +47,7 @@ interface Route {
 
 function studioRoutes(): Route[] {
   const start = SRC.indexOf("export const API_ROUTES: Route[] = [");
-  expect(start, "API_ROUTES table not found in src/index.ts").toBeGreaterThan(-1);
+  expect(start, "API_ROUTES table not found in src/studio.ts").toBeGreaterThan(-1);
   const end = SRC.indexOf("\n];", start);
   expect(end, "API_ROUTES terminator not found").toBeGreaterThan(start);
   const block = SRC.slice(start, end);

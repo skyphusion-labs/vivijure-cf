@@ -346,9 +346,9 @@ emitter in the pinned core dist (`node_modules/@skyphusion-labs/vivijure-core/di
 | `film.advance_failed` | core `film-orchestrator` | error | `film_id`, `error` | an advance tick threw; the render is failed with `advance failed: <msg>` |
 | `film.submit.deduplicated` | core `film-submit-idempotency` | info | `film_id` (the incumbent), `dropped_film_id`, `entry`, `keyed_by` (`idempotency-key` / `natural-key`), `window_seconds` | a duplicate film submit was folded into the in-flight film |
 | `d1.retry` / `d1.exhausted` | core `d1-retry` (`withD1Retry`) | info | `op`, `attempt` / `attempts`, `code` | transient D1 error retried / retries exhausted |
-| `authz.deny` | host `src/index.ts` | warn | `route` (template), `method`, `required`, `held` | a route refused the credential's scope (403) |
+| `authz.deny` | host `src/studio.ts` | warn | `route` (template), `method`, `required`, `held` | a route refused the credential's scope (403) |
 | `authz.token_scope_invalid` | host `src/auth-gate.ts` | error | `name`, `scope`, `msg` | an `api_tokens` row has no usable scope; denied |
-| `router.error` | host `src/index.ts` | error | `route` (template), `method`, `reason` | an unhandled handler throw (500 `internal error`) |
+| `router.error` | host `src/studio.ts` | error | `route` (template), `method`, `reason` | an unhandled handler throw (500 `internal error`) |
 | `auth.allow_unauthenticated` | host `src/access-auth.ts` | info | `msg` | in-Worker auth is disabled (`ALLOW_UNAUTHENTICATED=true`); once per isolate |
 
 ## Poll-surface content length (cf#365) -- assemble vs delivered

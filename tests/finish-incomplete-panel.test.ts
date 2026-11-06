@@ -76,7 +76,7 @@ describe("the retry button", () => {
     expect(render).toContain("fd.canRetryFinish(jobId)");
   });
   it("no route in this studio starts a scatter film, so a new film can always retry", () => {
-    const index = readFileSync(join(__dirname, "../src/index.ts"), "utf8");
+    const index = readFileSync(join(__dirname, "../src/studio.ts"), "utf8");
     expect(index).not.toContain("startScatterRender");
     expect(index).toContain("startFilmJob(env");
   });

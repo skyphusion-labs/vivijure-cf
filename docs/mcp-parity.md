@@ -1,7 +1,7 @@
 # Studio MCP parity: what an agent can reach, and what it can SEE
 
 **Measured, not asserted.** Every number here is derived at test time by
-`tests/mcp-parity-317.test.ts` from two artifacts: the studio route table in `src/index.ts`, and the
+`tests/mcp-parity-317.test.ts` from two artifacts: the studio route table in `src/studio.ts`, and the
 tool catalog of the **installed** `@skyphusion-labs/vivijure-mcp` package (the same code the deployed
 MCP Worker runs). The test asserts these numbers, so adding a route or a tool fails CI until this
 document is re-measured. Tracking issue: cf#317.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 
 // The real route over core's real tick: only the storage and the database are faked.

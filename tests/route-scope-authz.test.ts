@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import worker from "../src/index";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { sha256Hex } from "../src/auth-gate";
 import { authorizeRoute, isScope, SCOPES, AUTHZ_DENY_REASON, AUTHZ_DENY_CODE, type Scope } from "../src/authz";
 import { PINNED_ROUTE_COUNT } from "./route-scope-pins";

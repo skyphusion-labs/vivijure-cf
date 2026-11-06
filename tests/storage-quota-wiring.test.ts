@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { studioEnv } from "../src/orchestrator-env";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import type { Env } from "../src/env";
 import {
   STORAGE_USAGE_DDL,

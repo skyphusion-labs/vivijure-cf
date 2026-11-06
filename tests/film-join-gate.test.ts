@@ -76,7 +76,7 @@ describe("film join gate", () => {
   });
 
   it("both poll doors and the film start doors call the gate", () => {
-    const index = readFileSync(join(import.meta.dirname, "..", "src", "index.ts"), "utf8");
+    const index = readFileSync(join(import.meta.dirname, "..", "src", "studio.ts"), "utf8");
     const polls = index.match(/jobAfterSkippedJoin\(r\.job\)/g) ?? [];
     expect(polls).toHaveLength(2);
     const starts = index.match(/songStartRefusal\(/g) ?? [];

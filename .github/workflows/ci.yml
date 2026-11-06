@@ -1317,7 +1317,7 @@ jobs:
         run: npm run deploy
 
       # Post-deploy gate self-check (S9 W3): PROVE prod is fail-closed. Hit a real /api/* route with
-      # NO bearer and REQUIRE 403 -- the deny an unauthenticated caller must get (src/index.ts gates
+      # NO bearer and REQUIRE 403 -- the deny an unauthenticated caller must get (src/studio.ts gates
       # every /api/* before routing). The worker is already LIVE by this step, so this never rolls
       # back a deploy; it turns an accidentally-OPEN studio into a RED CI run instead of a silent
       # ship (the automatic version of the v0.12.0 live matrix). No new secrets: the hostname is the

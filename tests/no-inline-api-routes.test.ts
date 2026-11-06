@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 // both outside this function) both assertions below failed, naming the inline `/api/modules`
 // comparison. A green run against that tree would have meant the test was not reaching the thing.
 
-const SRC = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
+const SRC = readFileSync(`${process.cwd()}/src/studio.ts`, "utf8");
 
 /** The body of `routeRequest`, from its signature to the closing brace in column 0. Returned with
  *  its first and last line so a caller can prove the slice did not overrun its terminator and
@@ -25,7 +25,7 @@ const SRC = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
 function routeRequestBody(): { text: string; first: string; last: string; lines: number } {
   const all = SRC.split("\n");
   const start = all.findIndex((l) => l.startsWith("async function routeRequest("));
-  if (start === -1) throw new Error("routeRequest not found in src/index.ts");
+  if (start === -1) throw new Error("routeRequest not found in src/studio.ts");
   let end = -1;
   for (let i = start + 1; i < all.length; i++) {
     if (all[i] === "}") { end = i; break; }

@@ -17,10 +17,10 @@
 //   1. HARD (no exceptions): every export is a function or a non-null object, and an object that
 //      carries a handler key carries a function there. This is the rule workerd enforces; a breach
 //      is a worker that does not start.
-//   2. CONTRACT (ratchet, in-tree entries): a named export is a class. Helpers, constants and manifests belong in a
-//      leaf module the entry imports. The exports that predate this test are listed in BASELINE by
-//      entry and name. The list may only shrink: a new non-class export fails, and a listed name
-//      that is gone fails too, so the list cannot rot into a blanket pass.
+//   2. CONTRACT (in-tree entries, no exceptions): a named export is a class. Helpers, constants and
+//      manifests belong in a leaf module the entry imports. The exports that predated this test sat
+//      in a shrink-only BASELINE until vivijure-cf#1308 moved every one of them; with the list empty
+//      it was removed, so there is nothing left to add a name to.
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, dirname, resolve } from "node:path";
@@ -34,14 +34,6 @@ const HANDLER_KEYS = [
   "fetch", "tail", "trace", "tailStream", "scheduled", "alarm", "test", "queue", "email", "connect",
   "webSocketMessage", "webSocketClose", "webSocketError",
 ];
-
-// Non-class named exports that predate cf#1244, by entry (repo-relative main) and name. Remove a line
-// when its export moves to a leaf module. Never add one: move the export instead.
-const BASELINE: Record<string, string[]> = {
-  "src/index.ts": [
-    "API_ROUTES", "ARTIFACT_PREFIXES", "clampArtifactUrlTtl", "runSweepPass", "safeArtifactContentType",
-  ],
-};
 
 /** Every wrangler config in the tree (committed `.toml` and `.toml.example`), never node_modules. */
 function wranglerConfigs(dir: string, out: string[] = []): string[] {
@@ -114,10 +106,6 @@ describe("cf#1244: every Worker entry exports only what workerd can serve", () =
     expect(workerdRefusal("default", { fetch() {} })).toBeNull();
   });
 
-  it("the BASELINE names only entries this test found", () => {
-    for (const e of Object.keys(BASELINE)) expect(entries, e).toContain(e);
-  });
-
   for (const entry of entries) {
     it(`${entry}`, async () => {
       const mod = (await import(pathToFileURL(join(ROOT, entry)).href)) as Record<string, unknown>;
@@ -131,16 +119,8 @@ describe("cf#1244: every Worker entry exports only what workerd can serve", () =
       // that package's contract, changed in its own repo, not here.
       if (entry.startsWith("node_modules/")) return;
 
-      const allowed = BASELINE[entry] ?? [];
       const nonClass = names.filter((n) => n !== "default" && !isClass(mod[n]));
-      expect(
-        nonClass.filter((n) => !allowed.includes(n)),
-        "a named export of a Worker entry must be a class; move it to a leaf module",
-      ).toEqual([]);
-      expect(
-        allowed.filter((n) => !nonClass.includes(n)),
-        "BASELINE lists an export that is gone or now a class; delete the line",
-      ).toEqual([]);
+      expect(nonClass, "a named export of a Worker entry must be a class; move it to a leaf module").toEqual([]);
     });
   }
 });

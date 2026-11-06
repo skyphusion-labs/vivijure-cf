@@ -551,7 +551,7 @@ fi
 # ---- post-deploy gate self-check (S9 W3): PROVE the studio is fail-closed --------------------
 # A novice must never ship an OPEN studio without seeing red. We hit a real /api/* route with NO
 # bearer and REQUIRE 403 -- the deny the token/access gate returns for an unauthenticated caller
-# (src/index.ts gates EVERY /api/* before routing). Anything else fails the deploy LOUDLY. This is
+# (src/studio.ts gates EVERY /api/* before routing). Anything else fails the deploy LOUDLY. This is
 # the v0.12.0 live-matrix proof, now automatic on every deploy. deploy.sh only ever renders
 # AUTH_MODE=token|access (validated up top), and ALLOW_UNAUTHENTICATED has no effect in either
 # mode, so a no-bearer /api/* is ALWAYS expected to 403 here. Edge propagation can lag a few
