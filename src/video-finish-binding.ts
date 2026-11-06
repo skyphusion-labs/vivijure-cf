@@ -12,8 +12,10 @@
 //      communicate with another Worker running on a route, or on a workers.dev subdomain, is via
 //      service bindings." A Custom Domain lifts it -- for ANOTHER Worker. Ours is the same one.
 //
-// So the door is the BINDING. No hostname, no DNS, no edge hop, no bearer required, and the
-// container stays unreachable from the internet -- the property cf#797 itself called not tradeable.
+// So the door is the BINDING. No hostname, no DNS, no edge hop, and the container stays unreachable
+// from the internet -- the property cf#797 itself called not tradeable. The hop still CARRIES the
+// bearer (cf#911): core attaches it on the bound path, and FinishContainer starts the container with
+// the same token, so the credential does not depend on the boundary staying private.
 //
 // REQUIRES core >= 1.23.0. The seam is `MEDIA_DOOR_FETCHERS` on the env core receives, keyed by the
 // door's URL var so there is one door vocabulary rather than two, and duck-typed on `fetch` so a DO

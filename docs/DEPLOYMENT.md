@@ -713,7 +713,22 @@ docker compose -f containers/compose.yaml up -d
 A container with no token exits at startup naming both this variable and the opt-out; it does not
 come up and serve. If your deployment is genuinely loopback-only and wants no authentication, ask
 for that **by name** with `LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true`. Unset is not a request for it.
-`GET /health` stays open either way, so swarm and Traefik healthchecks are unaffected. As of #519
+`GET /health` stays open either way, so swarm and Traefik healthchecks are unaffected.
+
+**Rolling a token onto a door that ran without one (cf#911).** With a token set, add
+`LOCAL_FINISH_ACCEPT_MISSING_TOKEN=true` for one release. A request with NO `Authorization` header
+is then served, and the container prints `bearer: served <method> <path> with no Authorization
+header`. A header that is present and wrong is still 401. When the log shows no such line across a
+full film, remove the variable. It is exact `true` only, and without a token it changes nothing:
+the container still refuses to start.
+
+**The Cloudflare Container door (`FINISH_CONTAINER`).** The studio starts that container itself, with
+the `MEDIA_FINISH_TOKEN` value as `LOCAL_FINISH_TOKEN` plus the variable above (src/finish-container.ts),
+and it logs `finish_container.bearer_absent` for every request that reaches the container without
+the header. If no token is readable it starts the container with the no-auth opt-out instead, so the
+finish tier keeps working. The next release removes both the permit and that fallback.
+
+As of #519
 this is part of the **standard** install: `deploy.sh` (`scripts/setup-media-vpc.py`) reuses or creates
 one Cloudflare tunnel (default name `vivijure-media`, override with `VIVIJURE_TUNNEL_NAME`) and writes
 its connector token to `containers/tunnel.env` (0600). It creates NO Workers VPC services and renders
