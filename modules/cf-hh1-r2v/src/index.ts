@@ -90,7 +90,10 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 60,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.14/s at 720P, $0.18/s at 1080P",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.14, 0.18],
     blurb: "Holds a look from reference stills. Silent.",
     limits: [
       "3-15 second clips",
@@ -100,6 +103,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "hold",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,

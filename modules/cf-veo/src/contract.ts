@@ -22,6 +22,12 @@ export interface ModuleUi {
   cost?: string;
   blurb?: string;
   limits?: string[];
+  /** Lowest and highest clip rate in USD per second, at provider cost with no markup (cf#1246). */
+  cost_usd_per_second?: [number, number];
+  /** Price points for a door billed per clip, at provider cost (cf#1246). An absent key matches any value. */
+  cost_usd_per_clip?: ClipPrice[];
+  /** The day the cost above was read, YYYY-MM-DD (cf#1246). Required with either cost field. */
+  cost_as_of?: string;
 }
 
 /** How we actually call this motion door (same shape as core MotionUsageDecl). */
@@ -35,6 +41,8 @@ export interface MotionUsageDecl {
   duration_steps?: number[];
   first_last?: boolean;
   seed?: boolean;
+  /** cf#1246: the face grade the panel reads instead of naming doors. */
+  face_hold?: FaceHold;
 }
 
 export interface ModuleManifest {
@@ -109,3 +117,11 @@ export interface MotionBackendOutput {
   fps: number;
   frames: number;
 }
+
+/** One per-clip price point (cf#1246). `resolution` is a value of the door's resolution enum and `seconds` one of
+ *  its duration steps; an absent key matches any value. */
+export interface ClipPrice { usd: number; resolution?: string; seconds?: number; }
+
+/** How well the door holds a face across a film (cf#1246): hold = the same face throughout, two = pinned by the
+ *  first and last stills, one = pinned by the start still only, drift = faces drift. */
+export type FaceHold = "hold" | "two" | "one" | "drift";

@@ -152,6 +152,9 @@ service-bound, but is never installed through the dispatch install gate, and is 
 | `ui.order` | number | no | | (absent sorts as `100`) |
 | `ui.locality` | `"local" \| "byo" \| "cloud"` | no | | (absent classifies as `cloud`) |
 | `ui.cost` | string | no | | |
+| `ui.cost_usd_per_second` | `[number, number]` | no | | (absent = price unknown) |
+| `ui.cost_usd_per_clip` | `{ usd, resolution?, seconds? }[]` | no | | (absent = price unknown) |
+| `ui.cost_as_of` | `"YYYY-MM-DD"` | with a cost field | | |
 | `ui.blurb` | string | no | | |
 | `ui.limits` | string[] | no | | |
 
@@ -171,6 +174,19 @@ What each optional field means:
 - **`cancelable`**: the module serves `POST /cancel` (see "Async + cancel").
 - **`usage`** (`motion.backend`): how the door is actually called (native audio, voice mode, min/max
   seconds, duration steps, first/last frame, seed, voice ref, driving audio). Absent = undeclared.
+- **`usage.face_hold`** (cf#1246): how well the door holds a face across a film. `hold` = the same face
+  throughout (a trained face, a reference lock, or a portrait driven by our audio), `two` = pinned by the
+  first and last stills, `one` = pinned by the start still only, `drift` = faces drift. The Make a video
+  page reads it to pick a face-consistent style.
+- **`ui.cost_usd_per_second`** / **`ui.cost_usd_per_clip`** (cf#1246): what one clip costs US, at the
+  provider's price with no markup (Conrad, 2026-11-05), so the panel can total a film. A door carries one
+  of the two, never both. Per second is `[lowest resolution, highest resolution]`. Per clip is a list of
+  price points; `resolution` is a value of the door's resolution enum, `seconds` one of its
+  `duration_steps`, and an absent key matches any value. No matching point means price unknown, never a
+  guess. `ui.cost_as_of` is the day the figure was read, and is required with either field. The
+  source of each figure is in `docs/motion-door-prices.md`. A door with no listed price leaves both out
+  and says so in `ui.limits`. The rules are in `modules/_shared/door-manifest-rules.ts` and
+  `docs/CONTRACT.md` 4.0.1.
 - **`needs_tenant_r2`**: see `InvokeRequest.r2` under "Invocation contract". Leave absent unless the
   module submits to a pooled RunPod endpoint that needs the tenant's per-job R2 credential.
 - **`ui.locality`**: load-bearing, not cosmetic. It drives the planner door tag AND the core's

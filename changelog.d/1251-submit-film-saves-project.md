@@ -1,0 +1,3 @@
+### fix(film): a film started with submit_film saves its board to a project
+
+`POST /api/storyboard/bundle` now keeps the whole board, as sent, beside the bundle (`<bundleKey>.board.json`), and `POST /api/render/film` (MCP `submit_film`) saves that board to a storyboard project, so the panel can reopen it. It never rebuilds a board from the bundle's lossy YAML. The film door also takes an optional `projectId` and writes the project on the renders row. A bundle made before this still starts its film, and the answer says the board was not saved. Parts of a long film save nothing; the parent saves the whole board.

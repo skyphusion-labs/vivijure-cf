@@ -89,15 +89,24 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 65,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.28 per 6 s and $0.56 per 10 s clip at 768P, $0.49 per 6 s clip at 1080P",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_clip: [
+      { resolution: "768P", seconds: 6, usd: 0.28 },
+      { resolution: "768P", seconds: 10, usd: 0.56 },
+      { resolution: "1080P", seconds: 6, usd: 0.49 },
+    ],
     blurb: "Physical motion on Cloudflare. Silent. 6 or 10 seconds.",
     limits: [
       "6 or 10 second clips",
       "Silent motion",
       "No spoken lines. A board with a line needs a talking door",
+      "The provider lists no price for 10 seconds at 1080P.",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: true,

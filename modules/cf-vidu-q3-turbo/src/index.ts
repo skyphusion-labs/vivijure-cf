@@ -89,7 +89,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 58,
     locality: "cloud",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.04/s at 540p, $0.06/s at 720p, $0.07/s at 1080p",
+    cost_as_of: "2026-11-05",
     cost_usd_per_second: [0.04, 0.07],
     blurb: "Talking clips from a still. 1 to 16 seconds. The next still can close the shot.",
     limits: [
@@ -100,6 +102,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "two",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,

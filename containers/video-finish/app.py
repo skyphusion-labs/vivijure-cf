@@ -334,7 +334,8 @@ async def _finish_chunked(body, partial_urls, t0):
                 )
                 clip_durs.extend(durs)
                 partial = os.path.join(root, f"partial_{batch_no:03d}.mp4")
-                await loop.run_in_executor(None, _concat_hard, norms, partial)
+                await loop.run_in_executor(
+                    None, functools.partial(_concat_hard, norms, partial, audio=keep_clip_audio))
                 pdur = _probe_duration(partial) or 0.0
                 # INNER guard: this batch must not have lost a clip.
                 assert_no_dropped_parts(pdur, durs, level=f"batch {batch_no + 1}", fps=fps)
@@ -403,9 +404,13 @@ async def _finish_chunked(body, partial_urls, t0):
                     # Single batch: the partial IS the silent cut. No upload, no re-download.
                     shutil.move(pending[0], silent)
                 else:
+                    # The batch joins are timed by now; the joins BETWEEN partials still need the one
+                    # audio encode, or each batch boundary adds the same surplus (cf#1167).
                     await loop.run_in_executor(
-                        None, _concat_hard_urls, partial_gets, silent,
-                        os.path.join(root, "partials.txt"),
+                        None, functools.partial(
+                            _concat_hard_urls, partial_gets, silent,
+                            os.path.join(root, "partials.txt"),
+                            output_args=_join_output_args(keep_clip_audio)),
                     )
                     # OUTER guard: a dropped PARTIAL is a film short by a whole batch, and the
                     # ratio guard this replaced could not see one past 7 batches.
@@ -721,11 +726,28 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
     _run(cmd, timeout=timeout)
 
 
-def _concat_hard(norms, out):
+def _concat_hard(norms, out, *, audio=False):
+    """Hard-cut join of parts that share one codec layout. The video is always stream-copied.
+
+    audio=True: the parts carry audio that must survive (a talking film, a titled film with sound). The
+    audio is then decoded and encoded ONCE across the join (JOIN_AUDIO_ARGS), as /async/join-films does.
+    A plain `-c copy` leaves an audio packet at every join whose timestamp step is cut short while it
+    still decodes to 1024 samples, so the joined track holds more samples than its timestamps imply
+    (cf#1167). Measured on this function with 25 talking clips of 2 to 4.2 s: 586 ms late at the last
+    clip counted in samples, about 24 ms per join, and the bed mix (amix) reads samples in order, so it
+    bakes that drift into the film. test_local_assemble_audio.py measures it by sample count.
+    """
     list_file = os.path.join(os.path.dirname(out), "concat.txt")
     with open(list_file, "w") as f:
         f.write("\n".join(f"file '{p}'" for p in norms) + "\n")
-    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out])
+    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, *_join_output_args(audio), out])
+
+
+def _join_output_args(audio):
+    """Output args for a hard-cut join: video copied; audio encoded once when kept, else copied (cf#1167)."""
+    if audio:
+        return ["-map", "0:v:0", "-c:v", "copy", "-map", "0:a:0", *JOIN_AUDIO_ARGS]
+    return ["-c", "copy"]
 
 
 def _concat_crossfade(norms, out, crossfade, *, crf, preset):
@@ -974,7 +996,8 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
     if effective_crossfade > 0 and len(norms) > 1:
         _concat_crossfade(norms, silent, effective_crossfade, crf=crf, preset=preset)
     else:
-        _concat_hard(norms, silent)  # -c copy; preserves per-clip audio when ensure_audio kept it
+        # Video copied; per-clip dialogue (ensure_audio) encoded once across the joins (cf#1167).
+        _concat_hard(norms, silent, audio=keep_clip_audio)
 
     # Fail loud: the concat must NEVER silently drop a clip (a scatter render once shipped 1 of 3
     # shots). Compares the assembled duration against what the inputs IMPLY -- sum for a hard cut,
@@ -1208,7 +1231,7 @@ def _assemble_film_titles(work, film_path, title_spec, credits_spec,
             segments.append(card)
 
     out = os.path.join(work, "with_titles.mp4")
-    _concat_hard(segments, out)
+    _concat_hard(segments, out, audio=has_audio)
     return out, _probe_duration(out)
 
 

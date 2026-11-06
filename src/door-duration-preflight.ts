@@ -28,7 +28,19 @@ interface BoardShape {
   scenes?: { id?: string; target_seconds?: unknown }[];
 }
 
-export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationShape): PreflightIssue[] {
+/** The numbers behind a door-length issue, so a page can say it in its own words without copying
+ *  this rule (the Make a video page does). `index` counts scenes from 1, the way people count. */
+export interface DoorDurationDetail {
+  index: number;
+  shot_id: string;
+  planned_seconds: number;
+  min_seconds: number | null;
+  max_seconds: number | null;
+  steps: number[] | null;
+}
+export type DoorDurationIssue = PreflightIssue & { detail: DoorDurationDetail };
+
+export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationShape): DoorDurationIssue[] {
   const usage = door.usage;
   if (!usage || door.duration_grid) return [];
   const steps = Array.isArray(usage.duration_steps) && usage.duration_steps.length
@@ -38,7 +50,7 @@ export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationSha
   const min = typeof usage.min_seconds === "number" ? usage.min_seconds : null;
   const allowed = steps ? `${steps.join(", ")} seconds` : `${min ?? "?"} to ${max ?? "?"} seconds`;
 
-  const issues: PreflightIssue[] = [];
+  const issues: DoorDurationIssue[] = [];
   const scenes = Array.isArray(storyboard.scenes) ? storyboard.scenes : [];
   scenes.forEach((scene, idx) => {
     const sid = scene.id || `scene_${(idx + 1).toString().padStart(2, "0")}`;
@@ -47,25 +59,61 @@ export function checkDoorDurations(storyboard: BoardShape, door: DoorDurationSha
         : undefined;
     if (planned === undefined || !(planned > 0)) return;
     const scope = `scene[${sid}]`;
+    const detail: DoorDurationDetail = { index: idx + 1, shot_id: sid, planned_seconds: planned, min_seconds: min, max_seconds: max, steps };
     if (max !== null && planned > max) {
       issues.push({
         level: "error",
         scope,
+        detail,
         message: `${sid} plans ${planned}s, and ${door.name} renders at most ${max}s (${allowed}). Shorten the shot, or pick another door.`,
       });
     } else if (min !== null && planned < min) {
       issues.push({
         level: "warning",
         scope,
+        detail,
         message: `${sid} plans ${planned}s, and ${door.name} renders at least ${min}s (${allowed}). The clip will run longer than planned.`,
       });
     } else if (steps && !steps.includes(planned)) {
       issues.push({
         level: "warning",
         scope,
+        detail,
         message: `${sid} plans ${planned}s, and ${door.name} renders only ${allowed}. The clip will not be ${planned}s long.`,
       });
     }
   });
   return issues;
+}
+
+// cf#1067 part 1: a door that clamps a shot does it with no word, and submit does not run preflight.
+// So the render doors run the same check on the shots they submit and say so in the answer. It never
+// refuses: a caller that wants a refusal runs preflight, where a shot over the door's ceiling is an
+// error. This is the word on the way out, for a caller that skipped it. `clip_deliveries` shows the
+// delivered length afterwards, and only for a door that reports numbers; this is before any spend.
+export interface DurationNote {
+  shot_id: string;
+  planned_seconds: number;
+  level: "error" | "warning";
+  message: string;
+}
+
+export function durationNotesForShots(
+  shots: { shot_id: string; seconds: number }[],
+  door: DoorDurationShape | undefined,
+): DurationNote[] {
+  if (!door) return [];
+  const planned = new Map(shots.map((s) => [s.shot_id, s.seconds]));
+  return checkDoorDurations({ scenes: shots.map((s) => ({ id: s.shot_id, target_seconds: s.seconds })) }, door)
+    .map((issue) => {
+      const shot_id = issue.scope.replace(/^scene\[/, "").replace(/\]$/, "");
+      return {
+        shot_id,
+        planned_seconds: planned.get(shot_id) ?? 0,
+        level: issue.level === "error" ? "error" as const : "warning" as const,
+        message: issue.level === "error"
+          ? issue.message.replace(/ Shorten the shot, or pick another door\.$/, ` The clip will be cut to fit. Shorten the shot, or pick another door.`)
+          : issue.message,
+      };
+    });
 }

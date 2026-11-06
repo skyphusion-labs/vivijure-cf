@@ -88,7 +88,10 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 90,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.15/s at hd, $0.24/s at fhd",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.15, 0.24],
     blurb: "Stylized talking clips from your stills. Faces drift. 5-20 seconds.",
     limits: [
       "5, 10, 15, or 20 second clips",
@@ -100,6 +103,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "drift",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,

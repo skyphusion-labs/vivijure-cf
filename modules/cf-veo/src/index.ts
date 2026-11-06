@@ -39,6 +39,7 @@ import {
   type ModuleConfig,
 } from "./params";
 import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
+import { callWithRefusals, failOnRefusal, type GatewayLogReader } from "../../_shared/gateway-log";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -48,6 +49,10 @@ interface R2Bucket {
 
 interface AiRun {
   run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
+  // Set by the binding after a gateway call. Absent on a stub or an unrouted call.
+  aiGatewayLogId?: string | null;
+  // cf#1154: the binding's gateway handle, used only to read one failed call's own log entry.
+  gateway?: GatewayLogReader["gateway"];
 }
 
 interface WorkflowInstance {
@@ -77,7 +82,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-veo",
-  version: "0.1.3",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Veo 3.1)" }],
@@ -90,7 +95,10 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 55,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.10/s at 720p, $0.12/s at 1080p with its audio (silent: $0.08/s and $0.10/s)",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.10, 0.12],
     blurb: "Photoreal talking on Cloudflare. Only 4, 6, or 8 seconds.",
     limits: [
       "4, 6, or 8 second clips",
@@ -99,6 +107,7 @@ const MANIFEST: ModuleManifest = {
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,
@@ -140,11 +149,13 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
 }
 
 /** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
-async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
+export async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config, await keyframeImageInput(params.input.keyframe_url));
-  return env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+  // A refusal its gateway log names (content policy, credit, a provider failure) comes back as { refused } and
+  // fails in parse, so it is never bought again. Anything else keeps the provider's own error and its log id.
+  return callWithRefusals(env.AI, gatewayId, () => env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } }));
 }
 
 /** Download and write. Retries on its own step, and never reaches the provider. */
@@ -175,7 +186,10 @@ export class CfVeoWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
     try {
       await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
         generate: () => generateClip(this.env, p),
-        parse: (raw) => requireVideoUrl(parseVideoUrl(raw)),
+        parse: (raw) => {
+          failOnRefusal(raw);
+          return requireVideoUrl(parseVideoUrl(raw));
+        },
         store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
