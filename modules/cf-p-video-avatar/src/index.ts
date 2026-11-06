@@ -88,7 +88,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 92,
     locality: "cloud",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.025/s at 720p, $0.045/s at 1080p",
+    cost_as_of: "2026-11-05",
     cost_usd_per_second: [0.025, 0.045],
     blurb: "Portrait plus Cast audio, at 720p or 1080p. The speaker is ours, not invented.",
     limits: [

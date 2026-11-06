@@ -56,8 +56,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 40,
     locality: "cloud",
-    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: list-public-endpoints, endpoint minimax-hailuo-2-3-fast
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.19/s",
+    cost_as_of: "2026-11-05",
     cost_usd_per_second: [0.19, 0.19],
     blurb: "Physical motion, silent. 6 or 10 seconds. No spoken lines.",
     limits: [

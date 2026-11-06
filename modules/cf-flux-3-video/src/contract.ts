@@ -26,6 +26,8 @@ export interface ModuleUi {
   cost_usd_per_second?: [number, number];
   /** Price points for a door billed per clip, at provider cost (cf#1246). An absent key matches any value. */
   cost_usd_per_clip?: ClipPrice[];
+  /** The day the cost above was read, YYYY-MM-DD (cf#1246). Required with either cost field. */
+  cost_as_of?: string;
 }
 
 /** How we actually call this motion door (same shape as core MotionUsageDecl). */

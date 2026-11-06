@@ -89,8 +89,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 65,
     locality: "cloud",
-    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://developers.cloudflare.com/ai/models/minimax/hailuo-2.3/
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.28 per 6 s and $0.56 per 10 s clip at 768P, $0.49 per 6 s clip at 1080P",
+    cost_as_of: "2026-11-05",
     cost_usd_per_clip: [
       { resolution: "768P", seconds: 6, usd: 0.28 },
       { resolution: "768P", seconds: 10, usd: 0.56 },

@@ -93,8 +93,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 55,
     locality: "cloud",
-    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://developers.cloudflare.com/ai/models/google/veo-3.1-fast/
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.10/s at 720p, $0.12/s at 1080p with its audio (silent: $0.08/s and $0.10/s)",
+    cost_as_of: "2026-11-05",
     cost_usd_per_second: [0.10, 0.12],
     blurb: "Photoreal talking on Cloudflare. Only 4, 6, or 8 seconds.",
     limits: [
