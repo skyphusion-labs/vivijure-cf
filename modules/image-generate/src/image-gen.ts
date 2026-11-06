@@ -49,27 +49,20 @@ export function sniffImageMime(bytes: ArrayBuffer | Uint8Array): { mime: string;
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: "image/jpeg", ext: "jpg" };
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return { mime: "image/png", ext: "png" };
   if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return { mime: "image/webp", ext: "webp" };
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return { mime: "image/gif", ext: "gif" };
   return { mime: "image/png", ext: "png" };
 }
 
-/** Per-provider params for proxied (non-@cf) text-to-image models. */
-export function buildProxiedImageParams(provider: Provider | undefined, prompt: string): Record<string, unknown> {
-  switch (provider) {
-    case "google":
-      return { prompt, output_format: "png" };
-    case "openai":
-      return { prompt, quality: "high", size: "1024x1024" };
-    case "recraft":
-      return { prompt, size: "1024x1024", style: "digital_illustration" };
-    case "bytedance":
-    case "xai":
-      return { prompt };
-    default:
-      return { prompt };
-  }
+/** Recraft models that refuse a `style`. The gateway log for a 7003 on recraft/recraftv4 carried the
+ *  provider's own error: "Recraft V4 doesn't support style 'digital_illustration'" (code
+ *  invalid_image_type), vivijure-cf#1141. Cloudflare's schema-input.json lists `style` as a free string,
+ *  so the schema cannot tell you this; only the provider can. */
+export function recraftRefusesStyle(model: string): boolean {
+  return model.startsWith("recraft/recraftv4");
 }
 
-/** Proxied params WITH reference images (multi-reference models). */
+/** Params for a proxied (non-@cf) image model, with or without reference images. Keyed on the MODEL,
+ *  not the provider, because two models of one provider can take different bodies (Recraft V4). */
 export function proxiedParams(model: string, prompt: string, imageInputs: string[] = []): Record<string, unknown> {
   // schema-input.json 2026-10-30: prompt required, image_input maxItems 14, additionalProperties false.
   if (model === "bytedance/seedream-5-lite") {
@@ -87,10 +80,22 @@ export function proxiedParams(model: string, prompt: string, imageInputs: string
     if (imageInputs.length) p.images = imageInputs.slice(0, 16);
     return p;
   }
-  if (model.startsWith("recraft/")) return { prompt, size: "1024x1024", style: "digital_illustration" };
+  if (model.startsWith("recraft/")) {
+    return recraftRefusesStyle(model)
+      ? { prompt, size: "1024x1024" }
+      : { prompt, size: "1024x1024", style: "digital_illustration" };
+  }
+  // xAI: the default URL output is refused for a zero-data-retention team, and every Cloudflare
+  // proxied call is one. Provider error from the gateway log (vivijure-cf#1141): "Zero Data Retention
+  // teams do not have access to URL format as it requires storing the generated images. Please use
+  // response_format="b64_json" instead." schema-input.json for xai/grok-imagine-image lists
+  // response_format enum [url, b64_json]. Reference images are not sent on this path yet.
+  if (model.startsWith("xai/")) return { prompt, response_format: "b64_json" };
   return { prompt };
 }
 
+/** The image REFERENCE a proxied result carries: an https URL, a data: URL, or raw base64 (xAI with
+ *  response_format b64_json). proxiedImageBytes turns any of the three into bytes. */
 export function extractProxiedImageUrl(result: unknown): string | null {
   const outer = result as Record<string, unknown> | null;
   if (!outer || typeof outer !== "object") return null;
@@ -106,10 +111,51 @@ export function extractProxiedImageUrl(result: unknown): string | null {
   if (Array.isArray(arr) && arr.length) {
     const first = arr[0] as Record<string, unknown> | string;
     if (typeof first === "string") return first;
-    const u = first?.url ?? first?.image_url;
-    if (typeof u === "string") return u;
+    const u = first?.url ?? first?.image_url ?? first?.b64_json;
+    if (typeof u === "string" && u.length > 0) return u;
   }
   return null;
+}
+
+const RAW_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** JPEG, PNG, WebP (RIFF) or GIF magic bytes. */
+export function hasImageMagic(b: Uint8Array): boolean {
+  if (b.length < 4) return false;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true;
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true;
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return true;
+  return b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38;
+}
+
+/** Bytes for a proxied image reference. A URL is fetched; a data: URL or raw base64 is decoded here,
+ *  because fetch() on a base64 string is not a request (vivijure-cf#1141, xAI b64_json). Anything
+ *  else throws, so the caller fails loud rather than storing a non-picture. */
+export async function proxiedImageBytes(ref: string): Promise<{ bytes: Uint8Array; mime: string }> {
+  if (/^https?:\/\//i.test(ref)) {
+    const resp = await fetch(ref);
+    if (!resp.ok) throw new Error(`failed to fetch generated image: ${resp.status}`);
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    // Sniff the bytes, not the header: a Recraft V4 result came back as WebP and was stored as
+    // image/png (vivijure-cf#1294). The header is the fallback only when the magic is unknown.
+    const mime = hasImageMagic(bytes) ? sniffImageMime(bytes).mime : resp.headers.get("content-type") || "image/png";
+    return { bytes, mime };
+  }
+  const parsed = parseDataUrl(ref);
+  const b64 = (parsed ? parsed.base64 : ref).replace(/\s+/g, "");
+  if (!b64 || !RAW_BASE64.test(b64)) {
+    throw new Error("image generation returned an image that is neither a URL nor base64");
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = base64ToBytes(b64);
+  } catch {
+    throw new Error("image generation returned undecodable base64");
+  }
+  // Base64 text is not proof of a picture: any run of letters is valid base64. Require image magic
+  // bytes, then sniff the mime rather than trust a declared type, as the @cf paths do.
+  if (!hasImageMagic(bytes)) throw new Error("image generation returned base64 that is not an image");
+  return { bytes, mime: sniffImageMime(bytes).mime };
 }
 
 /** Anything the proxied providers return that means "we refused", so a flagged generation fails
@@ -208,9 +254,7 @@ export async function generateImageBytes(
       return await generateOpenAIImage(env.OPENAI_API_KEY, model, args.prompt);
     }
     const refs = (args.refs ?? []).filter((r) => r.startsWith("data:"));
-    const params = refs.length
-      ? proxiedParams(model, args.prompt, refs)
-      : buildProxiedImageParams(provider, args.prompt);
+    const params = proxiedParams(model, args.prompt, refs);
     const opts = env.GATEWAY_ID ? { gateway: { id: env.GATEWAY_ID } } : undefined;
     const result = await env.AI.run(model, params, opts);
     const failure = detectProviderFailure(result);
@@ -219,12 +263,9 @@ export async function generateImageBytes(
     // stable id and the length instead -- enough to correlate two reports of the same refusal and
     // to see that a body was present, with none of its content.
     if (failure) throw new Error(`image generation failed (provider message ${untrustedLabel(failure)})`);
-    const url = extractProxiedImageUrl(result);
-    if (!url) throw new Error("image generation returned no image URL");
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`failed to fetch generated image: ${resp.status}`);
-    const bytes = new Uint8Array(await resp.arrayBuffer());
-    return { bytes, mime: resp.headers.get("content-type") || "image/png" };
+    const ref = extractProxiedImageUrl(result);
+    if (!ref) throw new Error("image generation returned no image URL");
+    return await proxiedImageBytes(ref);
   }
 
   // ---- plain @cf models ----

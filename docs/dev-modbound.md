@@ -159,9 +159,11 @@ var is a non-empty string, and as absent (the honest degrade path) when it is un
 > **Known deviation (#764, DV-1):** `dev-modbound.sh` only substitutes `${D1_DATABASE_ID}`,
 > `${AUTH_MODE}`, `${ACCESS_TEAM_DOMAIN}` and `${ACCESS_AUD}`, so the rendered dev config keeps literal
 > placeholders such as `VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"`. Those are non-empty strings, so the
-> dev core believes the video-finish (and other door) tiers ARE installed instead of taking the
-> `VIDEO_FINISH_URL unset` degrade path; any finish/assemble call then fails (no `MEDIA_FINISH_TOKEN`,
-> unresolvable URL) rather than degrading.
+> dev core believes the other door tiers ARE installed instead of taking the unset degrade path; any
+> call to one of them then fails (unresolvable URL) rather than degrading. `VIDEO_FINISH_URL` is the
+> exception since cf#964: the studio counts it only when it parses as an absolute http or https URL with
+> no `${...}` left in it, and clears it from the env it hands core otherwise, so the placeholder reads
+> as unset and the video-finish tier degrades honestly.
 
 ## Seeding history / artifacts
 
