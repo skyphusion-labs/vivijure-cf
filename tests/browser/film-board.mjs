@@ -163,6 +163,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
   await page.getByRole("button", { name: "Retry failed shots" }).click();
   await page.waitForSelector("#film-retry-dialog[open]");
   check("retry asks first", seen.retries.length === 0);
+  check("retry is not styled as destructive", (await page.getAttribute("#film-retry-go", "class")) === "planner-primary");
   await page.click('#film-retry-dialog button[value="cancel"]');
   await page.waitForTimeout(200);
   check("go back does not retry", seen.retries.length === 0);
@@ -643,6 +644,19 @@ for (const [name, extra] of [
   await none.ctx.close();
 }
 
+// ---- cf#1268: the confirm is shared, so a cancelled delete must not leave the next step red.
+{
+  const { ctx, page } = await open({ film: film({ phase: "stopped", stop_reason: "part 2 failed", parts: [part(0, "done"), part(1, "failed", { error: "shot 40 failed" })] }) });
+  await page.waitForSelector("#film-delete:not([hidden])");
+  await page.click("#film-delete");
+  await page.waitForSelector("#film-retry-dialog[open]");
+  await page.click('#film-retry-dialog button[value="cancel"]');
+  await page.waitForTimeout(100);
+  await page.getByRole("button", { name: "Retry failed shots" }).click();
+  await page.waitForSelector("#film-retry-dialog[open]");
+  check("after a cancelled delete, retry is not red", (await page.getAttribute("#film-retry-go", "class")) === "planner-primary");
+  await ctx.close();
+}
 // ---- cf#1206: delete a film as a whole.
 {
   const busy = await open({ film: film() });
@@ -656,6 +670,7 @@ for (const [name, extra] of [
   check("a finished film offers delete", (await page.locator("#film-delete").textContent()) === "Delete this film");
   await page.click("#film-delete");
   check("delete asks first, in plain words", (await page.locator("#film-retry-body").textContent()).includes("cannot undo"));
+  check("the delete button looks destructive", (await page.getAttribute("#film-retry-go", "class")) === "planner-danger");
   await page.click('#film-retry-dialog button[value="cancel"]');
   await page.waitForTimeout(100);
   check("going back deletes nothing", seen.deletes === 0);

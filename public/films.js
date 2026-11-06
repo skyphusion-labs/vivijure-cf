@@ -401,7 +401,7 @@
     $("film-retry-title").textContent = "Cancel the new take in part " + number + "?";
     $("film-retry-body").textContent = "This puts the part's film, prompts and lines back. A take that already ran stays paid for.";
     $("film-retry-note").textContent = "";
-    $("film-retry-go").textContent = "Cancel the take";
+    goButton("Cancel the take", false);
     $("film-retry-dialog").showModal();
   }
 
@@ -516,7 +516,7 @@
     $("film-retry-title").textContent = "Delete this film?";
     $("film-retry-body").textContent = "This removes the film, all of its parts, every joined version and its captions. You cannot undo it. Pictures and voices your other videos still use are kept.";
     $("film-retry-note").textContent = "";
-    $("film-retry-go").textContent = "Delete for good";
+    goButton("Delete for good", true);
     $("film-retry-dialog").showModal();
   }
 
@@ -668,6 +668,14 @@
     schedule(film);
   }
 
+  // cf#1268: the confirm dialog is shared, so every use sets its button's words AND its look. A
+  // destructive step is red; set together, a later dialog cannot inherit the red from a delete.
+  function goButton(text, destructive) {
+    const go = $("film-retry-go");
+    go.textContent = text;
+    go.className = destructive ? "planner-danger" : "planner-primary";
+  }
+
   function askRetry(part) {
     const number = part.index + 1;
     pendingAction = () => retry(part.index);
@@ -677,7 +685,7 @@
     $("film-retry-note").textContent = String(part.error || "").includes("submit outcome unknown")
       ? "The studio does not know if this part started. Check its project first, because a retry can buy it twice."
       : "";
-    $("film-retry-go").textContent = "Retry";
+    goButton("Retry", false);
     $("film-retry-dialog").showModal();
   }
 
@@ -688,7 +696,7 @@
       ? "Every part is kept. This only runs the join again."
       : "This starts the remaining parts, which cost money.";
     $("film-retry-note").textContent = "";
-    $("film-retry-go").textContent = rejoin ? "Join again" : "Resume";
+    goButton(rejoin ? "Join again" : "Resume", false);
     $("film-retry-dialog").showModal();
   }
 
