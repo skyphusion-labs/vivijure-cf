@@ -21,7 +21,9 @@ import { readFileSync } from "node:fs";
 
 import {
   buildRenderOwnerIndex,
+  clipJobOwnerMarkerOf,
   DEFAULT_GRACE_MS,
+  jobKindOf,
   reconcileRenders,
   refuseOversizedSweep,
   type RenderObjectLite,
@@ -90,12 +92,22 @@ async function main(): Promise<void> {
     return;
   }
   let deleted = 0;
+  // cf#1309: an owner marker comes last in r.orphans. Keep it if any sibling in its tree failed: without
+  // it the sibling would read as legacy, out of scope, and the re-list check below would not see it.
+  const failedClipJobs = new Set<string>();
   for (const c of r.orphans) {
+    const marker = clipJobOwnerMarkerOf(c.key);
+    if (marker && failedClipJobs.has(marker)) {
+      console.log(`  KEPT ${c.key}: a sibling in this tree did not delete, so the marker stays and the next run finds it`);
+      continue;
+    }
+    const seg = c.key.split("/")[1] ?? "";
     try {
       rclone(["deletefile", `${REMOTE}:${BUCKET}/${c.key}`]);
       deleted++;
       console.log(`  deleted ${c.key}`);
     } catch (e) {
+      if (jobKindOf(seg) === "clips") failedClipJobs.add(seg);
       console.log(`  FAILED ${c.key}: ${(e as Error).message} (continuing)`);
     }
   }

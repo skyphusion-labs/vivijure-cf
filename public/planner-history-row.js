@@ -16,6 +16,28 @@
 function artifactUrl(key) {
   return /^https?:\/\//i.test(key) ? key : "/api/artifact/" + key;
 }
+
+// cf#1309: a standalone clip job (POST /api/render/clips) now has a history row. Its job_id is the
+// clip job id, which is the one field that tells it apart: the list projection reads its mode as
+// "full". The film actions (view/resume, cancel, re-render, retry) all target film routes that answer
+// 404 or 400 for it, so the row offers delete, logs and one download per finished clip instead.
+function isClipJobRow(r) {
+  return !!r && typeof r.job_id === "string" && r.job_id.indexOf("clips-") === 0;
+}
+
+// cf#1309: the finished clips of a clip job row, from output.clips ({ shot_id, key }, the same shape a
+// derived animation row stores). A clip with no usable key is skipped, never guessed.
+function clipJobDownloads(r) {
+  const clips = r && r.output && typeof r.output === "object" && Array.isArray(r.output.clips)
+    ? r.output.clips
+    : [];
+  const out = [];
+  for (const c of clips) {
+    if (!c || typeof c.shot_id !== "string" || typeof c.key !== "string" || !c.key) continue;
+    out.push({ shot_id: c.shot_id, href: artifactUrl(c.key), name: (r.project || "clip") + "-" + c.shot_id + ".mp4" });
+  }
+  return out;
+}
 function buildHistoryRow(r, childrenByParent) {
   const li = document.createElement("li");
   li.className = "planner-history-item";
@@ -138,7 +160,9 @@ function buildHistoryRow(r, childrenByParent) {
     passBadge.textContent = passLabel;
     passBadge.title = passLabel === "preview"
       ? "stills preview; no motion / no film yet"
-      : "motion film (preview stills were already generated)";
+      : passLabel === "clips"
+        ? "motion clips, one per shot; no assembled film"
+        : "motion film (preview stills were already generated)";
     meta.appendChild(passBadge);
   }
 
@@ -388,12 +412,15 @@ function buildHistoryRow(r, childrenByParent) {
   const actions = document.createElement("div");
   actions.className = "planner-history-actions";
 
-  const view = document.createElement("button");
-  view.type = "button";
-  view.className = "planner-history-action";
-  view.textContent = "view";
-  view.addEventListener("click", () => resumeRender(r));
-  actions.appendChild(view);
+  const clipJob = isClipJobRow(r);
+  if (!clipJob) {
+    const view = document.createElement("button");
+    view.type = "button";
+    view.className = "planner-history-action";
+    view.textContent = "view";
+    view.addEventListener("click", () => resumeRender(r));
+    actions.appendChild(view);
+  }
 
   // #757: cancel any in-flight render straight from the history list, not just
   // the one the panel itself launched. Any non-terminal row is cancelable via
@@ -406,7 +433,7 @@ function buildHistoryRow(r, childrenByParent) {
     || r.status === "IN_PROGRESS"
     || r.status === "SUBMITTED"
     || r.status === "SCATTERING";
-  if (cancelable && r.job_id) {
+  if (cancelable && r.job_id && !clipJob) {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "planner-history-action planner-history-action-cancel";
@@ -414,6 +441,15 @@ function buildHistoryRow(r, childrenByParent) {
     cancel.title = "cancel this in-flight render (stops the GPU job)";
     cancel.addEventListener("click", () => cancelHistoryRow(r, cancel));
     actions.appendChild(cancel);
+  }
+
+  for (const d of clipJob ? clipJobDownloads(r) : []) {
+    const a = document.createElement("a");
+    a.href = d.href;
+    a.download = d.name;
+    a.className = "planner-history-action";
+    a.textContent = "clip " + d.shot_id;
+    actions.appendChild(a);
   }
 
   if (r.output_key) {
@@ -496,20 +532,23 @@ function buildHistoryRow(r, childrenByParent) {
   }
 
   // v0.35.1: "re-render" with the same bundle. Skips plan + bundle stages.
-  const rerun = document.createElement("button");
-  rerun.type = "button";
-  rerun.className = "planner-history-action";
-  rerun.textContent = "re-render";
-  rerun.title = "render this bundle again (skips plan + bundle stages)";
-  rerun.addEventListener("click", () => rerunBundle(r));
-  actions.appendChild(rerun);
+  // cf#1309: a clip job row has no bundle, so it has nothing to re-render. That is the only gate.
+  if (!clipJob) {
+    const rerun = document.createElement("button");
+    rerun.type = "button";
+    rerun.className = "planner-history-action";
+    rerun.textContent = "re-render";
+    rerun.title = "render this bundle again (skips plan + bundle stages)";
+    rerun.addEventListener("click", () => rerunBundle(r));
+    actions.appendChild(rerun);
+  }
 
   // cf#353: real retry -- re-POSTs the row's STORED args via /renders/:id/retry.
   // Server creates a NEW history row; the failed row stays for the audit trail.
   // "re-render" above still stages the bundle into the panel for a fresh manual submit.
   const isFailed =
     r.status === "FAILED" || r.status === "CANCELLED" || r.status === "TIMED_OUT";
-  if (isFailed && r.mode !== "finalized" && r.mode !== "cloud-finalized") {
+  if (isFailed && !clipJob && r.mode !== "finalized" && r.mode !== "cloud-finalized") {
     // Finalize/cloud failures use their own finalize/animate controls on the parent preview.
     const retry = document.createElement("button");
     retry.type = "button";
@@ -1875,6 +1914,7 @@ function historyStatusKind(status) {
 // cf#649: collapsed-row labels. Only emit a string when the field is actually
 // present so a missing backend does not invent one.
 function historyPassLabel(r) {
+  if (isClipJobRow(r)) return "clips";
   if (!r || typeof r.mode !== "string") return "";
   if (r.mode === "keyframes-only") return "preview";
   if (r.mode === "full" || r.mode === "finalized" || r.mode === "cloud-finalized") return "final";
