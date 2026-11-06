@@ -45,7 +45,7 @@ const ENDPOINT_ID = "wan-2-6-i2v";
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.2.3",
+  version: "0.2.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
@@ -83,6 +83,9 @@ const MANIFEST: ModuleManifest = {
     voice: "cast_tts",
     scatter_native_audio: false,
     driving_audio: true,
+    // cf#957: Wan 2.6 takes driving audio of 3 to 30 seconds. The floor is this door's, so the core pads a
+    // line to it for a shot on this door only. The dialogue modules no longer pad every line to 3s.
+    driving_audio_min_seconds: 3,
     min_seconds: 5,
     max_seconds: 15,
     // cf#929: this is a FLOOR plus a rounding rule, not a menu. wan.ts clampDuration snaps UP to the
