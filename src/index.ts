@@ -7,7 +7,7 @@ import { installModuleRow, uninstallModuleRow, setModuleEnabled, listInstalledMo
 import { fetchInstallManifestText } from "./install-manifest-fetch";
 import { resolveRenderPipeline, type RenderPipelineSelection } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { startClipJob, advanceClipJob, summarizeJob, type ClipShotInput } from "@skyphusion-labs/vivijure-core/render-orchestrator";
-import { FilmNotStartedError, startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { FilmBusyError, FilmNotStartedError, startFilmJob, advanceFilmJob, cancelFilmJob, retryFilmFinish, startFilmFromKeyframes, type FilmScene, type FilmSummary, type FinishRetryNotStarted } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import {
   filmJobToPollView, filmRowFromJob, isFilmJobId, mapRenderOverridesToModuleConfigs,
   normalizeFilmScenes, filterScenesByShotIds, summarizeFilmWithProjection,
@@ -1631,7 +1631,15 @@ const hCancelRender: Handler = async (_req, env, _c, p) => {
   if (!isFilmJobId(p.jobId)) {
     return json({ error: "unknown or legacy render job id (film-* only)", jobId: p.jobId }, 404);
   }
-  const job = await cancelFilmJob(env, p.jobId);
+  // vivijure-cf#1215: a cancel waits for a running tick and then gives up without writing. That is a retryable
+  // conflict, not a server error, and the film is still running.
+  let job: Awaited<ReturnType<typeof cancelFilmJob>>;
+  try {
+    job = await cancelFilmJob(env, p.jobId);
+  } catch (e) {
+    if (e instanceof FilmBusyError) return json({ error: e.message, jobId: p.jobId, retryable: true }, 409);
+    throw e;
+  }
   if (!job) throw notFound("render job");
   const view = filmJobToPollView(job, null);
   await updateRenderFromView(env, view);
