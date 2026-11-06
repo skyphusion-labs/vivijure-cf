@@ -33,9 +33,11 @@ import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboar
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { readIdempotencyKey } from "./film-idempotency";
 import { songStartRefusal } from "./film-join-gate";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
 import {
   bundleScenesHaveLines,
   hostedMotionFallback,
+  isDrivingOnlyDoor,
   prepareSpokenClip,
   spokenLinesPresent,
   withMotionBackend,
@@ -147,29 +149,41 @@ function perShotMotionFromCloud(
 }
 
 /**
- * vivijure-cf#1168: refuse a per-shot door map that core cannot run honestly yet.
+ * vivijure-core#442: the spoken-clip prep for a per-shot door map, door by door.
  *
- * Core decides pre-clip dialogue from the film's one `motion_backend`, and keeps `per_shot_motion` only
- * for the first clip start. So when the shots do not all use the default door and any door involved is
- * driven by a line's audio, either the map is lost after pre-clip dialogue (every shot goes to the
- * default door) or a mapped audio-driven door gets no audio. Both spend money on the wrong film. One
- * door for every shot is the single-door path and is not refused. The full fix is
- * skyphusion-labs/vivijure-core#442.
+ * Core keeps the map on the film doc and decides each shot's audio from its own door, so a map that mixes
+ * a door driven by a line's audio with a silent door now runs. What prepareSpokenClip does on the
+ * single-door path is done here for each door driven only by audio (isDrivingOnlyDoor) that holds a
+ * spoken shot: that door's config gets native audio off when its schema has the switch, sent as its own
+ * entry in `motion_configs`, and its shots carry no voice-sample clip. Every other door, and every shot on
+ * it, is left exactly as before; a map was not judged per door until now, and this does not add a refusal.
  */
-export function perShotAudioDoorRefusal(
-  modules: { name: string; usage?: { driving_audio?: boolean } }[],
-  motionBackend: string | undefined,
+export function prepareSpokenClipsPerDoor(
+  modules: RegisteredModule[],
   perShot: Record<string, string>,
-): string | null {
-  const doors = new Set(Object.values(perShot));
-  if (motionBackend !== undefined && doors.size === 1 && doors.has(motionBackend)) return null;
-  const involved = [...new Set([...(motionBackend ? [motionBackend] : []), ...doors])];
-  const driven = involved.filter((n) => modules.find((m) => m.name === n)?.usage?.driving_audio === true);
-  if (!driven.length) return null;
-  return (
-    `a per-shot door map cannot include a door driven by a line's audio yet (${driven.map((n) => `"${n}"`).join(", ")}): ` +
-    "the shots would lose their doors or get no audio. Use one door for every shot, or doors that do not need audio."
-  );
+  config: Record<string, unknown> | undefined,
+  voiceRefs: Record<string, string> | undefined,
+  lines: DialogueLine[] | undefined,
+):
+  | { ok: true; motionConfigs: Record<string, Record<string, unknown>> | undefined; voiceRefs: Record<string, string> | undefined }
+  | { ok: false; error: string } {
+  const shotsByDoor = new Map<string, string[]>();
+  for (const [shot, door] of Object.entries(perShot)) shotsByDoor.set(door, [...(shotsByDoor.get(door) ?? []), shot]);
+  const motionConfigs: Record<string, Record<string, unknown>> = {};
+  let refs = voiceRefs ? { ...voiceRefs } : undefined;
+  for (const [door, shots] of shotsByDoor) {
+    const mod = modules.find((m) => m.name === door);
+    if (!isDrivingOnlyDoor(mod)) continue;
+    const onDoor = new Set(shots);
+    const spoken = spokenLinesPresent((lines ?? []).filter((l) => onDoor.has(l.shot_id)));
+    if (!spoken) continue;
+    const clip = prepareSpokenClip(modules, mod, config, undefined, true);
+    if (!clip.ok) return clip;
+    if (clip.config) motionConfigs[door] = clip.config;
+    if (refs) for (const shot of shots) delete refs[shot];
+  }
+  if (refs && !Object.keys(refs).length) refs = undefined;
+  return { ok: true, motionConfigs: Object.keys(motionConfigs).length ? motionConfigs : undefined, voiceRefs: refs };
 }
 
 export function validatePreviewParent(parent: RenderRow): string | null {
@@ -268,11 +282,6 @@ export async function animateFromPreview(
       return { ok: false, error: `motion.backend module "${n}" is not installed`, status: 400 };
     }
   }
-  if (perShotMotion) {
-    const refusal = perShotAudioDoorRefusal(modules, motionBackend, perShotMotion);
-    if (refusal) return { ok: false, error: refusal, status: 400 };
-  }
-
   // cf#334: the shared pre-flight, for the ONE guard of the three that applies here.
   //
   // #577 is new coverage on this family. The motion config comes off the PARENT ROW's stored
@@ -340,9 +349,15 @@ export async function animateFromPreview(
   if (songRefusal) return { ok: false, error: songRefusal, status: 400 };
 
   // One door for the whole film (the finalized path). Hybrid and cloud-per-shot keep their
-  // own door map; refusing those here would judge only the gpu default.
+  // own door map, and are prepared door by door (vivijure-core#442).
   let motionConfig = mapped.motion_config;
-  if (!perShotMotion) {
+  let motionConfigs: Record<string, Record<string, unknown>> | undefined;
+  if (perShotMotion) {
+    const clips = prepareSpokenClipsPerDoor(modules, perShotMotion, mapped.motion_config, voice_ref_keys, dialogue_lines);
+    if (!clips.ok) return { ok: false, error: clips.error, status: 400 };
+    motionConfigs = clips.motionConfigs;
+    voice_ref_keys = clips.voiceRefs;
+  } else {
     const clip = prepareSpokenClip(
       modules,
       modules.find((m) => m.name === motionBackend),
@@ -367,6 +382,7 @@ export async function animateFromPreview(
       motion_backend: motionBackend,
       per_shot_motion: perShotMotion,
       motion_config: motionConfig,
+      motion_configs: motionConfigs,
       finish_config: mapped.finish_config,
       // cf#537: inherited from the PARENT render's stored overrides bag, so a derived render keeps
       // the selection the original was submitted with. Dropping it here would silently re-enable
