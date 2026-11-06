@@ -138,10 +138,12 @@ describe("chatterbox", () => {
     expect(new Set(step.names).size).toBe(step.names.length);
     expect(step.names).toEqual(["synth:s1", "store:s1", "synth:s2", "store:s2"]);
   });
-  it("runsync with no audio yet is not a purchase we kept, so it may retry", async () => {
+  // cf#1164 replaced "runsync with no audio yet may retry": that retry bought a second job and left the
+  // first in the provider queue. A queued job is now polled by id; tests/chatterbox-queued-runsync-1164.test.ts.
+  it("a runsync reply with no job status reached no job, so it may retry", async () => {
     let n = 0;
-    const { calls, state } = await run({ runsync: () => (n++ === 0 ? { status: "IN_PROGRESS" } : { status: "COMPLETED", output: { audio_url: "https://cdn.example/a.wav" } }) });
-    expect(calls.runsync).toBe(3);
+    const { calls, state } = await run({ runsync: () => (n++ === 0 ? {} : { status: "COMPLETED", output: { audio_url: "https://cdn.example/a.wav" } }) });
+    expect(calls.runsync).toBe(3); // two for s1 (one reached no job), one for s2
     expect(state?.status).toBe("done");
   });
 });

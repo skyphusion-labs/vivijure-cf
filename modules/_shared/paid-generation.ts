@@ -62,8 +62,19 @@ export async function runPaidGeneration<P, R = void>(
     return result === undefined ? null : (JSON.parse(JSON.stringify(result)) as unknown);
   });
   const parsed = run.parse(raw);
+  return await storePaidResult(step, () => run.store(parsed), options);
+}
+
+/** The store half alone, for a door whose provider call spans several steps (a submit, then polls by job
+ *  id, cf#1164). The store step never reaches the provider, and its failure reports the fixed text. */
+export async function storePaidResult<R>(
+  step: unknown,
+  store: () => Promise<R>,
+  options: Pick<PaidGenerationOptions, "storeStep" | "notStoredError"> = {},
+): Promise<R> {
+  const steps = step as PaidStepRunner;
   try {
-    return await steps.do(options.storeStep ?? "store", STORE_STEP_CONFIG as never, async () => await run.store(parsed));
+    return await steps.do(options.storeStep ?? "store", STORE_STEP_CONFIG as never, async () => await store());
   } catch (e) {
     console.error(JSON.stringify({ ev: "clip.store_failed", detail: e instanceof Error ? e.message : String(e) }));
     throw new Error(options.notStoredError ?? NOT_STORED_ERROR);

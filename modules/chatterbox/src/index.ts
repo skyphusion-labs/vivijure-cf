@@ -1,13 +1,14 @@
 // chatterbox: a `dialogue` module worker (vivijure-module/2). Voices each speaking shot's line with
-// Deepgram Aura-1 on Workers AI, in the cast member's assigned voice, and writes one WAV per shot to
-// R2. The core attaches each audio_key to that shot's FinishInput; since cf#783 removed
+// the RunPod public `chatterbox-turbo` endpoint, in the cast member's assigned voice, and writes one WAV
+// per shot to R2. The core attaches each audio_key to that shot's FinishInput; since cf#783 removed
 // finish-lipsync no finish module consumes it, and it reaches the film through the
 // mouth from it -- the "talking characters" pipeline's audio stage.
 //
-// ASYNC: an Aura-1 synth is a SINGLE BLOCKING env.AI.run (Workers AI is synchronous-only). A whole
-// film's worth of lines, done one per shot, far exceeds any request-path / waitUntil window (the
-// runtime cancels waitUntil ~30s after the response, #155). So the batch runs inside a Cloudflare
-// WORKFLOW, ONE step.do per shot: unlimited wall, per-shot retry + checkpoint, survives a recycle.
+// ASYNC: a line is one `/runsync` job. A whole film's worth of lines far exceeds any request-path /
+// waitUntil window (the runtime cancels waitUntil ~30s after the response, #155). So the batch runs
+// inside a Cloudflare WORKFLOW: per shot, one submit step, then (only if the provider is still queueing)
+// one status step per poll by job id, then one store step. Each is checkpointed, so a recycle or a retry
+// never submits a line twice (cf#1164).
 // R2 presence of the done state is authoritative for completion, like the render pipeline.
 //   GET  /module.json -> manifest
 //   POST /invoke      -> validate DialogueInput, persist `running`, START the workflow, return poll
@@ -35,6 +36,10 @@ import {
   decodePoll,
   stateKey,
   audioKey,
+  readJobReply,
+  LINE_POLL_DELAY,
+  LINE_MAX_POLLS,
+  type LineProgress,
   appliedTags,
   readOutput,
   normalizeInput,
@@ -42,16 +47,12 @@ import {
   type NormalizedLine,
 } from "./chatterbox";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
-import { NOT_STORED_AUDIO_ERROR, runPaidGeneration } from "../../_shared/paid-generation";
+import { NOT_STORED_AUDIO_ERROR, storePaidResult } from "../../_shared/paid-generation";
 import { runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, planeRefusalReason, planeRefusalError } from "../../_shared/runpod-route";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer | string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
   get(key: string): Promise<{ text(): Promise<string> } | null>;
-}
-
-interface AiRun {
-  run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
 }
 
 // Minimal hand-authored shapes for the Workflow binding (mirrors the wrangler [[workflows]] entry).
@@ -81,7 +82,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "chatterbox",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["dialogue"],
   provides: [{ id: "chatterbox", label: "Cast voices (Chatterbox Turbo)" }],
@@ -123,9 +124,18 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Synthesize ONE line and return where the audio is. THROWS when no audio came back, including a runsync
- *  still in progress, so the step retries. A returned URL is checkpointed, so it is never bought twice. */
-async function synthLine(env: Env, line: NormalizedLine): Promise<string> {
+async function readBody(r: Response): Promise<unknown> {
+  try {
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Submit ONE line. A reply that names a job (done, queued, or failed) is RETURNED, so the step checkpoints
+ *  it and a retry can never buy the line again. Only a request that reached no job throws, so the step may
+ *  retry it: nothing was queued, so nothing is bought twice and nothing is left behind. */
+async function submitLine(env: Env, line: NormalizedLine): Promise<LineProgress> {
   const route = await runpodRoute(env);
   if (!route.credential) throw new Error(runpodCredentialName(route) + " not configured");
   const r = await fetch(runpodEndpointUrl(route, MODEL) + "/runsync", {
@@ -135,11 +145,66 @@ async function synthLine(env: Env, line: NormalizedLine): Promise<string> {
   });
   const refusal = planeRefusalReason(route, r);
   if (refusal) throw new Error(planeRefusalError(MANIFEST.name, refusal));
-  if (!r.ok) throw new Error("chatterbox /runsync -> " + r.status);
-  const body = (await r.json()) as { output?: { audio_url?: string }; status?: string; error?: unknown };
-  const url = body.output?.audio_url;
-  if (!url) throw new Error("chatterbox returned no audio_url");
-  return url;
+  const body = await readBody(r);
+  const progress = readJobReply(r.status, body);
+  if (progress) return progress;
+  throw new Error("chatterbox /runsync -> " + r.status + " with no job status");
+}
+
+/** Read a queued line's job once. Never throws: a blip on the status read is one more pending poll, and
+ *  the poll budget bounds it. A reply that names a terminal state ends the wait. */
+async function pollLine(env: Env, id: string, last: string): Promise<LineProgress> {
+  try {
+    const route = await runpodRoute(env);
+    const r = await fetch(runpodEndpointUrl(route, MODEL) + "/status/" + encodeURIComponent(id), {
+      headers: runpodHeaders(route, "chatterbox"),
+    });
+    const refusal = planeRefusalReason(route, r);
+    if (refusal) return { kind: "failed", error: planeRefusalError(MANIFEST.name, refusal) };
+    const progress = readJobReply(r.status, await readBody(r));
+    return progress ?? { kind: "pending", id, status: last + " (status read HTTP " + r.status + ")" };
+  } catch (e) {
+    return { kind: "pending", id, status: last + " (status read failed: " + (e as Error).message + ")" };
+  }
+}
+
+/** Cancel a job we stop waiting for, so it does not run (and bill) after the film has given up on it. */
+async function cancelLine(env: Env, id: string): Promise<string> {
+  try {
+    const route = await runpodRoute(env);
+    const r = await fetch(runpodEndpointUrl(route, MODEL) + "/cancel/" + encodeURIComponent(id), {
+      method: "POST",
+      headers: runpodHeaders(route, "chatterbox"),
+    });
+    return r.ok ? "cancelled" : "cancel -> HTTP " + r.status;
+  } catch (e) {
+    return "cancel failed: " + (e as Error).message;
+  }
+}
+
+/** Structural, so a test can drive the real class with a fake. Mirrors WorkflowStep's do + sleep. */
+interface LineSteps {
+  do<T>(name: string, config: WorkflowStepConfig, fn: () => Promise<T>): Promise<T>;
+  do<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  sleep(name: string, duration: string): Promise<void>;
+}
+
+/** One line, to its audio URL: submit once, then poll the same job by id until it ends or the budget runs
+ *  out. A give-up cancels the job and says what state it was stuck in, with the provider's own error. */
+async function awaitLine(env: Env, steps: LineSteps, line: NormalizedLine): Promise<string> {
+  let progress = await steps.do(`synth:${line.shot_id}`, SYNTH_STEP_CONFIG, () => submitLine(env, line));
+  for (let i = 1; progress.kind === "pending"; i++) {
+    if (i > LINE_MAX_POLLS) {
+      const { id, status } = progress;
+      const cancel = await steps.do(`cancel:${line.shot_id}`, CANCEL_STEP_CONFIG, () => cancelLine(env, id));
+      throw new Error(`chatterbox job ${id} for ${line.shot_id} still ${status} after ${LINE_MAX_POLLS} polls (${cancel})`);
+    }
+    await steps.sleep(`wait:${line.shot_id}:${i}`, LINE_POLL_DELAY);
+    const { id, status } = progress;
+    progress = await steps.do(`status:${line.shot_id}:${i}`, POLL_STEP_CONFIG, () => pollLine(env, id, status));
+  }
+  if (progress.kind === "failed") throw new Error(progress.error);
+  return progress.url;
 }
 
 /** Download the bought line and write it. Never reaches the provider (cf#1107). */
@@ -160,6 +225,10 @@ const SYNTH_STEP_CONFIG: WorkflowStepConfig = {
   timeout: "2 minutes",
 };
 
+/** A status read never throws (pollLine), so its retries only cover a step the runtime itself lost. */
+const POLL_STEP_CONFIG: WorkflowStepConfig = { retries: { limit: 1, delay: "5 seconds" }, timeout: "1 minute" };
+const CANCEL_STEP_CONFIG: WorkflowStepConfig = { retries: { limit: 0, delay: "1 second" }, timeout: "1 minute" };
+
 export class ChatterboxWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
     withRetryingR2(this.env);
@@ -169,11 +238,11 @@ export class ChatterboxWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
       for (const line of lines) {
         // One step per shot: each is independently retried + checkpointed, so a recycle or a single
         // shot's transient failure never re-bills the lines already synthesized.
-        const shot = await runPaidGeneration(step, SYNTH_STEP_CONFIG, {
-          generate: () => synthLine(this.env, line),
-          parse: (raw) => raw as string,
-          store: (url) => storeLine(this.env, project, line, url),
-        }, { generateStep: `synth:${line.shot_id}`, storeStep: `store:${line.shot_id}`, notStoredError: NOT_STORED_AUDIO_ERROR });
+        const url = await awaitLine(this.env, step as unknown as LineSteps, line);
+        const shot = await storePaidResult(step, () => storeLine(this.env, project, line, url), {
+          storeStep: `store:${line.shot_id}`,
+          notStoredError: NOT_STORED_AUDIO_ERROR,
+        });
         audio.push(shot);
       }
       await writeState(this.env, job_id, { status: "done", project, audio, applied: appliedTags(audio) });
@@ -250,9 +319,8 @@ export default {
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
     // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
-    // GATEWAY_ID is hard-required here (see submit(): "GATEWAY_ID not configured" fails the call), so
-    // its visibility is a genuine ready/not-ready signal, unlike the AI-Gateway modules where the
-    // credential only routes an optional fallback. No telemetry field: this module holds no
+    // The RunPod credential is hard-required (submit() fails the call without it), so its visibility is a
+    // genuine ready/not-ready signal. No telemetry field: this module holds no
     // runpod_job_log binding.
     if (request.method === "GET" && url.pathname === "/ready") {
       const route = await runpodRoute(env);
