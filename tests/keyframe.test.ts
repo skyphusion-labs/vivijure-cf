@@ -235,7 +235,7 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.4");
+    expect(MANIFEST.version).toBe("0.3.5");
     // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.
     expect(MANIFEST.config_schema?.face_crop_pad).toMatchObject({ type: "float", default: 0.35, min: 0, max: 2 });
     expect(MANIFEST.config_schema?.style).toMatchObject({
