@@ -79,6 +79,11 @@ PANEL_HOME = "${PANEL_HOME}"
 # resolveKeyframeParallel). Empty or non-numeric falls back to the core default of 4; deploy.sh
 # and the CI render default it to 4. Rendered here so a plain deploy keeps it, not only a --var.
 KEYFRAME_PARALLEL = "${KEYFRAME_PARALLEL}"
+# STUDIO_GIT_SHA (cf#1347, src/studio-release.ts): the git sha of the commit this worker was built from,
+# projected read-only as `git_sha` on GET /api/modules. Every render stamps it: the CI deploy from
+# github.sha, studio-release from the checked-out tag, deploy.sh and the installer from git rev-parse
+# HEAD. Empty, or anything that is not 7 to 40 hex characters, projects as null, never a guess.
+STUDIO_GIT_SHA = "${STUDIO_GIT_SHA}"
 # ALLOW_UNAUTHENTICATED (cf#839): live code reads it (src/access-auth.ts) and until now it appeared
 # in NO committed wrangler example, so the one security-relevant knob in this file was the one an
 # operator could not see here. It is documented in docs/SECURITY.md and docs/CONTRACT.md; this is the
