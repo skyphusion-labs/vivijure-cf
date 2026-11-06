@@ -128,6 +128,54 @@ describe("cf#1282 plate_check: the ladder", () => {
   });
 });
 
+describe("cf#1283 keyframes_incomplete: shots that got no still", () => {
+  const kfi = (over: Record<string, unknown> = {}) => ({ adopted: 3, expected: 5, dropped: ["shot_02", "shot_04"], ...over });
+
+  it("ABSENT is unmeasured and renders nothing, beside a witness that does", () => {
+    expect(stageBand(out({}), "keyframes_incomplete")).toBe(DEGRADE_BANDS.UNMEASURED);
+    const blocks = stageBlocksFor(doc, out({ ...WITNESS }), fd, {});
+    expect(blocks.map((b) => (b as El).attrs["data-stage"])).toEqual(["master"]);
+  });
+
+  it("a full set (nothing dropped) is none-reported and renders nothing", () => {
+    const o = out({ keyframes_incomplete: kfi({ adopted: 5, dropped: [] }), ...WITNESS });
+    expect(stageBand(o, "keyframes_incomplete")).toBe(DEGRADE_BANDS.NONE_REPORTED);
+    expect(stageBlocksFor(doc, o, fd, {}).map((b) => (b as El).attrs["data-stage"])).toEqual(["master"]);
+  });
+
+  it("dropped shots report, named, with how many the film asked for", () => {
+    const o = out({ keyframes_incomplete: kfi() });
+    expect(stageBand(o, "keyframes_incomplete")).toBe(DEGRADE_BANDS.REPORTED);
+    expect(allText(stageBlocksFor(doc, o, fd, {}))).toBe(
+      "2 of 5 shots got no still, so this film was made without them (shot_02, shot_04).",
+    );
+    const one = out({ keyframes_incomplete: kfi({ adopted: 4, dropped: ["shot_05"] }) });
+    expect(stageSummary(stageFrom(one, "keyframes_incomplete")!)).toBe(
+      "1 of 5 shots got no still, so this film was made without it (shot_05).",
+    );
+  });
+
+  it("a dropped list that lost its ids still reports from the counts", () => {
+    const info = stageFrom(out({ keyframes_incomplete: kfi({ dropped: undefined }) }), "keyframes_incomplete")!;
+    expect(info.degraded).toBe(2);
+    expect(stageSummary(info)).toBe("2 of 5 shots got no still, so this film was made without them.");
+  });
+
+  it("a shape we do not recognise is UNREADABLE, never clean", () => {
+    for (const bad of [{ expected: 5, dropped: [] }, { adopted: 3 }, kfi({ dropped: "shot_02" }), kfi({ adopted: -1 }), []]) {
+      expect(stageBand(out({ keyframes_incomplete: bad }), "keyframes_incomplete")).toBe(DEGRADE_BANDS.UNREADABLE);
+    }
+  });
+
+  it("the history badge and the one-screen page say it plainly", () => {
+    expect(stagesNote(reportedStages(out({ keyframes_incomplete: kfi() }), fd))!.label).toBe("shots missing");
+    expect(fd.simpleWarnings(out({ keyframes_incomplete: kfi() }))).toEqual([
+      "Some pictures could not be made, so this video leaves out part of your idea.",
+    ]);
+    expect(fd.simpleWarnings(out({ keyframes_incomplete: kfi({ adopted: 5, dropped: [] }) }))).toEqual([]);
+  });
+});
+
 describe("the history badge names the check, not a finishing stage", () => {
   it("one check gets its own short badge; several fall back to the shared label", () => {
     const pc = reportedStages(out({ plate_check: plate([{ shot_id: "a" }]) }), fd);
@@ -245,9 +293,8 @@ describe("cf#1282: a retake drops the report of the still it replaced", () => {
 // It is still a mention, not proof of a caller, so it can pass a key that is used and never
 // rendered; it cannot pass a key no code touches, which is the failure it exists for. The core list
 // is read from the INSTALLED core's dist, so it follows the pin rather than a hand-typed copy.
-const EXEMPT: Record<string, string> = {
-  keyframes_incomplete: "unread today; skyphusion-labs/vivijure-cf#1283 adds the reader and removes this line",
-};
+// EMPTY since cf#1283 gave keyframes_incomplete its reader. An entry needs a reason and an issue.
+const EXEMPT: Record<string, string> = {};
 
 function corePayloadKeys(): string[] {
   const dist = join(ROOT, "node_modules/@skyphusion-labs/vivijure-core/dist/render-output-payload.js");
@@ -283,7 +330,9 @@ describe("ratchet: no render payload key without a panel reader or an exemption"
   });
 
   it("the reader test can say no (negative control)", () => {
-    expect(hasReader(src, "keyframes_incomplete")).toBe(false);
+    // A key no code could ever read. Until cf#1283 the live control was keyframes_incomplete itself.
+    expect(hasReader(src, "no_such_payload_key")).toBe(false);
+    expect(hasReader(stripComments("// output.no_such_payload_key\n/* \"no_such_payload_key\" */"), "no_such_payload_key")).toBe(false);
     expect(hasReader(src, "film_finish")).toBe(true);
   });
 

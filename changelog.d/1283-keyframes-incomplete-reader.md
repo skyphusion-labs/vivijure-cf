@@ -1,0 +1,3 @@
+### feat(panel): the panel says when a film was made without some of its shots
+
+`output.keyframes_incomplete` (`{ adopted, expected, dropped }`) is written when the keyframe stage delivered only part of the stills and the film shipped without the rest. Nothing in the panel read it, so such a film looked like a clean render. It now shows on the planner live view and the render history row, with the badge "shots missing" and the dropped shots by id ("2 of 5 shots got no still, so this film was made without them (shot_02, shot_04)."), and on the Make a video page as "Some pictures could not be made, so this video leaves out part of your idea." The render payload ratchet test has no exemptions left (vivijure-cf#1283).

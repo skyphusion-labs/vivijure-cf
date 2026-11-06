@@ -258,7 +258,12 @@
   // same way, as adapters. Both are things the studio MEASURED about the pictures, not finishing
   // stages, so each carries its own sentence below, and both keep the ladder: key absent means the
   // check never ran and shows nothing; a clean result shows nothing; only a reported problem renders.
-  var STAGE_KEYS = ["speech", "master", "dialogue", "film_finish", "content_validation", "plate_check"];
+  // cf#1283: `keyframes_incomplete` joins the same way. It is the one signal here with no clean
+  // rung: core writes it only when shots were dropped, so absent is both "never happened" and
+  // "never measured", and either way it shows nothing.
+  var STAGE_KEYS = [
+    "speech", "master", "dialogue", "film_finish", "content_validation", "plate_check", "keyframes_incomplete",
+  ];
 
   // The one sentence a still with an unclean plate gets, wherever a still is shown. Plain words on
   // purpose: the reader needs to know what may be wrong and the one thing that can fix it.
@@ -346,6 +351,20 @@
     return { degraded: shots.length, reasons: [], shots: shots };
   }
 
+  /** cf#1283: `keyframes_incomplete` -> the shared form. Core emits `{ adopted, expected, dropped }`
+   *  (film-model.ts, #619 / #622) when the keyframe stage delivered only part of the stills: the film
+   *  shipped the `adopted` shots and left out `dropped`. STRICT on the two counts, like the others: an
+   *  unrecognised shape reads as unreadable, never as clean. The count is the dropped list when it is
+   *  readable, else `expected - adopted`, so a list that lost its ids still reports. */
+  function parseKeyframesIncomplete(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (!isCount(raw.adopted) || !isCount(raw.expected)) return null;
+    if (raw.dropped !== undefined && !Array.isArray(raw.dropped)) return null;
+    var shots = stringList(raw.dropped);
+    var missing = Math.max(shots.length, raw.expected - raw.adopted, 0);
+    return { degraded: missing, reasons: [], shots: shots, expected: raw.expected };
+  }
+
   /** The shot ids `output.plate_check` names as unclean. Empty for clean, absent, or junk. */
   function plateUncleanShots(output) {
     if (!output || typeof output !== "object" || Array.isArray(output)) return [];
@@ -385,6 +404,10 @@
   function simpleWarnings(output) {
     var out = [];
     if (!output || typeof output !== "object" || Array.isArray(output)) return out;
+    var kfi = parseKeyframesIncomplete(output.keyframes_incomplete);
+    if (kfi && kfi.degraded > 0) {
+      out.push("Some pictures could not be made, so this video leaves out part of your idea.");
+    }
     var cv = parseContentValidation(output.content_validation);
     if (cv && cv.failed > 0) out.push("Some clips failed the picture check and may look wrong.");
     if (cv && cv.unmeasured > 0) out.push("Some clips could not be checked for picture problems.");
@@ -406,6 +429,7 @@
     film_finish: { noun: "title cards and captions", unit: "pass", parse: parseFilmFinish },
     content_validation: { noun: "picture check", unit: "clip", parse: parseContentValidation, badge: "picture check" },
     plate_check: { noun: "extra person check", unit: "still", parse: parsePlateCheck, badge: "may show an extra person" },
+    keyframes_incomplete: { noun: "stills", unit: "shot", parse: parseKeyframesIncomplete, badge: "shots missing" },
   };
 
   /** The raw-shape parser for a stage: its own, or the shared `{ degraded, reasons }` one. */
@@ -430,6 +454,7 @@
     // The two picture checks carry their split and their shots, so the sentence can be exact.
     if (typeof parsed.failed === "number") info.failed = parsed.failed;
     if (typeof parsed.unmeasured === "number") info.unmeasured = parsed.unmeasured;
+    if (typeof parsed.expected === "number") info.expected = parsed.expected;
     if (parsed.shots) info.shots = parsed.shots;
     return info;
   }
@@ -470,6 +495,15 @@
         parts.push(unmeasured + " clip" + (unmeasured === 1 ? " was" : "s were") + " not checked for picture problems.");
       }
       return parts.length ? parts.join(" ") : null;
+    }
+    if (info.stage === "keyframes_incomplete") {
+      var dropped = Array.isArray(info.shots) ? info.shots : [];
+      var m = n;
+      var of = typeof info.expected === "number" && info.expected > 0 ? " of " + info.expected : "";
+      return (
+        m + of + " shot" + (m === 1 && !of ? "" : "s") + " got no still, so this film was made without " +
+        (m === 1 ? "it" : "them") + (dropped.length ? " (" + dropped.join(", ") + ")" : "") + "."
+      );
     }
     if (info.stage === "plate_check") {
       var shots = Array.isArray(info.shots) ? info.shots : [];
@@ -682,6 +716,7 @@
     parseFilmFinish: parseFilmFinish,
     parseContentValidation: parseContentValidation,
     parsePlateCheck: parsePlateCheck,
+    parseKeyframesIncomplete: parseKeyframesIncomplete,
     plateUncleanShots: plateUncleanShots,
     keyframeUnclean: keyframeUnclean,
     shotWarnings: shotWarnings,

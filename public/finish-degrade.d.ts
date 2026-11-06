@@ -99,7 +99,14 @@ export function clipFinishSummary(clip: ClipFinishDegrade | null | undefined): s
  *
  *  `degraded` is the COUNT and `reasons` is DEDUPED, so `degraded >= reasons.length`; the
  *  two are not interchangeable. */
-export type StageKey = "speech" | "master" | "dialogue" | "film_finish" | "content_validation" | "plate_check";
+export type StageKey =
+  | "speech"
+  | "master"
+  | "dialogue"
+  | "film_finish"
+  | "content_validation"
+  | "plate_check"
+  | "keyframes_incomplete";
 export const STAGE_KEYS: StageKey[];
 
 export interface StageDegrade {
@@ -116,8 +123,11 @@ export interface StageDegrade {
   failed?: number;
   /** cf#916: `content_validation` only. Clips the picture check could not look at. */
   unmeasured?: number;
-  /** cf#1282: `plate_check` only. Shot ids whose still may show an extra person. */
+  /** cf#1282: `plate_check`: shot ids whose still may show an extra person. cf#1283:
+   *  `keyframes_incomplete`: shot ids that got no still and were left out. */
   shots?: string[];
+  /** cf#1283: `keyframes_incomplete` only. Shots the storyboard asked for. */
+  expected?: number;
 }
 
 /** cf#860: `output.film_finish` normalised into the shared `{ degraded, reasons }` form.
@@ -197,6 +207,14 @@ export function parseContentValidation(raw: unknown): {
 
 /** cf#1282: `output.plate_check` (core `plateCheckView`): `{ checked, unclean: { shot_id }[] }`. */
 export function parsePlateCheck(raw: unknown): { degraded: number; reasons: string[]; shots: string[] } | null;
+
+/** cf#1283: `output.keyframes_incomplete` (core film-model): `{ adopted, expected, dropped }`. */
+export function parseKeyframesIncomplete(raw: unknown): {
+  degraded: number;
+  reasons: string[];
+  shots: string[];
+  expected: number;
+} | null;
 
 /** The shot ids `output.plate_check` names as unclean. Empty for clean, absent or junk. */
 export function plateUncleanShots(output: RenderOutput | null | undefined): string[];
