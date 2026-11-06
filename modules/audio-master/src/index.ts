@@ -22,7 +22,7 @@
 // (pass the INPUT bed through unchanged, but RECORDED) is preferred over a hard ok:false unless the input
 // itself is malformed -- a master miss must never drop a fully-rendered film (#249 / #77).
 
-import { FAILURE_BAD_RESPONSE, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { FAILURE_BAD_RESPONSE, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -44,7 +44,7 @@ interface Env {
 
 const MANIFEST: ModuleManifest = {
   name: "audio-master",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["master"],
   provides: [
@@ -117,7 +117,10 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
     return withFailure(passthrough(input, "container-unreachable", { detail: msg }), FAILURE_UNREACHABLE);
   }
   const resp = timed.resp;
-  if (!resp.ok) return withFailure(passthrough(input, "container-failed", { detail: "HTTP " + resp.status }), failureFromStatus(resp.status));
+  // cf#1327: three container outcomes, three tags. A non-2xx is the transport or the route; a body that is
+  // JSON but not an object is a bad response, held and retried like unparseable JSON below; an ok:false body
+  // is the handler refusing, which no retry cures.
+  if (!resp.ok) return withFailure(passthrough(input, "container-http-error", { detail: "HTTP " + resp.status }), failureFromStatus(resp.status));
 
   let body: unknown;
   try {
@@ -126,7 +129,8 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
     return withFailure(passthrough(input, "container-bad-response"), FAILURE_BAD_RESPONSE);
   }
   const res = parseContainerResult(body);
-  if (!res || !res.ok) return passthrough(input, "container-failed");
+  if (!res) return withFailure(passthrough(input, "container-bad-response", { detail: "body is not an object" }), FAILURE_BAD_RESPONSE);
+  if (!res.ok) return withFailure(passthrough(input, "container-refused"), FAILURE_REFUSED);
   if (!res.key) return passthrough(input, "no-output-key", { detail: "container returned no mastered key" });
 
   const output = masterOutputFromResult(input, res);
