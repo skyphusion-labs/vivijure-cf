@@ -77,6 +77,7 @@ a conditional uncomment of the Workers-for-Platforms block.
 | `${ACCESS_TEAM_DOMAIN}` | Zero-Trust team hostname (`<team>.cloudflareaccess.com`) -- F2 JWT `iss` check (access mode) |
 | `${ACCESS_AUD}` | the vivijure Access application AUD -- F2 JWT `aud` check (access mode) |
 | `${PANEL_HOME}` | the studio home page (cf#1242): `simple` opens on Make a video; empty keeps the planner home |
+| `${KEYFRAME_PARALLEL}` | keyframe invokes one film starts at once (cf#1249); deploy.sh and the CI render default it to `4`, and empty also means 4 in vivijure-core |
 | `${D1_DATABASE_ID}` | the D1 database UUID |
 | `${SPEND_RATE_LIMITER_NS_ID}` | the rate-limit namespace id |
 | `${R2_S3_ENDPOINT}` | the account-scoped R2 S3 API host (`https://<account-id>.r2.cloudflarestorage.com`), an identifier the render DERIVES from `CLOUDFLARE_ACCOUNT_ID` -- not stored anywhere (#238 follow-up) |
@@ -180,7 +181,7 @@ described in 3a and fails closed at each:
     sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
     mv .wrangler.hosted2.toml .wrangler.hosted.toml
     # 4) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
-    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $KEYFRAME_PARALLEL $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
     envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml; rm -f .wrangler.hosted.toml
     # 5) No placeholder may survive OUTSIDE comments (a missing secret leaves a literal ${...}); comment
     #    prose mentioning ${...} is fine. -F keeps '${' literal on every grep (GNU vs busybox differ).
@@ -380,7 +381,7 @@ export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com
 # media origins (empty = that service is off)
 export VIDEO_FINISH_URL= IMAGE_PREP_URL= AUDIO_BEAT_SYNC_URL= AUDIO_MIX_URL= AUDIO_MASTER_URL=
 export FINISH_UPSCALE_DOORS= FINISH_BLENDER_DOORS=
-VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $KEYFRAME_PARALLEL $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
 envsubst "$VARS" < wrangler.toml.example > wrangler.toml
 sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" wrangler.toml
 ```

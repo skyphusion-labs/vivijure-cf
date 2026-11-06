@@ -166,6 +166,9 @@ export interface Env {
   // (public/make.html) at "/" and the nav, with the planner kept as "Advanced". Unset, or any other
   // value, keeps today's behaviour exactly. See src/panel-home.ts and docs/DEPLOYMENT.md.
   PANEL_HOME?: string;
+  // cf#1249: keyframe fan-out per film, a [vars] entry read by vivijure-core (resolveKeyframeParallel).
+  // Unset, empty or non-numeric -> 4. Rendered by deploy.sh and the CI deploy from the deploy env.
+  KEYFRAME_PARALLEL?: string;
 
   // Dev-only planner AI mock (#411 dev-parity). When "1"/"true", planStoryboard/refineStoryboard
   // return deterministic canned completions instead of a live model call, so the planner re-prompt

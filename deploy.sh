@@ -97,6 +97,8 @@ fi
 AUTH_MODE="${AUTH_MODE:-token}"
 # Studio home page (cf#1242): "simple" opens on Make a video; empty keeps the planner home.
 PANEL_HOME="${PANEL_HOME:-}"
+# Keyframe fan-out per film (cf#1249). 4 is the vivijure-core default; set it in deploy.env to change it.
+KEYFRAME_PARALLEL="${KEYFRAME_PARALLEL:-4}"
 case "$AUTH_MODE" in
   token)
     ACCESS_TEAM_DOMAIN=""; ACCESS_AUD=""   # rendered empty; the token gate ignores them
@@ -363,11 +365,11 @@ info "media stack: tunnel token -> containers/tunnel.env (0600). Set VIDEO_FINIS
 # ---- 5. render wrangler.toml from the template ------------------------------
 say "Step 5/9: render wrangler.toml ($VIVIJURE_PROFILE profile)"
 command -v envsubst >/dev/null || die "envsubst not found -- install gettext (apt-get install gettext-base)"
-export AUTH_MODE ACCESS_TEAM_DOMAIN ACCESS_AUD PANEL_HOME D1_DATABASE_ID SPEND_RATE_LIMITER_NS_ID
+export AUTH_MODE ACCESS_TEAM_DOMAIN ACCESS_AUD PANEL_HOME KEYFRAME_PARALLEL D1_DATABASE_ID SPEND_RATE_LIMITER_NS_ID
 export R2_S3_ENDPOINT R2_S3_BUCKET   # #238 follow-up: now rendered into [vars], not put as secrets
 export VIDEO_FINISH_URL IMAGE_PREP_URL AUDIO_BEAT_SYNC_URL AUDIO_MIX_URL AUDIO_MASTER_URL
 export FINISH_UPSCALE_DOORS FINISH_BLENDER_DOORS
-VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$PANEL_HOME \$D1_DATABASE_ID \$VIDEO_FINISH_URL \$IMAGE_PREP_URL \$AUDIO_BEAT_SYNC_URL \$AUDIO_MIX_URL \$AUDIO_MASTER_URL \$FINISH_UPSCALE_DOORS \$FINISH_BLENDER_DOORS \$SPEND_RATE_LIMITER_NS_ID \$R2_S3_ENDPOINT \$R2_S3_BUCKET"
+VARS="\$AUTH_MODE \$ACCESS_TEAM_DOMAIN \$ACCESS_AUD \$PANEL_HOME \$KEYFRAME_PARALLEL \$D1_DATABASE_ID \$VIDEO_FINISH_URL \$IMAGE_PREP_URL \$AUDIO_BEAT_SYNC_URL \$AUDIO_MIX_URL \$AUDIO_MASTER_URL \$FINISH_UPSCALE_DOORS \$FINISH_BLENDER_DOORS \$SPEND_RATE_LIMITER_NS_ID \$R2_S3_ENDPOINT \$R2_S3_BUCKET"
 
 # Strip the wrangler.toml.example blocks this deploy does not want, then envsubst the rest:
 #   SELFHOST-SKIP -- OUR-fleet-only (e.g. the vivijure-tail consumer); ALWAYS stripped for a self-host.
