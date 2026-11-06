@@ -350,6 +350,9 @@ emitter in the pinned core dist (`node_modules/@skyphusion-labs/vivijure-core/di
 | `authz.token_scope_invalid` | host `src/auth-gate.ts` | error | `name`, `scope`, `msg` | an `api_tokens` row has no usable scope; denied |
 | `router.error` | host `src/studio.ts` | error | `route` (template), `method`, `reason` | an unhandled handler throw (500 `internal error`) |
 | `auth.allow_unauthenticated` | host `src/access-auth.ts` | info | `msg` | in-Worker auth is disabled (`ALLOW_UNAUTHENTICATED=true`); once per isolate |
+| `film.cron_pass` | host `src/studio.ts` (`sweepFilmParents`) | info | `active`, `reached`, `cut`, `restored`, `ms` | one film-parent sweep pass. `cut` is the parents it did not start because the pass reached `FILM_PASS_START_BUDGET_MS` (15 s, cf#1302); they are reached on later passes. A pass whose parent list fails throws before this line, and `runSweepPass` logs `sweep.failed` |
+| `r2.retry` | host `modules/_shared/r2-retry.ts` | warn | `op`, `attempt` (1-based), `error` | an R2 call failed with a temporary error and is retried (up to 4 waits, 200 to 2000 ms, plus up to 25% jitter) |
+| `clips.sweep` | host `src/clip-job-sweep.ts` | info | `total`, `listed`, `advanced`, `busy`, `not_standalone`, `missing`, `failed` | one standalone clip job sweep pass (cf#1316) |
 
 ## Poll-surface content length (cf#365) -- assemble vs delivered
 
