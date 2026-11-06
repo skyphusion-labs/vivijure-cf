@@ -10,7 +10,7 @@ import {
   finishedKey,
   defaultConfig,
 } from "../modules/finish-blender/src/finish";
-import { MANIFEST } from "../modules/finish-blender/src/index";
+import { MANIFEST } from "../modules/finish-blender/src/manifest";
 import worker from "../modules/finish-blender/src/index";
 import { DOOR_ROUTE_NAME } from "../modules/_shared/finish-door";
 import type { FinishInput } from "../modules/finish-blender/src/contract";

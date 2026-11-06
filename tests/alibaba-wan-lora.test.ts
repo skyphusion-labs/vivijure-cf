@@ -13,7 +13,7 @@ import {
   RUNPOD_NOTFOUND_GRACE_MS,
   ALLOWED_DURATIONS,
 } from "../modules/alibaba-wan-lora/src/wan-lora";
-import { MANIFEST } from "../modules/alibaba-wan-lora/src/index";
+import { MANIFEST } from "../modules/alibaba-wan-lora/src/manifest";
 import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 describe("alibaba-wan-lora pure logic", () => {

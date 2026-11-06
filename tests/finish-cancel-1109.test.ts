@@ -1,9 +1,12 @@
 // cf#1109: a film cancel must be able to stop a running GPU finish step. Each module's real /cancel is
 // driven here, with only the network stubbed.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import rife, { MANIFEST as RIFE } from "../modules/finish-rife/src/index";
-import upscale, { MANIFEST as UPSCALE } from "../modules/finish-upscale/src/index";
-import blender, { MANIFEST as BLENDER } from "../modules/finish-blender/src/index";
+import rife from "../modules/finish-rife/src/index";
+import { MANIFEST as RIFE } from "../modules/finish-rife/src/manifest";
+import upscale from "../modules/finish-upscale/src/index";
+import { MANIFEST as UPSCALE } from "../modules/finish-upscale/src/manifest";
+import blender from "../modules/finish-blender/src/index";
+import { MANIFEST as BLENDER } from "../modules/finish-blender/src/manifest";
 import { encodePoll as rifePoll } from "../modules/finish-rife/src/finish";
 import { encodePoll as upscalePoll } from "../modules/finish-upscale/src/finish";
 import { encodePoll as blenderPoll } from "../modules/finish-blender/src/finish";
