@@ -17,12 +17,14 @@ function artifactUrl(key) {
   return /^https?:\/\//i.test(key) ? key : "/api/artifact/" + key;
 }
 
-// cf#1309: a standalone clip job (POST /api/render/clips) now has a history row. Its job_id is the
-// clip job id, which is the one field that tells it apart: the list projection reads its mode as
-// "full". The film actions (view/resume, cancel, re-render, retry) all target film routes that answer
-// 404 or 400 for it, so the row offers delete, logs and one download per finished clip instead.
+// cf#1309: a standalone clip job (POST /api/render/clips) now has a history row. Since core 1.41.0
+// (#1351) its mode reads "clips"; the clips- job id prefix still counts, for a row a studio on an older
+// core listed. The film actions (view/resume, cancel, re-render, retry) all target film routes that
+// answer 404 or 400 for it, so the row offers delete, logs and one download per finished clip instead.
 function isClipJobRow(r) {
-  return !!r && typeof r.job_id === "string" && r.job_id.indexOf("clips-") === 0;
+  if (!r) return false;
+  if (r.mode === "clips") return true;
+  return typeof r.job_id === "string" && r.job_id.indexOf("clips-") === 0;
 }
 
 // cf#1309: the finished clips of a clip job row, from output.clips ({ shot_id, key }, the same shape a

@@ -1037,7 +1037,8 @@ const hRetryRender: Handler = async (req, env, _c, p) => {
   if (isParentPartProject(row.project)) return partOfLongFilm();
   // cf#1309: a clip job row has no bundle and no stored film request, so neither retry path can repeat it.
   // Re-deriving a film from it would start a different job. Refuse with the door that can.
-  if (isClipJobId(row.job_id)) {
+  // #1351: the row's mode says it too since core 1.41.0. Either one refuses.
+  if (isClipJobId(row.job_id) || row.mode === "clips") {
     return json({ ok: false, error: "a clip job is not retried from history; submit its shots again with POST /api/render/clips" }, 400);
   }
   // cf#1177: a full retry replays the original request, or does not start. Finalize has its own path, from its
