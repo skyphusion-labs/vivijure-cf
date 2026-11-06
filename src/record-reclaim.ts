@@ -290,29 +290,28 @@ export function planReclaim(candidates: string[], live: Set<string>): ReclaimPla
 /**
  * True when a cast member's `voice_ref_key` is that member's OWN object and may be freed with it.
  *
- * The column holds two different shapes and only one is exclusively owned:
- *
- *   cast/<id>/voice-ref.<ext>                       EXCLUSIVE. The upload path writes it under the
- *                                                   member's own tree (src/cast-voice-sample.ts:281).
- *   renders/cast/clips/voice-sample_<module>.mp4     SHARED BY EVERY CAST MEMBER. `startCastVoiceSample`
- *                                                   invokes the talking door with
- *                                                   `context.project = "cast"` and
- *                                                   `shot_id = "voice-sample"`
- *                                                   (src/cast-voice-sample.ts:149,163), and every
- *                                                   module derives its clip key from exactly those
- *                                                   two values. So the key is a CONSTANT across
- *                                                   members, and `keepCastVoiceSample` promotes that
- *                                                   same constant into each member's column
- *                                                   (src/cast-voice-sample.ts:201).
- *
- * Deleting the second shape with one cast member destroys the kept voice reference of every other
- * member that also kept a generated sample. So the generated shape is LEFT BEHIND on purpose: a
- * known, reported leak is better than silently deleting another record's only copy. Freeing it
- * safely needs the shared key fixed at the source, which is its own change.
+ * Since cf#1008 every writer puts the key under the member's own tree: the upload path, the copy path,
+ * and keep, which copies the generated clip to `cast/<id>/voice-ref.<ext>`. Rows kept BEFORE cf#1008
+ * can still hold the legacy generated shape, `renders/cast/clips/voice-sample_<module>.mp4`, which was
+ * one key SHARED by every member (`shot_id` was the constant "voice-sample"). That shape is not owned;
+ * see `isLegacySharedVoiceSampleKey`, which cast delete frees only when no surviving row names it.
  */
 export function ownsVoiceRefKey(castId: number, key: string | null | undefined): boolean {
   if (!key) return false;
   return key.startsWith(`cast/${castId}/`);
+}
+
+/** cf#1008: the legacy generated sample key, one object SHARED by every member that kept a generated
+ *  sample before the per-member shot id. Never owned by one member: it is freed only when a count of the
+ *  surviving cast rows that name it reads zero. */
+export function isLegacySharedVoiceSampleKey(key: string | null | undefined): boolean {
+  return typeof key === "string" && /^renders\/cast\/clips\/voice-sample_[^/]+$/.test(key);
+}
+
+/** cf#1008: the prefixes a cast member exclusively owns, by id. Same rule as `castTreeIdOf` in
+ *  r2-orphan-reconcile.ts. Ids are AUTOINCREMENT (migrations/0001_init.sql), so never reused. */
+export function castOwnedPrefixes(castId: number): string[] {
+  return [`cast/${castId}/`, `cast-gen/${castId}/`];
 }
 
 /**

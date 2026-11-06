@@ -86,8 +86,25 @@ type SampleState = {
   clip_key?: string;
 };
 
-function stateKey(publicId: string): string {
+/** The R2 doc that tracks one member's sample in flight. Cast delete frees it (cf#1008). */
+export function voiceSampleStateKey(publicId: string): string {
   return SAMPLE_STATE_PREFIX + publicId + ".json";
+}
+const stateKey = voiceSampleStateKey;
+
+/** cf#1008: the shot id a member's sample is generated under. Every motion module keys its clip from
+ *  `context.project` and `shot_id` alone, so a constant shot id made ONE clip key for every member:
+ *  cast B generating a sample overwrote cast A's. The member's public id makes each sample its own. */
+export function voiceSampleShotId(publicId: string): string {
+  return "voice-sample-" + publicId;
+}
+
+/** True when `key` is the clip a module wrote for THIS member's sample, under the per-member shot id.
+ *  The legacy constant shape (`renders/cast/clips/voice-sample_<module>.mp4`) is never a match. */
+export function isOwnGeneratedSampleKey(publicId: string, key: string | null | undefined): boolean {
+  if (!key || !publicId) return false;
+  const prefix = "renders/cast/clips/" + voiceSampleShotId(publicId) + "_";
+  return key.startsWith(prefix) && !key.slice(prefix.length).includes("/");
 }
 
 async function putState(env: Env, publicId: string, state: SampleState): Promise<void> {
@@ -139,7 +156,7 @@ export async function startCastVoiceSample(
   const r = await invokeModule(fetcher, {
     hook: "motion.backend",
     input: {
-      shot_id: "voice-sample",
+      shot_id: voiceSampleShotId(cast.public_id),
       keyframe_url,
       keyframe_key: cast.portrait_key,
       prompt,
@@ -185,9 +202,20 @@ export async function keepCastVoiceSample(env: Env, castId: number): Promise<{ v
   if (!cast) fail(404, "cast member");
   const state = await getState(env, cast.public_id);
   if (!state?.clip_key) fail(400, "No finished sample to keep. Generate one and wait for it.");
-  const row = await updateCast(env, castId, { voice_ref_key: state.clip_key });
-  if (!row) fail(404, "cast member");
-  return { voice_ref_key: state.clip_key };
+  // cf#1008: the kept sample is COPIED into the member's own tree, the same key the upload path writes,
+  // so voice_ref_key always names an object this member alone owns and cast delete can free it.
+  const obj = await env.R2_RENDERS.get(state.clip_key);
+  if (!obj) fail(400, "The sample is no longer in storage. Generate it again.");
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const kept = await persistVoiceRef(env, castId, bytes, obj.httpMetadata?.contentType || "");
+  // The generated clip and its state doc are now spent. Free them, but only a clip under this member's
+  // own shot id: a state doc written before cf#1008 names the shared legacy key, which other members'
+  // rows may still point at.
+  if (isOwnGeneratedSampleKey(cast.public_id, state.clip_key)) {
+    try { await env.R2_RENDERS.delete(state.clip_key); } catch { /* best-effort */ }
+  }
+  try { await env.R2_RENDERS.delete(stateKey(cast.public_id)); } catch { /* best-effort */ }
+  return { voice_ref_key: kept.voice_ref_key };
 }
 
 export async function clearCastVoiceSample(env: Env, castId: number): Promise<void> {
