@@ -146,6 +146,32 @@ function perShotMotionFromCloud(
   return out;
 }
 
+/**
+ * vivijure-cf#1168: refuse a per-shot door map that core cannot run honestly yet.
+ *
+ * Core decides pre-clip dialogue from the film's one `motion_backend`, and keeps `per_shot_motion` only
+ * for the first clip start. So when the shots do not all use the default door and any door involved is
+ * driven by a line's audio, either the map is lost after pre-clip dialogue (every shot goes to the
+ * default door) or a mapped audio-driven door gets no audio. Both spend money on the wrong film. One
+ * door for every shot is the single-door path and is not refused. The full fix is
+ * skyphusion-labs/vivijure-core#442.
+ */
+export function perShotAudioDoorRefusal(
+  modules: { name: string; usage?: { driving_audio?: boolean } }[],
+  motionBackend: string | undefined,
+  perShot: Record<string, string>,
+): string | null {
+  const doors = new Set(Object.values(perShot));
+  if (motionBackend !== undefined && doors.size === 1 && doors.has(motionBackend)) return null;
+  const involved = [...new Set([...(motionBackend ? [motionBackend] : []), ...doors])];
+  const driven = involved.filter((n) => modules.find((m) => m.name === n)?.usage?.driving_audio === true);
+  if (!driven.length) return null;
+  return (
+    `a per-shot door map cannot include a door driven by a line's audio yet (${driven.map((n) => `"${n}"`).join(", ")}): ` +
+    "the shots would lose their doors or get no audio. Use one door for every shot, or doors that do not need audio."
+  );
+}
+
 export function validatePreviewParent(parent: RenderRow): string | null {
   if (parent.mode !== "keyframes-only") return "parent render is not a keyframes-only preview";
   if (parent.status !== "COMPLETED") return "parent preview is not completed";
@@ -241,6 +267,10 @@ export async function animateFromPreview(
     if (!motionInstalled.has(n)) {
       return { ok: false, error: `motion.backend module "${n}" is not installed`, status: 400 };
     }
+  }
+  if (perShotMotion) {
+    const refusal = perShotAudioDoorRefusal(modules, motionBackend, perShotMotion);
+    if (refusal) return { ok: false, error: refusal, status: 400 };
   }
 
   // cf#334: the shared pre-flight, for the ONE guard of the three that applies here.
