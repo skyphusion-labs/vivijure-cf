@@ -74,6 +74,38 @@ describe("hPlan (#143 regression)", () => {
     expect(body.ok).toBe(false);
   });
 
+  // cf#1137: an entry without slot made core's sort throw, so the route answered 500 "internal error".
+  const plan400 = async (characters: unknown) => {
+    const res = await worker.fetch(planReq({ brief: "a short film", model: "nonexistent/model", characters }), makeEnv(), ctx);
+    return { status: res.status, text: await res.text() };
+  };
+
+  it("cf#1137: the repro (two entries with no slot) is a 400 naming slot, name and bible", async () => {
+    const r = await plan400([
+      { name: "Mara", description: "grey coat" },
+      { name: "Sam", description: "red scarf" },
+    ]);
+    expect(r.status).toBe(400);
+    expect(r.text).toContain("characters[0] is missing or has a bad slot, bible (fields sent: name, description)");
+    expect(r.text).toContain("slot (one of A, B, C, D), name (a non-empty string) and bible");
+  });
+
+  it("cf#1137: a slot outside A-D, an empty name, a repeated slot and a non-object are each refused", async () => {
+    expect((await plan400([{ slot: "E", name: "M", bible: "" }])).text).toContain("characters[0] is missing or has a bad slot");
+    expect((await plan400([{ slot: "A", name: " ", bible: "" }])).text).toContain("has a bad name");
+    expect((await plan400([{ slot: "A", name: "M", bible: "" }, { slot: "A", name: "N", bible: "" }])).text).toContain(
+      "characters[1] repeats slot A",
+    );
+    expect((await plan400(["Mara"])).status).toBe(400);
+    expect((await plan400({ slot: "A" })).text).toContain("characters must be an array");
+  });
+
+  it("cf#1137: the shape both panels send (bible may be empty) still reaches the planner", async () => {
+    const r = await plan400([{ slot: "A", name: "Mara", bible: "" }, { slot: "B", name: "Sam", bible: "red scarf" }]);
+    // 422 is the planner's own answer for an unknown model: the door let the cast through.
+    expect(r.status).toBe(422);
+  });
+
   it("missing brief still gets a 400 bad request, not a 500", async () => {
     const env = makeEnv();
     const res = await worker.fetch(
