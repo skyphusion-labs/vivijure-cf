@@ -75,6 +75,10 @@ ACCESS_AUD = "${ACCESS_AUD}"
 # PANEL_HOME (cf#1242, src/panel-home.ts): "simple" serves the one-screen Make a video page at /
 # and names the planner "Advanced". Empty (the self-host default) keeps the planner home.
 PANEL_HOME = "${PANEL_HOME}"
+# KEYFRAME_PARALLEL (cf#1249): how many keyframe invokes one film starts at once (vivijure-core
+# resolveKeyframeParallel). Empty or non-numeric falls back to the core default of 4; deploy.sh
+# and the CI render default it to 4. Rendered here so a plain deploy keeps it, not only a --var.
+KEYFRAME_PARALLEL = "${KEYFRAME_PARALLEL}"
 # ALLOW_UNAUTHENTICATED (cf#839): live code reads it (src/access-auth.ts) and until now it appeared
 # in NO committed wrangler example, so the one security-relevant knob in this file was the one an
 # operator could not see here. It is documented in docs/SECURITY.md and docs/CONTRACT.md; this is the
