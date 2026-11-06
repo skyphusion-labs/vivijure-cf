@@ -77,9 +77,6 @@ describe("cf507 wire: two bound doors both carry jobs, and each poll goes home",
       FINISH_DOOR_TOKEN: TOKEN_LEGACY,
       FINISH_DOOR_TOKEN_PROPAGANDHI: TOKEN_PROP,
       FINISH_UPSCALE_DOORS: "https://finish-upscale-fatmike.test,https://finish-upscale-propagandhi.test",
-      SPEECH_DOOR_TOKEN: TOKEN_LEGACY,
-      SPEECH_DOOR_TOKEN_PROPAGANDHI: TOKEN_PROP,
-      SPEECH_UPSCALE_DOORS: "https://speech-upscale-fatmike.test,https://speech-upscale-propagandhi.test",
     };
     return { legacy: { calls: legacyCalls }, prop: { calls: propCalls }, env };
   }

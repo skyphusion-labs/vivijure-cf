@@ -1,0 +1,3 @@
+### docs(config): the media-door hosts resolve again; retire the last SPEECH_UPSCALE_DOORS reference
+
+Re-measured for vivijure-cf#890: every media-door host the reference deploy names (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`, `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, `FINISH_BLENDER_DOORS`) now resolves and answers `GET /health` with 200, and every other path with 401. The comments in `wrangler.toml.example` and `modules/_shared/video-finish-404.ts` that said the video-finish host was NXDOMAIN now say what was measured and when. `SPEECH_UPSCALE_DOORS` and its two `SPEECH_DOOR_TOKEN*` keys are gone from the one test fixture that still set them; no source has read them since speech-upscale was removed (#787). No var is renamed or removed from the template.

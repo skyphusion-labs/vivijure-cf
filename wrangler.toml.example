@@ -123,12 +123,13 @@ R2_S3_BUCKET = "${R2_S3_BUCKET}"
 # succeeds against nothing. Repoint it only AFTER the thing behind it answers a real
 # /async/finish.
 #
-# MEASURED 2026-09-27 (cf#837): the hosted deploy injects
-# VIDEO_FINISH_URL=https://video-finish.skyphusion.org from a repo Actions variable, and that
-# hostname is NXDOMAIN. On the hosted core that is masked, because the binding wins before the
-# value is ever used; it is NOT masked for the two module workers that reach this door over
-# plain HTTPS (modules/film-titles, modules/subtitle). Tracked in cf#780 / cf#746; the variable
-# is live deploy state and is not changed from here.
+# RE-MEASURED 2026-11-06 (cf#890; the cf#837 reading of 2026-09-27 was NXDOMAIN): the
+# reference deploy's VIDEO_FINISH_URL host, and every other media-door host below, now
+# resolves and answers GET /health with 200 and every other path with 401 (bearer-gated).
+# That proves a service is there, not that the deploy's MEDIA_FINISH_TOKEN matches it; only
+# a real finish proves that. The two module workers that reach this door over plain HTTPS
+# (modules/film-titles, modules/subtitle) depend on the host, because a module worker has no
+# FINISH_CONTAINER binding. The values are live deploy state and are not changed from here.
 VIDEO_FINISH_URL = "${VIDEO_FINISH_URL}"
 IMAGE_PREP_URL = "${IMAGE_PREP_URL}"
 AUDIO_BEAT_SYNC_URL = "${AUDIO_BEAT_SYNC_URL}"
