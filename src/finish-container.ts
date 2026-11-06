@@ -16,35 +16,68 @@
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
 import { FinishJobTail, RELEASE_SLEEP_AFTER, RUNNING_SLEEP_AFTER, observeExchange } from "./finish-job-tail";
+import { mediaFinishToken } from "../modules/_shared/media-finish-auth";
+
+// THE BEARER CONFIGURATION THIS CONTAINER IS STARTED WITH (cf#911). Exported as literals because
+// tests/container-bearer-gate.test.py parses them and drives the real Python require_bearer_config
+// with exactly these variables. Keep each one a flat object of string literals.
+
+/** The variable the container reads its token from. The VALUE comes from MEDIA_FINISH_TOKEN, the
+ *  same Secrets Store binding the Worker sends, so the two sides cannot disagree. */
+export const FINISH_CONTAINER_TOKEN_VAR = "LOCAL_FINISH_TOKEN";
+
+/** STAGE 1 of 2, added beside the token. A request with NO Authorization header is served and
+ *  logged; a wrong token is 401. Stage 2 deletes this constant and passes the token alone. */
+export const FINISH_CONTAINER_STAGE_ENV = { LOCAL_FINISH_ACCEPT_MISSING_TOKEN: "true" };
+
+/** What the container gets when no token is readable: today's opt-out, so a deploy without the
+ *  binding keeps a working finish tier through this release. Also the value before the first fetch
+ *  resolves the token. Stage 2 deletes it, and a deploy with no token then gets a 503 instead. */
+export const FINISH_CONTAINER_NO_TOKEN_ENV = { LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true" };
+
+export type FinishContainerBearer = { mode: "token" | "open"; vars: Record<string, string> };
+
+/** Resolve the container's bearer env from the Worker env. Never logs or returns the token outside
+ *  `vars`, which goes only to the container's start config. */
+export async function finishContainerBearer(env: Pick<Env, "MEDIA_FINISH_TOKEN">): Promise<FinishContainerBearer> {
+  const token = await mediaFinishToken(env.MEDIA_FINISH_TOKEN);
+  if (token) return { mode: "token", vars: { [FINISH_CONTAINER_TOKEN_VAR]: token, ...FINISH_CONTAINER_STAGE_ENV } };
+  return { mode: "open", vars: { ...FINISH_CONTAINER_NO_TOKEN_ENV } };
+}
+
+/** True for a request the container would gate (every path but its health probe) that carries no
+ *  Authorization header. Counted at the Durable Object, where the Worker's own log can see it. */
+export function bearerAbsent(request: Request): boolean {
+  const path = new URL(request.url).pathname.replace(/\/+$/, "");
+  return path !== "/health" && !request.headers.has("authorization");
+}
 
 export class FinishContainer extends Container<Env> {
   // containers/video-finish/Dockerfile sets ENV PORT=8000 and app.py binds 0.0.0.0:8000.
   defaultPort = 8000;
 
   // cf#893 made the container REFUSE TO START without a bearer configuration, and NOTHING reaches
-  // this container's process except this property: `envVars` defaults to `{}` in the base class,
-  // the [[containers]] block carries no env, and the Dockerfile sets none. Without this line the
-  // hosted tier dies before binding and the platform reports `Container crashed while checking for
-  // ports`. Measured, not inferred: `python app.py` with neither var exits 1 at
-  // require_bearer_config, and exits 0 and binds with this one set.
+  // this container's process except `envVars`: it defaults to `{}` in the base class, the
+  // [[containers]] block carries no env, and the Dockerfile sets none.
   //
-  // WHY THE OPT-OUT AND NOT A TOKEN, which is the part to read before "hardening" this. A token
-  // here would break every call. `mediaDoorFetch` takes the BOUND branch first --
-  // `if (bound) return bound.fetch(...)` -- and returns before the token lookup, so the binding
-  // path never attaches an Authorization header (src/video-finish-binding.ts:15 says so in its own
-  // words: "the door is the BINDING. No hostname, no DNS, no edge hop, no bearer required"). Set a
-  // token and the Worker gets 401 on every request.
+  // cf#911: THE BOUND HOP NOW CARRIES THE TOKEN, in two stages so it cannot lock the finish tier out.
+  // The binding is a private boundary, but that is a property of the deployment and nothing in the
+  // code keeps it so; the container checks the credential anyway.
   //
-  // AND IT IS RIGHT ON THE MERITS, not merely the only thing that works. GHSA-v8g8 found that a
-  // fail-open default is defensible behind a private network boundary and indefensible on a public
-  // hostname. The [[containers]] binding IS that private boundary: no hostname, no DNS, no edge
-  // hop. This is the one deployment where the old docstring was telling the truth -- so the
-  // insecure-looking state is CHOSEN here, by name, with the reason beside it, instead of being
-  // the silent default everywhere including the public hostnames the advisory was about.
+  //   STAGE 1 (this release). The first fetch resolves MEDIA_FINISH_TOKEN and, when it is readable,
+  //   starts the container with the token plus LOCAL_FINISH_ACCEPT_MISSING_TOKEN=true: a wrong token
+  //   is 401, a missing header is served and logged (`finish_container.bearer_absent` here, a
+  //   `bearer:` line in the container). With no readable token it keeps the old opt-out.
+  //   STAGE 2 (the flip). Token only; no readable token answers 503 without starting the container.
+  //   Flip only after a full film renders with zero `finish_container.bearer_absent`.
   //
-  // Authenticating the binding hop itself is a real improvement and a contract change on core's
-  // bound path. It is tracked separately; it is not this.
-  envVars = { LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true" };
+  // The opt-out is the value until the first fetch resolves the token, so any start path that does
+  // not go through fetch() behaves exactly as before rather than starting with `{}` and crashing.
+  // The env is applied at container START, so an instance already running keeps the env it started
+  // with until it sleeps; both stages accept what the other sends, which is why this is staged.
+  envVars: Record<string, string> = { ...FINISH_CONTAINER_NO_TOKEN_ENV };
+
+  private bearerReady?: Promise<void>;
 
   // sleepAfter is the IDLE timeout, and for this stage it is a contract with the job loop, not a
   // free knob.
@@ -75,7 +108,20 @@ export class FinishContainer extends Container<Env> {
 
   private jobTail = new FinishJobTail();
 
+  /** Resolve the bearer env once per instance, before the first request can start the container. */
+  private ensureBearer(): Promise<void> {
+    this.bearerReady ??= finishContainerBearer(this.env).then((b) => {
+      this.envVars = b.vars;
+      console.log(JSON.stringify({ ev: "finish_container.bearer_mode", mode: b.mode, stage: 1 }));
+    });
+    return this.bearerReady;
+  }
+
   override async fetch(request: Request): Promise<Response> {
+    await this.ensureBearer();
+    if (bearerAbsent(request)) {
+      console.warn(JSON.stringify({ ev: "finish_container.bearer_absent", method: request.method, path: new URL(request.url).pathname }));
+    }
     const resp = await super.fetch(request);
     const decision = await observeExchange(this.jobTail, request.method, new URL(request.url).pathname, resp);
     if (decision) {

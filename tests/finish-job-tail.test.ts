@@ -17,6 +17,9 @@ function container(answers: Response[]) {
     sleepAfter: RUNNING_SLEEP_AFTER,
     sleepAfterMs: 0,
     jobTail: new FinishJobTail(),
+    // cf#911: the real fetch resolves the bearer env off this.env first. No token here: these rows
+    // are about the idle tail, and tests/finish-container-bearer-911.test.ts covers the bearer.
+    env: {},
     containerFetch: async () => answers.shift() as Response,
   });
   return c;

@@ -382,6 +382,9 @@ secret_name = "R2_S3_SECRET_ACCESS_KEY"
 #
 # CX-8/cf#881 independently found and fixed the same stale "fail-open" wording; superseded here by
 # cf#893 (cf#906/#910), which landed the real fix (and the fail-CLOSED code change to match) first.
+#
+# cf#911: the SAME value also arms the FINISH_CONTAINER door. FinishContainer reads this binding and
+# starts its container with it as LOCAL_FINISH_TOKEN, so the bound hop is checked like a public one.
 [[secrets_store_secrets]]
 binding = "MEDIA_FINISH_TOKEN"
 store_id = "REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID"
