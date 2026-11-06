@@ -102,7 +102,7 @@ through its `LOKI_VPC` `vpc_service` binding, at `LOKI_PUSH_URL` or the
 
 ## Loki labels (the tail derives these per line)
 
-The tail (`tail/src/index.ts`, `shapeEventsToLoki` / `deriveFields`) sets exactly four stream
+The tail (`tail/src/shape.ts`, `shapeEventsToLoki` / `deriveFields`) sets exactly four stream
 labels: `worker`, `level`, `phase`, `module`. They are derived by best-effort parsing of the log
 TEXT, not read from structured fields (a line is only read structurally when it is a JSON object
 with `"_v":1`, which no current emitter sets).

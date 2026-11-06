@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import handler, { shapeEventsToLoki, deriveFields, reportSinkDrop } from "../tail/src/index";
+import handler from "../tail/src/index";
+import { shapeEventsToLoki, deriveFields, reportSinkDrop } from "../tail/src/shape";
 import type { Env } from "../tail/src/index";
 
 describe("vivijure-tail event -> Loki shaping", () => {
