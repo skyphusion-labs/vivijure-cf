@@ -2291,7 +2291,7 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
     async readStills(filmId) {
       const r = await advanceFilmJob(env, filmId);
       if (!r) return null;
-      // Nothing else keeps this row current: the sweep skips keyframes-only rows, and no one polls this job.
+      // The sweep drives keyframes-only rows too since core 1.32.0 (vivijure-cf#1139). This keeps the row current at the moment the parent reads it, rather than up to a sweep tick later.
       await updateRenderFromView(env, filmJobToPollView(r.job, r.clipJob), ctx);
       return { phase: r.job.phase, keyframes: r.job.keyframes ?? [], error: r.job.error ?? null };
     },
