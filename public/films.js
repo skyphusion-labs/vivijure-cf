@@ -13,6 +13,9 @@
     done: "Done",
     failed: "Failed",
   };
+  // cf#1282: a still made from a plate the backend could not clean of an extra person. New take is
+  // the control on this page that redraws it.
+  const EXTRA_PERSON = "This still may show an extra person. Use New take to try again.";
   const STATUS_LABELS = { pending: "Waiting", running: "Rendering", done: "Done", failed: "Failed" };
 
   const $ = (id) => document.getElementById(id);
@@ -324,6 +327,8 @@
     if (shot.keyframe_key) img.src = artifact(shot.keyframe_key);
     else img.removeAttribute("src");
     $("film-still-text").textContent = shot.prompt || "";
+    $("film-still-warn").textContent = shot.plate_unclean ? EXTRA_PERSON : "";
+    $("film-still-warn").hidden = !shot.plate_unclean;
     $("film-still-prev").disabled = at === 0;
     $("film-still-next").disabled = at === shots.length - 1;
     $("film-still-retake").hidden = !part || !canRetake(part);
@@ -347,6 +352,7 @@
       card.append(el("div", { className: "films-warn", textContent: shot.retake_status === "running" ? "New take in progress" : "Waiting for a new take" }));
     }
     if (shot.error) card.append(el("div", { className: "films-error", textContent: shot.error }));
+    if (shot.plate_unclean) card.append(el("div", { className: "films-warn", textContent: EXTRA_PERSON }));
     if (shot.prompt) card.append(el("div", { className: "films-shot-text", textContent: shot.prompt }));
     if (shot.line) card.append(el("div", { className: "films-shot-line", textContent: "\u201C" + shot.line + "\u201D" }));
     if (shot.clip_key) card.append(watchControl(shot.clip_key, "Watch clip"));

@@ -977,6 +977,8 @@ details.planner-bundle-consistent {
    clip reads as a flag, not an error. */
 .planner-history-keyframe-dur { font-size: 11px; color: var(--muted); display: block; }
 .planner-history-keyframe-dur-clamped { color: #e8b84a; }
+/* cf#916 / cf#1282: a still that may show an extra person, or a clip that failed the picture check. */
+.planner-history-keyframe-warn { margin: 2px 0 0; font-size: 11px; color: var(--warn, #f2c14e); }
 .planner-history-empty { color: var(--muted); font-style: italic; padding: 12px 0; }
 /* image lightbox for the history keyframe stills. openShotPreview()
    (planner.js) builds these elements in JS with NO inline styles, so without

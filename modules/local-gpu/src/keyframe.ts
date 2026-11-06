@@ -1,4 +1,4 @@
-import type { KeyframeInput } from "./contract";
+import type { KeyframeInput, PlateCount } from "./contract";
 import { isSafeJobId } from "./i2v";
 
 const TIERS = ["draft", "standard", "final"] as const;
@@ -54,6 +54,7 @@ export function buildPreviewBody(input: KeyframeInput, cfg: Record<string, unkno
 export interface KeyframeShot {
   shot_id: string;
   keyframe_key: string;
+  plate_count?: PlateCount;
 }
 
 export function parseKeyframes(result: unknown): KeyframeShot[] {
@@ -69,7 +70,13 @@ export function parseKeyframes(result: unknown): KeyframeShot[] {
     const shot_id = typeof o.shot_id === "string" ? o.shot_id : null;
     const key =
       typeof o.key === "string" ? o.key : typeof o.keyframe_key === "string" ? o.keyframe_key : null;
-    if (shot_id && key) out.push({ shot_id, keyframe_key: key });
+    // plate_count: the backend plate count guard report (vivijure-cf#1282), passed through for the
+    // core to read strictly. Only a plain object is forwarded.
+    const plate =
+      o.plate_count && typeof o.plate_count === "object" && !Array.isArray(o.plate_count)
+        ? (o.plate_count as PlateCount)
+        : undefined;
+    if (shot_id && key) out.push({ shot_id, keyframe_key: key, ...(plate ? { plate_count: plate } : {}) });
   }
   return out;
 }

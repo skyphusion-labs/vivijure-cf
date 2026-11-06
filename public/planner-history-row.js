@@ -722,6 +722,14 @@ function buildHistoryRow(r, childrenByParent) {
       cap.textContent = kf.shot_id;
       a.appendChild(cap);
       wrap.appendChild(a);
+      // cf#916 / cf#1282: this still may show an extra person, or its clip failed the picture
+      // check. Empty for a clean shot, so a healthy row gains nothing.
+      const shotWarns = window.stageDegradeView
+        ? window.stageDegradeView.shotWarningBlocks(document, r.output, kf.shot_id, kf, window.finishDegrade, {
+          className: "planner-history-keyframe-warn",
+        })
+        : [];
+      for (const w of shotWarns) wrap.appendChild(w);
 
       // v0.145.2: the motion clip rendered FROM this keyframe, shown directly
       // under the still so the keyframe and its animation read as one unit.

@@ -527,6 +527,34 @@ for (const [name, extra] of [
   await ctx.close();
 }
 
+// ---- cf#1282: a still the plate count guard could not clean says so, on the card and in the viewer.
+{
+  const base = { index: 0, status: "done", seconds: 6, clip_key: null, prompt: "P", line: null, error: null, retake_status: null };
+  const bad = { ...base, shot_id: "s1", keyframe_key: "renders/k/0.png", plate_unclean: true };
+  const fine = { ...base, shot_id: "s2", index: 1, keyframe_key: "renders/k/1.png" };
+  const state = { film: film({ phase: "done", parts: [part(0, "done")] }), shots: () => [bad, fine] };
+  const { ctx, page } = await open(state);
+  await page.waitForSelector(".films-part");
+  await page.locator('[data-part-index="0"] button[aria-expanded]').click();
+  await page.waitForSelector('[data-shot-index="1"]');
+  const WARN = "This still may show an extra person. Use New take to try again.";
+  check("the unclean still warns on its card", (await text(page, '[data-shot-index="0"] .films-warn')) === WARN);
+  check("a clean still does not warn", (await page.locator('[data-shot-index="1"] .films-warn').count()) === 0);
+  await page.locator(".films-sheet-toggle").click();
+  await page.waitForSelector(".films-sheet-tile");
+  await page.locator(".films-sheet-tile").first().click();
+  await page.waitForSelector("#film-still-dialog[open]");
+  check("the viewer warns on the unclean still", (await page.locator("#film-still-warn").isVisible()) && (await text(page, "#film-still-warn")) === WARN);
+  await page.locator("#film-still-next").click();
+  check("the viewer clears it on a clean still", await page.locator("#film-still-warn").isHidden());
+  if (process.env.SHOTS) {
+    await page.locator("#film-still-prev").click();
+    await page.screenshot({ path: join(process.env.SHOTS, "films-still-extra-person.png"), fullPage: false });
+    console.log("SHOT", join(process.env.SHOTS, "films-still-extra-person.png"));
+  }
+  await ctx.close();
+}
+
 // ---- an open sheet survives polls, and reloads when the part changes stage.
 {
   const shot = { shot_id: "s1", index: 0, status: "done", seconds: 6, keyframe_key: "renders/k/0.png", clip_key: null, prompt: "P", line: null, error: null, retake_status: null };

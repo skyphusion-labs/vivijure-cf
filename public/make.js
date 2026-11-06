@@ -731,10 +731,19 @@
     $("make-player").src = url;
     $("make-download").href = url;
     const degrade = fd && fd.degradeFrom ? fd.degradeFrom(out) : null;
-    if (degrade) {
-      $("make-result-note").hidden = false;
-      $("make-result-note").textContent = "Some polish could not run, so parts of this video are less sharp than planned.";
+    const notes = [];
+    if (degrade) notes.push("Some polish could not run, so parts of this video are less sharp than planned.");
+    // cf#916 / cf#1282: the picture check and the extra person check, in plain words.
+    if (fd && fd.simpleWarnings) notes.push(...fd.simpleWarnings(out));
+    const noteBox = $("make-result-note");
+    noteBox.textContent = "";
+    for (const line of notes) {
+      const p = document.createElement("p");
+      p.className = "make-warn";
+      p.textContent = line;
+      noteBox.appendChild(p);
     }
+    noteBox.hidden = notes.length === 0;
     $("make-saved").textContent = run.project
       ? "Saved as \"" + run.project.name + "\". Open it from the advanced planner to change anything."
       : "Could not save a copy for the advanced planner" + (run.saveError ? ": " + run.saveError : ".");

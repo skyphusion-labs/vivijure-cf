@@ -51,3 +51,19 @@ export function stageBlocksFor(
   fd: StageDegradeSource | null | undefined,
   opts?: StageBlockOptions,
 ): StageBlockElement[];
+
+/** The finish-degrade surface shotWarningBlocks needs. */
+export interface ShotWarningSource {
+  shotWarnings(output: RenderOutput | null | undefined, shotId: string, kf?: unknown): string[];
+}
+
+/** cf#916 / cf#1282: plain-words warnings beside one shot's still. EMPTY when there is nothing
+ *  to say. */
+export function shotWarningBlocks(
+  doc: ElementFactory | null | undefined,
+  output: RenderOutput | null | undefined,
+  shotId: string,
+  kf: unknown,
+  fd: ShotWarningSource | null | undefined,
+  opts?: { className?: string },
+): StageBlockElement[];

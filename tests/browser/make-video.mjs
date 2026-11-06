@@ -110,7 +110,7 @@ async function open(opts = {}) {
       polls++;
       if (opts.failRender) return json({ jobId: "film-77", status: "FAILED", error: "a clip could not be made", output: {} });
       if (polls < 2) return json({ jobId: "film-77", status: "IN_PROGRESS", output: { phase: "i2v", progress: 0.5 } });
-      return json({ jobId: "film-77", status: "COMPLETED", output: { output_key: "films/cart/final.mp4", project: "cart" } });
+      return json({ jobId: "film-77", status: "COMPLETED", output: { output_key: "films/cart/final.mp4", project: "cart", ...(opts.output ?? {}) } });
     }
     return json({});
   });
@@ -168,7 +168,34 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   check("edit opens the advanced planner", (await page.getAttribute("#make-edit", "href")) === "planner");
   check("says where it was saved", (await text(page, "#make-saved")).includes("Cart race"));
   check("result is plain words", !JARGON.test(await page.locator("#make-result").innerText()), (await page.locator("#make-result").innerText()).match(JARGON)?.[0]);
+  check("a clean video shows no warning", await page.locator("#make-result-note").isHidden());
   check("no script errors through the whole run", errors.length === 0, errors.join(" | "));
+  await ctx.close();
+}
+{
+  // cf#916 / cf#1282: a video the studio could not vouch for says so, in plain words, under the player.
+  const output = {
+    content_validation: { checked: 2, unmeasured: 1, reasons: ["video-finish /inspect unreachable or errored"] },
+    plate_check: { checked: 2, unclean: [{ shot_id: "s2", expected: 2, faces: 3 }] },
+  };
+  const { ctx, page, errors } = await open({ output, simple: true });
+  await page.click('#make-faces button[aria-label="Add Mara"]');
+  await page.fill("#make-idea", "Mara races a shopping cart at sunset.");
+  await page.click("#make-go");
+  await page.waitForSelector("#make-confirm[open]");
+  await page.click('#make-confirm button[value="go"]');
+  await page.waitForSelector("#make-result:not([hidden])", { timeout: 15000 });
+  const lines = await page.$$eval("#make-result-note p.make-warn", (els) => els.map((e) => e.textContent));
+  check("the warnings show under the video", !(await page.locator("#make-result-note").isHidden()) && lines.length === 2, JSON.stringify(lines));
+  check("unchecked clips are named plainly", lines[0] === "Some clips could not be checked for picture problems.", lines[0]);
+  check("the extra person warning says how to fix it", lines[1] === "One picture may show an extra person. To fix it, open the advanced planner and regenerate that picture.", lines[1]);
+  check("warnings are plain words", !JARGON.test(await page.locator("#make-result").innerText()), (await page.locator("#make-result").innerText()).match(JARGON)?.[0]);
+  check("no script errors with warnings", errors.length === 0, errors.join(" | "));
+  if (process.env.SHOTS) {
+    await mkdir(process.env.SHOTS, { recursive: true });
+    await page.screenshot({ path: join(process.env.SHOTS, "make-result-warnings-390.png"), fullPage: true });
+    console.log("SHOT", join(process.env.SHOTS, "make-result-warnings-390.png"));
+  }
   await ctx.close();
 }
 {

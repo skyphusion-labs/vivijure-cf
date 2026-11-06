@@ -164,7 +164,20 @@ export interface KeyframeInput {
 export interface KeyframeShot {
   shot_id: string;
   keyframe_key: string;
+  /** The plate count guard report, when the backend ran it on this still. */
+  plate_count?: PlateCount;
 }
+/** The backend plate count guard report on one still (vivijure-backend docs/contract.md, the
+ *  `keyframes` row). `clean: false`: the still was made from a plate that may show an extra person.
+ *  Passed through untouched; the core reads it strictly (parsePlateCount). */
+export interface PlateCount {
+  expected: number;
+  faces: number[];
+  chosen: number;
+  clean: boolean;
+  retries: number;
+}
+
 export interface KeyframeOutput {
   project: string;
   keyframes: KeyframeShot[];

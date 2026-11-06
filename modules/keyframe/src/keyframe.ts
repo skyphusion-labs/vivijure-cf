@@ -2,7 +2,7 @@
 // keyframes-only pass), parse the keyframes out of the result, and encode/decode the async poll
 // token. No I/O here, so it unit-tests without the runtime, the GPU, or spend.
 
-import type { KeyframeInput, KeyframeShot } from "./contract";
+import type { KeyframeInput, KeyframeShot, PlateCount } from "./contract";
 import { resolveProjectForBundle } from "../../_shared/bundle-project";
 
 const TIERS = ["draft", "standard", "final"] as const;
@@ -86,6 +86,12 @@ export function buildPreviewBody(input: KeyframeInput, cfg: Record<string, unkno
   return { input: body };
 }
 
+/** The backend plate count report when it is a plain object, else undefined. The core owns the strict
+ *  read; this only refuses what cannot possibly be one, so a junk value is never forwarded. */
+export function plateCountOf(raw: unknown): PlateCount | undefined {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PlateCount) : undefined;
+}
+
 /** Extract the generated keyframes from the backend result. The handler returns
  *  RenderResult.to_dict() = { keyframes: [{shot_id, key}], ... }; RunPod nests it under `output`.
  *  Accept either the raw result or the {output:...} wrapper, and either `key` or `keyframe_key`. */
@@ -101,7 +107,17 @@ export function parseKeyframes(result: unknown): KeyframeShot[] {
     const shot_id = typeof o.shot_id === "string" ? o.shot_id : null;
     const key = typeof o.key === "string" ? o.key : typeof o.keyframe_key === "string" ? o.keyframe_key : null;
     // reused: this job drew nothing, so the core must not stamp its config provenance on the still.
-    if (shot_id && key) out.push({ shot_id, keyframe_key: key, ...(o.reused === true ? { reused: true } : {}) });
+    // plate_count: the backend plate count guard report (vivijure-cf#1282). Passed through for the
+    // core to read strictly; dropping it here was one of the three places the warning died.
+    const plate = plateCountOf(o.plate_count);
+    if (shot_id && key) {
+      out.push({
+        shot_id,
+        keyframe_key: key,
+        ...(o.reused === true ? { reused: true } : {}),
+        ...(plate ? { plate_count: plate } : {}),
+      });
+    }
   }
   return out;
 }

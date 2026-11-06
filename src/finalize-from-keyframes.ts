@@ -86,14 +86,22 @@ function normalizeFilmScenesFromOutput(output: unknown): FilmScene[] {
   return out;
 }
 
+/** One preview still as the film start takes it. Its plate count report rides along (cf#1282) so the
+ *  animated film can still say which stills may show an extra person; the core reads it strictly. */
+function previewRef(k: { shot_id: string; key: string }): FilmKeyframeRef {
+  const plate = (k as { plate_count?: unknown }).plate_count;
+  const carried = plate && typeof plate === "object" && !Array.isArray(plate) ? { plate_count: plate } : {};
+  return { shot_id: k.shot_id, keyframe_key: k.key, ...carried } as FilmKeyframeRef;
+}
+
 export function selectPreviewKeyframes(parent: RenderRow): FilmKeyframeRef[] {
   const kfs = parent.keyframes ?? [];
   const locked = parent.locked_shots;
   if (Array.isArray(locked) && locked.length > 0) {
     const allow = new Set(locked);
-    return kfs.filter((k) => allow.has(k.shot_id)).map((k) => ({ shot_id: k.shot_id, keyframe_key: k.key }));
+    return kfs.filter((k) => allow.has(k.shot_id)).map(previewRef);
   }
-  return kfs.map((k) => ({ shot_id: k.shot_id, keyframe_key: k.key }));
+  return kfs.map(previewRef);
 }
 
 function scenesForKeyframes(allScenes: FilmScene[], keyframes: FilmKeyframeRef[]): FilmScene[] {
