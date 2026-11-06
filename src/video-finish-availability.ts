@@ -177,7 +177,33 @@ export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
 type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> &
   Partial<VideoFinishDoorHost>;
 
-/** Which state this studio is in. A bound container, or a public URL, is available.
+/** The VIDEO_FINISH_URL value when it can name an origin, else undefined (cf#964).
+ *
+ *  A non-empty string is not an origin. A rendered config can keep a literal `${VIDEO_FINISH_URL}`
+ *  (the unsubstituted placeholder), and a typed value can be a bare word or a scheme with no host.
+ *  Each of those used to report the tier "available" and send the film down a path that fails after
+ *  the clips are paid for. The value counts only when it parses as an absolute http or https URL with a
+ *  host and no placeholder left in it. This is a shape check, not a reachability probe: a well formed
+ *  URL to a dead host still counts, and the bound door (checked first) is the stronger observation.
+ *
+ *  studioEnv applies the same rule to the env it hands core, so the panel and the film path agree on
+ *  whether the tier is there. */
+export function usableVideoFinishUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("${")) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  if (!url.hostname) return undefined;
+  return trimmed;
+}
+
+/** Which state this studio is in. A bound container, or a usable public URL, is available.
  *
  *  cf#810: THE BINDING IS CHECKED FIRST, and this is not a preference, it is the file's own rule
  *  applied to a case that did not exist when it was written. The header above says a studio that has
@@ -192,7 +218,7 @@ type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> 
  *  failure this file exists to prevent, arriving through the change meant to fix the tier. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
   if (videoFinishDoorOf(env)) return "available";
-  if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
+  if (usableVideoFinishUrl(env.VIDEO_FINISH_URL)) return "available";
   return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
 }
 
