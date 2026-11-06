@@ -1001,7 +1001,10 @@ resolved to the module that declares it (an id declared by an `image.generate` m
 the reason.
 
 **POST `/api/storyboard/plan`** -- plan a storyboard from a brief. Body `PlanStoryboardArgs`:
-`{ brief (req), model (req), characters?, beatBlock? }` (`characters` defaults to `[]`).
+`{ brief (req), model (req), characters?, beatBlock? }` (`characters` defaults to `[]`). Each
+`characters` entry is `{ slot, name, bible }`: `slot` is one of `A`, `B`, `C`, `D` and appears once,
+`name` is a non-empty string, `bible` is a string (may be empty). Any other shape is a `400` that
+names the entry and the bad fields (cf#1137; it was a `500` before).
 Response `200 { ok: true, storyboard: StoryboardValidated, raw, provider, model, logId, module }` or
 `422 { ok: false, errors: string[], raw, provider, model, logId, module? }`. `provider` is always the
 literal `"module"` (kept for shape stability; the answering module is `module`), `logId` is always
