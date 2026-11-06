@@ -10,11 +10,10 @@
 //   - modules/subtitle and modules/film-titles reach the door over PLAIN HTTPS at VIDEO_FINISH_URL.
 //     They were NOT migrated to the cf#810 container binding: MEDIA_DOOR_FETCHERS is synthesised in
 //     the CORE worker (src/orchestrator-env.ts) and a module worker has no FINISH_CONTAINER binding.
-//   - The hosted value of VIDEO_FINISH_URL is https://video-finish.skyphusion.org, which is
-//     NXDOMAIN. A poll therefore fails at connect and never produces a 404 to classify, so
-//     classifyVideoFinish404 is UNREACHABLE on the hosted deploy. That is a dead tier, tracked in
-//     cf#780 / cf#746, not a policy defect, and it is why this file has no live subject to tune
-//     against.
+//   - The reference deploy's VIDEO_FINISH_URL host was NXDOMAIN when this was written (cf#837,
+//     2026-09-27), so classifyVideoFinish404 had no live subject. Re-measured 2026-11-06 (cf#890):
+//     the host resolves and answers GET /health with 200, so a poll can reach it again. It is a
+//     single door, so the arithmetic in the next point is the one that applies.
 //   - Where the door DOES answer and is a single instance (the cf#810 container is one per job, and
 //     a self-host container is normally one), P(peer 404) is 0 and the streak below stops being peer
 //     arithmetic: it becomes tolerance for a submit/registration race and for a restart that lost
