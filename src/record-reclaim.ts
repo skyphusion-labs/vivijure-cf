@@ -94,6 +94,30 @@ export function renderDocPrefix(jobId: string): string {
   return `renders/${jobId}/`;
 }
 
+/** A clips-<uuid> job id, the shape `startClipJob` mints (render-orchestrator.js:407). */
+export function isClipJobId(jobId: unknown): jobId is string {
+  return typeof jobId === "string" && /^clips-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(jobId);
+}
+
+/** The clips-job document of a clip job (render-orchestrator.js:112). */
+export function clipJobDocKey(clipJobId: string): string {
+  return `${renderDocPrefix(clipJobId)}clips-job.json`;
+}
+
+/**
+ * cf#1309: the owner marker of a STANDALONE clip job (POST /api/render/clips).
+ *
+ * A clip job that a film starts has the same `renders/clips-<uuid>/` shape, and its doc does not say
+ * which kind it is. So the standalone door writes this object beside the doc, AFTER the doc and
+ * BEFORE the renders row. It says one thing: this tree was born with a renders row as its owner.
+ * The orphan sweep (src/r2-render-orphan-reconcile.ts) reads it to tell a standalone tree whose row
+ * is gone (an orphan) from a legacy tree that never had a row (out of scope). A tree without it is
+ * never judged dead because no row names it.
+ */
+export function clipJobOwnerKey(clipJobId: string): string {
+  return `${renderDocPrefix(clipJobId)}owner.json`;
+}
+
 /** The folder a render's finish clips live under (vivijure-core#379). Unlike the per-project keys above,
  *  nothing else writes here, so a render's own folder is safe to sweep. Its intermediate clips are named
  *  by no record, so a sweep is the only way they are freed. Null if the project is not known. */

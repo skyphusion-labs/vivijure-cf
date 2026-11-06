@@ -14,10 +14,15 @@
 //                                film_id, or a shard id a live scatter doc names (shard rows can be
 //                                missing until a poll self-heals them).
 //   renders/<scatter-id>/...     scatter-<uuid>, owned by a live renders.job_id.
-//   renders/<clips-id>/...       clips-<uuid>, KEPT when a live film doc names it as clip_job_id.
-//                                Otherwise OUT OF SCOPE, not orphan: a standalone POST /api/clips job
-//                                writes no row and its doc names no film, so an unnamed clips tree is
-//                                not provably dead (cf#1309 proposes giving it an owner).
+//   renders/<clips-id>/...       clips-<uuid>, KEPT when a live film doc names it as clip_job_id, or
+//                                when a live renders row has it as job_id (a standalone clip job,
+//                                POST /api/render/clips, cf#1309). With no such owner it is an ORPHAN
+//                                only if the tree holds the owner marker (record-reclaim.ts
+//                                clipJobOwnerKey), which the standalone door writes before its row:
+//                                the marker proves the tree was born with a row, so no row means the
+//                                row is gone. A tree with no marker is a film's clip job or a
+//                                standalone job from before cf#1309, and nothing proves either dead,
+//                                so it stays OUT OF SCOPE. There is no age rule for it.
 //   renders/logs/<job-id>.txt    the render log, owned by the same job id (render-log.js).
 //
 // WHAT IS OUT OF SCOPE, each deliberately:
@@ -38,7 +43,9 @@
 //     scope, so a project that happens to be named like a job id is never read as one.
 
 import {
+  clipJobDocKey,
   clipJobIdOf,
+  clipJobOwnerKey,
   parseJobDocKeys,
   renderRowKeys,
   shotRowKeys,
@@ -96,6 +103,16 @@ export interface RenderOwnerIndex {
   referencedKeys: Set<string>;
   projectSegments: Set<string>;
   docsRead: number;
+  /** Clip job ids whose tree holds the owner marker (cf#1309). Read from the LISTING, not from records,
+   *  so `reconcileRenders` fills it; a caller of `classifyRenderKey` alone may pass it. Absent reads as
+   *  "no tree is marked", which keeps every unowned clips tree out of scope. */
+  markedClipJobIds?: Set<string>;
+}
+
+/** The clip job id whose owner marker this key is, or null. */
+export function clipJobOwnerMarkerOf(key: string): string | null {
+  const seg = key.split("/")[1] ?? "";
+  return jobKindOf(seg) === "clips" && key === clipJobOwnerKey(seg) ? seg : null;
 }
 
 export async function buildRenderOwnerIndex(input: RenderOwnerInput): Promise<RenderOwnerIndex> {
@@ -126,6 +143,14 @@ export async function buildRenderOwnerIndex(input: RenderOwnerInput): Promise<Re
     const shards = doc && typeof doc === "object" ? (doc as { shard_film_ids?: unknown }).shard_film_ids : undefined;
     if (Array.isArray(shards)) for (const s of shards) if (typeof s === "string" && s) liveJobIds.add(s);
   }
+  // cf#1309: a standalone clip job's row is its owner, and its doc names its clips and takes.
+  for (const id of [...liveJobIds]) {
+    if (jobKindOf(id) !== "clips") continue;
+    liveClipJobIds.add(id);
+    const doc = await input.readDoc(clipJobDocKey(id));
+    docsRead++;
+    if (doc) harvest(doc);
+  }
   for (const id of liveJobIds) {
     if (jobKindOf(id) !== "film") continue;
     const doc = await input.readDoc(`renders/${id}/film-job.json`);
@@ -135,7 +160,7 @@ export async function buildRenderOwnerIndex(input: RenderOwnerInput): Promise<Re
     const clipId = clipJobIdOf(doc);
     if (!clipId) continue;
     liveClipJobIds.add(clipId);
-    const clipDoc = await input.readDoc(`renders/${clipId}/clips-job.json`);
+    const clipDoc = await input.readDoc(clipJobDocKey(clipId));
     docsRead++;
     if (clipDoc) harvest(clipDoc);
   }
@@ -177,9 +202,10 @@ export function classifyRenderKey(
   if (!kind) return mk("out-of-scope", "not a job tree (project-keyed or unrecognised)");
   if (idx.projectSegments.has(seg)) return mk("out-of-scope", `segment ${seg} is also a live project name`);
   if (kind === "clips") {
-    return idx.liveClipJobIds.has(seg)
-      ? mk("keep", `clip job ${seg} of a live film`)
-      : mk("out-of-scope", `clip job ${seg} named by no live film; may be a standalone clip job (cf#1309)`);
+    if (idx.liveClipJobIds.has(seg)) return mk("keep", `clip job ${seg} of a live film or a live clip job row`);
+    return idx.markedClipJobIds?.has(seg)
+      ? mk("orphan", `standalone clip job ${seg} has an owner marker and no live renders row (cf#1309)`)
+      : mk("out-of-scope", `clip job ${seg} has no owner marker and no live owner; a film clip job or a standalone job from before cf#1309`);
   }
   return idx.liveJobIds.has(seg)
     ? mk("keep", `under live ${kind} ${seg}`)
@@ -203,10 +229,20 @@ export function reconcileRenders(
   const orphans: RenderClassification[] = [];
   const kept: RenderClassification[] = [];
   const outOfScope: RenderClassification[] = [];
+  const marked = new Set(idx.markedClipJobIds ?? []);
   for (const o of objects) {
-    const c = classifyRenderKey(o, idx, nowMs, graceMs);
+    const id = clipJobOwnerMarkerOf(o.key);
+    if (id) marked.add(id);
+  }
+  const withMarks: RenderOwnerIndex = { ...idx, markedClipJobIds: marked };
+  for (const o of objects) {
+    const c = classifyRenderKey(o, withMarks, nowMs, graceMs);
     (c.decision === "orphan" ? orphans : c.decision === "keep" ? kept : outOfScope).push(c);
   }
+  // A marker goes LAST. It is what makes the rest of its tree an orphan, so deleting it first and then
+  // failing on a sibling would leave that sibling reading as legacy: kept, and invisible to the re-list
+  // check. The IO also skips a marker whose siblings did not all go (scripts/r2-render-orphan-gc.ts).
+  orphans.sort((a, b) => Number(clipJobOwnerMarkerOf(a.key) !== null) - Number(clipJobOwnerMarkerOf(b.key) !== null));
   return { orphans, kept, outOfScope, orphanBytes: orphans.reduce((n, c) => n + (c.size || 0), 0), orphanCount: orphans.length };
 }
 
