@@ -9,7 +9,7 @@ import { meteredR2Bucket } from "@skyphusion-labs/vivijure-core/storage-quota";
 import { cfPlatformFromEnv } from "./platform/cf-platform.js";
 import { videoFinishDoor, type VideoFinishDoorHost } from "./video-finish-binding.js";
 import { RESERVED_JOB_INSTANCES } from "./video-finish-binding";
-import { usableVideoFinishUrl } from "./video-finish-availability.js";
+import { declaredUnprovisionable, usableVideoFinishUrl } from "./video-finish-availability.js";
 import { finishQueueSlots, sqlFinishQueue, type FinishQueue } from "@skyphusion-labs/vivijure-core/finish-queue";
 import type { Env } from "./env.js";
 
@@ -56,6 +56,13 @@ export function studioEnv(raw: Env): StudioEnv {
   // same as no URL. Core treats any non-empty string as an installed tier, so clear it here and core
   // takes the documented degrade path instead of failing a paid-for film at its finish step.
   if (raw.VIDEO_FINISH_URL !== undefined && !usableVideoFinishUrl(raw.VIDEO_FINISH_URL)) {
+    raw.VIDEO_FINISH_URL = undefined;
+  }
+  // cf#871: a studio declared unprovisionable has no tier, whatever URL is typed, unless the
+  // container is BOUND (the door is an observation and wins, as in videoFinishState). Clearing the
+  // URL here makes core take the same degrade path the panel reports, instead of the panel greying
+  // the controls while the film path still tries the URL.
+  if (raw.VIDEO_FINISH_URL !== undefined && !raw.FINISH_CONTAINER && declaredUnprovisionable(raw)) {
     raw.VIDEO_FINISH_URL = undefined;
   }
   const { PRESIGNER } = orchestratorEnv(raw);
