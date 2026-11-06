@@ -148,6 +148,29 @@ describe("proxiedImageBytes reads a URL, a data: URL or raw base64", () => {
     expect(r.mime).toBe("image/jpeg");
   });
 
+  it("sniffs a fetched WebP even when the header says image/png (cf#1294)", async () => {
+    // RIFF....WEBP: the magic of the Recraft V4 artifact read live on 2026-11-06 (52494646).
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(webp, { headers: { "content-type": "image/png" } })));
+    const r = await proxiedImageBytes("https://example.invalid/recraft.png");
+    expect(r.mime).toBe("image/webp");
+  });
+
+  it("sniffs a fetched GIF as image/gif, not the png default", async () => {
+    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(gif)));
+    const r = await proxiedImageBytes("https://example.invalid/a.gif");
+    expect(r.mime).toBe("image/gif");
+  });
+
+  it("keeps the header when the fetched magic is unknown", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4, 5]), {
+      headers: { "content-type": "image/avif" },
+    })));
+    const r = await proxiedImageBytes("https://example.invalid/a.avif");
+    expect(r.mime).toBe("image/avif");
+  });
+
   it("fails loud on text that is neither", async () => {
     await expect(proxiedImageBytes("not an image, at all!")).rejects.toThrow("neither a URL nor base64");
   });

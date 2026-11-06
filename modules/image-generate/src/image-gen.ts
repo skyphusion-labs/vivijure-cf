@@ -49,6 +49,7 @@ export function sniffImageMime(bytes: ArrayBuffer | Uint8Array): { mime: string;
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: "image/jpeg", ext: "jpg" };
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return { mime: "image/png", ext: "png" };
   if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return { mime: "image/webp", ext: "webp" };
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return { mime: "image/gif", ext: "gif" };
   return { mime: "image/png", ext: "png" };
 }
 
@@ -135,7 +136,10 @@ export async function proxiedImageBytes(ref: string): Promise<{ bytes: Uint8Arra
     const resp = await fetch(ref);
     if (!resp.ok) throw new Error(`failed to fetch generated image: ${resp.status}`);
     const bytes = new Uint8Array(await resp.arrayBuffer());
-    return { bytes, mime: resp.headers.get("content-type") || "image/png" };
+    // Sniff the bytes, not the header: a Recraft V4 result came back as WebP and was stored as
+    // image/png (vivijure-cf#1294). The header is the fallback only when the magic is unknown.
+    const mime = hasImageMagic(bytes) ? sniffImageMime(bytes).mime : resp.headers.get("content-type") || "image/png";
+    return { bytes, mime };
   }
   const parsed = parseDataUrl(ref);
   const b64 = (parsed ? parsed.base64 : ref).replace(/\s+/g, "");
