@@ -1,14 +1,13 @@
-// cf#911 stage 1: FinishContainer starts its container WITH the token, and says when a caller
-// omits it.
+// cf#911 stage 2: FinishContainer starts its container with the token ALONE, and with no readable
+// token it refuses at the Durable Object without starting the container.
 //
 // What a stub can prove here: which env the container would be started with, that it is in place
-// BEFORE the base fetch can start the container, and what is logged. What it cannot prove is that the
-// platform passes that env into the process; tests/container-bearer-gate.test.py drives the real
-// Python gate with these exact variables, and the live film is the last word.
+// BEFORE the base fetch can start the container, the refusal, and what is logged. What it cannot
+// prove is that the platform passes that env into the process; tests/container-bearer-gate.test.py
+// drives the real Python gate with this exact variable, and the live film is the last word.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  FINISH_CONTAINER_NO_TOKEN_ENV,
-  FINISH_CONTAINER_STAGE_ENV,
+  FINISH_CONTAINER_NO_TOKEN_STATUS,
   FINISH_CONTAINER_TOKEN_VAR,
   FinishContainer,
   bearerAbsent,
@@ -31,7 +30,7 @@ function container(env: Record<string, unknown>) {
     sleepAfter: RUNNING_SLEEP_AFTER,
     sleepAfterMs: 0,
     jobTail: new FinishJobTail(),
-    envVars: { ...FINISH_CONTAINER_NO_TOKEN_ENV },
+    envVars: {},
     env,
     containerFetch: async () => {
       seen.push({ ...(c.envVars as Record<string, string>) });
@@ -43,72 +42,74 @@ function container(env: Record<string, unknown>) {
 
 function logs() {
   const out: string[] = [];
-  vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
-  vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
+  for (const m of ["log", "warn", "error"] as const) {
+    vi.spyOn(console, m).mockImplementation((...a: unknown[]) => void out.push(a.join(" ")));
+  }
   return out;
 }
 
+const authed = (path: string) => new Request(ORIGIN + path, { method: "POST", headers: { authorization: "Bearer " + TOKEN } });
+
 describe("finishContainerBearer", () => {
-  it("a readable token: the token plus the stage-1 permit, nothing else", async () => {
+  it("a readable token: the token var and NOTHING else", async () => {
     const b = await finishContainerBearer({ MEDIA_FINISH_TOKEN: TOKEN } as never);
-    expect(b.mode).toBe("token");
-    expect(b.vars).toEqual({ [FINISH_CONTAINER_TOKEN_VAR]: TOKEN, ...FINISH_CONTAINER_STAGE_ENV });
-    expect(b.vars).not.toHaveProperty("LOCAL_FINISH_ALLOW_UNAUTHENTICATED");
+    expect(b).toEqual({ mode: "token", vars: { [FINISH_CONTAINER_TOKEN_VAR]: TOKEN } });
   });
 
   it("a Secrets Store handle is resolved", async () => {
     const b = await finishContainerBearer({ MEDIA_FINISH_TOKEN: { get: async () => ` ${TOKEN} ` } } as never);
-    expect(b.vars[FINISH_CONTAINER_TOKEN_VAR]).toBe(TOKEN);
+    expect(b.mode === "token" && b.vars[FINISH_CONTAINER_TOKEN_VAR]).toBe(TOKEN);
   });
 
-  it("no readable token (unset, blank, or a handle that throws): today's opt-out, so no lockout", async () => {
+  it("no readable token (unset, blank, or a handle that throws): none, with no fallback env", async () => {
     for (const raw of [undefined, "", "   ", { get: async () => { throw new Error("store down"); } }]) {
-      const b = await finishContainerBearer({ MEDIA_FINISH_TOKEN: raw } as never);
-      expect(b.mode).toBe("open");
-      expect(b.vars).toEqual(FINISH_CONTAINER_NO_TOKEN_ENV);
+      expect(await finishContainerBearer({ MEDIA_FINISH_TOKEN: raw } as never)).toEqual({ mode: "none" });
     }
   });
 });
 
-describe("FinishContainer.fetch arms the token BEFORE the container can start", () => {
+describe("FinishContainer.fetch", () => {
   it("the first request already reaches the container under the token env", async () => {
     logs();
     const { c, seen } = container({ MEDIA_FINISH_TOKEN: TOKEN });
-    await c.fetch(new Request(ORIGIN + "/async/finish", { method: "POST", headers: { authorization: "Bearer " + TOKEN } }));
-    expect(seen).toEqual([{ [FINISH_CONTAINER_TOKEN_VAR]: TOKEN, ...FINISH_CONTAINER_STAGE_ENV }]);
+    await c.fetch(authed("/async/finish"));
+    expect(seen).toEqual([{ [FINISH_CONTAINER_TOKEN_VAR]: TOKEN }]);
   });
 
-  it("CONTROL: with no token the container is reached under the opt-out, exactly as before", async () => {
-    logs();
+  it("NO token: 503 from the object, and the container is NEVER reached", async () => {
+    const out = logs();
     const { c, seen } = container({});
-    await c.fetch(new Request(ORIGIN + "/async/finish", { method: "POST" }));
-    expect(seen).toEqual([FINISH_CONTAINER_NO_TOKEN_ENV]);
+    const resp = await c.fetch(authed("/async/finish"));
+    expect(resp.status).toBe(FINISH_CONTAINER_NO_TOKEN_STATUS);
+    expect(FINISH_CONTAINER_NO_TOKEN_STATUS).toBe(503);
+    expect(seen).toEqual([]);
+    expect(out.some((l) => l.includes("finish_container.no_token"))).toBe(true);
   });
 
   it("the token is resolved once per instance, not per request", async () => {
     logs();
     const get = vi.fn(async () => TOKEN);
     const { c } = container({ MEDIA_FINISH_TOKEN: { get } });
-    await c.fetch(new Request(ORIGIN + "/async/status/a"));
-    await c.fetch(new Request(ORIGIN + "/async/status/a"));
+    await c.fetch(authed("/async/status/a"));
+    await c.fetch(authed("/async/status/a"));
     expect(get).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("finish_container.bearer_absent is the flip gate", () => {
+describe("finish_container.bearer_absent", () => {
   it("logs a gated request that carries no Authorization, and never the token", async () => {
     const out = logs();
     const { c } = container({ MEDIA_FINISH_TOKEN: TOKEN });
     await c.fetch(new Request(ORIGIN + "/async/status/a"));
     expect(out.some((l) => l.includes("finish_container.bearer_absent") && l.includes("/async/status/a"))).toBe(true);
-    expect(out.some((l) => l.includes('"mode":"token"'))).toBe(true);
+    expect(out.some((l) => l.includes('"mode":"token"') && l.includes('"stage":2'))).toBe(true);
     expect(out.join("\n")).not.toContain(TOKEN);
   });
 
   it("CONTROL: a request WITH the header logs no bearer_absent", async () => {
     const out = logs();
     const { c } = container({ MEDIA_FINISH_TOKEN: TOKEN });
-    await c.fetch(new Request(ORIGIN + "/async/finish", { method: "POST", headers: { authorization: "Bearer " + TOKEN } }));
+    await c.fetch(authed("/async/finish"));
     expect(out.some((l) => l.includes("finish_container.bearer_absent"))).toBe(false);
     expect(out.join("\n")).not.toContain(TOKEN);
   });
