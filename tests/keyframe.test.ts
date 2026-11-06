@@ -70,6 +70,13 @@ describe("keyframe pure logic", () => {
     });
   });
 
+  it("buildPreviewBody forwards face_crop_pad, and drops a non-number (cf#1143)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { face_crop_pad: 1.1 });
+    expect(input.render_overrides).toEqual({ keyframe: { face_crop_pad: 1.1 } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { face_crop_pad: "1.1" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
   it("buildPreviewBody drops invalid scene_lock / canny_scale and never forwards scene_denoise", () => {
     const { input } = buildPreviewBody(
       { project: "p", bundle_key: "b" },
@@ -228,7 +235,9 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.3");
+    expect(MANIFEST.version).toBe("0.3.4");
+    // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.
+    expect(MANIFEST.config_schema?.face_crop_pad).toMatchObject({ type: "float", default: 0.35, min: 0, max: 2 });
     expect(MANIFEST.config_schema?.style).toMatchObject({
       type: "enum",
       values: ["photoreal", "anime"],

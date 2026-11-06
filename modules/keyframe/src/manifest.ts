@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.3",
+  version: "0.3.4",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -54,6 +54,15 @@ export const MANIFEST: ModuleManifest = {
       min: 0,
       max: 1,
       label: "scene lock strength",
+    },
+    // cf#1143: how much around each face the scene-lock pass takes from the cast portrait. 0.35 is the face
+    // and little hair, the shipped crop. Larger keeps the hair and shoulders. Older backend images ignore it.
+    face_crop_pad: {
+      type: "float",
+      default: 0.35,
+      min: 0,
+      max: 2,
+      label: "face reference margin",
     },
     // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
     // That checkpoint is not in the default bake. A worker without it fails honest.
