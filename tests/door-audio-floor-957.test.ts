@@ -25,14 +25,22 @@ describe("driving-audio floors under core 1.37.0 (cf#957, core#464)", () => {
     expect(parseMotionUsage(m.usage)?.driving_audio_min_seconds).toBe(3);
   });
 
-  it("InfiniteTalk and p-video load with no floor, so their lines are not padded", async () => {
-    for (const [name, w] of [["infinitetalk", infinitetalk], ["cf-p-video-avatar", pvideo]] as const) {
-      const m = await manifestOf(w);
-      expect(typeof validateManifest(m), name).toBe("object");
-      const u = parseMotionUsage(m.usage);
-      expect(u?.driving_audio, name).toBe(true);
-      expect(u?.driving_audio_min_seconds, name).toBeUndefined();
-    }
+  it("InfiniteTalk loads with no floor, so its line is not padded to one", async () => {
+    const m = await manifestOf(infinitetalk);
+    expect(typeof validateManifest(m)).toBe("object");
+    const u = parseMotionUsage(m.usage);
+    expect(u?.driving_audio).toBe(true);
+    expect(u?.driving_audio_min_seconds).toBeUndefined();
+  });
+
+  it("cf#1338: p-video declares the provider's 1 s minimum, and core loads and keeps it", async () => {
+    // pruna/p-video-avatar refused a 0.43 s line: 400 "Audio is too short (0.43s). Minimum duration is 1.0s."
+    const m = await manifestOf(pvideo);
+    expect(typeof validateManifest(m)).toBe("object");
+    const u = parseMotionUsage(m.usage);
+    expect(u?.driving_audio).toBe(true);
+    expect(u?.driving_audio_min_seconds).toBe(1);
+    expect(((m.ui as { limits: string[] }).limits).some((l) => /under 1 second/.test(l))).toBe(true);
   });
 
   it("the p-video limit copy no longer says trailing silence is billed", async () => {
@@ -63,8 +71,8 @@ describe("planned length per driving-audio door, from the real manifests (cf#133
     expect(await ruleFor(infinitetalk)).toEqual({ perClip: true, pad: 2, hold: undefined });
   });
 
-  it("p-video bills per second: no pad, its pad would be billed; assembly holds it to the 2s plan", async () => {
-    expect(await ruleFor(pvideo)).toEqual({ perClip: false, pad: 0, hold: 2 });
+  it("p-video bills per second: padded only to its 1 s minimum, never to the plan; assembly holds it to 2s", async () => {
+    expect(await ruleFor(pvideo)).toEqual({ perClip: false, pad: 1, hold: 2 });
   });
 
   it("Wan bills per second: its own 3s floor still pads the line, and assembly holds to the plan", async () => {

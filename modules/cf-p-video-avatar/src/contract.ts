@@ -43,6 +43,8 @@ export interface MotionUsageDecl {
   seed?: boolean;
   /** Shot LINE file as driving audio. Never the Cast sample. */
   driving_audio?: boolean;
+  /** cf#1338: shortest driving-audio file this door accepts, in seconds. The core pads a line to it. */
+  driving_audio_min_seconds?: number;
   /** cf#1246: the face grade the panel reads instead of naming doors. */
   face_hold?: FaceHold;
 }
