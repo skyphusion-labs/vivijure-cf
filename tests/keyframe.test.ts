@@ -84,6 +84,26 @@ describe("keyframe pure logic", () => {
     expect(bad.input.render_overrides).toBeUndefined();
   });
 
+  it("buildPreviewBody maps pose_conditioning on/off to multi_char and sends nothing on auto (cf#1281)", () => {
+    const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: "on" });
+    expect(on.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_conditioning: true } } });
+    const off = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: "off" });
+    expect(off.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_conditioning: false } } });
+    const auto = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: "auto" });
+    expect(auto.input.render_overrides).toBeUndefined();
+    // A raw boolean or a typo is not a known value, so it never reaches the wire.
+    for (const v of [true, false, "true", "On", null]) {
+      expect(buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: v }).input.render_overrides).toBeUndefined();
+    }
+  });
+
+  it("buildPreviewBody keeps pose_scale and pose_conditioning together under one multi_char block (cf#1281)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.3, pose_conditioning: "on" });
+    expect(input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3, pose_conditioning: true } } });
+    const auto = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.3, pose_conditioning: "auto" });
+    expect(auto.input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3 } } });
+  });
+
   it("buildPreviewBody forwards plate_regional_text only as a real boolean (cf#1143 option a)", () => {
     const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_regional_text: true });
     expect(on.input.render_overrides).toEqual({ keyframe: { plate_regional_text: true } });
@@ -265,11 +285,13 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.8");
+    expect(MANIFEST.version).toBe("0.3.9");
     expect(MANIFEST.config_schema?.plate_people_free_background).toMatchObject({ type: "bool", default: false });
     // The pose default is the value the backend shipped with, so nothing changes until it is set.
     expect(MANIFEST.config_schema?.pose_scale).toMatchObject({ type: "float", default: 0.55, min: 0, max: 1.5 });
     expect(MANIFEST.config_schema?.plate_regional_text).toMatchObject({ type: "bool", default: false });
+    // cf#1281: tri-state, defaulting to "auto" so the backend default stands unless a job asks.
+    expect(MANIFEST.config_schema?.pose_conditioning).toMatchObject({ type: "enum", values: ["auto", "on", "off"], default: "auto" });
     expect(MANIFEST.config_schema?.plate_ip_adapter_scale).toMatchObject({ type: "float", default: 0, min: 0, max: 1 });
     // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.
     expect(MANIFEST.config_schema?.face_crop_pad).toMatchObject({ type: "float", default: 0.35, min: 0, max: 2 });

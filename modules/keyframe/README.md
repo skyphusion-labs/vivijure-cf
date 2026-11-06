@@ -48,6 +48,8 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | `guidance_scale` | float (0..20) | `6.5` | prompt adherence |
 | `seed` | int (>= -1) | `-1` | seed (`-1` = random) |
 | `style` | enum `photoreal` / `anime` | `photoreal` | still look. Photoreal uses RealVisXL. Anime uses Animagine XL 4.0. |
+| `plate_regional_text` | bool | `false` | two-person scene-lock plate: each person's description reaches only their own region (cf#1143). |
+| `pose_conditioning` | enum `auto` / `on` / `off` | `auto` | two-person pose skeleton. `auto` sends nothing, so the backend default per path stands; `on` / `off` set both paths (cf#1281). |
 
 To self-host (service `vivijure-module-keyframe`, bound into the core as `MODULE_KEYFRAME`):
 
