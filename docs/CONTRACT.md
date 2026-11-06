@@ -438,7 +438,8 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `render` | `RenderConfigProjection` | Core-owned render config: `{ quality_tiers: { value, label, blurb }[], default_tier }`. See 2.3.1. |
 | `host` | object | What THIS deployment can do (the core describing itself; orthogonal to `api`). Always present on this host. Fields below. |
 | `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
-| `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
+| `core_version` | string \| null | **cf#1347.** The vivijure-core version this worker was built with, read from the installed package's `package.json` at build time. `null` only if that value is not a version. ALWAYS present. |
+| `git_sha` | string \| null | **cf#287, cf#1347.** Git sha of the build that produced this worker, as the deploy stamps it in `env.STUDIO_GIT_SHA` (7 to 40 hex characters). `null` when nothing is stamped or the value is not a sha: never invented, and never echoed when malformed, because this route is unauthenticated. ALWAYS present (it was omitted when unset before cf#1347). |
 
 `HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" | "pick_one_per_kind", order: number }`.
 `pick_one_per_kind` is `score` only (vivijure-cf#878): one module per declared `score_kind`.

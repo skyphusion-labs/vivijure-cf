@@ -1160,6 +1160,8 @@ jobs:
           PANEL_HOME: ${{ vars.PANEL_HOME }}
           # cf#1249: keyframe fan-out per film; unset defaults to 4 (the vivijure-core default) below.
           KEYFRAME_PARALLEL: ${{ vars.KEYFRAME_PARALLEL }}
+          # cf#1347: the commit this deploy builds, projected as git_sha on GET /api/modules. Not secret.
+          STUDIO_GIT_SHA: ${{ github.sha }}
           # Public HTTPS door origins (repo VARIABLES, not secrets). Empty = that door is off.
           # These are the vars envsubst must see or wrangler.toml keeps ${VIDEO_FINISH_URL}
           # and the fail-closed placeholder check aborts (v1.32.5).
@@ -1186,7 +1188,7 @@ jobs:
           R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"; export R2_S3_ENDPOINT
           R2_S3_BUCKET="${R2_S3_BUCKET:-vivijure}"; export R2_S3_BUCKET
           KEYFRAME_PARALLEL="${KEYFRAME_PARALLEL:-4}"; export KEYFRAME_PARALLEL
-          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $KEYFRAME_PARALLEL $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+          VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $KEYFRAME_PARALLEL $STUDIO_GIT_SHA $D1_DATABASE_ID $VPC_VIDEO_FINISH_ID $VPC_IMAGE_PREP_ID $VPC_AUDIO_BEAT_SYNC_ID $VPC_AUDIO_MIX_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
           # cf#560: STRIP THE LOCAL-GPU BLOCK. The hosted studio must never bind local-gpu.
           #
           # The door's own manifest blurb says "Self-host only ... Commercial use of Vivijure is

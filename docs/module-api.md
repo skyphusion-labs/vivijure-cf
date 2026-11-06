@@ -942,7 +942,9 @@ GET /api/modules
   and `abuse_report_url` (only when the operator set one),
   `render.available`, `assistant`.
 - `studio_release` (cf#287) is the studio build identity: `env.STUDIO_RELEASE` when bound, else the
-  baked `package.json` version. Optional `git_sha` appears only when `env.STUDIO_GIT_SHA` is set.
+  baked `package.json` version. `core_version` (cf#1347) is the vivijure-core the worker was built with,
+  and `git_sha` is `env.STUDIO_GIT_SHA` when the deploy stamps a hex sha, else `null`. Both are always
+  present.
   Module manifest `version` strings do not substitute for this: each is that module's own release
   version (and `api` is the contract version), neither is the studio build.
 

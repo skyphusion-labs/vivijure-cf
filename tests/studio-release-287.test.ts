@@ -9,9 +9,13 @@ import { join } from "node:path";
 import worker from "../src/index";
 import type { Env } from "../src/env";
 import {
+  CORE_VERSION,
   PACKAGE_VERSION,
   resolveStudioRelease,
 } from "../src/studio-release";
+
+// cf#1347: the identity now always carries core_version and git_sha (null when unknown).
+const id = (studio_release: string, git_sha: string | null = null) => ({ studio_release, git_sha, core_version: CORE_VERSION });
 
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 const req = (path: string) => new Request(`https://studio.example${path}`, { method: "GET" });
@@ -26,32 +30,21 @@ function envWith(over: Record<string, unknown> = {}): Env {
 
 describe("resolveStudioRelease (cf#287)", () => {
   it("falls back to PACKAGE_VERSION when STUDIO_RELEASE is unset", () => {
-    expect(resolveStudioRelease({})).toEqual({ studio_release: PACKAGE_VERSION });
+    expect(resolveStudioRelease({})).toEqual(id(PACKAGE_VERSION));
   });
 
   it("prefers env.STUDIO_RELEASE over the baked package version", () => {
-    expect(resolveStudioRelease({ STUDIO_RELEASE: "v1.12.0" })).toEqual({
-      studio_release: "v1.12.0",
-    });
+    expect(resolveStudioRelease({ STUDIO_RELEASE: "v1.12.0" })).toEqual(id("v1.12.0"));
   });
 
   it("trims whitespace and treats blank STUDIO_RELEASE as unset", () => {
-    expect(resolveStudioRelease({ STUDIO_RELEASE: "  " })).toEqual({
-      studio_release: PACKAGE_VERSION,
-    });
-    expect(resolveStudioRelease({ STUDIO_RELEASE: "  v1.13.0  " })).toEqual({
-      studio_release: "v1.13.0",
-    });
+    expect(resolveStudioRelease({ STUDIO_RELEASE: "  " })).toEqual(id(PACKAGE_VERSION));
+    expect(resolveStudioRelease({ STUDIO_RELEASE: "  v1.13.0  " })).toEqual(id("v1.13.0"));
   });
 
-  it("includes git_sha only when set", () => {
-    expect(resolveStudioRelease({ STUDIO_RELEASE: "v1.20.1", STUDIO_GIT_SHA: "abc1234" })).toEqual({
-      studio_release: "v1.20.1",
-      git_sha: "abc1234",
-    });
-    expect(resolveStudioRelease({ STUDIO_GIT_SHA: "   " })).toEqual({
-      studio_release: PACKAGE_VERSION,
-    });
+  it("git_sha is the stamped sha when set, and null (never omitted, never guessed) when not (cf#1347)", () => {
+    expect(resolveStudioRelease({ STUDIO_RELEASE: "v1.20.1", STUDIO_GIT_SHA: "abc1234" })).toEqual(id("v1.20.1", "abc1234"));
+    expect(resolveStudioRelease({ STUDIO_GIT_SHA: "   " })).toEqual(id(PACKAGE_VERSION, null));
   });
 
   it("PACKAGE_VERSION stays pinned to package.json version", () => {
@@ -70,7 +63,7 @@ describe("GET /api/modules studio_release (cf#287)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { studio_release?: string; git_sha?: string; modules?: unknown[] };
     expect(body.studio_release).toBe(PACKAGE_VERSION);
-    expect(body.git_sha).toBeUndefined();
+    expect(body.git_sha).toBeNull(); // cf#1347: present and null when the deploy stamps no sha
     expect(Array.isArray(body.modules)).toBe(true);
   });
 

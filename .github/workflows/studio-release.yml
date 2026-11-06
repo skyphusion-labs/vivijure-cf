@@ -179,6 +179,10 @@ jobs:
           # nothing pins. The invariant is that no hosted studio config binds this door, not that a
           # particular consumer happens to ignore it.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          # cf#1347: stamp the CHECKED-OUT commit as git_sha, the same commit the fc#859 gate above
+          # asserts (git rev-parse HEAD, not $GITHUB_SHA). This render is a bare envsubst, so without the
+          # export the var renders empty, which projects as null: honest, but no sha.
+          STUDIO_GIT_SHA="$(git rev-parse HEAD)"; export STUDIO_GIT_SHA
           envsubst < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/00000000-0000-0000-0000-000000000000/g" wrangler.toml

@@ -2922,7 +2922,9 @@ const hModules: Handler = async (_req, env) => {
       ...(abuseUrl ? { abuse_report_url: abuseUrl } : {}),
     }),
     studio_release: release.studio_release,
-    ...(release.git_sha ? { git_sha: release.git_sha } : {}),
+    // cf#1347: which core and which build serve this studio. Both are always present; null means unknown.
+    core_version: release.core_version,
+    git_sha: release.git_sha,
   });
 };
 

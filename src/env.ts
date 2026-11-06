@@ -202,7 +202,7 @@ export interface Env {
   FILM_CLIP_DURATION_FLOOR?: string;
 
   // cf#287: studio release / build identity projected on GET /api/modules as top-level
-  // `studio_release` (+ optional `git_sha`). Unset => the baked package.json version is projected
+  // `studio_release`, plus `core_version` and `git_sha` (null when unstamped, cf#1347). Unset => the baked package.json version is projected
   // so two tag deploys are still distinguishable. The control plane may bind STUDIO_RELEASE to the
   // tenant's live tag (the value it already stores as tenants.studio_release); self-host can leave
   // both unset. See src/studio-release.ts.
