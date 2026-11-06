@@ -272,6 +272,9 @@ function renderAudioCurrent() {
     (planState.audioSourceLabel || "audio") + " · " + planState.audioKey + known;
   const audio = $("#planner-audio-player");
   if (audio) bindPlannerAudioPlayer(audio, planState.audioKey);
+  // cf#1016: only an uploaded bed can be deleted from here; a generated score keeps "clear" only.
+  const del = $("#planner-audio-delete");
+  if (del) del.hidden = !(window.audioBed && window.audioBed.isUploadedBedKey(planState.audioKey));
 }
 
 /** MiniMax / Workers AI MP3 often has no Xing header. Streaming /api/artifact
@@ -318,6 +321,36 @@ function clearAudio() {
   persistSoon();
   // v0.56.0: audio key state affects preflight's audio HEAD warning.
   schedulePreflight();
+}
+
+// cf#1016: delete the uploaded file itself, not just the link. The studio refuses while a render
+// that has not finished uses it, and says which.
+async function deleteAudioFile() {
+  const bed = window.audioBed;
+  const key = planState.audioKey;
+  const url = bed ? bed.deleteUrl(key) : null;
+  if (!url) return;
+  if (!window.confirm("delete this audio file from the studio? renders that already used it keep their sound. this cannot be undone.")) return;
+  let status = 0;
+  let body = null;
+  try {
+    const resp = await fetch(url, { method: "DELETE" });
+    status = resp.status;
+    body = await resp.json().catch(() => null);
+  } catch (err) {
+    body = { error: err.message };
+  }
+  const out = bed.deleteOutcome(status, body);
+  if (out.unlink && planState.audioKey === key) {
+    planState.audioKey = null;
+    planState.audioMime = null;
+    planState.audioDurationSeconds = null;
+    planState.audioSourceLabel = null;
+    renderAudioCurrent();
+    persistSoon();
+    schedulePreflight();
+  }
+  window.alert(out.message);
 }
 
 async function uploadAudioFile(file) {

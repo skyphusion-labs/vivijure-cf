@@ -240,6 +240,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const audioClear = $("#planner-audio-clear");
   if (audioClear) audioClear.addEventListener("click", clearAudio);
+  const audioDelete = $("#planner-audio-delete");
+  if (audioDelete) audioDelete.addEventListener("click", deleteAudioFile);
   const snapBtn = $("#planner-snap-btn");
   if (snapBtn) snapBtn.addEventListener("click", snapAllScenes);
   const analyzeBtn = $("#planner-analyze-beats");

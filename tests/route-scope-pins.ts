@@ -18,7 +18,7 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 101; // cf#1206: DELETE /api/film/:id
+export const PINNED_ROUTE_COUNT = 102; // cf#1016: DELETE /api/storyboard/audio-upload/:name
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
 export const PINNED_OPERATOR_COUNT = 8;
@@ -127,6 +127,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "POST", pattern: "/api/storyboard/markers", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/bundle", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/audio-upload", scope: "consumer" },
+  { method: "DELETE", pattern: "/api/storyboard/audio-upload/:name", scope: "consumer" }, // cf#1016: same scope as the upload
   { method: "POST", pattern: "/api/storyboard/character-ref", scope: "consumer" },
   { method: "POST", pattern: "/api/audio/analyze", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/render", scope: "consumer" },

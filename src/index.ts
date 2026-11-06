@@ -139,6 +139,7 @@ import {
 import { resolveProjectForBundle } from "../modules/_shared/bundle-project";
 import { validateStoryboard } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import { planCharactersRefusal } from "./plan-characters";
+import { deleteUploadedBed } from "./audio-bed-delete";
 import { checkStoryboardShape, checkCastBindingsReady, checkDurationGrid, resolveCastBindings, summarize, type PreflightIssue } from "@skyphusion-labs/vivijure-core/preflight";
 import {
   planStoryboard, refineStoryboard, chatComplete,
@@ -565,6 +566,11 @@ const hStoryboardAudioUpload: Handler = async (req, env) => {
   const key = `audio/${crypto.randomUUID()}.${ext}`;
   await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: mime } });
   return json({ key, mime, size: bytes.byteLength }, 201);
+};
+// cf#1016: the uploaded bed delete. Scope, 404, and the running-render 409 live in audio-bed-delete.ts.
+const hStoryboardAudioDelete: Handler = async (_req, env, _c, p) => {
+  const r = await deleteUploadedBed(env, p.name);
+  return json(r.body, r.status);
 };
 const hStoryboardCharacterRef: Handler = async (req, env) => {
   const mime = (req.headers.get("content-type") || "").split(";")[0].trim() || "application/octet-stream";
@@ -2846,6 +2852,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/storyboard/markers",              scope: "consumer",    handler: hMarkers },
   { method: "POST",   pattern: "/api/storyboard/bundle",               scope: "consumer",    handler: hBundle },
   { method: "POST",   pattern: "/api/storyboard/audio-upload",         scope: "consumer",    handler: hStoryboardAudioUpload },
+  { method: "DELETE", pattern: "/api/storyboard/audio-upload/:name",   scope: "consumer",    handler: hStoryboardAudioDelete },
   { method: "POST",   pattern: "/api/storyboard/character-ref",        scope: "consumer",    handler: hStoryboardCharacterRef },
   { method: "POST",   pattern: "/api/audio/analyze",                   scope: "consumer",    handler: hAudioAnalyze },
   { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: refusingLongFilmProjects(hSubmitRender) },
