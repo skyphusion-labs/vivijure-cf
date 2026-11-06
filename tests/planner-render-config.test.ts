@@ -310,10 +310,10 @@ describe("renderBackendSelector (default RunPod speed door; any other door is pi
     mod.renderBackendSelector([backend("a", "Door A"), backend("b", "Door B")], wrap);
     const hint = wrap.querySelector(".planner-backend-caption-hint") as El;
     expect(hint).not.toBeNull();
-    expect(hint.textContent).toMatch(/^Required: pick which backend/i);
+    expect(hint.textContent).toBe("Pick a video style.");
     mod.restore({ motion_backend: "a" }); // pick a door via the real restore path
     expect(hint.textContent).not.toMatch(/Required/);
-    expect(hint.textContent).toMatch(/Talking doors are the default/i);
+    expect(hint.textContent).toBe("Talking styles come first. Studio GPU makes a silent look only.");
   });
 });
 

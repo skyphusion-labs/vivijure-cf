@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { faceGrade, GRADE, FACE_EVIDENCE } from "../public/make-style.js";
+import { faceGrade, GRADE } from "../public/make-style.js";
 import { FACE_HOLD_VALUES, motionDoorRefusals } from "../modules/_shared/door-manifest-rules";
 
 // cf#1246: every motion door states what a clip costs us, the day that cost was read, and how well it holds a
@@ -88,16 +88,33 @@ describe("every motion door in modules/ meets the cf#1246 rules", async () => {
     expect((seedance.m.ui?.limits ?? []).some((l) => /no price/i.test(l))).toBe(true);
   });
 
-  it("face_hold matches the grade the panel computes today", () => {
+  // make-style.js reads usage.face_hold now (cf#1246), so comparing the field with faceGrade would
+  // compare it with itself and could not fail. The proof the switch changed no door's grade is the
+  // rule the panel used BEFORE, frozen here from main at 5a96dff (its FACE_EVIDENCE table plus the
+  // generic facts), run on every real manifest: it must give the declared grade, and so must the panel.
+  const OLD_FACE_EVIDENCE: Record<string, number> = { "alibaba-wan-lora": 3, "cf-hh1-r2v": 3, "cf-flux-3-video": 0 };
+  const oldFaceGrade = (m: { name: string; usage?: Record<string, unknown> }): number => {
+    if (m.name in OLD_FACE_EVIDENCE) return OLD_FACE_EVIDENCE[m.name];
+    const u = m.usage ?? {};
+    if (u.driving_audio === true && u.native_audio !== true) return 3;
+    return u.first_last === true ? 2 : 1;
+  };
+
+  it("face_hold is the grade the old rule gave, and the panel now reads it", () => {
     const off = doors
-      .map((d) => ({ door: d.m.name, declared: d.m.usage?.face_hold, panel: FACE_HOLD_VALUES[faceGrade(d.m as never)] }))
-      .filter((r) => r.declared !== r.panel);
+      .map((d) => ({
+        door: d.m.name,
+        declared: d.m.usage?.face_hold,
+        old: FACE_HOLD_VALUES[oldFaceGrade(d.m as never)],
+        panel: FACE_HOLD_VALUES[faceGrade(d.m as never)],
+      }))
+      .filter((r) => r.declared !== r.old || r.panel !== r.old);
     expect(off).toEqual([]);
   });
 
-  it("the face grades use the panel's own scale, and the panel's evidence names real doors", () => {
+  it("the face grades use the panel's own scale, and the old rule's evidence names real doors", () => {
     expect(FACE_HOLD_VALUES.map((_, i) => i)).toEqual([GRADE.DRIFT, GRADE.ONE, GRADE.TWO, GRADE.HOLD]);
-    for (const n of Object.keys(FACE_EVIDENCE)) expect(doors.map((d) => d.m.name)).toContain(n);
+    for (const n of Object.keys(OLD_FACE_EVIDENCE)) expect(doors.map((d) => d.m.name)).toContain(n);
   });
 });
 

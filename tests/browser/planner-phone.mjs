@@ -149,6 +149,21 @@ const gotoRender = async (page) => { await page.click('[data-step-id="render"]')
   await page.waitForFunction(() => document.querySelector("#planner-motion-backend")?.options.length > 0);
   const list = await doors(page);
   check("spoken board hides the silent door", !list.includes("silent-door") && list.includes("talk-priced"), list.join(","));
+  // cf#1246: each door card shows its own price at cost, or says it has none.
+  const costOf = (label) => page.locator(".planner-backend-selector label, .planner-backend-selector [role=radio]").filter({ hasText: label }).first().locator(".is-cost").textContent();
+  check("a priced door shows its price per second at cost", (await costOf("Priced talking door")) === "$0.04 to $0.07 a second, at cost", await costOf("Priced talking door"));
+  check("a door with no price says so", (await costOf("Unpriced talking door")) === "Price unknown", await costOf("Unpriced talking door"));
+  if (process.env.SHOTS) {
+    const card = page.locator(".planner-backend-selector").first();
+    for (const [name, w] of [["planner-prices-390.png", 390], ["planner-prices-1280.png", 1280]]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.waitForTimeout(200);
+      await card.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: process.env.SHOTS + "/" + name });
+      console.log("SHOT " + process.env.SHOTS + "/" + name);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+  }
   await pickDoor(page, "talk-priced");
   await page.click("#planner-render-btn");
   await page.waitForSelector("#planner-spend-confirm[open]");

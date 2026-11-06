@@ -385,8 +385,12 @@
     return moduleLabel(mod);
   }
 
+  // cf#1246: the door's own price at cost, from ui.cost_usd_per_second or ui.cost_usd_per_clip
+  // (make-style.js rateLine, one formatter for both pages). "Price unknown" when it states none.
   function doorCost(mod) {
     if (isQualityDoor(mod)) return "Look only, slower";
+    const style = global.makeStyle;
+    if (style && typeof style.rateLine === "function") return style.rateLine(mod);
     const cost = uiHint(mod, "cost");
     if (typeof cost !== "string") return "";
     return filmmakerCostLine(cost).replace(/\.$/, "");
@@ -577,8 +581,8 @@
       const hint = wrap.querySelector(".planner-backend-caption-hint");
       if (hint) {
         hint.textContent = value
-          ? "Talking doors are the default. Studio GPU is silent look only."
-          : "Required: pick which backend renders the motion (image-to-video) step.";
+          ? "Talking styles come first. Studio GPU makes a silent look only."
+          : "Pick a video style.";
       }
     }
     // vivijure#546: notify the render gate whenever the backend choice changes so the
@@ -619,10 +623,10 @@
     capHint.className = "planner-backend-caption-hint";
     const linesOn = storyboardHasSpokenLines();
     capHint.textContent = linesOn
-      ? "This storyboard has spoken lines. Only doors that can say them (they keep audio on our stills)."
+      ? "Your scenes have spoken lines, so only talking styles are shown."
       : (mods.length > 1
-        ? "Talking doors are the default. Studio GPU is silent look only."
-        : "This backend renders the motion (image-to-video) step.");
+        ? "Talking styles come first. Studio GPU makes a silent look only."
+        : "This is the video style your scenes will use.");
     cap.appendChild(capHint);
     section.appendChild(cap);
 

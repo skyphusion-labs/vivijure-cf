@@ -53,17 +53,12 @@ is `public/make-style.js` (pure, unit tested in `tests/make-style.test.ts`). In 
 So a talking plan in Wide gets InfiniteTalk (then `cf-p-video-avatar` when InfiniteTalk is not
 installed), and Vertical or Square gets `cf-vidu-q3-turbo`, then `cf-seedance`.
 
-Three modules are graded from prose rather than from a manifest field, because no manifest field
-carries a face-hold fact yet. They are declared in `tests/panel-no-hardcoded-modules.test.ts`:
-
-| Module | Grade | Evidence |
-|---|---|---|
-| `alibaba-wan-lora` | 3, needs the trained Wan look | provides label "Silent, your trained face (Wan)"; this repo's door limits: "with your trained face" |
-| `cf-hh1-r2v` | 3 | blurb "Holds a look from reference stills"; door limits: "silent look lock" |
-| `cf-flux-3-video` | 0 | blurb and door limits: "Faces drift". It declares `usage.first_last`, so the generic rule alone would rank it 2 |
-
-The fix that retires this table is a manifest field (for example `usage.face_hold`) reported to the
-module lane; the page then reads it like any other projected fact.
+Each module states its own grade in `usage.face_hold` (`hold`, `two`, `one`, `drift`; cf#1246), and
+the page reads it. A module that predates the field falls back to the generic facts above. The values
+were set to the grades the old name table gave, and
+`tests/motion-door-price-face-1246.test.ts` proves no module's grade changed in the switch. One name is
+left, declared in `tests/panel-no-hardcoded-modules.test.ts`: `alibaba-wan-lora` needs the trained
+Wan look, and no manifest field says so yet.
 
 `alibaba-wan-lora` is usable only when the host can train the Wan look (`GET /api/cast`
 `wan_lora_trainable`) or every chosen person already has it. When it is chosen and someone lacks
@@ -91,10 +86,21 @@ Draft, Good and Best are the core tiers `draft`, `standard` and `final` (`render
 Where a module has a resolution choice, Draft asks for its lowest, Best its highest, Good its
 default.
 
-Price comes from the module's own `ui.cost_usd_per_second`, which is `[lowest resolution, highest
-resolution]`, the same figure the planner's spend confirm uses. Lowest resolution is priced at the
-first figure and highest at the second; anything between is priced at the second and shown as
-"up to". The total is that rate times the planned seconds (the seconds the render submit sends).
+Prices are **at cost**: the provider's price with nothing added, until an end-user markup is set
+(Conrad, 2026-11-05). A module states one of two fields (cf#1246):
+
+- `ui.cost_usd_per_second`, `[lowest resolution, highest resolution]`, the same figure the planner's
+  spend confirm uses. Lowest resolution is priced at the first figure and highest at the second;
+  anything between is priced at the second and shown as "up to".
+- `ui.cost_usd_per_clip`, a list of `{usd, resolution?, seconds?}`, where a missing key matches any
+  value. The page takes the resolution the quality picks and the scene's length, and finds the entry.
+  No entry is "price unknown".
+
+Each scene is priced at the length the module really makes: inside its `min_seconds` and
+`max_seconds`, then rounded up to its `duration_steps`. So on `alibaba-wan`, which makes 5, 10 or 15
+second clips, a 7 second scene is priced as 10. The planner's video style cards show the same price
+line ("$0.04 to $0.07 a second, at cost"), and the day it was read when the module states
+`ui.cost_as_of`.
 Before the plan exists the total says it comes after planning, and each quality shows the price for
 10 seconds. **A module with no stated rate shows "price unknown", never a number.** The figure covers
 the moving video only; pictures and voices have no stated price anywhere the page can read, and the

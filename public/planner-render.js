@@ -458,7 +458,7 @@ function updateRenderGate() {
     && cfg
     && typeof cfg.backendChoicePending === "function"
     && cfg.backendChoicePending();
-  const reason = pending ? "pick a render backend above" : "";
+  const reason = pending ? "Pick a video style above." : "";
   btn.disabled = !!reason;
   if (reasonEl) {
     reasonEl.textContent = reason;

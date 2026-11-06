@@ -29,16 +29,16 @@ const check = (name, ok, detail = "") => {
 };
 process.on("uncaughtException", (e) => { console.log("HARNESS", String(e).split("\n")[0]); process.exit(2); });
 
-// Fixtures copy the real manifest facts the rule reads (usage, ui.order, enums, rates).
+// Fixtures copy the real manifest facts the rule reads (usage incl. face_hold, ui.order, enums, rates).
 const enumOf = (values, d = values[0]) => ({ type: "enum", values, default: d });
 const door = (name, usage, extra = {}) => ({ name, hooks: ["motion.backend"], provides: [{ id: name, label: name }], usage, ...extra });
 const KF = { name: "keyframe", hooks: ["keyframe"], trains_loras: true, config_schema: { width: { type: "int", min: 512, max: 1536 }, height: { type: "int", min: 512, max: 1536 } } };
-const HH1 = door("cf-hh1-r2v", { native_audio: false, first_last: true }, { ui: { order: 60 }, config_schema: { ratio: enumOf(["16:9", "9:16", "1:1"]), resolution: enumOf(["720P", "1080P"]) } });
-const VIDU = door("cf-vidu-q3-turbo", { native_audio: true, first_last: true }, { ui: { order: 58, cost_usd_per_second: [0.04, 0.07] }, config_schema: { resolution: enumOf(["540p", "720p", "1080p"], "720p") } });
-const SEED = door("cf-seedance", { native_audio: true, first_last: true }, { ui: { order: 70 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
-const ITALK = door("infinitetalk", { native_audio: false, driving_audio: true }, { ui: { order: 15 }, config_schema: {} });
-const WIDE = door("wide-only", { native_audio: true, first_last: true }, { config_schema: { ratio: enumOf(["16:9"]) } });
-const VEO = door("cf-veo", { native_audio: true }, { config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
+const HH1 = door("cf-hh1-r2v", { native_audio: false, first_last: true, face_hold: "hold" }, { ui: { order: 60 }, config_schema: { ratio: enumOf(["16:9", "9:16", "1:1"]), resolution: enumOf(["720P", "1080P"]) } });
+const VIDU = door("cf-vidu-q3-turbo", { native_audio: true, first_last: true, face_hold: "two" }, { ui: { order: 58, cost_usd_per_second: [0.04, 0.07] }, config_schema: { resolution: enumOf(["540p", "720p", "1080p"], "720p") } });
+const SEED = door("cf-seedance", { native_audio: true, first_last: true, face_hold: "two" }, { ui: { order: 70 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
+const ITALK = door("infinitetalk", { native_audio: false, driving_audio: true, face_hold: "hold" }, { ui: { order: 15 }, config_schema: {} });
+const WIDE = door("wide-only", { native_audio: true, first_last: true, face_hold: "two" }, { config_schema: { ratio: enumOf(["16:9"]) } });
+const VEO = door("cf-veo", { native_audio: true, face_hold: "one" }, { config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
 const registry = (doors) => ({
   modules: [KF, ...doors],
   hooks: { keyframe: ["keyframe"], "motion.backend": doors.map((d) => d.name) },
