@@ -9,6 +9,10 @@ import type { Env } from "../src/env";
 import { advanceFilmJob, filmJobDocKey, type FilmJob, type FinishShot } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { orch } from "./orchestrator-env";
 
+// The real clock, captured before any test fakes timers, so the tick helper can bound its wait in wall time.
+const realNow = Date.now.bind(Date);
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+
 // The exact text a film part failed on, live.
 const LIVE = "list: We encountered an internal error. Please try again. (10001)";
 
@@ -263,7 +267,14 @@ describe("R2 retry", () => {
       if (!vi.isFakeTimers()) vi.useFakeTimers();
       let settled = false;
       const p = advanceFilmJob(env as never, ID).finally(() => { settled = true; });
-      for (let i = 0; i < 600 && !settled; i++) await vi.advanceTimersByTimeAsync(1000);
+      // Wait on the CONDITION, not on a pass count: each pass moves the fake clock for the retry sleep, then yields a
+      // real macrotask so real async work the fake clock does not control can progress. The bound is REAL wall time
+      // (captured before the clock is faked), so a loaded machine slows the loop without running it out (cf#1231).
+      const deadline = realNow() + 30_000;
+      while (!settled && realNow() < deadline) {
+        await vi.advanceTimersByTimeAsync(1000);
+        if (!settled) await new Promise<void>((r) => realSetTimeout(r, 1));
+      }
       expect(settled, "the tick finished").toBe(true);
       return p;
     };
