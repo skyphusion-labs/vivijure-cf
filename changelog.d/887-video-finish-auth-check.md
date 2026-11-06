@@ -1,0 +1,5 @@
+### feat(video-finish): a bearer-gated `GET /auth-check` that does no work (#887)
+
+The container half of the on-demand video-finish readiness read (vivijure-cf#887, option (b)). `GET /auth-check` sits behind `bearer_middleware` like every media route, so a 200 means the process is up AND accepted the caller's bearer; a wrong or stale token is the gate's own 401. It does no work: no JOBS entry, no ffmpeg, no subprocess, no worker thread, no network, no disk. The body is `{ok, serving: true, bearer: "verified"|"disabled", liveness_only: true}`; `disabled` reports the explicit loopback opt-out honestly instead of calling an open door verified. Nothing secret is returned.
+
+Through the `FINISH_CONTAINER` binding it routes like any stateless path, to a `sync-<n>` pool instance, so it never mints a job instance. The studio route that calls it (`GET /api/tiers/video-finish/readiness`) is a later PR; this one only adds the container route. Ships with `--containers-rollout=immediate` on the studio deploy and a deploy of the standalone `vivijure-video-finish` Worker.
