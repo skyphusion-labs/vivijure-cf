@@ -1,7 +1,11 @@
 /// <reference types="node" />
-// cf#1334: the panel refuses a refine reply that would shorten a board of more than 50 scenes, because the
-// refinement prompt caps its reply at core's PLANNER_ASK_MAX_SCENES (vivijure-core#473). The browser run
-// (tests/browser/refine-guard-1334.mjs) proves the flow; this pins the rule and its threshold.
+// cf#1334: the panel refuses a refine reply that would shorten a board of more than 50 scenes. When the guard
+// was written, the refinement prompt capped its reply at core's PLANNER_ASK_MAX_SCENES, so a long board could
+// come back cut to 50. Since core 1.39.0 (vivijure-core#473) the prompt says to return every scene unless the
+// user asks to remove some, and PLANNER_ASK_MAX_SCENES bounds what one turn adds or rewrites, not the board.
+// The guard stays as a backstop, and its threshold is still that constant. cf#1341 holds the decision on
+// relaxing it, with a measured refine on a 60-scene board. The browser run (tests/browser/refine-guard-1334.mjs)
+// proves the flow; this pins the rule and its threshold.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { PLANNER_ASK_MAX_SCENES } from "@skyphusion-labs/vivijure-core/planner-prompt";
