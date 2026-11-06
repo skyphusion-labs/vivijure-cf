@@ -67,7 +67,7 @@ const RUNNABLE = [...MODELS, ...LEGACY_MODELS];
 
 const MANIFEST: ModuleManifest = {
   name: "image-generate",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["image.generate"],
   provides: [{ id: "image-gen", label: "Image generation (FLUX 2 / Nano Banana / SDXL)" }],
