@@ -38,11 +38,8 @@ const HANDLER_KEYS = [
 // Non-class named exports that predate cf#1244, by entry (repo-relative main) and name. Remove a line
 // when its export moves to a leaf module. Never add one: move the export instead.
 const BASELINE: Record<string, string[]> = {
-  "modules/cast-image/src/index.ts": ["MODELS"],
   "modules/cf-p-video-avatar/src/index.ts": ["generateClip"],
   "modules/cf-veo/src/index.ts": ["generateClip"],
-  "modules/image-generate/src/index.ts": ["LEGACY_MODELS", "MANIFEST", "MODELS"],
-  "modules/local-gpu/src/index.ts": ["MANIFEST", "_resetGridCache", "doorDurationGrid"],
   "src/index.ts": [
     "API_ROUTES", "ARTIFACT_PREFIXES", "clampArtifactUrlTtl", "runSweepPass", "safeArtifactContentType",
   ],

@@ -18,7 +18,9 @@ import {
   isSafeJobId,
   normalizeBackendUrl,
 } from "../modules/local-gpu/src/i2v";
-import localGpuWorker, { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
+import localGpuWorker from "../modules/local-gpu/src/index";
+import { doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/backend";
+import { MANIFEST } from "../modules/local-gpu/src/manifest";
 import { buildPreviewBody, parseKeyframes, encodeKeyframePoll, decodeKeyframePoll } from "../modules/local-gpu/src/keyframe";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";

@@ -12,8 +12,6 @@
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -22,7 +20,6 @@ import {
   type CastImageOutput,
 } from "./contract";
 import {
-  TRAINING_PROMPTS,
   buildState,
   encodePoll,
   decodePoll,
@@ -32,6 +29,7 @@ import {
   type CastImageState,
 } from "./cast-image";
 import { generateImage, type AiRun, type ImagesBinding } from "./image-gen";
+import { MANIFEST, MODELS } from "./manifest";
 
 // Minimal binding shapes this module needs.
 interface R2Bucket {
@@ -44,27 +42,6 @@ interface Env {
   R2_RENDERS: R2Bucket;   // the shared `vivijure` bucket: run state + generated refs land here
   IMAGES?: ImagesBinding; // Cloudflare Images: downscale refs to <=512px (FLUX-2's input cap; bounds nano-banana payloads)
 }
-
-export const MODELS = [
-  "@cf/black-forest-labs/flux-2-klein-9b",
-  "google/nano-banana-pro",
-  "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-dev",
-  "black-forest-labs/flux-3-image-klein",
-];
-
-const MANIFEST: ModuleManifest = {
-  name: "cast-image",
-  version: "0.1.3",
-  api: MODULE_API,
-  hooks: ["cast.image"],
-  provides: [{ id: "cast-refs", label: "Training references (FLUX 2 / Nano Banana)" }],
-  config_schema: {
-    model: { type: "enum", values: MODELS, default: MODELS[0], label: "image model" },
-    num_images: { type: "int", default: 10, min: 4, max: TRAINING_PROMPTS.length, label: "training images" },
-  },
-  ui: { section: "cast", order: 10 },
-};
 
 // Images rendered per /poll cycle: keeps each poll inside the Worker time budget while finishing the
 // set in a handful of polls.

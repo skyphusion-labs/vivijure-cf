@@ -10,17 +10,16 @@
 // so every preview 404'd while every gate stayed green. A module that cannot write cannot recreate
 // that split, and a third-party module cannot invent its own namespace. The core owns persistence.
 //
-// Ship a new image model by adding its id to MODELS below; the catalog picks it up with no studio
+// Ship a new image model by adding its id to MODELS in ./manifest; the catalog picks it up with no studio
 // deploy. That is the whole point of the projection.
 
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type ImageGenerateInput,
   type ImageGenerateOutput,
 } from "./contract";
+import { LEGACY_MODELS, MANIFEST, MODELS } from "./manifest";
 import { bytesToBase64, generateImageBytes, type AiRun } from "./image-gen";
 
 interface SecretsStoreSecret {
@@ -34,50 +33,7 @@ interface Env {
   OPENAI_API_KEY?: SecretsStoreSecret | string;
 }
 
-// The models this module can actually dispatch. Every id here is executable by image-gen.ts; a row
-// the module cannot run would be a lie in the studio picker, which is the defect class cf#129 exists
-// to kill. This list moved here from the studio's hardcoded src/image-models.ts.
-const MODELS = [
-  "@cf/black-forest-labs/flux-2-klein-9b",
-  "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-dev",
-  "google/nano-banana-2",
-  "google/nano-banana-pro",
-  "bytedance/seedream-5-pro",
-  "bytedance/seedream-5-lite",
-  "xai/grok-imagine-image",
-  "openai/gpt-image-2",
-  "recraft/recraftv4",
-];
-// Still runnable if a saved session names them. Not on the picker.
-// gpt-image-1.5 stays here for the transparent-PNG BYOK path.
-// google/imagen-4 has no Cloudflare model page and its schema-input.json 404s (checked 2026-10-30), so
-// it left the picker. It stays here so a saved config still resolves. A live check is still owed, and
-// #1076 says to drop it after that check.
-export const LEGACY_MODELS = [
-  "google/imagen-4",
-  "openai/gpt-image-1.5",
-  "@cf/black-forest-labs/flux-1-schnell",
-  "@cf/leonardo/lucid-origin",
-  "@cf/leonardo/phoenix-1.0",
-  "@cf/lykon/dreamshaper-8-lcm",
-  "@cf/stabilityai/stable-diffusion-xl-base-1.0",
-];
 const RUNNABLE = [...MODELS, ...LEGACY_MODELS];
-
-const MANIFEST: ModuleManifest = {
-  name: "image-generate",
-  version: "0.1.3",
-  api: MODULE_API,
-  hooks: ["image.generate"],
-  provides: [{ id: "image-gen", label: "Image generation (FLUX 2 / Nano Banana / SDXL)" }],
-  config_schema: {
-    // The core's projection reads THIS field to build the catalog rows, exactly as it reads
-    // plan-enhance's. Same declaration form, no special-casing of this module's name anywhere.
-    model: { type: "enum", values: MODELS, default: MODELS[0], label: "image model" },
-  },
-  ui: { section: "chat", order: 20 },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -198,5 +154,3 @@ export default {
     return json({ ok: false, error: "not found" }, 404);
   },
 };
-
-export { MANIFEST, MODELS };
