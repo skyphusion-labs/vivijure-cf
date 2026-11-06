@@ -132,7 +132,11 @@ describe("deploy.sh is wired to the plan, not to a hand list (cf#880)", () => {
 });
 
 describe("every module deploy.sh ships fills cleanly (cf#880)", () => {
-  it("leaves no placeholder in any rendered module config", () => {
+  // About 30 module configs, each filled by the shipped script, which runs a dozen sed and mv steps per
+  // file. That is several hundred processes: 2.7 s on an idle laptop, and it ran past the 5 s default
+  // under a full-suite run. So the fills run in ONE shell loop (one spawn, not one per module), and the
+  // timeout is sized to the work, not to the default.
+  it("leaves no placeholder in any rendered module config", { timeout: 60_000 }, () => {
     const d = dir();
     const env = {
       ...process.env,
@@ -141,20 +145,17 @@ describe("every module deploy.sh ships fills cleanly (cf#880)", () => {
     };
     const names = modules(TEMPLATE, 1, 0, 1);
     expect(names.length).toBeGreaterThan(25);
+    for (const m of names) cpSync(join(ROOT, "modules", m, "wrangler.toml"), join(d, `${m}.toml`));
+    // Each file reports its own exit status, so one failure names its module and does not hide the rest.
+    const loop = 'for m in "$@"; do sh "$FILL" "$DIR/$m.toml" >/dev/null 2>"$DIR/$m.err"; echo "$m $?"; done';
+    const out = execFileSync("sh", ["-c", loop, "sh", ...names], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...env, FILL, DIR: d },
+    });
+    const status = new Map(out.trim().split("\n").map((l) => l.split(" ") as [string, string]));
+    expect([...status.keys()].sort()).toEqual([...names].sort());
     for (const m of names) {
-      const copy = join(d, `${m}.toml`);
-      cpSync(join(ROOT, "modules", m, "wrangler.toml"), copy);
-      let status = 0;
-      let out = "";
-      try {
-        execFileSync("sh", [FILL, copy], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env });
-      } catch (e) {
-        const x = e as { status?: number; stdout?: string; stderr?: string };
-        status = x.status ?? 1;
-        out = `${x.stdout ?? ""}${x.stderr ?? ""}`;
-      }
-      expect(status, `${m}: ${out}`).toBe(0);
-      const live = readFileSync(copy, "utf8").split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+      expect(status.get(m), `${m}: ${readFileSync(join(d, `${m}.err`), "utf8")}`).toBe("0");
+      const live = readFileSync(join(d, `${m}.toml`), "utf8").split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
       expect(live, m).not.toMatch(/REPLACE_WITH_|\$\{[A-Z_]+\}/);
     }
   });
