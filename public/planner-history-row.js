@@ -512,7 +512,7 @@ function buildHistoryRow(r, childrenByParent) {
     addAudio.addEventListener("click", () => addAudioToRender(r, addAudio));
     actions.appendChild(addAudio);
 
-    // v0.137.0: spoken narration via installed score module (config_schema.text).
+    // v0.137.0: spoken narration via an installed score module of kind narration (vivijure-cf#878).
     if (
       window.plannerRegistry
       && window.plannerRegistry.narrationScoreModules().length > 0

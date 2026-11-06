@@ -1,7 +1,7 @@
 // Planner audio-bed / narration via installed `score` modules (registry-driven).
 //
-// Discovers score modules from the registry (music: config_schema.prompt; narration:
-// config_schema.text), invokes the chosen one, and reads the R2 audio key from applied tags.
+// Discovers score modules from the registry by their declared score_kind (vivijure-cf#878: "music" for a
+// bed, "narration" for a voiceover), invokes the chosen one, and reads the R2 audio key from applied tags.
 
 import type { Env } from "./env";
 import {
@@ -13,6 +13,7 @@ import {
   validateConfig,
 } from "@skyphusion-labs/vivijure-core/modules/registry";
 import type { PlanEnhanceStoryboard, RegisteredModule, ScoreInput, ScoreOutput } from "@skyphusion-labs/vivijure-core/modules/types";
+import { pickScoreModule, scoreModulesOfKind } from "@skyphusion-labs/vivijure-core/modules/score-select";
 import { hookOutputViolation } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 interface FetcherLike {
@@ -21,18 +22,14 @@ interface FetcherLike {
 
 export type ScoreBedKind = "music" | "narration";
 
-/** Score modules that generate a music bed (config_schema.prompt). */
+/** Score modules that generate a music bed: score_kind "music" (vivijure-cf#878). */
 export function musicScoreModules(modules: RegisteredModule[]): RegisteredModule[] {
-  return servingForHook(modules, "score").filter(
-    (m) => m.config_schema != null && m.config_schema.prompt != null,
-  );
+  return scoreModulesOfKind(modules, "music");
 }
 
-/** Score modules that synthesize narration (config_schema.text). */
+/** Score modules that synthesize narration: score_kind "narration" (vivijure-cf#878). */
 export function narrationScoreModules(modules: RegisteredModule[]): RegisteredModule[] {
-  return servingForHook(modules, "score").filter(
-    (m) => m.config_schema != null && m.config_schema.text != null,
-  );
+  return scoreModulesOfKind(modules, "narration");
 }
 
 /** User-facing label from a module manifest (provides[0].label, else name). */
@@ -45,20 +42,6 @@ function fetcherForModule(env: Env, mod: RegisteredModule): FetcherLike | null {
   return resolveFetcher(env as unknown as Record<string, unknown>, mod.binding);
 }
 
-function candidatesForKind(modules: RegisteredModule[], kind: ScoreBedKind): RegisteredModule[] {
-  return kind === "music" ? musicScoreModules(modules) : narrationScoreModules(modules);
-}
-
-function resolveScoreModule(
-  modules: RegisteredModule[],
-  kind: ScoreBedKind,
-  moduleName?: string,
-): RegisteredModule | null {
-  const candidates = candidatesForKind(modules, kind);
-  if (candidates.length === 0) return null;
-  if (moduleName) return candidates.find((m) => m.name === moduleName) ?? null;
-  return candidates[0];
-}
 
 function resolveScoreModuleByName(
   modules: RegisteredModule[],
@@ -99,17 +82,10 @@ export async function startScoreBedGenerate(
 > {
   const kind: ScoreBedKind = args.kind === "narration" ? "narration" : "music";
   const modules = await discoverModules(env as unknown as Record<string, unknown>);
-  const mod = resolveScoreModule(modules, kind, args.module?.trim() || undefined);
-  if (!mod) {
-    const wanted = args.module?.trim();
-    const hint = kind === "music" ? "config_schema.prompt" : "config_schema.text";
-    return {
-      ok: false,
-      error: wanted
-        ? `score module "${wanted}" is not installed or is not a ${kind} module`
-        : `no ${kind} score module installed (bind a score module with ${hint})`,
-    };
-  }
+  // vivijure-cf#878: one module of the declared kind. Every refusal names its cause.
+  const picked = pickScoreModule(modules, kind, args.module?.trim() || undefined);
+  if (!picked.ok) return { ok: false, error: picked.error };
+  const mod = picked.module;
 
   const fetcher = fetcherForModule(env, mod);
   if (!fetcher) {

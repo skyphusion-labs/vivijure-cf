@@ -150,10 +150,12 @@ flowchart TD
   BESPOKE --> S5[notify: toggle]
 ```
 
-There are **12 hooks** (extension points). A hook is either:
+There are **12 hooks** (extension points). A hook is one of:
 - **`pick_one`** -- exactly one installed module serves it (rendered as a chooser), or
 - **`chain`** -- every installed module serving it runs in order, each consuming the previous output
-  (rendered as stacked config blocks).
+  (rendered as stacked config blocks), or
+- **`pick_one_per_kind`** -- `score` only (vivijure-cf#878): each module declares a `score_kind` (`music`,
+  `narration` or `beat`), and one module serves each kind.
 
 A module failure is **data, never an exception across the wire**: a module returns `{ ok: false }`
 and the core degrades; it does not crash. Polish steps (finish, speech, score, master, film.finish)
@@ -438,7 +440,8 @@ isolate (a refresh storm does not re-fetch every module manifest).
 | `studio_release` | string | **cf#287.** Studio release / build identity. Prefer `env.STUDIO_RELEASE` (the control-plane tag, e.g. `v1.20.1`) when bound; otherwise the baked `package.json` version. ALWAYS present so two tag deploys never project a byte-identical registry (module manifest versions are hand-maintained and do not move when a module gains telemetry or a fix). |
 | `git_sha?` | string | **cf#287, optional.** Git sha of the build that produced this worker (`env.STUDIO_GIT_SHA`). Omitted when unset; never invented. |
 
-`HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain", order: number }`.
+`HookCatalogEntry`: `{ name: HookName, blurb: string, cardinality: "pick_one" | "chain" | "pick_one_per_kind", order: number }`.
+`pick_one_per_kind` is `score` only (vivijure-cf#878): one module per declared `score_kind`.
 `order` is the pipeline display sort key (`HOOK_DISPLAY_ORDER`, core#54; additive): `plan.enhance` 10,
 `cast.image` 20, `image.generate` 30, `keyframe` 40, `motion.backend` 50, `dialogue` 60, `speech` 70,
 `finish` 80, `score` 90, `master` 100, `film.finish` 110, `notify` 120. A panel sorts `catalog[]` by it
@@ -1754,7 +1757,7 @@ hook; optional hint fields are not demanded.
 | `keyframe` | pick_one | storyboard -> start keyframes (SDXL) |
 | `motion.backend` | pick_one | keyframe -> shot clip (GPU or cloud) |
 | `finish` | chain | interpolation / upscale / face restore |
-| `score` | chain | music / narration / beat-sync |
+| `score` | pick_one_per_kind | music / narration / beat-sync |
 | `dialogue` | pick_one | spoken lines -> per-character voice (TTS) |
 | `speech` | chain | clean / enhance dialogue audio |
 | `plan.enhance` | chain | LLM auto-direction |

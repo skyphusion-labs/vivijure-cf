@@ -17,13 +17,14 @@ describe("score-bed helpers", () => {
     expect(audioKeyFromApplied([])).toBeNull();
   });
 
-  it("musicScoreModules keeps score modules with a prompt field only", () => {
+  it("musicScoreModules and narrationScoreModules select by declared kind (vivijure-cf#878)", () => {
     const music = {
       name: "music-gen",
       version: "0.1.0",
       api: "vivijure-module/2" as const,
       binding: "MODULE_MUSIC_GEN",
       hooks: ["score" as const],
+      score_kind: "music",
       config_schema: { prompt: { type: "string" as const, default: "" } },
     } as unknown as RegisteredModule;
     const narration = {
@@ -32,10 +33,14 @@ describe("score-bed helpers", () => {
       api: "vivijure-module/2" as const,
       binding: "MODULE_NARRATION_GEN",
       hooks: ["score" as const],
+      score_kind: "narration",
       config_schema: { text: { type: "string" as const, default: "" } },
     } as unknown as RegisteredModule;
     expect(musicScoreModules([music, narration])).toEqual([music]);
     expect(narrationScoreModules([music, narration])).toEqual([narration]);
+    // CONTROL: a module with the old config key and no declared kind is not selected for either.
+    const keyOnly = { ...narration, name: "legacy-narration", score_kind: undefined } as unknown as RegisteredModule;
+    expect(narrationScoreModules([keyOnly, music])).toEqual([]);
   });
 
   it("scoreModuleLabel prefers provides[0].label", () => {

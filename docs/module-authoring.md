@@ -46,7 +46,7 @@ surface internal: the service binding is the boundary, do not punch a hole in it
 | `keyframe` | storyboard -> start keyframes (SDXL on GPU) | **pick one** |
 | `motion.backend` | keyframe (+ motion prompt) -> shot clip (GPU or cloud) | **pick one** per shot |
 | `finish` | post-process a clip: interpolation / lip-sync / upscale / face restore | **chain** |
-| `score` | add audio to a film: music / narration / beat-sync | **chain** |
+| `score` | add audio to a film: music / narration / beat-sync | **one per kind**: declare `score_kind` (`music`, `narration` or `beat`); the host picks one module per kind (vivijure-cf#878) |
 | `dialogue` | per-shot dialogue lines -> speech audio (TTS); becomes the shot's spoken track | **pick one** |
 | `speech` | per-shot dialogue audio -> cleaned/enhanced audio (post-dialogue, pre-finish) | **chain** |
 | `plan.enhance` | expand a storyboard before render (LLM auto-direction) | **chain** |

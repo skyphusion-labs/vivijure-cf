@@ -19,7 +19,7 @@ const el = (tag, cls, text) => {
 // Pipeline stage order comes from catalog[].order (core HookCatalogEntry / HOOK_DISPLAY_ORDER).
 // Panels must not hardcode hook name lists (core#54).
 
-const CARDINALITY_LABEL = { pick_one: "single module", chain: "chain" };
+const CARDINALITY_LABEL = { pick_one: "single module", chain: "chain", pick_one_per_kind: "one per kind" };
 
 // In-memory pipeline state: the pick_one choice per hook and the per-module
 // config the user has set. Kept here so a later increment can submit it with a
