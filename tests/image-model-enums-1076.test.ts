@@ -2,9 +2,9 @@ import { MODELS as KEYFRAME_MODELS, clampModel } from "../modules/cloud-keyframe
 // cf#1076: image model enums against schema-input.json, read 2026-10-30.
 // Defaults stay the first declared id. A new option is selectable. It is not the default.
 import { describe, expect, it, vi } from "vitest";
-import { LEGACY_MODELS, MODELS as IMAGE_MODELS } from "../modules/image-generate/src/index";
+import { LEGACY_MODELS, MODELS as IMAGE_MODELS } from "../modules/image-generate/src/manifest";
 import { generateImageBytes, proxiedParams as imageParams } from "../modules/image-generate/src/image-gen";
-import { MODELS as CAST_MODELS } from "../modules/cast-image/src/index";
+import { MODELS as CAST_MODELS } from "../modules/cast-image/src/manifest";
 import { proxiedParams as castParams } from "../modules/cast-image/src/image-gen";
 import { MODELS as KF_MODELS } from "../modules/cloud-keyframe/src/keyframe";
 import { maxRefsForModel, proxiedParams as kfParams } from "../modules/cloud-keyframe/src/image-gen";

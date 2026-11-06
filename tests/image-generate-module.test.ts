@@ -7,7 +7,8 @@ import { extractProxiedImageUrl } from "../modules/image-generate/src/image-gen"
 // a payload the core would hand downstream as garbage.
 
 import { describe, it, expect, vi } from "vitest";
-import worker, { MANIFEST, MODELS } from "../modules/image-generate/src/index";
+import worker from "../modules/image-generate/src/index";
+import { MANIFEST, MODELS } from "../modules/image-generate/src/manifest";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { base64ToBytes, sniffImageMime } from "../modules/image-generate/src/image-gen";
