@@ -54,6 +54,8 @@ const browser = await chromium.launch({
 });
 process.on("uncaughtException", (e) => { console.log("HARNESS", String(e).split("\n")[0]); process.exit(2); });
 
+// cf#1341: a test can set the next reply's scenes from the sent ones, so one message can meet two replies.
+let nextReply = null;
 async function session(planned) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await ctx.addInitScript(() => { try { localStorage.setItem("vivijure_api_token", "test"); } catch {} });
@@ -69,6 +71,11 @@ async function session(planned) {
     if (pathname === "/api/storyboard/refine") {
       const { storyboard, message } = JSON.parse(r.request().postData());
       const scenes = storyboard.scenes;
+      if (nextReply) {
+        const make = nextReply;
+        nextReply = null;
+        return J(r, { ok: true, storyboard: { ...storyboard, scenes: make(scenes) } });
+      }
       // "shrink" answers the way the capped prompt asks: the first 50 scenes (or one fewer on a short board).
       if (message === "shrink") return J(r, { ok: true, storyboard: { ...storyboard, scenes: scenes.slice(0, Math.min(50, scenes.length - 1)) } });
       // "edit" rewrites scene 1 and keeps every scene; "grow" adds one.
@@ -129,6 +136,42 @@ const refine = async (page, message) => {
   const g = await refine(page, "grow");
   check("60 scenes: a reply that adds a scene is applied", g.n === 61, String(g.n));
   check("no page errors", errors.length === 0, errors.join("; "));
+  await ctx.close();
+}
+
+// ---- cf#1341: on a board over 50, a shorter reply applies only when the message names each removed scene,
+// the reply only removes, and every kept scene is unchanged.
+{
+  const { ctx, page, errors } = await session(boardOf(60));
+  const DELETE = "Delete shots 10, 20 and 30. Keep every other scene exactly as it is.";
+  const without = (ids) => (scenes) => scenes.filter((s) => !ids.includes(s.id));
+
+  nextReply = (scenes) => scenes.slice(0, 50);
+  const trunc = await refine(page, DELETE);
+  check("1341: the delete message with a 60 to 50 truncation is refused", trunc.n === 60 && /50 of your 60/.test(trunc.last), trunc.last);
+
+  nextReply = without(["shot_10", "shot_20", "shot_30"]);
+  const plain = await refine(page, "Make the pacing tighter.");
+  check("1341: a pure removal with no removal message is refused", plain.n === 60 && /57 of your 60/.test(plain.last), plain.last);
+
+  nextReply = (scenes) => without(["shot_10", "shot_20", "shot_30"])(scenes).map((s) => (s.id === "shot_11" ? { ...s, prompt: "Edited by refine." } : s));
+  const edited = await refine(page, DELETE);
+  check("1341: a delete that also edits a kept scene is refused", edited.n === 60 && /57 of your 60/.test(edited.last), edited.last);
+
+  nextReply = without(["shot_5"]); // this board's ids are unpadded: shot_1 to shot_60
+  const rain = await refine(page, "remove the rain from shot 5");
+  check("1341: \"remove the rain from shot 5\" with a shorter reply is refused", rain.n === 60 && /not applied: the reply had 59 of your 60/.test(rain.last), rain.last);
+  check("1341: a refusal still points to the scene editor", /delete in the scene editor/.test(rain.last), rain.last);
+
+  nextReply = without(["shot_10", "shot_20", "shot_30"]);
+  const ok = await refine(page, DELETE);
+  check("1341: 60 to 57 with \"delete shots 10, 20, 30\" applies", ok.n === 57, String(ok.n));
+  check("1341: the chat names the removed scenes and the undo",
+    /removed Scene 10 \(shot_10\), Scene 20 \(shot_20\), Scene 30 \(shot_30\); discard all edits restores them/.test(ok.last), ok.last);
+  await page.click("#planner-scenes-discard");
+  const back = await page.evaluate(() => window.planState.storyboard.scenes.length);
+  check("1341: discard all edits restores the removed scenes", back === 60, String(back));
+  check("1341: no page errors", errors.length === 0, errors.join("; "));
   await ctx.close();
 }
 
