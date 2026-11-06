@@ -89,7 +89,8 @@ only forwards the SRT + style spec). See `wrangler.toml`.
 A polish step never fails the chain. Nothing to caption is an intentional no-op
 (`noop:no-dialogue`); a disabled module is `noop:disabled`. A sidecar-only run with no presigned
 sidecar URL, or a container failure, passes the original film through unchanged with `degraded` set
-(e.g. `passthrough:container-failed`) -- never a fake "applied" tag, so a degrade is never silent.
+(e.g. `passthrough:container-http-error` for a non-2xx, `passthrough:container-refused` for an
+`ok: false` body) -- never a fake "applied" tag, so a degrade is never silent.
 
 ## License
 

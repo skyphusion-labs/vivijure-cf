@@ -64,7 +64,8 @@ secrets (it only forwards the card spec). See `wrangler.toml`.
 
 A polish step never fails the chain. No title and no credits is an intentional no-op
 (`noop:no-cards`); a container failure passes the original film through unchanged tagged
-`passthrough:container-failed` with `degraded` set.
+`passthrough:container-http-error` (a non-2xx) or `passthrough:container-refused` (an `ok: false`
+body) with `degraded` set.
 
 ## License
 
