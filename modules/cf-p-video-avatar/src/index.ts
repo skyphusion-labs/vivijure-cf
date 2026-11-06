@@ -24,8 +24,6 @@ import {
   type MotionBackendOutput,
 } from "./contract";
 import {
-  MODEL,
-  buildParams,
   parseVideoUrl,
   clipTiming,
   encodePoll,
@@ -34,48 +32,11 @@ import {
   clipKey,
   normalizeConfig,
   type RunState,
-  type ModuleConfig,
 } from "./params";
 import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
-import { callWithRefusals, failOnRefusal, type GatewayLogReader } from "../../_shared/gateway-log";
+import { failOnRefusal } from "../../_shared/gateway-log";
+import { type Env, type WorkflowParams, generateClip, secretValue } from "./generate";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
-
-interface R2Bucket {
-  put(key: string, value: ArrayBuffer | string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
-  get(key: string): Promise<{ text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer> } | null>;
-}
-
-interface AiRun {
-  run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
-  // Set by the binding after a gateway call. Absent on a stub or an unrouted call.
-  aiGatewayLogId?: string | null;
-  // cf#1154: the binding's gateway handle, used only to read one failed call's own log entry.
-  gateway?: GatewayLogReader["gateway"];
-}
-
-interface WorkflowInstance {
-  id: string;
-  status(): Promise<{ status: string }>;
-}
-interface WorkflowBinding {
-  create(options?: { id?: string; params?: WorkflowParams }): Promise<WorkflowInstance>;
-  get(id: string): Promise<WorkflowInstance>;
-}
-
-interface Env {
-  AI: AiRun;
-  GATEWAY_ID: SecretsStoreSecret;
-  R2_RENDERS: R2Bucket;
-  I2V_WORKFLOW: WorkflowBinding;
-}
-
-export interface WorkflowParams {
-  job_id: string;
-  project: string;
-  shot_id: string;
-  input: MotionBackendInput;
-  config: ModuleConfig;
-}
 
 const MANIFEST: ModuleManifest = {
   name: "cf-p-video-avatar",
@@ -120,17 +81,6 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
-  if (typeof s === "string") return s;
-  if (!s) return "";
-  try {
-    return await s.get();
-  } catch (e) {
-    console.warn("secrets-store get failed: " + (e as Error).message);
-    return "";
-  }
-}
-
 async function writeState(env: Env, jobId: string, state: RunState): Promise<void> {
   await env.R2_RENDERS.put(stateKey(jobId), JSON.stringify(state), {
     httpMetadata: { contentType: "application/json" },
@@ -145,16 +95,6 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   } catch {
     return null;
   }
-}
-
-/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
-export async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
-  const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) throw new Error("GATEWAY_ID not configured");
-  const modelParams = buildParams(params.input, params.config);
-  // A refusal its gateway log names (content policy, credit, a provider failure) comes back as { refused } and
-  // fails in parse, so it is never bought again. Anything else keeps the provider's own error and its log id.
-  return callWithRefusals(env.AI, gatewayId, () => env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } }));
 }
 
 /** Download and write. Retries on its own step, and never reaches the provider. */

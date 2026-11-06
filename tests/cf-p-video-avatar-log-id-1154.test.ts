@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateClip, type WorkflowParams } from "../modules/cf-p-video-avatar/src/index";
+import { generateClip, type WorkflowParams } from "../modules/cf-p-video-avatar/src/generate";
 
 // cf#1154: a provider 7003 carries no detail. The gateway log id points at the request and holds no content.
 const params = {

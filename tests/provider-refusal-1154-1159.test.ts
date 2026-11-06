@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyTransientFailure } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { callWithRefusals, readRefusal, refusalFromLog } from "../modules/_shared/gateway-log";
 import { CfPVideoAvatarWorkflow } from "../modules/cf-p-video-avatar/src/index";
-import { CfVeoWorkflow, generateClip as veoGenerateClip } from "../modules/cf-veo/src/index";
+import { CfVeoWorkflow } from "../modules/cf-veo/src/index";
+import { generateClip as veoGenerateClip } from "../modules/cf-veo/src/generate";
 import { buildParams as avatarParams } from "../modules/cf-p-video-avatar/src/params";
 
 // cf#1154 / cf#1159. The response heads below are the provider replies the lead read from the AI Gateway log

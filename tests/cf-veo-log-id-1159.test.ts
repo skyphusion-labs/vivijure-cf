@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generateClip, type WorkflowParams } from "../modules/cf-veo/src/index";
+import { generateClip, type WorkflowParams } from "../modules/cf-veo/src/generate";
 import { namingGatewayLog } from "../modules/_shared/gateway-log";
 
 // cf#1159: cf-veo failed one photoreal shot with "AiGatewayError: 2002: Error" and nothing else. The gateway log
