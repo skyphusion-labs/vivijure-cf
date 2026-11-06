@@ -17,7 +17,7 @@ duration behind:
 So the guard gets blinder exactly as the film gets longer, which is the wrong
 direction for a check whose whole purpose is "a scatter render once shipped 1 of 3
 shots". Chunked assemble makes this acute: it introduces a SECOND concat level whose
-parts are whole batches, and `MAX_CLIPS` is 80, so 7+ parts at the outer level is the
+parts are whole batches, and `MAX_CLIPS` is 600, so 7+ parts at the outer level is the
 normal case rather than the edge one. Ported unchanged, the outer guard would be
 decoration -- present, green, and structurally unable to see the failure it is named
 for.
