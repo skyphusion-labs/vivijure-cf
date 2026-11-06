@@ -1,7 +1,7 @@
 // Pure helpers for the chatterbox module: TTS param construction, R2 key layout, poll tokens, run
 // state, and line validation. No I/O -- unit-tested without bindings or spend.
 //
-// Backed by Deepgram Aura-1 on Workers AI (chatterbox-turbo). We request 16-bit PCM WAV (not the
+// Backed by the RunPod public chatterbox-turbo endpoint. We request WAV (not the
 // default MP3) so the spoken track stays clean and lossless all the way into the final mux.
 
 import type { DialogueInput, DialogueLine, DialogueOutput, DialogueShotAudio } from "./contract";
@@ -115,3 +115,59 @@ export interface NormalizedLine {
   text: string;
   voice: VoiceId;
 }
+
+// --- the provider job (cf#1164) ---
+//
+// `/runsync` waits about 90 s. A job still queued or running at that point comes back as
+// `{ id, status: "IN_QUEUE" | "IN_PROGRESS" }` with no output, and the job keeps going. A failed job comes
+// back as `{ id, status: "FAILED", error }`, often with HTTP 400. So a reply is read by its status, and a
+// non-terminal job is polled by its id, never submitted again.
+
+/** What one reply from `/runsync` or `/status/<id>` says about a line. */
+export type LineProgress =
+  | { kind: "done"; url: string }
+  | { kind: "pending"; id: string; status: string }
+  | { kind: "failed"; error: string };
+
+const PENDING_STATUSES: ReadonlySet<string> = new Set(["IN_QUEUE", "IN_PROGRESS"]);
+const FAILED_STATUSES: ReadonlySet<string> = new Set(["FAILED", "CANCELLED", "TIMED_OUT"]);
+
+function errorText(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object") {
+    const m = (e as Record<string, unknown>).message;
+    if (typeof m === "string" && m.length > 0) return m;
+    return JSON.stringify(e);
+  }
+  return "";
+}
+
+/** Pure. Reads one provider reply. Returns null when the reply carries no job status at all, so the caller
+ *  can tell "the provider answered" from "the request did not reach a job" (an HTTP error with no body). */
+export function readJobReply(httpStatus: number, body: unknown): LineProgress | null {
+  const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const status = typeof b.status === "string" ? b.status : "";
+  const id = typeof b.id === "string" ? b.id : "";
+  const err = errorText(b.error).slice(0, 300);
+  if (status === "COMPLETED") {
+    const out = b.output && typeof b.output === "object" ? (b.output as Record<string, unknown>) : {};
+    const url = typeof out.audio_url === "string" ? out.audio_url : "";
+    if (url) return { kind: "done", url };
+    return { kind: "failed", error: "chatterbox job " + (id || "?") + " COMPLETED with no audio_url" + (err ? ": " + err : "") };
+  }
+  if (PENDING_STATUSES.has(status)) {
+    // A job we cannot name cannot be polled or cancelled. Report it, rather than submit a second one.
+    if (!id) return { kind: "failed", error: "chatterbox reply " + status + " carried no job id" };
+    return { kind: "pending", id, status };
+  }
+  if (FAILED_STATUSES.has(status)) {
+    return { kind: "failed", error: "chatterbox job " + (id || "?") + " " + status + (err ? ": " + err : "") + " (HTTP " + httpStatus + ")" };
+  }
+  if (status) return { kind: "failed", error: "chatterbox job " + (id || "?") + " has unknown status " + status + " (HTTP " + httpStatus + ")" };
+  return null;
+}
+
+/** Poll cadence for a queued line. 20 s apart, 30 polls: a line waits at most about 10 minutes in the
+ *  provider queue, then it is cancelled and the film fails with the status it was stuck in. */
+export const LINE_POLL_DELAY = "20 seconds" as const;
+export const LINE_MAX_POLLS = 30;
