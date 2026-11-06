@@ -176,7 +176,7 @@ resolution than infinitetalk. Not a default door.
 | Talks? | Mouth follows our file. Not invented speech. |
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line is refused. |
 | First+last? | No. The page has a portrait and no end frame. |
-| Cannot | Invent speech. Lock the sample you kept. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. Trim trailing silence. |
+| Cannot | Invent speech. Lock the sample you kept. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. |
 
 ## infinitetalk
 

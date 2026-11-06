@@ -40,7 +40,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type Workflo
 
 const MANIFEST: ModuleManifest = {
   name: "cf-p-video-avatar",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (higher resolution)" }],
@@ -60,7 +60,7 @@ const MANIFEST: ModuleManifest = {
       "Mouth follows the storyboard line in the Cast voice. A shot with no line is refused.",
       "720p or 1080p.",
       "15 seconds is this door's own cap, not the provider's, until a real long-line test.",
-      "Trailing silence is not trimmed. If billing follows the audio, that silence is billed.",
+      "The line's trailing silence is cut to 200 ms before this door sees it, and the line is not padded (cf#957, core#464).",
       "Whether the picture follows the portrait's shape is unknown until a real render.",
       "A named voice is sent because the provider requires one. Whether it changes an audio-driven clip is unknown until a real render.",
     ],
