@@ -4,7 +4,9 @@
 // through core's own validator and parser.
 import { describe, it, expect } from "vitest";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
-import { parseMotionUsage } from "@skyphusion-labs/vivijure-core/motion-usage";
+import { doorBillsPerClip, parseMotionUsage } from "@skyphusion-labs/vivijure-core/motion-usage";
+import { assembleHoldSeconds, drivenLineFloorSeconds } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import wan from "../modules/alibaba-wan/src/index";
 import infinitetalk from "../modules/infinitetalk/src/index";
 import pvideo from "../modules/cf-p-video-avatar/src/index";
@@ -37,5 +39,36 @@ describe("driving-audio floors under core 1.37.0 (cf#957, core#464)", () => {
     const limits = ((await manifestOf(pvideo)).ui as { limits: string[] }).limits;
     expect(limits.some((l) => /not trimmed/.test(l))).toBe(false);
     expect(limits.some((l) => /cut to 200 ms/.test(l))).toBe(true);
+  });
+});
+
+// cf#1338 / vivijure-core#478 (core 1.40.0): a driven shot keeps its planned length by the cheapest means its
+// door allows. The rule reads each door's billing from its REAL manifest, so this is where it is proven: a
+// fixture shaped by hand is what the first draft of core#478 got wrong (`[0.25]` against the real
+// `[{ usd: 0.25 }]`), and a rule that misreads InfiniteTalk holds its clip instead of padding its line.
+describe("planned length per driving-audio door, from the real manifests (cf#1338, core 1.40.0)", () => {
+  const PLANNED = 2;
+  const ruleFor = async (w: Door) => {
+    const m = await manifestOf(w);
+    const usage = parseMotionUsage(m.usage);
+    const perClip = doorBillsPerClip({ ...(m as object), binding: "MODULE_X" } as RegisteredModule);
+    return {
+      perClip,
+      pad: drivenLineFloorSeconds(usage, perClip, PLANNED),
+      hold: assembleHoldSeconds(usage, perClip, PLANNED),
+    };
+  };
+
+  it("InfiniteTalk bills per clip: its line is padded to the 2s plan, and assembly holds nothing", async () => {
+    expect(await ruleFor(infinitetalk)).toEqual({ perClip: true, pad: 2, hold: undefined });
+  });
+
+  it("p-video bills per second: no pad, its pad would be billed; assembly holds it to the 2s plan", async () => {
+    expect(await ruleFor(pvideo)).toEqual({ perClip: false, pad: 0, hold: 2 });
+  });
+
+  it("Wan bills per second: its own 3s floor still pads the line, and assembly holds to the plan", async () => {
+    // A Wan clip is 5, 10 or 15 seconds, so the hold to 2s never adds a frame; it is harmless, not needed.
+    expect(await ruleFor(wan)).toEqual({ perClip: false, pad: 3, hold: 2 });
   });
 });
