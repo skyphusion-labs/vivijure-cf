@@ -688,6 +688,23 @@ details.planner-bundle-consistent {
   color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
   border-radius: 999px; padding: 3px 9px;
 }
+/* cf#1329: one window of scenes at a time on a long board. */
+.planner-scenes-pager {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-2);
+}
+.planner-scenes-pager[hidden] { display: none; }
+.planner-scenes-pager button {
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 9px; padding: 7px 10px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px;
+}
+.planner-scenes-pager button:disabled { opacity: 0.45; cursor: default; }
+.planner-scenes-page-label { font-size: 13px; color: var(--muted); }
+.planner-scenes-page-jump { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin-left: auto; }
+.planner-scenes-page-jump input {
+  width: 5.5em; background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+  border-radius: 9px; padding: 6px 8px; font: inherit; font-size: 13px;
+}
 .planner-scene-row {
   border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
   background: var(--panel-2); display: grid; gap: 12px;
