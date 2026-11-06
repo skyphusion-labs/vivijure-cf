@@ -40,7 +40,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type Workflo
 
 const MANIFEST: ModuleManifest = {
   name: "cf-p-video-avatar",
-  version: "0.1.3",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (higher resolution)" }],
@@ -60,7 +60,8 @@ const MANIFEST: ModuleManifest = {
       "Mouth follows the storyboard line in the Cast voice. A shot with no line is refused.",
       "720p or 1080p.",
       "15 seconds is this door's own cap, not the provider's, until a real long-line test.",
-      "The line's trailing silence is cut to 200 ms before this door sees it, and the line is not padded (cf#957, core#464).",
+      "The line's trailing silence is cut to 200 ms before this door sees it (cf#957, core#464).",
+      "The provider refuses a line under 1 second, so a shorter line is padded with silence to 1 second. A shot shorter than its plan is held on its last frame in assembly, which is not billed (cf#1338).",
       "Whether the picture follows the portrait's shape is unknown until a real render.",
       "A named voice is sent because the provider requires one. Whether it changes an audio-driven clip is unknown until a real render.",
     ],
@@ -71,6 +72,10 @@ const MANIFEST: ModuleManifest = {
     voice: "cast_tts",
     scatter_native_audio: false,
     driving_audio: true,
+    // cf#1338: the provider's own floor. pruna/p-video-avatar answered a 0.43 s line with 400 "Audio is too
+    // short (0.43s). Minimum duration is 1.0s." (gateway log 01a1b266-f930-7303-baa4-1551fe9be19c, cost 0).
+    // The core pads a line to this for a shot on this door only (core#464).
+    driving_audio_min_seconds: 1,
     // OUR door cap, matching infinitetalk (#931). The provider page lists no duration.
     min_seconds: 1,
     max_seconds: 15,
