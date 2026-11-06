@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.6",
+  version: "0.3.7",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -72,6 +72,14 @@ export const MANIFEST: ModuleManifest = {
       min: 0,
       max: 1,
       label: "two-person portrait strength",
+    },
+    // cf#1143 option a: on a two-person shot, each person's description reaches only their own half of the first
+    // (scene) pass, while the scene, style, setting and the adult statement stay for the whole frame. Off = one
+    // prompt for the frame, as before. Older backend images ignore it.
+    plate_regional_text: {
+      type: "bool",
+      default: false,
+      label: "keep each person's look to themselves",
     },
     // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
     // That checkpoint is not in the default bake. A worker without it fails honest.

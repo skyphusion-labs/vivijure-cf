@@ -50,6 +50,8 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   num("face_crop_pad", "face_crop_pad");
   // cf#1143 option b: the two-person plate takes each portrait at this scale. 0 is off.
   num("plate_ip_adapter_scale", "plate_ip_adapter_scale");
+  // cf#1143 option a: per-region descriptions in the two-person plate. Only a real boolean is forwarded.
+  if (typeof cfg.plate_regional_text === "boolean") o.plate_regional_text = cfg.plate_regional_text;
   // Anime stills swap the SDXL checkpoint. Photoreal keeps the backend default.
   if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_BASES.anime;
   return o;
