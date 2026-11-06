@@ -48,6 +48,8 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   num("canny_scale", "canny_scale");
   // cf#1143: the Pass B identity crop padding. The backend clamps it to 0..2.
   num("face_crop_pad", "face_crop_pad");
+  // cf#1143 option b: the two-person plate takes each portrait at this scale. 0 is off.
+  num("plate_ip_adapter_scale", "plate_ip_adapter_scale");
   // Anime stills swap the SDXL checkpoint. Photoreal keeps the backend default.
   if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_BASES.anime;
   return o;

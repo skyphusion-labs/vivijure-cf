@@ -70,6 +70,13 @@ describe("keyframe pure logic", () => {
     });
   });
 
+  it("buildPreviewBody forwards plate_ip_adapter_scale, and drops a non-number (cf#1143 option b)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_ip_adapter_scale: 0.4 });
+    expect(input.render_overrides).toEqual({ keyframe: { plate_ip_adapter_scale: 0.4 } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_ip_adapter_scale: "0.4" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
   it("buildPreviewBody forwards face_crop_pad, and drops a non-number (cf#1143)", () => {
     const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { face_crop_pad: 1.1 });
     expect(input.render_overrides).toEqual({ keyframe: { face_crop_pad: 1.1 } });
@@ -235,7 +242,8 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.5");
+    expect(MANIFEST.version).toBe("0.3.6");
+    expect(MANIFEST.config_schema?.plate_ip_adapter_scale).toMatchObject({ type: "float", default: 0, min: 0, max: 1 });
     // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.
     expect(MANIFEST.config_schema?.face_crop_pad).toMatchObject({ type: "float", default: 0.35, min: 0, max: 2 });
     expect(MANIFEST.config_schema?.style).toMatchObject({
