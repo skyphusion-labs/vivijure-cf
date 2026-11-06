@@ -2172,7 +2172,15 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         bundle_key: job.bundle_key,
         scenes,
         // New stills in place of the old, by shot. Every other still keeps its key, so its clip's proof holds.
-        keyframes: job.keyframes.map((k) => ({ ...k, keyframe_key: retake.stills?.[k.shot_id] ?? k.keyframe_key })),
+        // A replaced still drops its plate count report (cf#1282): it described the OLD still, and a
+        // warning that outlives the picture it is about is a false one.
+        keyframes: job.keyframes.map((k) => {
+          const next = retake.stills?.[k.shot_id];
+          if (!next) return k;
+          const copy: typeof k & { plate_count?: unknown } = { ...k, keyframe_key: next };
+          delete copy.plate_count;
+          return copy;
+        }),
         held_end_frames: heldEndFrames(job.keyframes, retake, job.held_end_frames),
         motion_backend: job.motion_backend ?? undefined,
         motion_config: job.motion_config,

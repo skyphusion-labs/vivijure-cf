@@ -110,9 +110,41 @@
     return stageBlocks(doc, reportedStages(output, fd), fd && fd.stageSummary, opts);
   }
 
+  /**
+   * cf#916 / cf#1282: the warnings beside ONE shot's still, as elements. Same contract as
+   * stageBlocks: an EMPTY array when there is nothing to say, so a clean shot renders nothing and a
+   * test can tell "declined" from "never reached".
+   *
+   * @param doc     anything with createElement(tag). Injected.
+   * @param output  the render output payload.
+   * @param shotId  the shot.
+   * @param kf      that shot's keyframe entry, which may carry its own plate_count.
+   * @param fd      finishDegrade. Injected; the WORDING lives there, not here.
+   * @param opts    { className } for the warning element.
+   */
+  function shotWarningBlocks(doc, output, shotId, kf, fd, opts) {
+    var out = [];
+    if (!doc || typeof doc.createElement !== "function") return out;
+    if (!fd || typeof fd.shotWarnings !== "function") return out;
+    var lines = fd.shotWarnings(output, shotId, kf);
+    var o = opts || {};
+    for (var i = 0; i < lines.length; i++) {
+      var p = doc.createElement("p");
+      p.className = o.className || "shot-warning";
+      if (typeof p.setAttribute === "function") {
+        p.setAttribute("role", "note");
+        p.setAttribute("data-shot-id", String(shotId));
+      }
+      p.textContent = lines[i];
+      out.push(p);
+    }
+    return out;
+  }
+
   return {
     stageBlocks: stageBlocks,
     reportedStages: reportedStages,
     stageBlocksFor: stageBlocksFor,
+    shotWarningBlocks: shotWarningBlocks,
   };
 });

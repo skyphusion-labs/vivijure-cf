@@ -1115,7 +1115,8 @@ export function rotateFrom<T>(items: T[], start: number): T[] {
 export interface PartJob {
   phase?: string;
   clip_job_id?: string;
-  keyframes?: Array<{ shot_id: string; keyframe_key: string }>;
+  /** `plate_count` is the backend plate count guard report (core 1.31.0, cf#1282), when it ran. */
+  keyframes?: Array<{ shot_id: string; keyframe_key: string; plate_count?: { clean?: unknown } }>;
   finish_shots?: Array<{ shot_id: string; degraded?: string[] }>;
 }
 export interface PartClipJob {
@@ -1142,13 +1143,17 @@ export function partShotRows(doc: ParentDoc, part: ParentPart, job: PartJob | nu
     const fps = clip?.delivered_fps;
     const line = doc.dialogue_lines.find((l) => l.shot_id === id);
     const inRetake = part.retake?.shots.includes(local);
+    const kf = job?.keyframes?.find((k) => k.shot_id === local);
     return {
       shot_id: id,
       index: part.shot_from + i,
       status: clip?.status ?? "pending",
       seconds: sceneSeconds(scene),
       ...(frames && fps ? { delivered_seconds: Math.round((frames / fps) * 1000) / 1000 } : {}),
-      keyframe_key: job?.keyframes?.find((k) => k.shot_id === local)?.keyframe_key ?? clip?.keyframe_key ?? null,
+      keyframe_key: kf?.keyframe_key ?? clip?.keyframe_key ?? null,
+      // cf#1282: true only on an explicit `clean: false`. A still the guard never looked at is absent,
+      // not clean, and shows nothing.
+      ...(kf?.plate_count?.clean === false ? { plate_unclean: true } : {}),
       clip_key: clip?.clip_key ?? null,
       prompt: scene.prompt ?? null,
       line: line?.text ?? null,

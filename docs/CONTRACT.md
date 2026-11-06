@@ -1562,7 +1562,13 @@ ran; plus, when applicable: `sidecar_key` (a soft `.srt` subtitle sidecar was pr
 `finish_unavailable: { at, reason, delivered }` and `clips: { shot_id, key }[]` (#519 clips-only
 degrade), `finish: { degraded, reasons }` (once finish shots exist, #226), `keyframes` (`{ shot_id,
 key }[]`) + `scenes` (keyframes-only), `clips: { shot_id, key, model? }[]` + `model` (a derived
-finalize / cloud / hybrid animation), `keyframes_incomplete`, and `clip_deliveries` (2.21). The poll
+finalize / cloud / hybrid animation), `keyframes_incomplete`, `clip_deliveries` (2.21),
+`content_validation: { checked, unmeasured, reasons, degraded?: { shot_id, reason }[] }` (core 1.25.0:
+what the clip pixel check measured; absent when it never ran), and `plate_check: { checked, unclean:
+{ shot_id, expected, faces }[] }` (core 1.31.0: stills the backend plate count guard ran on, and the ones
+that may show an extra person; absent when it ran on no still). A keyframes-only `keyframes` entry also
+carries `plate_count: { expected, faces, chosen, clean, retries }` when the guard ran on that still. The
+panel shows both checks on the render and beside the affected still (cf#916, cf#1282). The poll
 view (not the history row) additionally relays the host's `wan_lora_projection` (2.21) on any
 `output` it carries, done or in flight.
 

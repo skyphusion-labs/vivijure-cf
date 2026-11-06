@@ -99,7 +99,7 @@ export function clipFinishSummary(clip: ClipFinishDegrade | null | undefined): s
  *
  *  `degraded` is the COUNT and `reasons` is DEDUPED, so `degraded >= reasons.length`; the
  *  two are not interchangeable. */
-export type StageKey = "speech" | "master" | "dialogue" | "film_finish";
+export type StageKey = "speech" | "master" | "dialogue" | "film_finish" | "content_validation" | "plate_check";
 export const STAGE_KEYS: StageKey[];
 
 export interface StageDegrade {
@@ -112,6 +112,12 @@ export interface StageDegrade {
    *  -- the wasted-work signal. Carried so it is not re-derived later; it is NOT a degrade and
    *  must never affect a band or light a badge. */
   adopted?: string[];
+  /** cf#916: `content_validation` only. Clips that FAILED the picture check. */
+  failed?: number;
+  /** cf#916: `content_validation` only. Clips the picture check could not look at. */
+  unmeasured?: number;
+  /** cf#1282: `plate_check` only. Shot ids whose still may show an extra person. */
+  shots?: string[];
 }
 
 /** cf#860: `output.film_finish` normalised into the shared `{ degraded, reasons }` form.
@@ -176,3 +182,33 @@ export function completedStatus(
 export function canRetryFinish(jobId: unknown): boolean;
 export function retryFailedNote(output: RenderOutput | null | undefined): string | null;
 export function waitingLabel(output: RenderOutput | null | undefined): string | null;
+
+/** cf#916: `output.content_validation` (core `contentValidationView`):
+ *  `{ checked, unmeasured, reasons, degraded?: { shot_id, reason }[] }`. `degraded` here is the
+ *  count of failed plus unmeasured clips; `reasons` carries `<shot>: <reason>` for each failure, then
+ *  the deduped unmeasured reasons verbatim. null when the shape is not recognised. */
+export function parseContentValidation(raw: unknown): {
+  degraded: number;
+  reasons: string[];
+  failed: number;
+  failedShots: string[];
+  unmeasured: number;
+} | null;
+
+/** cf#1282: `output.plate_check` (core `plateCheckView`): `{ checked, unclean: { shot_id }[] }`. */
+export function parsePlateCheck(raw: unknown): { degraded: number; reasons: string[]; shots: string[] } | null;
+
+/** The shot ids `output.plate_check` names as unclean. Empty for clean, absent or junk. */
+export function plateUncleanShots(output: RenderOutput | null | undefined): string[];
+
+/** True only when a keyframe entry carries `plate_count.clean === false`. */
+export function keyframeUnclean(kf: unknown): boolean;
+
+/** Plain-words warnings for one shot's still or clip. Empty when there is nothing to say. */
+export function shotWarnings(output: RenderOutput | null | undefined, shotId: string, kf?: unknown): string[];
+
+/** Plain lines for the one-screen Make a video page: no shot ids. Empty when nothing to say. */
+export function simpleWarnings(output: RenderOutput | null | undefined): string[];
+
+/** The sentence shown beside a still made from a plate that may show an extra person. */
+export const STILL_EXTRA_PERSON: string;

@@ -253,7 +253,16 @@
   //
   // This is the unfinished half of cf#549, which was filed about exactly this case: a film that
   // ships without its title card being indistinguishable from one that shipped complete.
-  var STAGE_KEYS = ["speech", "master", "dialogue", "film_finish"];
+  //
+  // cf#916: `content_validation` (core 1.25.0) and cf#1282: `plate_check` (core 1.31.0) join the
+  // same way, as adapters. Both are things the studio MEASURED about the pictures, not finishing
+  // stages, so each carries its own sentence below, and both keep the ladder: key absent means the
+  // check never ran and shows nothing; a clean result shows nothing; only a reported problem renders.
+  var STAGE_KEYS = ["speech", "master", "dialogue", "film_finish", "content_validation", "plate_check"];
+
+  // The one sentence a still with an unclean plate gets, wherever a still is shown. Plain words on
+  // purpose: the reader needs to know what may be wrong and the one thing that can fix it.
+  var STILL_EXTRA_PERSON = "This still may show an extra person. Regenerate it to try again.";
 
   /** Tolerant string-list read for the STRUCTURAL ledgers (`applied` / `adopted`). Deliberately
    *  forgiving where the degrade parse is strict: a malformed ledger must not decide the band,
@@ -286,6 +295,108 @@
     return { degraded: 1, reasons: [String(d).trim()], applied: ledgers.applied, adopted: ledgers.adopted };
   }
 
+  function isCount(v) {
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 && Math.floor(v) === v;
+  }
+
+  /** cf#916: `content_validation` -> the shared form. Core emits
+   *  `{ checked, unmeasured, reasons, degraded? }` (clip-content-validate.ts contentValidationView):
+   *  `unmeasured` clips the pixel check could not look at, `reasons` the deduped words for why, and
+   *  `degraded` the clips that FAILED it, each `{ shot_id, reason }`. The whole key is absent when the
+   *  check never ran. STRICT on the two counts: without them the shape is not one we recognise, and an
+   *  unrecognised shape must read as unreadable, never as clean. */
+  function parseContentValidation(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (!isCount(raw.checked) || !isCount(raw.unmeasured)) return null;
+    if (raw.reasons !== undefined && !Array.isArray(raw.reasons)) return null;
+    if (raw.degraded !== undefined && !Array.isArray(raw.degraded)) return null;
+    var failedShots = [];
+    var failedReasons = [];
+    var list = Array.isArray(raw.degraded) ? raw.degraded : [];
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i];
+      if (!d || typeof d !== "object" || !isNonEmptyString(d.shot_id)) continue;
+      var shot = String(d.shot_id).trim();
+      failedShots.push(shot);
+      // The shot id is OUR structural prefix; the reason after it is the studio's, verbatim.
+      if (isNonEmptyString(d.reason)) failedReasons.push(shot + ": " + String(d.reason).trim());
+    }
+    var reasons = failedReasons.concat(raw.unmeasured > 0 ? stringList(raw.reasons) : []);
+    return {
+      degraded: failedShots.length + raw.unmeasured,
+      reasons: reasons,
+      failed: failedShots.length,
+      failedShots: failedShots,
+      unmeasured: raw.unmeasured,
+    };
+  }
+
+  /** cf#1282: `plate_check` -> the shared form. Core emits `{ checked, unclean: [{ shot_id,
+   *  expected, faces }] }` (plate-count.ts plateCheckView), absent when the backend plate count guard
+   *  ran on no still. Each unclean entry is a still made from a plate that may show an extra person.
+   *  There is no studio reason string to quote, so `reasons` stays empty and the summary says it. */
+  function parsePlateCheck(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (!isCount(raw.checked) || !Array.isArray(raw.unclean)) return null;
+    var shots = [];
+    for (var i = 0; i < raw.unclean.length; i++) {
+      var u = raw.unclean[i];
+      if (u && typeof u === "object" && isNonEmptyString(u.shot_id)) shots.push(String(u.shot_id).trim());
+    }
+    return { degraded: shots.length, reasons: [], shots: shots };
+  }
+
+  /** The shot ids `output.plate_check` names as unclean. Empty for clean, absent, or junk. */
+  function plateUncleanShots(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return [];
+    var parsed = parsePlateCheck(output.plate_check);
+    return parsed ? parsed.shots : [];
+  }
+
+  /** True when this keyframe entry's own `plate_count` says its plate was not clean. Only an explicit
+   *  `clean: false` counts: a missing or malformed report is "not measured", never a warning. */
+  function keyframeUnclean(kf) {
+    if (!kf || typeof kf !== "object") return false;
+    var pc = kf.plate_count;
+    return !!pc && typeof pc === "object" && !Array.isArray(pc) && pc.clean === false;
+  }
+
+  /** The warnings to show beside ONE shot's still or clip, in plain words. Empty when there is
+   *  nothing to say, which is the common case and must render nothing.
+   *
+   *  @param output  the render output payload (may be null)
+   *  @param shotId  the shot
+   *  @param kf      that shot's keyframe entry, when the caller has one (it may carry plate_count) */
+  function shotWarnings(output, shotId, kf) {
+    var out = [];
+    var id = isNonEmptyString(shotId) ? String(shotId).trim() : "";
+    var unclean = keyframeUnclean(kf) || (!!id && plateUncleanShots(output).indexOf(id) !== -1);
+    if (unclean) out.push(STILL_EXTRA_PERSON);
+    if (id && output && typeof output === "object" && !Array.isArray(output)) {
+      var cv = parseContentValidation(output.content_validation);
+      if (cv && cv.failedShots.indexOf(id) !== -1) out.push("This clip failed the picture check and may look wrong.");
+    }
+    return out;
+  }
+
+  /** The plain lines the one-screen Make a video page shows under a finished video. That page has
+   *  no shot list and no shot ids, so these say WHAT may be wrong and WHERE to fix it, nothing more.
+   *  Empty when the checks found nothing or never ran: a clean video shows no warning. */
+  function simpleWarnings(output) {
+    var out = [];
+    if (!output || typeof output !== "object" || Array.isArray(output)) return out;
+    var cv = parseContentValidation(output.content_validation);
+    if (cv && cv.failed > 0) out.push("Some clips failed the picture check and may look wrong.");
+    if (cv && cv.unmeasured > 0) out.push("Some clips could not be checked for picture problems.");
+    var unclean = plateUncleanShots(output).length;
+    if (unclean === 1) {
+      out.push("One picture may show an extra person. To fix it, open the advanced planner and regenerate that picture.");
+    } else if (unclean > 1) {
+      out.push(unclean + " pictures may show an extra person. To fix them, open the advanced planner and regenerate those pictures.");
+    }
+    return out;
+  }
+
   // OUR structural noun for each stage, and the raw-shape parser it needs. Never a paraphrase of
   // a reason: the reasons are rendered verbatim beside this, never instead of it.
   var STAGE_LABELS = {
@@ -293,6 +404,8 @@
     master: { noun: "audio master", unit: "step" },
     dialogue: { noun: "dialogue", unit: "stage" },
     film_finish: { noun: "title cards and captions", unit: "pass", parse: parseFilmFinish },
+    content_validation: { noun: "picture check", unit: "clip", parse: parseContentValidation, badge: "picture check" },
+    plate_check: { noun: "extra person check", unit: "still", parse: parsePlateCheck, badge: "may show an extra person" },
   };
 
   /** The raw-shape parser for a stage: its own, or the shared `{ degraded, reasons }` one. */
@@ -314,6 +427,10 @@
     // Structural ledgers ride along when the shape carries them. They are not degrades.
     if (parsed.applied) info.applied = parsed.applied;
     if (parsed.adopted) info.adopted = parsed.adopted;
+    // The two picture checks carry their split and their shots, so the sentence can be exact.
+    if (typeof parsed.failed === "number") info.failed = parsed.failed;
+    if (typeof parsed.unmeasured === "number") info.unmeasured = parsed.unmeasured;
+    if (parsed.shots) info.shots = parsed.shots;
     return info;
   }
 
@@ -341,6 +458,27 @@
       // Always exactly one reason (core carries a single `degraded` string), so a count here
       // would read as false precision. "uncarded" is core's own word for this state.
       return "The title-card and caption pass degraded, so this film shipped without part of it.";
+    }
+    if (info.stage === "content_validation") {
+      var parts = [];
+      var failed = typeof info.failed === "number" ? info.failed : 0;
+      var unmeasured = typeof info.unmeasured === "number" ? info.unmeasured : 0;
+      if (failed > 0) {
+        parts.push(failed + " clip" + (failed === 1 ? "" : "s") + " failed the picture check and may look wrong.");
+      }
+      if (unmeasured > 0) {
+        parts.push(unmeasured + " clip" + (unmeasured === 1 ? " was" : "s were") + " not checked for picture problems.");
+      }
+      return parts.length ? parts.join(" ") : null;
+    }
+    if (info.stage === "plate_check") {
+      var shots = Array.isArray(info.shots) ? info.shots : [];
+      var k = shots.length || n;
+      return (
+        (k === 1 ? "1 still" : k + " stills") + " may show an extra person" +
+        (shots.length ? " (" + shots.join(", ") + ")" : "") +
+        ". Regenerate " + (k === 1 ? "that still" : "those stills") + " to try again."
+      );
     }
     if (info.stage === "dialogue") {
       // core#317: the post-clips leg has exactly ONE declared degrade, so n is always 1
@@ -374,12 +512,17 @@
   function stagesNote(infos) {
     var list = Array.isArray(infos) ? infos : [];
     var names = [];
+    var badges = [];
     for (var i = 0; i < list.length; i++) {
-      if (list[i] && STAGE_LABELS[list[i].stage]) names.push(STAGE_LABELS[list[i].stage].noun);
+      if (list[i] && STAGE_LABELS[list[i].stage]) {
+        names.push(STAGE_LABELS[list[i].stage].noun);
+        // A stage whose "<noun> limited" would read wrong names its own short badge.
+        badges.push(STAGE_LABELS[list[i].stage].badge || null);
+      }
     }
     if (!names.length) return null;
     return {
-      label: names.length === 1 ? names[0] + " limited" : "stages limited",
+      label: names.length === 1 ? badges[0] || names[0] + " limited" : "stages limited",
       title:
         "this render completed, and these stages delivered less than a full pass: " +
         names.join(", ") +
@@ -537,6 +680,13 @@
     stageSummary: stageSummary,
     stagesNote: stagesNote,
     parseFilmFinish: parseFilmFinish,
+    parseContentValidation: parseContentValidation,
+    parsePlateCheck: parsePlateCheck,
+    plateUncleanShots: plateUncleanShots,
+    keyframeUnclean: keyframeUnclean,
+    shotWarnings: shotWarnings,
+    simpleWarnings: simpleWarnings,
+    STILL_EXTRA_PERSON: STILL_EXTRA_PERSON,
     combineBands: combineBands,
   };
 });
