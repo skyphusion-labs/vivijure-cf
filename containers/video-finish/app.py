@@ -377,12 +377,8 @@ async def _finish_chunked(body, partial_urls, t0):
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(status, f"clips[{i}] {info}")
-                target = c.get("targetSeconds")
-                try:
-                    target = float(target) if target is not None else None
-                except (TypeError, ValueError):
-                    target = None
-                batch.append((dst, target, i))
+                target = _parse_seconds(c, "targetSeconds")
+                batch.append((dst, target, i, _parse_seconds(c, "holdToSeconds")))
                 batch_bytes += os.path.getsize(dst)
                 # Close on reaching the bound. The batch may overshoot by at most one clip, which
                 # is why the peak-disk budget is written against MAX_BATCH_BYTES + MAX_CLIP_BYTES.
@@ -515,12 +511,8 @@ async def _finish_work(body):
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(status, f"clips[{i}] {info}")
-                target = c.get("targetSeconds")
-                try:
-                    target = float(target) if target is not None else None
-                except (TypeError, ValueError):
-                    target = None
-                srcs.append((p, target))
+                target = _parse_seconds(c, "targetSeconds")
+                srcs.append((p, target, _parse_seconds(c, "holdToSeconds")))
             audio_path = None
             if audio_url:
                 audio_path = os.path.join(work, "audio.bin")
@@ -648,6 +640,61 @@ def _probe_duration(path):
     return max(0.1, float(proc.stdout.strip()))
 
 
+def _probe_stream_duration(path, stream):
+    """Duration in seconds of the first `stream` ("v:0" or "a:0") of path, or None when there is no such
+    stream or it cannot be read. A container's own duration is the LONGEST stream, so a clip whose audio
+    outlasts its video reads as the audio length there (vivijure-cf#1338); this reads one stream."""
+    try:
+        proc = _run(
+            ["ffprobe", "-v", "error", "-select_streams", stream, "-show_entries", "stream=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            timeout=FFPROBE_TIMEOUT, text=True,
+        )
+        d = float(proc.stdout.strip().splitlines()[0])
+        return d if d > 0 else None
+    except Exception:
+        return None
+
+
+def _parse_seconds(clip, key):
+    """A clip's optional positive seconds field (targetSeconds, holdToSeconds), or None."""
+    v = clip.get(key) if isinstance(clip, dict) else None
+    try:
+        v = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+    return v if v is not None and v > 0 else None
+
+
+def _hold_extension(video_s, audio_s, hold_to, keep_audio):
+    """vivijure-cf#1338. How long a clip's video must run, by cloning its last frame, or None to leave it.
+
+    hold_to: the planned seconds the Worker asks a clip to be held to (a door that bills by length, whose
+    line was not padded). keep_audio: the clip's own audio is kept (a talking film), so the video must also
+    last as long as that audio: a 4n+1 frame door delivers about 70 ms less video than audio, and the audio
+    is never cut to fit the video. Pure: no probe, so it is tested on its own.
+    """
+    if video_s is None or video_s <= 0:
+        return None
+    want = max(hold_to or 0.0, (audio_s or 0.0) if keep_audio else 0.0)
+    return want if want - video_s > 0.0005 else None
+
+
+def _clip_plan(src, target, hold_to, tail, keep_audio):
+    """(cap, extend_to) for one clip. The tail-trim of a join is taken from the clip's length AFTER any
+    hold, so a held clip is not cut back to its delivered length."""
+    extend_to = None
+    if hold_to or keep_audio:
+        v = _probe_stream_duration(src, "v:0")
+        a = _probe_stream_duration(src, "a:0") if keep_audio else None
+        extend_to = _hold_extension(v, a, hold_to, keep_audio)
+    cap = target
+    if tail > 0:
+        base = cap if cap else (max(extend_to, _probe_duration(src)) if extend_to else _probe_duration(src))
+        cap = max(0.1, base - tail)
+    return cap, extend_to
+
+
 def _probe_frame(path):
     """(width, height) of the first video stream, or (None, None) when it cannot be read. The film
     itself is the truth for a burn: a caption is drawn on the frame it has."""
@@ -690,7 +737,8 @@ def _probe_audio(path):
     return True, sample_rate, layout
 
 
-def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=False, ensure_audio=False, timeout=None):
+def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=False, ensure_audio=False, timeout=None,
+               extend_to=None):
     """Scale/pad/fps-normalize src to dst.
     keep_audio=False (default): strip audio (-an). Used by _assemble's silent path
     and the silent-film path of _assemble_film_titles.
@@ -707,6 +755,15 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
     )
+    # vivijure-cf#1338: hold the clip's last frame until it lasts extend_to seconds. stop_duration is a
+    # ceiling on the added time, so it is set generously and the -t below (or the audio) bounds the result.
+    af = None
+    if extend_to:
+        vf += f",tpad=stop_mode=clone:stop_duration={extend_to + 1:.3f}"
+        if ensure_audio or keep_audio:
+            af = f"apad=whole_dur={extend_to:.3f}"
+        if not (cap and cap > 0.15):
+            cap = extend_to
     cmd = ["ffmpeg", "-y", "-i", src]
     synth_silence = False
     if ensure_audio:
@@ -715,6 +772,8 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
             synth_silence = True
             cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
     cmd += ["-vf", vf]
+    if af and not synth_silence:
+        cmd += ["-af", af]
     if ensure_audio:
         cmd += ["-map", "0:v:0", "-map", ("1:a:0" if synth_silence else "0:a:0"),
                 "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
@@ -899,15 +958,14 @@ def _normalize_batch(batch_dir, batch, total_clips, *, width, height, fps, crf, 
     boundary, which is a continuity artefact chunking must not introduce.
     """
     norms, durs = [], []
-    for src, target, gidx in batch:
-        cap = target
+    for item in batch:
+        src, target, gidx = item[0], item[1], item[2]
+        hold_to = item[3] if len(item) > 3 else None
         tail = trim_tail if (trim_tail > 0 and gidx < total_clips - 1) else 0.0
-        if tail > 0:
-            base = cap if cap else _probe_duration(src)
-            cap = max(0.1, base - tail)
+        cap, extend_to = _clip_plan(src, target, hold_to, tail, keep_clip_audio)
         dst = os.path.join(batch_dir, f"norm_{gidx:03d}.mp4")
         _normalize(src, dst, width=width, height=height, fps=fps, crf=crf, preset=preset,
-                   cap=cap, ensure_audio=keep_clip_audio)
+                   cap=cap, ensure_audio=keep_clip_audio, extend_to=extend_to)
         norms.append(dst)
         durs.append(round(_probe_duration(dst) or 0.0, 3))
     return norms, durs
@@ -981,15 +1039,14 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
     trim_tail = (trim_join_frames / max(1, fps)) if effective_crossfade <= 0 else 0.0
     last = len(srcs) - 1
     norms = []
-    for i, (src, target) in enumerate(srcs):
-        cap = target
+    for i, item in enumerate(srcs):
+        src, target = item[0], item[1]
+        hold_to = item[2] if len(item) > 2 else None
         tail = trim_tail if (trim_tail > 0 and i < last) else 0.0
-        if tail > 0:
-            base = cap if cap else _probe_duration(src)
-            cap = max(0.1, base - tail)
+        cap, extend_to = _clip_plan(src, target, hold_to, tail, keep_clip_audio)
         dst = os.path.join(work, f"norm_{i:03d}.mp4")
         _normalize(src, dst, width=width, height=height, fps=fps, crf=crf, preset=preset,
-                   cap=cap, ensure_audio=keep_clip_audio)
+                   cap=cap, ensure_audio=keep_clip_audio, extend_to=extend_to)
         norms.append(dst)
 
     # ACTUAL per-clip assembled seconds (#697/#698): the normalized (tail-trimmed, capped) duration each
