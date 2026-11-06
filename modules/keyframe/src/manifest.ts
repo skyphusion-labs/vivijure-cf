@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.7",
+  version: "0.3.8",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -80,6 +80,22 @@ export const MANIFEST: ModuleManifest = {
       type: "bool",
       default: false,
       label: "keep each person's look to themselves",
+    },
+    // cf#1143 option c: with the setting above on, the space between the two people reads only the look and the
+    // place, not the shot's sentence that names them, so it is not asked to draw a third person. Off = as before.
+    plate_people_free_background: {
+      type: "bool",
+      default: false,
+      label: "nobody in the gap between two people",
+    },
+    // cf#1143 option d: how firmly a two-person still plants exactly two bodies. 0.55 is the value shipped
+    // before. Sent to the backend as multi_char.controlnet_pose_scale, which clamps it to 0..1.5.
+    pose_scale: {
+      type: "float",
+      default: 0.55,
+      min: 0,
+      max: 1.5,
+      label: "two-person body placement strength",
     },
     // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
     // That checkpoint is not in the default bake. A worker without it fails honest.
