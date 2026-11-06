@@ -16,6 +16,21 @@
 
 let refineInflight = false;
 
+// cf#1334: until vivijure-core#473, the refinement prompt tells the model to return at most
+// PLANNER_ASK_MAX_SCENES (50) scenes, and a refine sends and returns the whole board. So a refine of a
+// longer board can come back shorter, and applying it would drop the rest. The panel refuses that case.
+// The cost: a refine that is MEANT to delete scenes from a board over 50 is refused too; the scene
+// editor's delete does that instead. Relax this once core keeps the board length.
+const REFINE_GUARD_MIN_SCENES = 50;
+
+/** Pure: true when a refine reply must not replace the board, because the board it was given had more
+ *  than REFINE_GUARD_MIN_SCENES scenes and the reply is shorter. */
+function refineShrinksLongBoard(sentCount, returnedCount) {
+  const sent = Math.floor(Number(sentCount)) || 0;
+  const back = Math.floor(Number(returnedCount)) || 0;
+  return sent > REFINE_GUARD_MIN_SCENES && back < sent;
+}
+
 function setRefineStatus(text, kind) {
   const el = $("#planner-refine-status");
   if (!el) return;
@@ -75,6 +90,10 @@ async function sendRefine() {
   refineInflight = true;
   $("#planner-refine-send").disabled = true;
   setRefineStatus("refining...", "loading");
+  // The board as sent. A refine that applies makes this the "discard all edits" baseline, so a discard
+  // undoes the refine (cf#1334). A copy, so edits made while the refine is in flight do not move it.
+  const sentBoard = JSON.parse(JSON.stringify(planState.storyboard));
+  const sentCount = Array.isArray(sentBoard.scenes) ? sentBoard.scenes.length : 0;
 
   // Optimistically append the user turn so the log shows what was just
   // sent even before the response lands.
@@ -135,7 +154,28 @@ async function sendRefine() {
     return;
   }
 
+  const returnedCount = data && data.ok === true && data.storyboard && Array.isArray(data.storyboard.scenes)
+    ? data.storyboard.scenes.length
+    : 0;
+  if (data && data.ok === true && data.storyboard && refineShrinksLongBoard(sentCount, returnedCount)) {
+    setRefineStatus("not applied: the board would have lost scenes", "error");
+    planState.refineHistory.push({
+      role: "assistant",
+      content: "(not applied: the reply had " + returnedCount + " of your " + sentCount + " scenes. "
+        + "A refine of a board over " + REFINE_GUARD_MIN_SCENES + " scenes can return at most "
+        + REFINE_GUARD_MIN_SCENES + " for now, so your board is unchanged. "
+        + "To remove scenes, use delete in the scene editor.)",
+      ts: Date.now(),
+    });
+    renderRefineTurns();
+    persistSoon();
+    refineInflight = false;
+    $("#planner-refine-send").disabled = false;
+    return;
+  }
+
   if (data && data.ok === true && data.storyboard) {
+    planState.originalStoryboard = sentBoard;
     planState.storyboard = data.storyboard;
     // #743: refine response carries no yaml field; fetch the preview like scene-edit.
     refreshYamlPreview();
