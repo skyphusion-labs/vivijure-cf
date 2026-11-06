@@ -363,7 +363,9 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
     expect((h.captured as CapturedArgs | null)?.quality_tier).toBeUndefined();
   });
 
-  it("an invalid qualityTier coerces to undefined (no bad tier leaks onto the job/row)", async () => {
+  // cf#896: an invalid tier used to coerce to undefined and run at final. It is now refused before
+  // any work, so no bad tier can reach the job or the row, and no render starts at a tier not asked for.
+  it("an invalid qualityTier is refused, and nothing starts", async () => {
     h.captured = null;
     const res = await worker.fetch(
       postFilm({
@@ -374,7 +376,8 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
       env,
       ctx,
     );
-    expect(res.status).toBe(201);
-    expect((h.captured as CapturedArgs | null)?.quality_tier).toBeUndefined();
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error?: string }).error).toContain("qualityTier must be one of");
+    expect(h.captured).toBeNull();
   });
 });

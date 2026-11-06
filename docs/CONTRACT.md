@@ -1138,13 +1138,13 @@ track is analyzed again.
 Both return, and `GET /api/storyboard/render/:jobId` (2.24) polls, a **RunPod-shaped poll view** so
 the planner's existing poll loop understands a module render identically to a raw RunPod job.
 
-**POST `/api/storyboard/render` body:**
+**POST `/api/storyboard/render` body:** A field this door does not read is refused `400`, naming the field, before any spend (cf#896), and so is a `qualityTier` that is not `draft`, `standard` or `final`. The snake_case spellings `bundle_key`, `quality_tier`, `project_id`, `cast_loras` and `keyframes_only` are accepted and applied as the field they name; both spellings with different values are refused `400`. A top-level `keyframe_backend` is applied as `renderOverrides.keyframe_backend`. `storyboard` and the shard aliases are accepted and ignored.
 
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
 | `bundleKey` | string | yes | -- | R2 key of the render bundle (storyboard + cast refs/LoRAs). |
 | `project` | string | no | derived from `bundleKey` | Project namespace. A caller value that does not match the bundle key is remapped to the bundle slug, as in section 2.20, so it does not separate two renders of one bundle. |
-| `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Injected into keyframe + motion configs. |
+| `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Injected into keyframe + motion configs. Absent is `"final"` (core `DEFAULT_QUALITY_TIER`); any other value is refused `400` (cf#896). |
 | `renderOverrides` | object | no | -- | Per-module config overrides; see 2.18.1. |
 | `keyframesOnly` | bool | no | false | Stop after keyframes (preview), no i2v/assemble. |
 | `audioKey` | string | no | -- | Staged audio bed to mux after assemble (ignored when `keyframesOnly`). |
@@ -1224,7 +1224,7 @@ or `does not fit one`. There is no song, so no refusal, when `audioKey` is absen
 
 **POST `/api/storyboard/render-from-keyframes` body:** `{ bundleKey (req), project?, qualityTier?
 (default final), renderOverrides?, audioKey?, projectId?, motion_backend?, castLoras?,
-idempotency_key? }`. Reads scenes + injected keyframes from the bundle. `motion_backend` resolves as:
+idempotency_key? }`. The snake_case spellings `bundle_key`, `quality_tier`, `project_id` and `cast_loras` are applied as the field they name, a top-level `keyframe_backend` as `renderOverrides.keyframe_backend`, and `storyboard` is accepted and ignored. Any other field, two spellings with different values, or a `qualityTier` that is not `draft`, `standard` or `final`, is refused `400` naming it (cf#896). Reads scenes + injected keyframes from the bundle. `motion_backend` resolves as:
 the top-level value, else `renderOverrides.motion_backend`, else the hosted door for this bundle.
 A bundle with a spoken line uses installed `infinitetalk` when that module is a cloud driving-only
 door, otherwise the first other cloud driving-only door. A bundle with no spoken line uses the
@@ -1336,14 +1336,14 @@ The direct film-render entry (the planner film render and API clients such as th
 a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (master) -> mux ->
 (film.finish) -> done.
 
-**Request body:**
+**Request body:** A field this door does not read is refused `400`, naming the field, before any spend (cf#896). So is a `qualityTier` that is not `draft`, `standard` or `final`. The shard aliases stay accepted and ignored.
 
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
 | `bundle_key` | string | yes | -- | R2 key of the render bundle. |
 | `scenes` | `FilmScene[]` | yes | -- | `{ shot_id, prompt, seconds }[]`; non-empty. |
 | `project` | string | no | derived from `bundle_key` | Project namespace. A caller value that does not match the bundle key (`bundles/<slug>.tar.gz` or `bundles/<slug>-<16hex>.tar.gz`) is remapped to `<slug>` before the GPU job starts; the backend tenancy check is kept and the panel must not send a mismatch. |
-| `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Records the film's quality tier on its renders-history row (#762). The ACTUAL render tier is driven by the baked `keyframe_config.quality_tier` (read by the keyframe module) + `motion_config`; this top-level field is what makes the recorded row LABEL honest (before #762 the row hardcoded `"final"`, mislabeling a draft film). An absent / invalid value defaults `"final"`. Slate should send this alongside the baked configs. |
+| `qualityTier` | `"draft"\|"standard"\|"final"` | no | `"final"` | Records the film's quality tier on its renders-history row (#762). The ACTUAL render tier is driven by the baked `keyframe_config.quality_tier` (read by the keyframe module) + `motion_config`; this top-level field is what makes the recorded row LABEL honest (before #762 the row hardcoded `"final"`, mislabeling a draft film). An absent value defaults `"final"`; any other value is refused `400` (cf#896). Slate should send this alongside the baked configs. |
 | `motion_backend` | string | yes | -- | Motion module choice. An omitted or non-serving value is rejected `400` listing the installed `motion.backend` names (#504; this route has no keyframes-only mode, so the check is unconditional). |
 | `keyframe_backend` | string | no | by name: `keyframe`, else `cloud-keyframe` | Explicit `keyframe` module choice; a named-but-not-installed value fails the job with `keyframe module <name> not installed`. Omitted, the studio fills it BY NAME with the installed module named `keyframe`, else `cloud-keyframe` (`defaultKeyframeBackendName`, `src/default-keyframe.ts`); when `motion_backend` is `local-gpu`, or neither name is installed, it stays unset and the core picks (the local pairing rule for `local-gpu`). |
 | `keyframe_config` | object | no | -- | **Flat** keyframe module knobs (cf#390 shape A). |

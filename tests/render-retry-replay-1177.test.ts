@@ -160,7 +160,7 @@ describe("cf#1177 a retry", () => {
 
   it("render-from-keyframes refuses a part's project", async () => {
     h.started = [];
-    const res = await worker.fetch(post("/api/storyboard/render-from-keyframes", { bundleKey: "bundles/Long_3c5aae7e_p01-0123456789abcdef.tar.gz", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 4 }] }), env() as never, ctx);
+    const res = await worker.fetch(post("/api/storyboard/render-from-keyframes", { bundleKey: "bundles/Long_3c5aae7e_p01-0123456789abcdef.tar.gz" }), env() as never, ctx);
     expect(res.status).toBe(409);
     expect(h.started).toEqual([]);
   });

@@ -133,6 +133,18 @@ import { defaultKeyframeBackendName, withFastestKeyframeDefault } from "./defaul
 import { sweepUnresolvedJobs } from "@skyphusion-labs/vivijure-core/render-sweep";
 import { renderConfigProjection, parseModuleRenderOverrides } from "@skyphusion-labs/vivijure-core/render-module-config";
 import {
+  FILM_SUBMIT_FIELDS,
+  FROM_KEYFRAMES_FIELDS,
+  FROM_KEYFRAMES_ALIASES,
+  PANEL_IGNORED_FIELDS,
+  PANEL_RENDER_ALIASES,
+  PANEL_RENDER_FIELDS,
+  normalizeSubmitBody,
+  qualityTierRefusal,
+  unknownSubmitFieldsRefusal,
+  type SubmitDoorRules,
+} from "./submit-fields";
+import {
   coerceQualityTier,
   type AudioAnalyzeRequest,
 } from "@skyphusion-labs/vivijure-core/runpod-submit";
@@ -959,6 +971,45 @@ function refusingLongFilmParts(handler: Handler): Handler {
   };
 }
 
+type SameKeys<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type AssertTrue<T extends true> = T;
+// cf#896: each door's field list is exactly its body type's keys. Add a field to one and not the
+// other and this is a type error, so the refusal cannot drift from what the handler reads.
+export type PanelRenderFieldsMatch = AssertTrue<SameKeys<keyof PanelRenderBody, (typeof PANEL_RENDER_FIELDS)[number]>>;
+export type FromKeyframesFieldsMatch = AssertTrue<SameKeys<keyof FromKeyframesBody, (typeof FROM_KEYFRAMES_FIELDS)[number]>>;
+export type FilmSubmitFieldsMatch = AssertTrue<SameKeys<keyof FilmSubmitBody, (typeof FILM_SUBMIT_FIELDS)[number]>>;
+
+const PANEL_RENDER_RULES: SubmitDoorRules = {
+  door: "POST /api/storyboard/render", fields: PANEL_RENDER_FIELDS, aliases: PANEL_RENDER_ALIASES,
+  ignored: PANEL_IGNORED_FIELDS, keyframeBackendIntoOverrides: true,
+};
+const FROM_KEYFRAMES_RULES: SubmitDoorRules = {
+  door: "POST /api/storyboard/render-from-keyframes", fields: FROM_KEYFRAMES_FIELDS, aliases: FROM_KEYFRAMES_ALIASES,
+  ignored: PANEL_IGNORED_FIELDS, keyframeBackendIntoOverrides: true,
+};
+const FILM_SUBMIT_RULES: SubmitDoorRules = { door: "POST /api/render/film", fields: FILM_SUBMIT_FIELDS };
+
+/** cf#896: refuse a field the door does not read, and a qualityTier it does not know, before the handler
+ *  runs. In the route table and not in the handler, like refusingLongFilmProjects below: a retry replays a
+ *  stored body through the handler and a long film starts its parts by calling it directly. */
+function refusingUnknownSubmitFields(rules: SubmitDoorRules, handler: Handler): Handler {
+  const allowed = [...rules.fields, ...(rules.ignored ?? [])];
+  return async (req, env, ctx, p) => {
+    // A bad body is left for the handler to answer.
+    const raw = (await req.clone().json().catch(() => null)) as unknown;
+    const normalized = normalizeSubmitBody(raw, rules);
+    if ("refusal" in normalized) throw badRequest(normalized.refusal);
+    const body = normalized.body;
+    const refusal = unknownSubmitFieldsRefusal(body, allowed, rules.door) ?? qualityTierRefusal(body);
+    if (refusal) throw badRequest(refusal);
+    if (!normalized.changed) return handler(req, env, ctx, p);
+    // The handler reads, and stores for a retry, the body with the aliases already renamed.
+    const headers = new Headers(req.headers);
+    headers.delete("content-length");
+    return handler(new Request(req.url, { method: req.method, headers, body: JSON.stringify(body) }), env, ctx, p);
+  };
+}
+
 /** For the submit routes outside callers use. It sits in the route table and not in the handler, because a
  *  parent film starts its own parts by calling these handlers directly. */
 function refusingLongFilmProjects(handler: Handler): Handler {
@@ -1091,9 +1142,7 @@ const hAnimateHybrid: Handler = async (req, env, _c, p) => {
 
 // --- render submission / lifecycle ---------------------------------------
 
-const hSubmitRender: Handler = async (req, env) => {
-  const submitted = await req.clone().text();
-  const b = await readBody<{
+type PanelRenderBody = {
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; keyframesOnly?: boolean; audioKey?: string;
     processShotIds?: string[]; projectId?: unknown;
@@ -1105,7 +1154,10 @@ const hSubmitRender: Handler = async (req, env) => {
     shardCount?: number; shard_count?: number;
     idempotency_key?: unknown;
     idempotencyKey?: unknown;
-  }>(req);
+  };
+const hSubmitRender: Handler = async (req, env) => {
+  const submitted = await req.clone().text();
+  const b = await readBody<PanelRenderBody>(req);
   // cf#334: the guards below are the SHARED pre-flight, not this door's private copy. What stays
   // here is this door's own contract -- its field spellings, its keyframes-only mode, and its 503 on
   // an absent keyframe module -- declared in the profile so a reviewer can see what differs instead
@@ -1266,13 +1318,14 @@ const hSubmitRender: Handler = async (req, env) => {
   const panelNotes = b.keyframesOnly ? [] : durationNotesForShots(scenes, panelMotionMod);
   return json(panelNotes.length ? { ...view, duration_notes: panelNotes } : view, 201);
 };
-const hRenderFromKeyframes: Handler = async (req, env) => {
-  const b = await readBody<{
+type FromKeyframesBody = {
     project?: string; bundleKey?: string; qualityTier?: string;
     renderOverrides?: Record<string, unknown>; audioKey?: string; projectId?: unknown;
     motion_backend?: string; castLoras?: Record<string, unknown>;
     idempotency_key?: unknown; idempotencyKey?: unknown;
-  }>(req);
+  };
+const hRenderFromKeyframes: Handler = async (req, env) => {
+  const b = await readBody<FromKeyframesBody>(req);
   // cf#334: the shared pre-flight, minus the one guard this door's caller cannot satisfy.
   //
   // C4 lands here PARTIALLY and the gap is declared rather than hidden. #577 (motion config) and the
@@ -1904,9 +1957,10 @@ function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: 
   return { delivery_width: width as number, delivery_height: height as number };
 }
 
+type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown };
 const hStartFilm: Handler = async (req, env) => {
   const submitted = await req.clone().text();
-  const a = await readBody<{ project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown }>(req);
+  const a = await readBody<FilmSubmitBody>(req);
   // cf#334: the SAME shared pre-flight the panel door runs. This door's own contract stays in the
   // profile: its field spellings (`bundle_key`, not `bundleKey`), its always-on motion leg, and its
   // deliberate NON-refusal on an absent keyframe module, which it leaves for startFilmJob to fail.
@@ -2873,11 +2927,11 @@ export const API_ROUTES: Route[] = [
   { method: "DELETE", pattern: "/api/storyboard/audio-upload/:name",   scope: "consumer",    handler: hStoryboardAudioDelete },
   { method: "POST",   pattern: "/api/storyboard/character-ref",        scope: "consumer",    handler: hStoryboardCharacterRef },
   { method: "POST",   pattern: "/api/audio/analyze",                   scope: "consumer",    handler: hAudioAnalyze },
-  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: refusingLongFilmProjects(hSubmitRender) },
+  { method: "POST",   pattern: "/api/storyboard/render",               scope: "consumer",    handler: refusingUnknownSubmitFields(PANEL_RENDER_RULES, refusingLongFilmProjects(hSubmitRender)) },
   { method: "POST",   pattern: "/api/storyboard/render-plan",          scope: "consumer",    handler: hRenderPlan },
   { method: "POST",   pattern: "/api/render/clips",                     scope: "consumer",    handler: refusingLongFilmProjects(hStartClips) },
   { method: "GET",    pattern: "/api/render/clips/:id",                 scope: "consumer",    handler: hPollClips },
-  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: refusingLongFilmProjects(hStartFilm) },
+  { method: "POST",   pattern: "/api/render/film",                      scope: "consumer",    handler: refusingUnknownSubmitFields(FILM_SUBMIT_RULES, refusingLongFilmProjects(hStartFilm)) },
   { method: "GET",    pattern: "/api/render/film/:id",                  scope: "consumer",    handler: hPollFilm },
   { method: "POST",   pattern: "/api/film",                             scope: "consumer",    handler: hCreateParentFilm },
   { method: "GET",    pattern: "/api/film",                             scope: "consumer",    handler: hListParentFilms },
@@ -2891,7 +2945,7 @@ export const API_ROUTES: Route[] = [
   { method: "POST",   pattern: "/api/film/:id/resume",                  scope: "consumer",    handler: hResumeParent },
   { method: "POST",   pattern: "/api/render/film/:id/finish-retry",     scope: "consumer",    handler: hRetryFinish },
   { method: "POST",   pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer",    handler: refusingLongFilmParts(hRegenShot) },
-  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: hRenderFromKeyframes },
+  { method: "POST",   pattern: "/api/storyboard/render-from-keyframes", scope: "consumer",    handler: refusingUnknownSubmitFields(FROM_KEYFRAMES_RULES, hRenderFromKeyframes) },
   { method: "GET",    pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hPollRender },
   { method: "DELETE", pattern: "/api/storyboard/render/:jobId",        scope: "consumer",    handler: hCancelRender },
   { method: "GET",    pattern: "/api/storyboard/renders",              scope: "consumer",    handler: hListRenders },
