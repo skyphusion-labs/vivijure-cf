@@ -69,6 +69,7 @@ import {
 } from "./record-reclaim-io";
 import { isClipJobId } from "./record-reclaim";
 import { clipJobRowSeed, clipJobToPollView, isStandaloneClipJob, writeClipJobOwner } from "./clip-job-row";
+import { ensureClipJobRow, readClipJobDoc, withClipJobLease } from "./clip-job-lease";
 import {
   talkingVoiceHonorFor,
   startCastVoiceSample,
@@ -1884,17 +1885,22 @@ const hStartClips: Handler = async (req, env) => {
   });
 };
 const hPollClips: Handler = async (_req, env, _c, p) => {
-  const job = await advanceClipJob(env, p.id);
+  const standalone = await isStandaloneClipJob(env, p.id);
+  // cf#1315: one advancer at a time, or two polls can buy the same batch. A poll that loses the lease
+  // answers from the doc as it stands; the holder is advancing it. See src/clip-job-lease.ts.
+  const leased = await withClipJobLease(env, p.id, () => advanceClipJob(env, p.id),
+    standalone ? { ensureRow: () => ensureClipJobRow(env, p.id) } : {});
+  const job = leased.ran ? leased.value : await readClipJobDoc(env, p.id);
   if (!job) throw notFound("clip job");
   // cf#1309: keep the row current, and insert it if the start could not. Only for a job born standalone:
   // a film's clip job has no owner marker and its film row is its record, so it never gets a row here.
   // A poll is idempotent and retried, so this throws like hPollFilm rather than hiding a failure.
-  if (await isStandaloneClipJob(env, job.job_id)) {
+  if (standalone) {
     await insertRender(env, clipJobRowSeed(job));
     await updateRenderFromView(env, clipJobToPollView(job));
   }
   return json({
-    ok: true, job_id: job.job_id, motion_backend: job.motion_backend, ...summarizeJob(job),
+    ok: true, job_id: job.job_id, motion_backend: job.motion_backend, ...summarizeJob(job), advanced: leased.ran,
     shots: job.shots.map((sh) => ({ shot_id: sh.shot_id, status: sh.status, clip_key: sh.clip_key, error: sh.error })),
   });
 };

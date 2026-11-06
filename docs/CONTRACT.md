@@ -1275,9 +1275,17 @@ motion_backend? }`. `400` if `shots[]` is empty.
 
 **GET `/api/render/clips/:id`** -- advance + poll. `404` if unknown.
 
+**cf#1315: one advancer at a time.** GET advances a clip job that has an `owner.json` under the film
+advance lease, keyed by the clip job id (the conditional UPDATE on its `renders` row, 60 s, renewed
+while the tick runs). A GET that overlaps another does not advance: it answers `200` from the job doc as
+it stands, with `advanced: false`. The GET that advanced answers `advanced: true`. A missing row is
+written before the lease is asked, so the guard holds even when POST could not write it. A film's clip
+job (no `owner.json`) is not guarded here; its driver is the film tick. A second driver of standalone
+clip jobs takes the same lease (`withClipJobLease`, `src/clip-job-lease.ts`).
+
 Both respond `200 { ok: true, job_id, motion_backend, total, done, failed, pending, complete,
 shots: [...] }` where each shot is `{ shot_id, status, error }` (POST) or `{ shot_id, status,
-clip_key, error }` (GET). `status` is `"pending" | "done" | "failed"`.
+clip_key, error }` (GET). GET also carries `advanced` (cf#1315). `status` is `"pending" | "done" | "failed"`.
 
 **cf#1309: a clip job started here has a render history row.** POST writes, after the job doc,
 `renders/<job_id>/owner.json` and then a `renders` row with `job_id` = the clip job id, `bundle_key`
