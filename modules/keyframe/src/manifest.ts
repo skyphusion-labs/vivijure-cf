@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.5",
+  version: "0.3.6",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -63,6 +63,15 @@ export const MANIFEST: ModuleManifest = {
       min: 0,
       max: 2,
       label: "face reference margin",
+    },
+    // cf#1143: on a two-person shot, how strongly the first (scene) pass takes each person's portrait in their half
+    // of the frame. 0 is off, the plate as before. Older backend images ignore it.
+    plate_ip_adapter_scale: {
+      type: "float",
+      default: 0,
+      min: 0,
+      max: 1,
+      label: "two-person portrait strength",
     },
     // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
     // That checkpoint is not in the default bake. A worker without it fails honest.
