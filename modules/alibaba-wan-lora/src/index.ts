@@ -79,8 +79,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 75,
     locality: "cloud",
-    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://docs.runpod.io/public-endpoints/models/wan-2-2-i2v-lora
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.35 per 5 s clip, $0.56 per 8 s clip ($0.07/s)",
+    cost_as_of: "2026-11-05",
     cost_usd_per_second: [0.07, 0.07],
     blurb: "Detailed motion with your trained face. Silent.",
     limits: [

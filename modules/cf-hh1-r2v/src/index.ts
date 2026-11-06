@@ -90,8 +90,9 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 60,
     locality: "cloud",
-    // cf#1246: provider cost, no markup (Conrad, 2026-11-05). Read 2026-11-05: https://developers.cloudflare.com/ai/models/alibaba/hh1.1-r2v/
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
     cost: "$0.14/s at 720P, $0.18/s at 1080P",
+    cost_as_of: "2026-11-05",
     cost_usd_per_second: [0.14, 0.18],
     blurb: "Holds a look from reference stills. Silent.",
     limits: [

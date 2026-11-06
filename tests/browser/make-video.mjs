@@ -100,6 +100,10 @@ async function open(opts = {}) {
     if (pathname === "/api/storyboard/plan") return opts.planFail ? json({ ok: false, errors: ["the model said no"] }, 422) : json({ ok: true, storyboard: opts.board ?? spokenBoard });
     if (pathname === "/api/storyboard/projects" && method === "POST") return json({ project: { id: 41, name: body.name } }, 201);
     if (pathname === "/api/storyboard/projects/41/storyboard") return json({ project: { id: 41, name: "Cart race" } });
+    if (pathname === "/api/storyboard/preflight") {
+      if (opts.preflightFail) return json({ error: "down" }, 500);
+      return json(opts.preflight ?? { ok: true, counts: { error: 0, warning: 0, info: 0 }, issues: [] });
+    }
     if (pathname === "/api/storyboard/bundle") return json({ ok: true, bundleKey: "bundles/cart/bundle.tar.gz" }, 201);
     if (pathname === "/api/storyboard/render" && method === "POST") return json({ ok: true, jobId: "film-77", status: "IN_QUEUE" }, 201);
     if (pathname === "/api/storyboard/render/film-77") {
@@ -141,7 +145,7 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   check("total waits for the plan", (await text(page, "#make-total")).includes("after your idea is planned"));
   await page.click("#make-go");
   await page.waitForSelector("#make-confirm[open]");
-  check("the plan has talking, so the style moves to a talking one", (await text(page, "#make-confirm-style")) === "Style: Talking, consistent faces.", await text(page, "#make-confirm-style"));
+  check("the plan has talking, so the style moves to a talking one", (await text(page, "#make-confirm-style")) === "Style: Talking, consistent faces. Some scenes in this video speak, so the whole video uses a talking style.", await text(page, "#make-confirm-style"));
   check("confirm shows one total from the stated rate", (await text(page, "#make-confirm-total")) === "Total: up to $1.33", await text(page, "#make-confirm-total"));
   check("confirm says what it is", (await text(page, "#make-confirm-what")).includes("About 19 seconds, vertical, good quality, with Mara"), await text(page, "#make-confirm-what"));
   check("confirm is plain words", !JARGON.test(await page.locator("#make-confirm").innerText()));
@@ -176,7 +180,7 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   await page.check("#make-shape-wide");
   await page.click("#make-go");
   await page.waitForSelector("#make-confirm[open]");
-  check("wide talking: own-voice style", (await text(page, "#make-confirm-style")) === "Style: Talking in their own voices, faces locked.", await text(page, "#make-confirm-style"));
+  check("wide talking: own-voice style", (await text(page, "#make-confirm-style")) === "Style: Talking in their own voices, faces locked. Some scenes in this video speak, so the whole video uses a talking style.", await text(page, "#make-confirm-style"));
   check("confirm says who gets a voice", (await text(page, "#make-confirm-faces")).includes("Sam gets a voice of their own"), await text(page, "#make-confirm-faces"));
   await page.click('#make-confirm button[value="go"]');
   await page.waitForSelector("#make-result:not([hidden])", { timeout: 15000 });
@@ -235,6 +239,50 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
   await page.fill("#make-idea", "Sam waves.");
   check("ready face lets the video start", await page.locator("#make-go").isEnabled(), await text(page, "#make-why"));
   await ctx.close();
+}
+{
+  // cf#1067: the studio's length check, in plain words, before anything starts.
+  const cut = { level: "error", scope: "scene[s2]", message: "s2 plans 8s", detail: { index: 2, shot_id: "s2", planned_seconds: 8, min_seconds: 1, max_seconds: 5, steps: null } };
+  const step = { level: "warning", scope: "scene[s1]", message: "s1 plans 6s", detail: { index: 1, shot_id: "s1", planned_seconds: 6, min_seconds: 5, max_seconds: 10, steps: [5, 10] } };
+  // An issue with no numbers (a board problem) is not a length and is not shown here.
+  const other = { level: "warning", scope: "storyboard", message: "a board note" };
+  const { ctx, page, calls } = await open({ preflight: { ok: false, counts: { error: 1, warning: 2, info: 0 }, issues: [step, cut, other] } });
+  await page.click('#make-faces button[aria-label="Add Mara"]');
+  await page.fill("#make-idea", "Mara races a shopping cart at sunset.");
+  await page.click("#make-go");
+  await page.waitForSelector("#make-confirm[open]");
+  const notes = await page.$$eval("#make-confirm-lengths li", (els) => els.map((e) => e.textContent));
+  check("a cut scene is told before anything starts", notes.includes("Scene 2 is 8 seconds. This style makes clips of at most 5 seconds, so it will be cut to 5 seconds."), notes.join(" | "));
+  check("a scene that snaps to a length is told", notes.includes("Scene 1 is 6 seconds. This style makes clips of 5 or 10 seconds, so it will not be exactly 6 seconds."), notes.join(" | "));
+  check("only length notes are listed", notes.length === 2, notes.join(" | "));
+  check("the check asks about the chosen style", calls.find((c) => c.pathname === "/api/storyboard/preflight")?.body?.motion_backend === "cf-vidu-q3-turbo");
+  check("length notes are plain words", !JARGON.test(await page.locator("#make-confirm-lengths").innerText()));
+  if (process.env.SHOTS) {
+    for (const [name, viewport] of [["make-lengths-390.png", { width: 390, height: 844 }], ["make-lengths-1280.png", { width: 1280, height: 900 }]]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: join(process.env.SHOTS, name) });
+      console.log("SHOT", join(process.env.SHOTS, name));
+    }
+  }
+  await page.click('#make-confirm button[value="cancel"]');
+  await ctx.close();
+
+  const quiet = await open({ preflightFail: true });
+  await quiet.page.click('#make-faces button[aria-label="Add Mara"]');
+  await quiet.page.fill("#make-idea", "Mara races a shopping cart at sunset.");
+  await quiet.page.click("#make-go");
+  await quiet.page.waitForSelector("#make-confirm[open]");
+  check("a failed check is said, and the video can still start", (await text(quiet.page, "#make-confirm-lengths")).includes("could not check") && await quiet.page.locator('#make-confirm button[value="go"]').isEnabled());
+  await quiet.ctx.close();
+
+  const none = await open();
+  await none.page.click('#make-faces button[aria-label="Add Mara"]');
+  await none.page.fill("#make-idea", "Mara races a shopping cart at sunset.");
+  await none.page.click("#make-go");
+  await none.page.waitForSelector("#make-confirm[open]");
+  check("no length notes when every scene fits", await none.page.locator("#make-confirm-lengths").isHidden());
+  await none.ctx.close();
 }
 {
   // A failed video is told plainly with a way back.

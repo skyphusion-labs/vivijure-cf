@@ -466,15 +466,34 @@
         : "No style here keeps faces consistent in this shape.";
       return;
     }
-    askConfirm();
+    await askConfirm();
   }
 
-  function askConfirm() {
+  // cf#1067: the studio's own length check for this style, in plain words, before anything starts. A
+  // failed check does not stop the video; it says the lengths could not be checked.
+  async function lengthNotes() {
+    try {
+      // Not postJson: preflight answers ok:false when a shot is too long, and that is the answer wanted here.
+      const r = await fetch("/api/storyboard/preflight", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ storyboard: state.board, motion_backend: state.choice.door.name, quality: state.quality }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const out = await r.json();
+      return (Array.isArray(out.issues) ? out.issues : []).map(style.lengthNote).filter(Boolean);
+    } catch (_) {
+      return ["The studio could not check how long each scene will be."];
+    }
+  }
+
+  async function askConfirm() {
     const seconds = style.boardSeconds(state.board);
     const shape = style.SHAPES.find((s) => s.id === state.shape);
     const quality = style.QUALITIES.find((q) => q.id === state.quality);
     $("make-confirm-what").textContent = "About " + Math.round(seconds) + " seconds, " + shape.label.toLowerCase() + ", " + quality.label.toLowerCase() + " quality, with " + characters().map((c) => c.name).join(", ") + ".";
-    $("make-confirm-style").textContent = "Style: " + state.choice.line + ".";
+    const talking = style.talkingStyleLine(state.board, state.choice.door);
+    $("make-confirm-style").textContent = "Style: " + state.choice.line + "." + (talking ? " " + talking : "");
     $("make-confirm-total").textContent = "Total: " + $("make-total").textContent;
     $("make-confirm-note").textContent = $("make-total-note").textContent;
     const needWan = state.choice.needs === "wan_lora" ? state.chosen.map(findCast).filter((c) => c && !hasWanLook(c)) : [];
@@ -483,6 +502,15 @@
       needWan.length ? "First this style learns " + needWan.map((c) => c.name).join(", ") + "'s face (about " + PREP_MINUTES.wan + " min each)." : "",
       voiceless.length ? voiceless.map((c) => c.name).join(", ") + (voiceless.length === 1 ? " gets a voice of their own. You can change it on the Cast page." : " each get a voice of their own. You can change them on the Cast page.") : "",
     ].filter(Boolean).join(" ");
+    const lengths = $("make-confirm-lengths");
+    lengths.textContent = "";
+    const notes = await lengthNotes();
+    for (const n of notes) {
+      const li = document.createElement("li");
+      li.textContent = n;
+      lengths.append(li);
+    }
+    lengths.hidden = notes.length === 0;
     $("make-confirm").showModal();
   }
 

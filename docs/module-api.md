@@ -154,6 +154,7 @@ service-bound, but is never installed through the dispatch install gate, and is 
 | `ui.cost` | string | no | | |
 | `ui.cost_usd_per_second` | `[number, number]` | no | | (absent = price unknown) |
 | `ui.cost_usd_per_clip` | `{ usd, resolution?, seconds? }[]` | no | | (absent = price unknown) |
+| `ui.cost_as_of` | `"YYYY-MM-DD"` | with a cost field | | |
 | `ui.blurb` | string | no | | |
 | `ui.limits` | string[] | no | | |
 
@@ -182,8 +183,10 @@ What each optional field means:
   of the two, never both. Per second is `[lowest resolution, highest resolution]`. Per clip is a list of
   price points; `resolution` is a value of the door's resolution enum, `seconds` one of its
   `duration_steps`, and an absent key matches any value. No matching point means price unknown, never a
-  guess. Each door cites the price page and the date it was read beside the figure. A door with no
-  listed price leaves both out and says so in `ui.limits`.
+  guess. `ui.cost_as_of` is the day the figure was read, and is required with either field. The
+  source of each figure is in `docs/motion-door-prices.md`. A door with no listed price leaves both out
+  and says so in `ui.limits`. The rules are in `modules/_shared/door-manifest-rules.ts` and
+  `docs/CONTRACT.md` 4.0.1.
 - **`needs_tenant_r2`**: see `InvokeRequest.r2` under "Invocation contract". Leave absent unless the
   module submits to a pooled RunPod endpoint that needs the tenant's per-job R2 credential.
 - **`ui.locality`**: load-bearing, not cosmetic. It drives the planner door tag AND the core's
