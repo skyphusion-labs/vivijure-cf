@@ -451,7 +451,7 @@ rather than hardcoding a hook list; it is independent of the `catalog` array ord
 | Field | Type | Meaning |
 |-------|------|---------|
 | `dispatch` | boolean | `true` when this deploy binds the Workers-for-Platforms namespace (`MODULE_DISPATCH`), i.e. a module can be installed without a core redeploy (2.31). |
-| `hooks_unavailable?` | `{ [hook or "capability:<name>"]: string }` | Hooks this host cannot serve right now, each mapped to a reason the panel prints verbatim (cf#98). Absent key = available. `plan.enhance` appears when the AI Gateway is not usable; `master`, `film.finish`, `notify` and the `capability:video-finish` key appear when the video-finish tier is unavailable (`VIDEO_FINISH_URL` unset). |
+| `hooks_unavailable?` | `{ [hook or "capability:<name>"]: string }` | Hooks this host cannot serve right now, each mapped to a reason the panel prints verbatim (cf#98). Absent key = available. `plan.enhance` appears when the AI Gateway is not usable; `master`, `film.finish`, `notify` and the `capability:video-finish` key appear when the video-finish tier is unavailable (no bound container, and `VIDEO_FINISH_URL` unset or not an absolute http or https URL, cf#964). |
 | `abuse_report_url?` | string | Where a reporter is sent for abuse of THIS studio (control-plane#130). Present only when the operator set it. |
 
 #### 2.3.1 render.quality_tiers (canonical values)
@@ -942,7 +942,7 @@ action:
 
 | `state` | HTTP | Means |
 |---|---|---|
-| `tier-unavailable` | 503 | `VIDEO_FINISH_URL` is empty (the video-finish tier is not installed). A provisioning state, not a fault. |
+| `tier-unavailable` | 503 | No bound container, and `VIDEO_FINISH_URL` is empty or not an absolute http or https URL (the video-finish tier is not installed, cf#964). A provisioning state, not a fault. |
 | `route-not-served` | 503 | Container answered 404: its image predates this route. **EXPECTED during a rollout window**, when the Worker ships before the container image is rebuilt and the always-on service rolled. No bug to hunt. |
 | `container-unreachable` | 502 | No answer (transport failure, or 503/504 after retries). The service is down or unreachable at `VIDEO_FINISH_URL`. |
 | `container-error` | 502 | The container serves the route and failed on this clip. The fault is the input or ffmpeg on it. |

@@ -60,6 +60,21 @@ declared default rather than passed upstream, where it would surface as an opaqu
 
 No R2 bucket, by design (see above).
 
+## Proxied output and per-model bodies
+
+A proxied model answers with an `image` string, sometimes wrapped as `{ state, result: { image } }`.
+That string is an https URL, a data URL, or raw base64. URLs are fetched; the other two are decoded
+here, and base64 that does not decode to an image fails loud.
+
+Some models need a body that their published schema does not explain (vivijure-cf#1141):
+
+| model | body | why |
+|---|---|---|
+| `xai/grok-imagine-image` | `response_format: "b64_json"` | xAI refuses URL output for a zero-data-retention team. |
+| `recraft/recraftv4` | no `style` | Recraft V4 refuses every `style`. |
+
+The published schemas for these two are in `schemas/`, fetched from the Cloudflare model pages.
+
 ## Adding a model
 
 Append its id to `MODELS` in `src/index.ts` and confirm `src/image-gen.ts` can dispatch it. Every id

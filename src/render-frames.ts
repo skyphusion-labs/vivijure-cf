@@ -21,6 +21,7 @@
 // as "checked"; the honest claim is "N frames sampled at these timestamps looked like this".
 import { presignR2Get, presignR2Put } from "./r2-presign";
 import { videoFinishDoorOf, type VideoFinishDoorHost } from "./video-finish-binding";
+import { usableVideoFinishUrl } from "./video-finish-availability";
 import type { Env } from "./env";
 import { mediaFinishToken } from "../modules/_shared/media-finish-auth";
 
@@ -244,7 +245,7 @@ export async function buildFramesSheet(
     // is exactly the shape the door takes, so it passes straight through with no adapter.
     container = door;
   } else {
-    const base = typeof env.VIDEO_FINISH_URL === "string" ? env.VIDEO_FINISH_URL.replace(/\/$/, "") : "";
+    const base = (usableVideoFinishUrl(env.VIDEO_FINISH_URL) ?? "").replace(/\/$/, "");
     if (!base) return framesFailure("tier-unavailable");
     container = {
       fetch: (url, init) => {
