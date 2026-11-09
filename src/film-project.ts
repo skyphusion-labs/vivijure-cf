@@ -58,6 +58,16 @@ export function chooseFilmProject(
   return { create: true };
 }
 
+/** vivijure-cf#1395: what a caller is told when a save fails for a reason that is not a refusal it can
+ *  act on. Fixed text: a thrown value can carry a stack or storage internals, and it goes to the log,
+ *  never into a response (CodeQL js/stack-trace-exposure, alert #86). */
+export const FILM_PROJECT_SAVE_FAILED = "the board could not be saved to a project; the film still started";
+export const BUNDLE_BOARD_READ_FAILED = "the kept board could not be read, so the storyboard was not saved to a project; the film still started";
+
+function logSaveFailure(ev: string, e: unknown): void {
+  console.error(JSON.stringify({ ev, reason: e instanceof Error ? e.message : String(e) }));
+}
+
 export type FilmProjectResult =
   | { saved: true; id: string; name: string; created: boolean }
   | { saved: false; error: string };
@@ -99,7 +109,11 @@ export async function saveFilmProject(
     }
     return { saved: true, id: choice.use.public_id, name: choice.use.name, created: false };
   } catch (e) {
-    return { saved: false, error: e instanceof Error ? e.message : String(e) };
+    // core#518: the one refusal a caller can act on (retitle the board), with core's own sentence.
+    if (e instanceof BoardKeyCollisionError) return { saved: false, error: e.message };
+    // vivijure-cf#1395: anything else is logged and answered with fixed text.
+    logSaveFailure("film_project.save_failed", e);
+    return { saved: false, error: FILM_PROJECT_SAVE_FAILED };
   }
 }
 
@@ -150,7 +164,9 @@ export async function saveBundleFilmProject(
   try {
     board = await readBundleBoard(env, args.bundleKey);
   } catch (e) {
-    return { saved: false, error: `the kept board could not be read: ${e instanceof Error ? e.message : String(e)}` };
+    // vivijure-cf#1395: the storage error goes to the log, not the response.
+    logSaveFailure("film_project.bundle_board_read_failed", e);
+    return { saved: false, error: BUNDLE_BOARD_READ_FAILED };
   }
   if (board === null) return { saved: false, error: OLD_BUNDLE_NOT_SAVED };
   const named = (board as { projectName?: unknown }).projectName;

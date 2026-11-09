@@ -13,7 +13,7 @@ vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
 });
 
 import worker from "../src/index";
-import { chooseFilmProject, stableJson } from "../src/film-project";
+import { BUNDLE_BOARD_READ_FAILED, FILM_PROJECT_SAVE_FAILED, chooseFilmProject, saveBundleFilmProject, stableJson } from "../src/film-project";
 import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
 
 function realD1() {
@@ -247,5 +247,62 @@ describe("chooseFilmProject", () => {
   });
   it("ignores a project with another name", () => {
     expect(chooseFilmProject([row(1, "Other", null)], "F", {}, null)).toEqual({ create: true });
+  });
+});
+
+// vivijure-cf#1395 (CodeQL js/stack-trace-exposure, alert #86): a thrown value can carry a stack and storage
+// internals. It goes to the log, and the response carries a fixed sentence.
+describe("cf#1395: a save that throws answers fixed text, never the error", () => {
+  const SECRET = "D1_ERROR: no such table storyboard_projects_internal";
+  const boom = () => {
+    const err = new Error(SECRET);
+    err.stack = `Error: ${SECRET}\n    at secretFrame (/srv/worker/internal.js:42:7)`;
+    return err;
+  };
+
+  it("POST /api/film: the film starts, the project answer is the fixed sentence, and the error is logged", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => { logs.push(String(m)); });
+    const e = env();
+    const db = e.DB as { prepare: (sql: string) => unknown };
+    const real = db.prepare.bind(db);
+    db.prepare = (sql: string) => {
+      if (/FROM storyboard_projects/i.test(sql) && !/film/i.test(sql)) throw boom();
+      return real(sql);
+    };
+    const res = await worker.fetch(new Request("https://studio.example/api/film", {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer t" }, body: JSON.stringify(filmBody()),
+    }), e as never, ctx);
+    const text = await res.text();
+    spy.mockRestore();
+    expect(res.status).toBe(201);
+    expect((JSON.parse(text) as { project: unknown }).project).toEqual({ saved: false, error: FILM_PROJECT_SAVE_FAILED });
+    expect(text).not.toContain("D1_ERROR");
+    expect(text).not.toContain("secretFrame");
+    expect(logs.some((l) => l.includes("film_project.save_failed") && l.includes(SECRET))).toBe(true);
+  });
+
+  it("the bundle board read: fixed sentence out, the storage error to the log", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => { logs.push(String(m)); });
+    const r = await saveBundleFilmProject({ R2_RENDERS: { get: async () => { throw boom(); }, put: async () => null } } as never, { bundleKey: "bundles/b.tar.gz", filmName: "F" });
+    spy.mockRestore();
+    expect(r).toEqual({ saved: false, error: BUNDLE_BOARD_READ_FAILED });
+    expect(JSON.stringify(r)).not.toContain("D1_ERROR");
+    expect(logs.some((l) => l.includes("film_project.bundle_board_read_failed"))).toBe(true);
+  });
+
+  it("CONTROL: core's key collision THROWN by the save is still told in core's words, not the fixed sentence", async () => {
+    // The named-project path writes through setLastStoryboard, which throws BoardKeyCollisionError, so this
+    // reaches the catch (the create path refuses before it, and never does).
+    const e = env();
+    const a = (await call(e, "POST", "/api/storyboard/projects", { name: "A" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${a.id}/storyboard`, { storyboard: board("a") });
+    const b = (await call(e, "POST", "/api/storyboard/projects", { name: "B" })).body.project as Proj;
+    const r = await call(e, "POST", "/api/film", filmBody({ project_id: b.id }));
+    expect(r.status).toBe(201);
+    const err = (r.body.project as { saved: boolean; error: string });
+    expect(err.saved).toBe(false);
+    expect(err.error).toContain("already uses the render key");
   });
 });
