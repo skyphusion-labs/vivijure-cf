@@ -39,17 +39,11 @@ out of band as above, never in CI.
 **Drift detector:** `tests/mcp-doors-328.test.ts` asserts the production wrangler template
 points at `@skyphusion-labs/vivijure-mcp`, that the installed package's `serverInfo.version`
 matches its `package.json` version (the wire-version defect that used to report `0.1.0`), and
-that the retired propagandhi config is not reintroduced.
+that the retired local-studio MCP config is not reintroduced.
 
-## Retired: propagandhi / local studio door (cf#328)
+## Retired: the local studio MCP door (cf#328)
 
-Conrad ruling 2026-08-17: delete the second door. Applied the same day.
-
-| What | Was | Now |
-|------|-----|-----|
-| Worker | `vivijure-studio-mcp-flatliners` | deleted |
-| Hostname | `studio-mcp-propagandhi.skyphusion.org` | custom domain detached, DNS record gone |
-| Config | `wrangler.mcp.propagandhi.toml` | removed from this repo |
+Conrad ruling 2026-08-17: delete the second door. Applied the same day. The worker, its hostname, and its wrangler file are gone.
 
 Production MCP at `studio-mcp.vivijure.com` (`vivijure-studio-mcp`) is unchanged. A local-studio
 MCP door, if wanted later, is a new Worker with a new name, not a revival of this script.

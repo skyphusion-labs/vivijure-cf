@@ -579,7 +579,7 @@ if the feature behind it is unused. Beyond the ones seeded above:
 | `FINISH_DOOR_TOKEN` | core (`MEDIA_FINISH_TOKEN`); `film-titles`, `subtitle`, `beat-sync`, `audio-master` (`MEDIA_FINISH_TOKEN`); `finish-upscale` (`FINISH_DOOR_TOKEN`) | bearer the media containers / finish doors check |
 | `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` | core (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) | Wan 2.2 LoRA-training endpoint (cast `/train-wan-lora`) |
 | `IMAGE_GENERATE_OPENAI_API_KEY` | `image-generate` (`OPENAI_API_KEY`) | optional BYOK OpenAI key for transparent PNGs |
-| `FINISH_DOOR_TOKEN_PROPAGANDHI` | `finish-upscale` | second upscale door bearer |
+| second upscale door bearer | `finish-upscale` | name is the binding in `modules/finish-upscale/wrangler.toml` |
 | `BLENDER_DOOR_TOKEN` | `finish-blender` | blender door bearer |
 | `LOCAL_BACKEND_URL`, `LOCAL_BACKEND_TOKEN` | `local-gpu` | local-GPU door (section 6) |
 
@@ -877,7 +877,7 @@ so you cannot half-configure the door. Both values come from the door box: bring
 `vivijure-local-12gb` / `-16gb` container up FIRST, then copy them from its startup banner (the door
 also keeps them in its own `.env`). `LOCAL_BACKEND_URL` is the URL of YOUR door (on-box, or a
 tunnel you own if you self-host). Production fleet has no public named tunnel: `door-fatmike`
-and `door-propagandhi` were deleted (fleet-chezmoi #2042). Do not point this at
+and `door-the retired homelab host` were deleted (fleet-chezmoi #2042). Do not point this at
 `https://door-fatmike.skyphusion.org`. `LOCAL_BACKEND_TOKEN` is the shared token the door
 checks on each render call.
 `deploy.sh` seeds both into the Secrets Store and the `local-gpu` module binds them from there, which is
@@ -905,7 +905,7 @@ Two things to pin when you recreate the door container:
 - **Restart only the backend service, not the whole stack,** to keep the door URL stable.
   A full recreate can hand you a new URL, which then also has to be re-seeded into the studio's
   `LOCAL_BACKEND_URL` secret. Production fleet does not have a standing named tunnel
-  (`door-fatmike` / `door-propagandhi` deleted, fleet-chezmoi #2042). Do not push a live
+  (`door-fatmike` / `door-the retired homelab host` deleted, fleet-chezmoi #2042). Do not push a live
   Secrets Store update without an explicit apply GO.
 
 **Failure signature (self-diagnosis).** If you moved a door but skipped the R2 re-wire, the film fails
