@@ -14,7 +14,7 @@ import {
   readManifest,
   resolvePickOne,
   validateConfig,
-} from "@skyphusion-labs/vivijure-core/modules/registry";
+ ConfigValueError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { MODULE_API, type ConfigSchema, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 
@@ -96,8 +96,14 @@ describe("validateConfig", () => {
     expect(validateConfig(SCHEMA, { fidelity: 2.5 }).fidelity).toBe(1);
     expect(validateConfig(SCHEMA, { fidelity: 0.33 }).fidelity).toBe(0.33);
   });
-  it("falls back on an out-of-set enum and junk numbers", () => {
-    expect(validateConfig(SCHEMA, { face_restore: "wat" }).face_restore).toBe("none");
+  // core#343 (core 1.43.0): an enum value the schema does not declare is REFUSED by name, not replaced with
+  // the default. An absent value still takes the default. Junk numbers still fall back.
+  it("refuses an out-of-set enum by name, and keeps the default for an absent one", () => {
+    expect(() => validateConfig(SCHEMA, { face_restore: "wat" })).toThrow(ConfigValueError);
+    expect(() => validateConfig(SCHEMA, { face_restore: "wat" })).toThrow(/"face_restore": "wat" is not supported/);
+    expect(validateConfig(SCHEMA, {}).face_restore).toBe("none");
+  });
+  it("falls back on junk numbers", () => {
     expect(validateConfig(SCHEMA, { interpolation_factor: "abc" }).interpolation_factor).toBe(2);
   });
   it("drops unknown keys", () => {
