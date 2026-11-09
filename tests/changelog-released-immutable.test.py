@@ -253,6 +253,51 @@ with tempfile.TemporaryDirectory() as base_dir:
             rc != 0 and "no `## Unreleased` heading" in out,
         )
 
+    # cf#824: WHITESPACE-ONLY drift is reported on its own line and is NOT drift. Each case below
+    # edits the v1.0.0 section (not allowlisted, so any real change there is refused).
+    def edited(transform):
+        d = tempfile.mkdtemp()
+        tmp = pathlib.Path(d)
+        copy_repo(base, tmp)
+        path = tmp / "CHANGELOG.md"
+        path.write_text(transform(path.read_text()))
+        rc, out = run_guard(tmp)
+        shutil.rmtree(d)
+        return rc, out
+
+    V1_HEAD = "## v1.0.0 -- 2026-02-01\n\n### feat: shipped in v1.0.0\n"
+    assert BASE_CHANGELOG.count(V1_HEAD) == 1, "fixture drifted; the cf#824 cases edit this text"
+
+    for name, new in [
+        ("a doubled blank line", "## v1.0.0 -- 2026-02-01\n\n\n### feat: shipped in v1.0.0\n"),
+        ("trailing spaces on a line", "## v1.0.0 -- 2026-02-01   \n\n### feat: shipped in v1.0.0\t\n"),
+        ("a blank line holding only spaces", "## v1.0.0 -- 2026-02-01\n   \n### feat: shipped in v1.0.0\n"),
+    ]:
+        rc, out = edited(lambda t, new=new: t.replace(V1_HEAD, new))
+        check(
+            "WHITESPACE (cf#824): " + name + " passes, with its own note and no CHANGED line",
+            rc == 0
+            and "v1.0.0 differs from its tag in WHITESPACE ONLY" in out
+            and "has CHANGED" not in out,
+        )
+
+    # The other direction, and the reason the normaliser must stay narrow: a REAL rewrite still
+    # fails, alone or hidden inside a whitespace sweep, and so does every whitespace change that is
+    # actually a content change in Markdown.
+    for name, new in [
+        ("a rewritten claim", "## v1.0.0 -- 2026-02-01\n\n### feat: never shipped in v1.0.0\n"),
+        ("a rewrite hidden inside a whitespace sweep",
+         "## v1.0.0 -- 2026-02-01  \n\n\n### feat: never shipped in v1.0.0\n"),
+        ("a changed indent (list nesting / code block)", "## v1.0.0 -- 2026-02-01\n\n    ### feat: shipped in v1.0.0\n"),
+        ("the only blank line removed (merges two blocks)", "## v1.0.0 -- 2026-02-01\n### feat: shipped in v1.0.0\n"),
+        ("whitespace inside a line", "## v1.0.0 -- 2026-02-01\n\n### feat:  shipped in v1.0.0\n"),
+    ]:
+        rc, out = edited(lambda t, new=new: t.replace(V1_HEAD, new))
+        check(
+            "CONTROL (cf#824): " + name + " is still refused as content drift",
+            rc != 0 and "the v1.0.0 section has CHANGED" in out and "WHITESPACE ONLY" not in out,
+        )
+
 # -----------------------------------------------------------------------------------------------
 # REAL DEFECT, THIS REPO OWN LIVE STATE (cf#551). Not a synthetic fixture: an independent
 # re-derivation, written separately here rather than reusing anything from the script under test,
@@ -307,7 +352,43 @@ def independent_drift_scan(root):
     return sorted(drifted)
 
 
-live_drift = independent_drift_scan(repo_root)
+def independent_whitespace_only(root, versions):
+    """Of the drifted versions, those whose difference is whitespace only by the cf#824 rule,
+    re-derived here without the script's normaliser: compare the two sections as lists of
+    right-stripped lines with consecutive blank lines merged."""
+    heading_re = re.compile(r"^## (v\d+\.\d+\.\d+)\b")
+
+    def section_lines(text, version):
+        lines = text.split("\n")
+        try:
+            i = next(n for n, l in enumerate(lines) if (m := heading_re.match(l)) and m.group(1) == version)
+        except StopIteration:
+            return None
+        j = next((k for k in range(i + 1, len(lines)) if lines[k].startswith("## ")), len(lines))
+        kept = []
+        for l in (x.rstrip() for x in lines[i:j]):
+            if l == "" and kept and kept[-1] == "":
+                continue
+            kept.append(l)
+        while kept and kept[-1] == "":
+            kept.pop()
+        return kept
+
+    text = (root / "CHANGELOG.md").read_text()
+    out = []
+    for v in versions:
+        shown = subprocess.run(
+            ["git", "-C", str(root), "show", v + ":CHANGELOG.md"], capture_output=True, text=True, check=False
+        )
+        if shown.returncode == 0 and section_lines(text, v) == section_lines(shown.stdout, v):
+            out.append(v)
+    return sorted(out)
+
+
+live_drift_bytes = independent_drift_scan(repo_root)
+live_whitespace = independent_whitespace_only(repo_root, live_drift_bytes)
+# cf#824: whitespace-only versions are named as such by the guard and are not drift.
+live_drift = [v for v in live_drift_bytes if v not in live_whitespace]
 live_rc, live_out = run_guard(repo_root)
 live_sha = subprocess.run(
     ["git", "-C", str(repo_root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
@@ -315,6 +396,11 @@ live_sha = subprocess.run(
 print("")
 print("live repo state at " + live_sha + ":")
 print("  independently-derived drifted versions: " + (", ".join(live_drift) if live_drift else "(none)"))
+print("  of those, whitespace only (cf#824): " + (", ".join(live_whitespace) if live_whitespace else "(none)"))
+check(
+    "REAL DEFECT (cf#824): every independently-found whitespace-only version is named as such",
+    all((v + " differs from its tag in WHITESPACE ONLY") in live_out for v in live_whitespace),
+)
 check(
     "REAL DEFECT: the shipped guard agrees with an independent re-derivation on the live state "
     "of this repo",
