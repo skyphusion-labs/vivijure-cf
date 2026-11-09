@@ -159,6 +159,7 @@ import { serializeStoryboardYaml } from "@skyphusion-labs/vivijure-core/planner-
 import { emitMarkers, type MarkersFormat } from "./markers";
 import { abuseReportUrl } from "./abuse-contact";
 import { videoFinishHooksUnavailable } from "./video-finish-availability";
+import { hTierReadiness } from "./tier-readiness";
 import { keyLabel } from "./log-scrub";
 import { assembleBundle, type AssembleBundleArgs } from "@skyphusion-labs/vivijure-core/bundle-assembler";
 import { presignR2Get, FILM_DOWNLOAD_TTL_SECONDS } from "./r2-presign";
@@ -2932,6 +2933,7 @@ const hModules: Handler = async (_req, env) => {
 export const API_ROUTES: Route[] = [
   { method: "GET",    pattern: "/api/storage/usage",                   scope: "operator",    handler: hStorageUsage },
   { method: "POST",   pattern: "/api/storage/reconcile",               scope: "operator",    handler: hStorageReconcile },
+  { method: "GET",    pattern: "/api/tiers/video-finish/readiness",    scope: "operator",    handler: hTierReadiness },
   { method: "GET",    pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hListProjects },
   { method: "POST",   pattern: "/api/storyboard/projects",                        scope: "consumer",    handler: hCreateProject },
   { method: "GET",    pattern: "/api/storyboard/projects/:id",                    scope: "consumer",    handler: hGetProject },
