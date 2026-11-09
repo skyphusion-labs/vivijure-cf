@@ -32,8 +32,7 @@ import {
   stateKey,
   clipKey,
   normalizeConfig,
-  type RunState,
-} from "./params";
+  type RunState, resolutionDurationError } from "./params";
 import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
 import { failOnRefusal } from "../../_shared/gateway-log";
 import { type Env, type WorkflowParams, generateClip, secretValue } from "./generate";
@@ -48,7 +47,8 @@ const MANIFEST: ModuleManifest = {
   config_schema: {
     generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     aspect_ratio: { type: "enum", values: ["16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
-    resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution" },
+    // cf#932: the label is the one place the schema can say it; resolutionDurationError enforces it.
+    resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution (1080p: 8 second shots only)" },
   },
   ui: {
     section: "motion",
@@ -153,6 +153,9 @@ async function submit(
 
   const config = normalizeConfig(req.config ?? {});
   const seconds = clampDuration(input.seconds);
+  // cf#932: refuse 1080p on a shot that is not 8 seconds, before any provider call.
+  const comboError = resolutionDurationError(config, seconds);
+  if (comboError) return { ok: false, error: comboError, reason: "bad-input" };
   const project = req.context?.project || "project";
   const jobId = (req.context?.job_id || crypto.randomUUID()) + "-" + input.shot_id;
 

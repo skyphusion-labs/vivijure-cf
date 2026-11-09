@@ -25,6 +25,24 @@ export function clampDuration(seconds: number): number {
   return 8;
 }
 
+/**
+ * cf#932: Veo 3.1 makes 1080p only as an 8 second clip. Google's reference lists `resolution` as
+ * `"1080p"` (only supports 8s duration) and `durationSeconds` as must be "8" with 1080p, for every
+ * Veo 3.1 variant (https://ai.google.dev/gemini-api/docs/veo, read 2026-11-09). Cloudflare's
+ * schema-input.json for google/veo-3.1-fast lists the two enums independently and says nothing
+ * either way, and whether its wrapper enforces the rule is not measured.
+ *
+ * `config_schema` cannot state that one field limits another, so the panel offers 1080p on any shot.
+ * This is the module refusing the pair itself, before the provider is called, so the shot fails with
+ * a reason a person can act on rather than a provider error or a clip that is not what was asked.
+ * Returns the error, or null when the pair is allowed. `seconds` is the SNAPPED duration (4, 6 or 8).
+ */
+export function resolutionDurationError(config: ModuleConfig, seconds: number): string | null {
+  if (config.resolution !== "1080p" || seconds === 8) return null;
+  return "cf-veo: 1080p needs an 8 second clip, and this shot is " + seconds + "s. "
+    + "Veo 3.1 makes 1080p at 8 seconds only. Use 720p, or make the shot 8 seconds long.";
+}
+
 export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
   const ar = raw.aspect_ratio;
   return {

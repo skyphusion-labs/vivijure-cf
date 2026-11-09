@@ -184,7 +184,7 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 
 | | |
 |---|---|
-| Duration | Clip length follows the LINE audio. |
+| Duration | Clip length follows the LINE audio. The door declares 2-15 seconds. 15 is OUR cap, not RunPod's: the endpoint takes no duration parameter and publishes no length limit (checked 2026-11-09). Raising it needs a paid probe that compares the delivered clip length with the audio length (cf#931). |
 | Talks? | Mouth follows our file. Not invented speech. |
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet. |
 | First+last? | No. |
@@ -228,7 +228,7 @@ Clips with the model's own sound, from your stills. 4 to 15 seconds. Not a defau
 
 | | |
 |---|---|
-| Duration | 4, 6, or 8 seconds |
+| Duration | 4, 6, or 8 seconds. 1080p is 8 seconds only (Google's Veo 3.1 rule); a 1080p shot of 4 or 6 seconds is refused before the provider is called (cf#932). |
 | Talks? | Yes. |
 | Voice lock | `prompt_lock`. |
 | First+last? | No. |
