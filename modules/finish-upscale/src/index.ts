@@ -15,7 +15,8 @@
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot
 // be submitted at all.
 
-import { FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { FAILURE_ENDPOINT_ABSENT, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { runpodEndpointAbsent } from "../../_shared/runpod-endpoint-absent";
 import {
   type InvokeRequest,
   type InvokeResponse,
@@ -343,7 +344,14 @@ async function submitVia(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
     });
-    if (!r.ok) return withFailure(passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
+    if (!r.ok) {
+      // cf#757: a bound endpoint that does not exist gets its own degrade reason and failure code, so it can be
+      // told apart from a bad request without reading prose. RunPod arm only: the measured body is RunPod's.
+      if (!t.door && r.status === 404 && runpodEndpointAbsent(r.status, await r.text().catch(() => ""))) {
+        return withFailure(passthrough(input, "runpod-endpoint-absent", { detail: "HTTP 404: RunPod endpoint not found, this door has no backend" }), FAILURE_ENDPOINT_ABSENT);
+      }
+      return withFailure(passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
+    }
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
     // cf#279: neither service can enumerate jobs, so an id not recorded at submit is unreachable
