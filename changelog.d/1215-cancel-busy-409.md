@@ -1,3 +1,0 @@
-### fix(film): a cancel cannot be undone by a tick, and a busy cancel is a 409 (#1215)
-
-Core 1.34.0. A cancel used to write the film doc with no lease, so a tick that read the doc first could write the old doc back over the cancel, and the film kept spending. The R2 retry made one case easy to reach: a tick's put that lands and errors is put again over the cancel. A cancel now takes the film's advance lease, as a tick does, and waits up to 20 s for a running tick. If the tick still holds the film, `DELETE /api/storyboard/render/:jobId` answers 409 with `retryable: true`, and nothing is written or cancelled.

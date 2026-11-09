@@ -1,3 +1,0 @@
-### fix(clips): pin core 1.41.0 and save a clip job's row as mode clips
-
-The studio now pins `@skyphusion-labs/vivijure-core` `^1.41.0` from the registry, replacing 1.40.0. Core 1.41.0 adds the `clips` render mode, and the render row projection now passes it through. A clip job's history row is now inserted with mode `clips` instead of `full`. The retry route refuses a row whose mode is `clips` as well as one whose job id has the `clips-` prefix. The panel's `isClipJobRow` reads the mode first and keeps the prefix as the fallback for rows saved under an older core, so `historyPassLabel` and the hidden retry button follow the mode too (#1351).

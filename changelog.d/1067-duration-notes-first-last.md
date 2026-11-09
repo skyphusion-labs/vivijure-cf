@@ -1,3 +1,0 @@
-### fix(render): say when a door will cut a shot, and hold `first_last` to what a door sends
-
-`POST /api/storyboard/render` and `POST /api/render/film` now answer with `duration_notes` when the chosen door will not make a shot at its planned length, from the door's `usage` bounds. A caller that skipped preflight is told before the clip comes back cut. Nothing new is refused. A new conformance test runs every motion door's own param builder with an end still and requires `usage.first_last` to match whether the door sends it, so a door cannot declare end frames it drops, or drop the declaration and lose them.
