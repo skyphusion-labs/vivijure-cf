@@ -1274,6 +1274,10 @@ const hSubmitRender: Handler = async (req, env) => {
     keyframe_config: mapped.keyframe_config,
     motion_config: panelClip.config,
     finish_config: mapped.finish_config,
+    // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
+    // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
+    dialogue_backend: mapped.dialogue_backend,
+    dialogue_config: mapped.dialogue_config,
     // cf#537: which finish modules this render asked for. Resolved out of `renderOverrides.select`
     // by the core, so it rides the SAME bag that `renders.render_overrides` already persists, and a
     // derived render (regen-shot, finalize, animate-*) replays it with no schema change.
@@ -1469,6 +1473,10 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     motion_backend: motionBackend,
     motion_config: fromKfClip.config,
     finish_config: mapped.finish_config,
+    // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
+    // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
+    dialogue_backend: mapped.dialogue_backend,
+    dialogue_config: mapped.dialogue_config,
     finish_select: mapped.finish_select, // cf#537
     speech_config: mapped.speech_config,
     film_finish_config: mapped.film_finish_config,
@@ -2313,6 +2321,9 @@ function parentDoors(env: StudioEnv, ctx: ExecutionContext): ParentDoors {
         motion_config: job.motion_config,
         finish_config: job.finish_config,
         finish_select: job.finish_select,
+        // vivijure-cf#1379: the retake keeps the dialogue module and config the part ran with (core#339).
+        dialogue_backend: job.dialogue_backend,
+        dialogue_config: job.dialogue_config,
         speech_config: job.speech_config,
         film_finish_config: job.film_finish_config,
         master_config: job.master_config,
