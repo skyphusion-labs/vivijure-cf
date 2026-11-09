@@ -5,6 +5,7 @@
 // the classes wrangler binds, and this module carries the route table, the handlers and the sweep
 // pass that tests import (vivijure-cf#1308).
 
+import { providerlessHooksUnavailable } from "./providerless-hooks";
 import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { runLiveConformance, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
@@ -2899,9 +2900,12 @@ const hModules: Handler = async (_req, env) => {
   // cf#118: the video-finish tier is the second thing a host can genuinely lack, and it goes
   // through the SAME channel rather than growing a parallel one -- that is the whole point of
   // cf#98. Merged, so a host missing both reports both.
+  // cf#904: a catalog hook nothing in the project provides is reported here until an installed
+  // module serves it. Derived from discovery, so it clears itself. See src/providerless-hooks.ts.
   const hooksUnavailable = {
     ...(aiReady ? {} : { "plan.enhance": PLANNER_UNAVAILABLE_REASON }),
     ...videoFinishHooksUnavailable(env),
+    ...providerlessHooksUnavailable(modules),
   };
   const anyHookUnavailable = Object.keys(hooksUnavailable).length > 0;
   const abuseUrl = abuseReportUrl(env);
