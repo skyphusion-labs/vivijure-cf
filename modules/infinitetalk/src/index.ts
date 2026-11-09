@@ -20,7 +20,7 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./kling";
+import { MIN_SECONDS, MAX_SECONDS, buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./kling";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
@@ -77,8 +77,9 @@ const MANIFEST: ModuleManifest = {
     voice: "cast_tts",
     scatter_native_audio: false,
     driving_audio: true,
-    min_seconds: 2,
-    max_seconds: 15,
+    min_seconds: MIN_SECONDS,
+    // cf#931: our cap, not RunPod's. See MAX_SECONDS in ./kling.
+    max_seconds: MAX_SECONDS,
   },
 };
 
