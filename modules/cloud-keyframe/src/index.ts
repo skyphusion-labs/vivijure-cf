@@ -259,12 +259,12 @@ async function generateImageWithFlagRetry(
 async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<InvokeResponse<KeyframeOutput>> {
   const input = req.input;
   if (!input || !input.project || !input.bundle_key) {
-    return { ok: false, error: "cloud-keyframe: input needs project and bundle_key" };
+    return { ok: false, error: "cloud-keyframe: input needs project and bundle_key", reason: "bad-input" };
   }
   const model = clampModel(req.config.model);
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if ((model.startsWith("google/") || model.startsWith("pruna/")) && !gatewayId) {
-    return { ok: false, error: "cloud-keyframe: GATEWAY_ID not configured (required for the proxied model)" };
+    return { ok: false, error: "cloud-keyframe: GATEWAY_ID not configured (required for the proxied model)", reason: "not-configured" };
   }
   const width = clampDim(req.config.width, 1344);
   const height = clampDim(req.config.height, 768);
@@ -277,10 +277,10 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   } catch (e) {
     return { ok: false, error: "cloud-keyframe: could not read bundle: " + (e as Error).message };
   }
-  if (!tar) return { ok: false, error: "cloud-keyframe: bundle not found at " + input.bundle_key };
+  if (!tar) return { ok: false, error: "cloud-keyframe: bundle not found at " + input.bundle_key, reason: "bad-input" };
 
   const yaml = extractTarText(tar, "storyboard.yaml");
-  if (!yaml) return { ok: false, error: "cloud-keyframe: bundle has no storyboard.yaml" };
+  if (!yaml) return { ok: false, error: "cloud-keyframe: bundle has no storyboard.yaml", reason: "bad-input" };
   const scenes = parseScenes(yaml);
   const stylePrefix = parseStylePrefix(yaml);
   const setting = parseSetting(yaml);
@@ -289,7 +289,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
 
   const selected = selectScenes(scenes, input.shot_ids);
   if (selected.length === 0) {
-    return { ok: false, error: "cloud-keyframe: no shots to render (empty storyboard or no matching shot_ids)" };
+    return { ok: false, error: "cloud-keyframe: no shots to render (empty storyboard or no matching shot_ids)", reason: "bad-input" };
   }
 
   // Stage each used slot's reference portrait(s), downscaled, as standalone R2 objects the per-shot
@@ -297,7 +297,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   // we cannot render with identity.
   const filmPlan = parseFilmRef(req.config.film_ref);
   if (!filmPlan) {
-    return { ok: false, error: "cloud-keyframe: unknown film_ref (use none | first_keyframe | cast:<slot>)" };
+    return { ok: false, error: "cloud-keyframe: unknown film_ref (use none | first_keyframe | cast:<slot>)", reason: "bad-input" };
   }
 
   const contextId = req.context?.job_id;
@@ -341,7 +341,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
       // Scatter shards often get one empty-slot shot. Skip unused registry
       // slots that have no file. Still fail if this shard NAMED the slot.
       if (namedSlots.includes(slot)) {
-        return { ok: false, error: "cloud-keyframe: slot " + slot + " has no portrait in the bundle (cannot render its shots)" };
+        return { ok: false, error: "cloud-keyframe: slot " + slot + " has no portrait in the bundle (cannot render its shots)", reason: "bad-input" };
       }
       continue;
     }
@@ -689,10 +689,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<KeyframeInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "keyframe") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

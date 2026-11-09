@@ -116,14 +116,14 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const audio = input.audio_url || (typeof req.config?.audio_url === "string" ? req.config.audio_url : "");
   if (!audio) {
-    return { ok: false, error: "infinitetalk: needs Cast audio (audio_url) so the speaker stays ours" };
+    return { ok: false, error: "infinitetalk: needs Cast audio (audio_url) so the speaker stays ours", reason: "bad-input" };
   }
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
   try {
     const r = await fetch(endpoint(route) + "/run", {
       method: "POST",
@@ -290,10 +290,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

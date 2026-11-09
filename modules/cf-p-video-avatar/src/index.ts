@@ -155,14 +155,14 @@ async function submit(
 ): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const audio = input.audio_url || "";
   if (!audio) {
-    return { ok: false, error: "cf-p-video-avatar: needs Cast audio (audio_url) so the speaker stays ours" };
+    return { ok: false, error: "cf-p-video-avatar: needs Cast audio (audio_url) so the speaker stays ours", reason: "bad-input" };
   }
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "cf-p-video-avatar: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "cf-p-video-avatar: GATEWAY_ID not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   const project = req.context?.project || "project";
@@ -254,10 +254,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
