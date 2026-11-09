@@ -46,7 +46,7 @@ function json(body: unknown, status = 200): Response {
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id and prompt", reason: "bad-input" };
   }
   const { baseUrl, token, urlError } = await backendCfg(env);
   if (!baseUrl) return { ok: false, error: urlError ?? "local-gpu: LOCAL_BACKEND_URL not configured" };
@@ -137,7 +137,7 @@ async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
 async function submitKeyframe(env: Env, req: InvokeRequest<KeyframeInput>): Promise<InvokeResponse<KeyframeOutput>> {
   const input = req.input;
   if (!input || !input.project || !input.bundle_key) {
-    return { ok: false, error: "keyframe: input needs project and bundle_key" };
+    return { ok: false, error: "keyframe: input needs project and bundle_key", reason: "bad-input" };
   }
   const { baseUrl, token, urlError } = await backendCfg(env);
   if (!baseUrl) return { ok: false, error: urlError ?? "local-gpu: LOCAL_BACKEND_URL not configured" };
@@ -227,13 +227,13 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook === "keyframe") {
         return json(await submitKeyframe(env, req as InvokeRequest<KeyframeInput>));
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req as InvokeRequest<MotionBackendInput>));
     }

@@ -69,7 +69,7 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
 async function submit(env: Env, req: InvokeRequest<CastImageInput>): Promise<InvokeResponse<CastImageOutput>> {
   const input = req.input;
   if (!input || typeof input.cast_id !== "number" || !input.portrait_url) {
-    return { ok: false, error: "cast.image: input needs cast_id and portrait_url" };
+    return { ok: false, error: "cast.image: input needs cast_id and portrait_url", reason: "bad-input" };
   }
   const model = typeof req.config.model === "string" && MODELS.includes(req.config.model) ? req.config.model : MODELS[0];
   const num = typeof req.config.num_images === "number" ? req.config.num_images : 10;
@@ -158,10 +158,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<CastImageInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "cast.image") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

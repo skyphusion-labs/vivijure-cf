@@ -220,9 +220,9 @@ async function submit(
 ): Promise<InvokeResponse<ScoreOutput>> {
   const input = req.input;
   const filmKey = typeof input?.film_key === "string" ? input.film_key.trim() : "";
-  if (!filmKey) return { ok: false, error: "score: input.film_key required" };
+  if (!filmKey) return { ok: false, error: "score: input.film_key required", reason: "bad-input" };
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "score: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "score: GATEWAY_ID not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   const scoredInput = { ...input, film_key: filmKey };
@@ -336,10 +336,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<ScoreInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "score") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
