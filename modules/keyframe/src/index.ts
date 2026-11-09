@@ -152,7 +152,7 @@ async function submit(
 ): Promise<InvokeResponse<KeyframeOutput>> {
   const input = req.input;
   if (!input || !input.project || !input.bundle_key) {
-    return { ok: false, error: "keyframe: input needs project and bundle_key" };
+    return { ok: false, error: "keyframe: input needs project and bundle_key", reason: "bad-input" };
   }
   const { route, apiKey, endpointId } = await runpodCreds(env);
   const credProblem = credentialProblem(route, endpointId);
@@ -380,7 +380,7 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<KeyframeInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       // cp#270: STRIP AT THE BOUNDARY. Reads the tenant credential and REMOVES it from `req` in
       // one call, so nothing below this line holds an object that still contains it -- the
@@ -389,7 +389,7 @@ export default {
       // this one should be unable to leak it even by accident.
       const tenantR2 = takeTenantR2(req);
       if (req.hook !== "keyframe") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req, tenantR2));
     }

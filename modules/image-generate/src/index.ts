@@ -80,7 +80,7 @@ async function runGenerate(
 ): Promise<InvokeResponse<ImageGenerateOutput>> {
   const input = req.input;
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim()) {
-    return { ok: false, error: "image.generate: input needs a non-empty prompt" };
+    return { ok: false, error: "image.generate: input needs a non-empty prompt", reason: "bad-input" };
   }
   // Clamp the model to what this module declared. An unknown id falls back to the default rather
   // than being passed through to the binding, where it would fail as an opaque upstream error.
@@ -143,10 +143,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<ImageGenerateInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } satisfies InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } satisfies InvokeResponse);
       }
       if (req.hook !== "image.generate") {
-        return json({ ok: false, error: `unsupported hook ${String(req.hook)}` } satisfies InvokeResponse);
+        return json({ ok: false, error: `unsupported hook ${String(req.hook)}`, reason: "unsupported" } satisfies InvokeResponse);
       }
       return json(await runGenerate(env, req));
     }

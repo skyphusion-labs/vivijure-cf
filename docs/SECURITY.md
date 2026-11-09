@@ -243,7 +243,7 @@ the gate does not accept it anywhere else. Unset, the route does not exist. It m
 `openssl rand -hex 32 | npx wrangler secret put SWEEP_TOKEN`, and give it only to the scheduler.
 
 The `operator` routes are installation, configuration, or estate-wide state: `GET /api/storage/usage`,
-`POST /api/storage/reconcile`, `GET /api/modules/installed`, `POST /api/modules/install`,
+`POST /api/storage/reconcile`, `GET /api/tiers/video-finish/readiness`, `GET /api/modules/installed`, `POST /api/modules/install`,
 `DELETE`/`PATCH /api/modules/install/:name`, and `GET`/`PATCH /api/modules/:name/config`. Every other
 route is `consumer`, INCLUDING every DELETE and every spend route (the axis is whose data, not how
 destructive the verb). A scope refusal is `403` with body

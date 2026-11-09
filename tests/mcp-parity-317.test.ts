@@ -455,7 +455,7 @@ describe("cf#317 parity measurement -- the matchers themselves", () => {
 // the code cannot drift apart silently. When one fails, the fix is to RE-MEASURE and update the doc,
 // never to relax the assertion.
 const PUBLISHED = {
-  routes: 102, // cf#1016 added DELETE /api/storyboard/audio-upload/:name; cf#1206 added DELETE /api/film/:id. Studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
+  routes: 103, // cf#887 added GET /api/tiers/video-finish/readiness; cf#1016 added DELETE /api/storyboard/audio-upload/:name; cf#1206 added DELETE /api/film/:id. Studio API route entries (method+pattern); the 4 /api/demo/* entries went with the public demo door (pr1019)
   // cf#894: vivijure-mcp 1.3.0 took the catalog from 42 to 109. The growth is NOT what the issue
   // that filed this assumed: it is 37 new `cp_*` tools AND 30 new STUDIO tools, not ~67
   // control-plane ones. Nothing was removed. Three numbers because one would hide that split, and
@@ -480,7 +480,7 @@ const PUBLISHED = {
   // unnoticed, so they are derived here rather than hand-corrected a fifth time.
   panelUncurated: 16, // cf#1206: the film delete has no curated tool yet. voice-sample panel calls left; hear-one-line and four film routes are uncurated
   panelUncuratedPathOnly: 20, // method-aware 16 + the 4 uncurated path-only false positives
-  hatchReachable: 99, // reachable via studio_request = routes minus the raw-body class (cf#1016: the bed DELETE takes no body)
+  hatchReachable: 100, // reachable via studio_request = routes minus the raw-body class (cf#1016: the bed DELETE takes no body)
 };
 
 // Hoisted to module scope by cf#423 so more than one assertion can address it. It was previously

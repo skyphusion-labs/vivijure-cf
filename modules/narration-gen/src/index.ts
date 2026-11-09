@@ -148,9 +148,9 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeResponse<ScoreOutput>> {
   const input = req.input;
   const filmKey = typeof input?.film_key === "string" ? input.film_key.trim() : "";
-  if (!filmKey) return { ok: false, error: "score: input.film_key required" };
+  if (!filmKey) return { ok: false, error: "score: input.film_key required", reason: "bad-input" };
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "narration-gen: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "narration-gen: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   let body: { input: Record<string, unknown> };
@@ -322,10 +322,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<ScoreInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "score") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
