@@ -8,6 +8,11 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = false
 
+# Already this Worker's custom domain (AAAA 100::, proxied).
+[[routes]]
+pattern = "audio-master.skyphusion.org"
+custom_domain = true
+
 # Door bearer. Value is a wrangler secret, never a [vars] entry.
 [secrets]
 required = ["LOCAL_FINISH_TOKEN"]
