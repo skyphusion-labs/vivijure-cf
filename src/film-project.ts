@@ -16,7 +16,11 @@
 // which happened, so a caller can see a project that did not save.
 
 import {
+  BoardKeyCollisionError,
+  boardKeySlug,
   createProject,
+  deleteProject,
+  findBoardKeyHolder,
   getProjectById,
   getProjectIdByPublicId,
   listProjects,
@@ -71,8 +75,21 @@ export async function saveFilmProject(
     }
     const choice = chooseFilmProject(named ? [] : await listProjects(env), args.filmName, args.board, named);
     if ("create" in choice) {
+      // vivijure-cf#1387 (core#518): a board whose title key another project holds is refused. Check
+      // BEFORE creating, so a refusal leaves no empty project behind. The film still starts.
+      const slug = boardKeySlug(args.board);
+      const holder = slug ? await findBoardKeyHolder(env, slug, -1) : null;
+      if (slug && holder) return { saved: false, error: new BoardKeyCollisionError(slug, holder).message };
       const made = await createProject(env, { name: args.filmName });
-      const row = await setLastStoryboard(env, made.id, args.board);
+      let row: StoryboardProject | null;
+      try {
+        row = await setLastStoryboard(env, made.id, args.board);
+      } catch (e) {
+        // The check above is not transactional: a concurrent save can take the key in between. The
+        // project this call just made holds nothing, so it goes, and the refusal is reported.
+        await deleteProject(env, made.id).catch(() => null);
+        throw e;
+      }
       if (!row) return { saved: false, error: "the new project could not take the board" };
       return { saved: true, id: row.public_id, name: row.name, created: true };
     }

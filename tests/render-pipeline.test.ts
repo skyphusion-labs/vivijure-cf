@@ -44,10 +44,15 @@ describe("resolveRenderPipeline", () => {
 
   it("clamps each module config against its schema", () => {
     const p = resolveRenderPipeline([seedance, rife], {
-      config: { "cloud-seedance": { steps: 999 }, rife: { factor: "8x" } },
+      config: { "cloud-seedance": { steps: 999 }, rife: {} },
     });
     expect(p.motion_backend?.config.steps).toBe(50); // clamped to max
-    expect(p.finish[0].config.factor).toBe("2x"); // bad enum -> default
+    expect(p.finish[0].config.factor).toBe("2x"); // absent enum -> default
+  });
+
+  it("refuses a bad enum by name instead of defaulting it (core#343)", () => {
+    expect(() => resolveRenderPipeline([seedance, rife], { config: { rife: { factor: "8x" } } }))
+      .toThrow(/"factor": "8x" is not supported/);
   });
 
   it("carries the binding through so a downstream invoker can reach the module", () => {

@@ -72,8 +72,8 @@ function env() {
 }
 
 const ctx = { waitUntil() {}, passThroughOnException() {} } as never;
-const board = (tag: string) => ({
-  title: "t", projectName: "Master", full_prompt: "x", style_prefix: "", style_category: "", style_preset: "",
+const board = (tag: string, title = "t") => ({
+  title, projectName: "Master", full_prompt: "x", style_prefix: "", style_category: "", style_preset: "",
   use_characters: [], cast_rules: "", duration_seconds: 16, clip_seconds: 4,
   scenes: [1, 2, 3, 4].map((i) => ({ shot_id: `s${i}`, prompt: `${tag} p${i}`, seconds: 4 })),
 });
@@ -116,12 +116,97 @@ describe("cf#1241: a film started through the API saves its board to a project",
   it("a draft with the film's name and a different board is never overwritten", async () => {
     const e = env();
     const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Long" })).body.project as Proj;
-    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    // Its own title: since core#518 (core 1.43.0, PR core#519) two boards with one title key cannot both
+    // be stored, and that case is the next test. This one is about a DIFFERENT board, as it always was.
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft", "draft title") });
     await call(e, "POST", "/api/film", filmBody());
     const list = await projects(e);
     expect(list).toHaveLength(2);
-    expect(list.find((p) => p.id === draft.id)!.last_storyboard).toEqual(board("draft"));
+    expect(list.find((p) => p.id === draft.id)!.last_storyboard).toEqual(board("draft", "draft title"));
     expect(list.find((p) => p.id !== draft.id)!.last_storyboard).toEqual(board("a"));
+  });
+
+  it("cf#1387: a film board whose title key a draft holds is not saved, and leaves no empty project", async () => {
+    // core#518 (PR core#519): a board is refused when another project already renders under its title key,
+    // because the two would share stored keyframes and LoRAs (vivijure-backend#487). The film still starts:
+    // saving its board never refuses the film. Before this fix the project was created first, so a refusal
+    // left an empty "Long" behind.
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Draft" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    const r = await call(e, "POST", "/api/film", filmBody());
+    expect(r.status).toBe(201);
+    const saved = r.body.project as { saved: boolean; error?: string };
+    expect(saved.saved).toBe(false);
+    expect(saved.error).toContain(`already uses the render key "t"`);
+    const list = await projects(e);
+    expect(list.map((p) => p.name)).toEqual(["Draft"]);
+    expect(list[0].last_storyboard).toEqual(board("draft"));
+  });
+
+  // The two halves of the film-path fix each cover for the other, so each gets its own test.
+  const spyDb = (e: Record<string, unknown>, blindKeyCheckOnce = false) => {
+    const db = e.DB as { prepare: (sql: string) => { bind: (...a: unknown[]) => unknown } };
+    const real = db.prepare.bind(db);
+    const seen: string[] = [];
+    let blinded = !blindKeyCheckOnce;
+    db.prepare = (sql: string) => {
+      seen.push(sql);
+      // Simulate the race: the pre-check reads before a concurrent save takes the key.
+      if (!blinded && sql.includes("json_extract(last_storyboard_json")) {
+        blinded = true;
+        const empty = { bind: () => empty, all: async () => ({ results: [] }), first: async () => null, run: async () => ({ success: true, meta: {} }) };
+        return empty as never;
+      }
+      return real(sql) as never;
+    };
+    return seen;
+  };
+
+  it("cf#1387: the key is checked BEFORE the project is created, so no row is ever written for a refusal", async () => {
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Draft" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    const seen = spyDb(e);
+    await call(e, "POST", "/api/film", filmBody());
+    expect(seen.filter((q) => /INSERT INTO storyboard_projects/i.test(q))).toEqual([]);
+  });
+
+  it("cf#1387: if a concurrent save takes the key after the check, the project just made is removed", async () => {
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Draft" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    const seen = spyDb(e, true);
+    const r = await call(e, "POST", "/api/film", filmBody());
+    expect(seen.some((q) => /INSERT INTO storyboard_projects/i.test(q))).toBe(true); // the race really ran
+    expect((r.body.project as { saved: boolean }).saved).toBe(false);
+    expect((await projects(e)).map((p) => p.name)).toEqual(["Draft"]);
+  });
+
+  describe("cf#1387: every board-save route answers a key collision with 409, never 500", () => {
+    const seeded = async () => {
+      const e = env();
+      const a = (await call(e, "POST", "/api/storyboard/projects", { name: "A" })).body.project as Proj;
+      expect((await call(e, "POST", `/api/storyboard/projects/${a.id}/storyboard`, { storyboard: board("a", "Shared Title") })).status).toBe(200);
+      const b = (await call(e, "POST", "/api/storyboard/projects", { name: "B" })).body.project as Proj;
+      return { e, a, b };
+    };
+    it("POST /api/storyboard/projects/:id/storyboard", async () => {
+      const { e, b } = await seeded();
+      const r = await call(e, "POST", `/api/storyboard/projects/${b.id}/storyboard`, { storyboard: board("b", "Shared Title") });
+      expect(r.status).toBe(409);
+      expect(String(r.body.error)).toContain(`project "A"`);
+    });
+    it("PATCH /api/storyboard/projects/:id with storyboard", async () => {
+      const { e, b } = await seeded();
+      const r = await call(e, "PATCH", `/api/storyboard/projects/${b.id}`, { storyboard: board("b", "Shared Title") });
+      expect(r.status).toBe(409);
+      expect(String(r.body.error)).toContain(`project "A"`);
+    });
+    it("CONTROL: saving a project's own board again is not refused", async () => {
+      const { e, a } = await seeded();
+      expect((await call(e, "POST", `/api/storyboard/projects/${a.id}/storyboard`, { storyboard: board("a2", "Shared Title") })).status).toBe(200);
+    });
   });
 
   it("an empty project with the film's name takes the board", async () => {

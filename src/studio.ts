@@ -5,6 +5,7 @@
 // the classes wrangler binds, and this module carries the route table, the handlers and the sweep
 // pass that tests import (vivijure-cf#1308).
 
+import { coreRefusal } from "./core-refusals";
 import { providerlessHooksUnavailable } from "./providerless-hooks";
 import { discoverModules, modulesResponse, dispatchChain, servingForHook, cloudMotionModules, gpuDoorMotionModules, localGpuKeyframePreflightError, motionBackendPreflightError, motionConfigPreflightError } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
@@ -2258,6 +2259,9 @@ async function doorJson(run: () => Promise<Response>): Promise<{ status: number;
     return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
   } catch (e) {
     if (e instanceof HttpError) return { status: e.status, body: { error: e.message } };
+    // cf#1383: the same mapping the router applies, so a part refused by core is refused by name.
+    const refused = coreRefusal(e);
+    if (refused) return { status: refused.status, body: { error: refused.error } };
     // core#421: nothing was invoked, so this is a door that could not start and not a submit of unknown outcome.
     if (e instanceof FilmNotStartedError) return { status: 503, body: { error: e.message } };
     throw e;
@@ -3232,6 +3236,9 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         return await hit.handler(request, env, ctx, hit.params);
       } catch (e) {
         if (e instanceof HttpError) return json({ error: e.message }, e.status);
+        // cf#1383: a refusal core threw (an invalid enum value, ...) is the caller's error, not ours.
+        const refused = coreRefusal(e);
+        if (refused) return json({ error: refused.error }, refused.status);
         // cf#223: the ROUTE TEMPLATE, never the raw pathname. A pathname carries the artifact key
         // (`/api/artifact/renders/<project>/...`) and every other :id in the URL, so logging it puts
         // user content in the one line that fires when something is already going wrong.
