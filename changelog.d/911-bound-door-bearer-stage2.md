@@ -1,3 +1,0 @@
-### feat(containers)!: the bound video-finish container requires the bearer (stage 2 of 2)
-
-**A deploy with `FINISH_CONTAINER` bound and no readable `MEDIA_FINISH_TOKEN` loses its finish tier.** That is the intended outcome. `FinishContainer` now starts its container with `LOCAL_FINISH_TOKEN` alone. With no readable token it answers 503 without starting the container and logs `finish_container.no_token`. The stage-1 rollout permit (`LOCAL_FINISH_ACCEPT_MISSING_TOKEN`) and the no-auth fallback are removed, and every media container's `bearer.py` is back to strict: a missing or wrong header is 401. Requires vivijure-core >= 1.36.0. Deploy only after stage 1 is live and a full film shows no `finish_container.bearer_absent` (cf#911).

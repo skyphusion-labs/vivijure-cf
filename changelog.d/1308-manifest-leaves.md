@@ -1,3 +1,0 @@
-### refactor(modules): seven module entries no longer export MANIFEST
-
-`alibaba-wan-lora`, `cloud-keyframe`, `finish-blender`, `finish-rife` and `finish-upscale` now keep their `MANIFEST` in a data-only `src/manifest.ts`, as `keyframe` and `own-gpu` already did; those two drop the re-export from their entry. Each Worker entry now exports only its default handler and its classes, which is the contract `tests/worker-entry-exports-1244.test.ts` holds (vivijure-cf#1244). The manifests are unchanged; `GET /module.json` returns the same document. Their `BASELINE` lines are gone (refs vivijure-cf#1308).
