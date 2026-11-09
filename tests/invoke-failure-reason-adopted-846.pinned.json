@@ -54,6 +54,7 @@
   "cf-seedance/src/index.ts | unsupported | \"unsupported hook \" + String(req.hook)",
   "cf-veo/src/index.ts | bad-input | \"invalid JSON body\"",
   "cf-veo/src/index.ts | bad-input | \"motion.backend: input needs shot_id, keyframe_url, and prompt\"",
+  "cf-veo/src/index.ts | bad-input | comboError",
   "cf-veo/src/index.ts | not-configured | \"cf-veo: GATEWAY_ID not configured\"",
   "cf-veo/src/index.ts | unsupported | \"unsupported hook \" + String(req.hook)",
   "cf-vidu-q3-turbo/src/index.ts | bad-input | \"invalid JSON body\"",
