@@ -198,6 +198,27 @@ describe("cf-seedance body matches each model's schema-input.json", () => {
     expect(String(p.prompt).length).toBeLessThanOrEqual(cap);
     expect(String(p.prompt)).toMatch(/reference video/);
   });
+
+  // cf#1369: the vendored copies capped prompt at 2000 while the published schemas had moved to 25000 (2.5) and
+  // 10000 (2.0 family), so composePrompt cut prompts the vendor would accept, with nothing reported. These are the
+  // live caps as fetched 2026-11-09. A re-vendor that changes one fails here, so the change is seen, not inherited.
+  const LIVE_PROMPT_CAP: Record<string, number> = {
+    "seedance-2.5.schema-input.json": 25000,
+    "seedance-2.0.schema-input.json": 10000,
+    "seedance-2.0-fast.schema-input.json": 10000,
+    "seedance-2.0-mini.schema-input.json": 10000,
+  };
+
+  it.each(MODELS)("%s: the vendored prompt cap is the published one", (_model, file) => {
+    expect(loadSchema(file).properties?.prompt?.maxLength).toBe(LIVE_PROMPT_CAP[file]);
+  });
+
+  it.each(MODELS)("%s: a 5000-character prompt is sent whole", (model, file) => {
+    const prompt = "a harbor at dawn ".repeat(300).slice(0, 5000);
+    const p = buildParams({ ...shot, prompt }, normalizeConfig({ model }));
+    expectValid(loadSchema(file), p);
+    expect(p.prompt).toBe(prompt.trim());
+  });
 });
 
 describe("cf-seedance door limits", () => {

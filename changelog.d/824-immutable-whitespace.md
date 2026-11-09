@@ -1,0 +1,3 @@
+### fix(ci): the changelog immutability guard reports whitespace-only drift on its own line (#824)
+
+`scripts/changelog-released-immutable.py` still compares a released section byte for byte against its tag. When the bytes differ but the only change is whitespace, it now prints a separate `differs from its tag in WHITESPACE ONLY` note and does not count it as drift. The normaliser is narrow on purpose: it strips trailing whitespace and collapses runs of blank lines, nothing else. A changed indent, a removed paragraph break, whitespace inside a line, and a rewrite hidden inside a whitespace sweep are all still refused, and `tests/changelog-released-immutable.test.py` proves each one. The job stays advisory (`continue-on-error`). Changing that posture is a separate call.

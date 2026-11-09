@@ -1,0 +1,3 @@
+### fix(studio): `GET /api/modules` reports `speech` unavailable while nothing serves it (#904)
+
+The catalog offered the `speech` stage ("clean / enhance dialogue audio") although no module provides it since cf#786 removed speech-upscale. `host.hooks_unavailable.speech` now says so, with a reason the panel prints verbatim. The entry is derived from what is installed, so it disappears as soon as a module serving `speech` is discovered. The hook stays in the catalog: retiring it and funding a provider are separate calls. `tests/providerless-hooks-904.test.ts` holds the list equal to the catalog hooks that no module in this repo declares.

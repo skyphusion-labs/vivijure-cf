@@ -184,7 +184,7 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 
 | | |
 |---|---|
-| Duration | Clip length follows the LINE audio. |
+| Duration | Clip length follows the LINE audio. The door declares 2-15 seconds. 15 is OUR cap, not RunPod's: the endpoint takes no duration parameter and publishes no length limit (checked 2026-11-09). Raising it needs a paid probe that compares the delivered clip length with the audio length (cf#931). |
 | Talks? | Mouth follows our file. Not invented speech. |
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet. |
 | First+last? | No. |

@@ -3,9 +3,22 @@
 import type { MotionBackendInput } from "./contract";
 import { mp4VideoTiming } from "../../_shared/mp4-timing";
 
+/** cf#931: the shortest and longest shot this door declares, in seconds.
+ *
+ *  MAX_SECONDS IS OUR CAP, NOT THE VENDOR'S. RunPod's InfiniteTalk endpoint takes no duration parameter
+ *  (inputs: prompt, image, audio, size, enable_safety_checker) and publishes no length ceiling: checked
+ *  2026-11-09 against https://docs.runpod.io/public-endpoints/models/infinitetalk (last modified
+ *  2026-10-26) and the public-endpoint catalog entry, which carries only "480p: $0.25". Clip length
+ *  follows the audio we send. 15 is a conservative declaration kept until the longest audio the endpoint
+ *  renders IN FULL is measured. That probe is a paid render per length tried (cf#931 prices it), and it
+ *  must compare the delivered clip duration against the supplied audio, because a silent truncation
+ *  would look like success. Raise this only with that measurement cited here. */
+export const MIN_SECONDS = 2;
+export const MAX_SECONDS = 15;
+
 export function clampDuration(seconds: number): number {
   const n = Math.round(Number(seconds) || 5);
-  return Math.max(2, Math.min(15, n));
+  return Math.max(MIN_SECONDS, Math.min(MAX_SECONDS, n));
 }
 
 function audioUrl(input: MotionBackendInput, cfg: Record<string, unknown>): string {
