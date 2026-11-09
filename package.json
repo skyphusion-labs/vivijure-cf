@@ -38,10 +38,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261106.1",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.1.0",
     "blake3-wasm": "2.1.5",
-    "playwright-core": "^1.64.1",
+    "playwright-core": "^1.65.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
     "wrangler": "^4.158.0"
