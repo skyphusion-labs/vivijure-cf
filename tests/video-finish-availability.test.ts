@@ -153,7 +153,8 @@ describe("GET /api/modules projection", () => {
     const body = await modulesBody(env());
     const host = body.host as { hooks_unavailable?: Record<string, string> };
     expect(Object.keys(host.hooks_unavailable ?? {}).sort()).toEqual(
-      ["capability:video-finish", "film.finish", "master", "notify", "plan.enhance"],
+      // `speech` is cf#904's providerless-hook entry: nothing in this env serves it.
+      ["capability:video-finish", "film.finish", "master", "notify", "plan.enhance", "speech"],
     );
   });
 });
