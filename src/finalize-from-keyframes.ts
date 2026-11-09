@@ -395,6 +395,10 @@ export async function animateFromPreview(
       motion_config: motionConfig,
       motion_configs: motionConfigs,
       finish_config: mapped.finish_config,
+      // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
+      // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
+      dialogue_backend: mapped.dialogue_backend,
+      dialogue_config: mapped.dialogue_config,
       // cf#537: inherited from the PARENT render's stored overrides bag, so a derived render keeps
       // the selection the original was submitted with. Dropping it here would silently re-enable
       // every default module on every finalize, which is the original defect wearing a new hat.

@@ -205,6 +205,10 @@ export async function retryFailedRender(
       keyframe_config: mapped.keyframe_config,
       motion_config: motionConfig,
       finish_config: mapped.finish_config,
+      // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
+      // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
+      dialogue_backend: mapped.dialogue_backend,
+      dialogue_config: mapped.dialogue_config,
       finish_select: mapped.finish_select,
       speech_config: mapped.speech_config,
       film_finish_config: mapped.film_finish_config,
