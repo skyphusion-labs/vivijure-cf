@@ -19,6 +19,10 @@ export const FAILURE_UNREACHABLE: StepFailureShape = { kind: "transient", code: 
 export const FAILURE_BAD_RESPONSE: StepFailureShape = { kind: "transient", code: "bad_response" };
 export const FAILURE_REFUSED: StepFailureShape = { kind: "permanent", code: "refused" };
 export const FAILURE_NOT_CONFIGURED: StepFailureShape = { kind: "permanent", code: "not_configured" };
+/** cf#757: the RunPod endpoint this module is bound to does not exist. Permanent: no wait brings it back, and
+ *  the code is its own so the film's report says "this door has no backend" without reading prose. Only
+ *  `runpodEndpointAbsent` (modules/_shared/runpod-endpoint-absent.ts) may decide it. */
+export const FAILURE_ENDPOINT_ABSENT: StepFailureShape = { kind: "permanent", code: "endpoint_absent", detail: "HTTP 404: RunPod endpoint not found, this door has no backend" };
 
 export function failureFromStatus(status: number): StepFailureShape {
   if (status === 429) return { kind: "transient", code: "capacity", detail: "HTTP 429" };
