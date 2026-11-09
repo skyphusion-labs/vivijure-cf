@@ -199,9 +199,10 @@ bumps root `package.json` `version` and adds a top-of-file `CHANGELOG.md` entry 
 `v*` tag. A bare merge to `main` runs CI only and does **not** redeploy production.
 
 `studio-release.yml` is a reusable workflow (`workflow_call`), not a separate trigger: the same `v*`
-CI run calls it from the `studio-release` job in `ci.yml` (gated on `ci`, `container-tests`,
-`migrations-gate`, `assert-on-main`). It builds the studio release asset, asserts `vX.Y.Z` ==
-`package.json` version, and advances the hosted studio pin.
+CI run calls it from the `studio-release` job in `ci.yml` (needs `ci`, `container-tests`,
+`container-smoke`, `migrations-gate`, `assert-on-main`, `assert-tag-version`, and `deploy`). It builds
+the studio release asset, asserts `vX.Y.Z` == `package.json` version, and advances the hosted studio
+pin only after that deploy.
 
 ### Dependency order
 
