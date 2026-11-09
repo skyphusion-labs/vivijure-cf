@@ -11,11 +11,14 @@
 // This class is deliberately MINIMAL. The base `Container.fetch()` already forwards the request
 // to the container on `defaultPort`, so a passthrough needs no code of our own, and the finish
 // tier's own HTTP surface (/async/finish, /async/status/{jobId}, /finish, /inspect) is unchanged.
-// The chunked-assemble job loop, `renewActivityTimeout()` and externalised job state are #784.
+// cf#784: job state is still the container's process memory, so a restart loses a running job. That
+// loss is now DETECTED here: the container names its process on every async body, and a not_found from a
+// different process than took the 202 is logged as `finish_container.job_lost` and marked on the 404.
+// Keeping a job alive across a restart (externalised state) is still open.
 
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
-import { FinishJobTail, RELEASE_SLEEP_AFTER, RUNNING_SLEEP_AFTER, observeExchange } from "./finish-job-tail";
+import { FinishJobTail, JOB_LOST_REASON, RELEASE_SLEEP_AFTER, RUNNING_SLEEP_AFTER, lostToRestart, observeExchange } from "./finish-job-tail";
 import { mediaFinishToken } from "../modules/_shared/media-finish-auth";
 
 // THE BEARER CONFIGURATION THIS CONTAINER IS STARTED WITH (cf#911, stage 2). Exported as a literal
@@ -120,11 +123,32 @@ export class FinishContainer extends Container<Env> {
       console.warn(JSON.stringify({ ev: "finish_container.bearer_absent", method: request.method, path: new URL(request.url).pathname }));
     }
     const resp = await super.fetch(request);
-    const decision = await observeExchange(this.jobTail, request.method, new URL(request.url).pathname, resp);
+    const path = new URL(request.url).pathname;
+    const decision = await observeExchange(this.jobTail, request.method, path, resp);
     if (decision) {
       this.sleepAfter = decision === "release" ? RELEASE_SLEEP_AFTER : RUNNING_SLEEP_AFTER;
       this.renewActivityTimeout();
     }
+    // cf#784: a job lost to a container restart is said so, in the log and on the 404 itself.
+    const lost = await lostToRestart(this.jobTail, request.method, path, resp);
+    if (lost) return markLost(this.jobTail, lost, resp);
     return resp;
   }
+}
+
+/** cf#784: log a job lost to a restart and return its 404 with `lost` added. Same status, so core's
+ *  reading is unchanged; the mark is for anything that reads the body or the tail channel. */
+export async function markLost(tail: FinishJobTail, lost: { jobId: string; acceptedBy: string; answeredBy: string }, resp: Response): Promise<Response> {
+  tail.lost(lost.jobId);
+  console.warn(JSON.stringify({ ev: "finish_container.job_lost", job_id: lost.jobId, accepted_by: lost.acceptedBy, answered_by: lost.answeredBy, reason: JOB_LOST_REASON }));
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await resp.clone().json()) as Record<string, unknown>;
+  } catch {
+    /* lostToRestart already read it, so this does not happen; an empty body is still a 404 */
+  }
+  return new Response(JSON.stringify({ ...body, lost: JOB_LOST_REASON }), {
+    status: resp.status,
+    headers: { "content-type": "application/json" },
+  });
 }
