@@ -107,8 +107,9 @@ export const MANIFEST: ModuleManifest = {
       default: "auto",
       label: "two-person pose skeleton",
     },
-    // Photoreal is RealVisXL (baked default). Anime is Animagine XL 4.0.
-    // That checkpoint is not in the default bake. A worker without it fails honest.
+    // Photoreal is RealVisXL (baked default). Anime is refused at invoke, before any RunPod call (cf#1384):
+    // Animagine is not on the GPU image and anime stills run on cloud-keyframe (vivijure-backend#557). It
+    // stays in the enum because core clamps an undeclared value to the default, which would draw photoreal.
     style: {
       type: "enum",
       values: ["photoreal", "anime"],
