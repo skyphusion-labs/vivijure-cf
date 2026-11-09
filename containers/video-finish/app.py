@@ -155,6 +155,14 @@ def _elapsed_ms(t0: float) -> int:
 JOB_TTL_S = 3600
 JOBS = {}  # job_id -> {"status": "pending"|"completed"|"failed", "result"?, "error"?, "at": monotonic}
 
+# cf#784: WHICH PROCESS answered. Minted once per process start, so it changes on every container
+# restart (OOM, host restart, a wake after sleep) and on nothing else. It rides on every async submit
+# and status body. A status read that answers not_found from a DIFFERENT instance than the one that
+# accepted the job is a job LOST to a restart, which is a different fact from a job that never
+# existed; before this, both read as one 404. The Durable Object in front (src/finish-container.ts)
+# makes the comparison. It is not a secret and carries nothing about the job.
+INSTANCE_ID = uuid.uuid4().hex
+
 
 class _JobError(Exception):
     """A work coroutine failure carrying the HTTP status the SYNC route should
@@ -210,11 +218,11 @@ async def async_submit(req):
             return web.json_response({"ok": False, "error": e.message}, status=e.status)
         known = JOBS.get(job_id)
         if known is not None and known["status"] != "failed":
-            return web.json_response({"ok": True, "jobId": job_id, "status": known["status"]}, status=202)
+            return web.json_response({"ok": True, "jobId": job_id, "status": known["status"], "instance": INSTANCE_ID}, status=202)
     JOBS[job_id] = {"status": "pending", "at": now}
     asyncio.create_task(_run_job(job_id, work(body)))
     log.info("/async/%s accepted job=%s", safe_log_value(route), job_id)  # codeql[py/log-injection]
-    return web.json_response({"ok": True, "jobId": job_id, "status": "pending"}, status=202)
+    return web.json_response({"ok": True, "jobId": job_id, "status": "pending", "instance": INSTANCE_ID}, status=202)
 
 
 async def async_status(req):
@@ -224,12 +232,12 @@ async def async_status(req):
     job_id = req.match_info.get("jobId", "")
     j = JOBS.get(job_id)
     if j is None:
-        return web.json_response({"ok": True, "status": "not_found"}, status=404)
+        return web.json_response({"ok": True, "status": "not_found", "instance": INSTANCE_ID}, status=404)
     if j["status"] == "pending":
-        return web.json_response({"ok": True, "status": "pending"})
+        return web.json_response({"ok": True, "status": "pending", "instance": INSTANCE_ID})
     if j["status"] == "completed":
-        return web.json_response({"ok": True, "status": "completed", "result": j["result"]})
-    return web.json_response({"ok": True, "status": "failed", "error": j.get("error", "job failed")})
+        return web.json_response({"ok": True, "status": "completed", "result": j["result"], "instance": INSTANCE_ID})
+    return web.json_response({"ok": True, "status": "failed", "error": j.get("error", "job failed"), "instance": INSTANCE_ID})
 
 
 

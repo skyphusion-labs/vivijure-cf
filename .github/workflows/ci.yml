@@ -301,6 +301,7 @@ jobs:
           containers/video-finish/test_inspect.py
           containers/video-finish/test_photometric_gate.py
           containers/video-finish/test_async.py
+          containers/video-finish/test_instance_id.py
           containers/video-finish/test_meta_sidecar.py
           containers/video-finish/test_concat_guard.py
           containers/video-finish/test_frame_text.py
