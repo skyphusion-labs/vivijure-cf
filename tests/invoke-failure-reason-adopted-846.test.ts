@@ -130,10 +130,28 @@ const SITES = failureLines();
 const DECLARED = SITES.map((s) => ({ ...s, reason: /\breason:\s*"([^"]*)"/.exec(s.text)?.[1] }))
   .filter((s): s is Site & { reason: string } => s.reason !== undefined);
 
+/** One entry per declared site: `file | reason | error expression`. Keyed on the sentence, not the line, so an
+ *  unrelated edit that shifts lines does not move it, and any one site gaining, losing or changing its class does. */
+function pinKey(s: Site & { reason: string }): string {
+  const e = /error:\s*(.*?),\s*reason:/.exec(s.text)?.[1] ?? "?";
+  return `${s.file} | ${s.reason} | ${e}`;
+}
+
+// The EXACT declared set. Regenerate it when a site is deliberately added or removed, and say why in the PR.
+// A floor (`>= n`) is not enough: dropping one site from n + 1 declared stays above it, which is how a removed
+// `reason` on cf-veo passed all 107 cases before this pin existed.
+const PINNED = JSON.parse(
+  readFileSync(join(import.meta.dirname, "invoke-failure-reason-adopted-846.pinned.json"), "utf8"),
+) as string[];
+
 describe("cf#846: every declared reason is a member, on the invoke arm only", () => {
-  it("DENOMINATOR: the scan sees the declared sites", () => {
+  it("DENOMINATOR: the scan sees the failure sites", () => {
     expect(SITES.length).toBeGreaterThan(400);
-    expect(DECLARED.length).toBeGreaterThanOrEqual(130);
+    expect(PINNED.length).toBe(131);
+  });
+
+  it("the declared set is EXACTLY the pinned set: no site gained, lost or changed its class", () => {
+    expect(DECLARED.map(pinKey).sort()).toEqual([...PINNED].sort());
   });
 
   it("no declared value is outside the closed set (not_configured, quota, ...)", () => {
