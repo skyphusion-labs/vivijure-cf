@@ -99,6 +99,7 @@
   "infinitetalk/src/index.ts | not-configured | \"infinitetalk: \" + runpodCredentialName(route) + \" not configured\"",
   "infinitetalk/src/index.ts | unsupported | \"unsupported hook \" + String(req.hook)",
   "keyframe/src/index.ts | bad-input | \"invalid JSON body\"",
+  "keyframe/src/index.ts | bad-input | \"keyframe: \" + styleProblem",
   "keyframe/src/index.ts | bad-input | \"keyframe: input needs project and bundle_key\"",
   "keyframe/src/index.ts | unsupported | \"unsupported hook \" + String(req.hook)",
   "local-gpu/src/index.ts | bad-input | \"invalid JSON body\"",
