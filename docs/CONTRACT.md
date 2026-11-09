@@ -296,7 +296,7 @@ these BEFORE its handler runs; each refusal is a JSON `{ "error": string }` body
 
 Every route the worker serves. The detail subsection for each follows in 2.2+.
 
-**102 route entries** (distinct `method` + `pattern`) over **82 distinct path patterns**. Those two
+**103 route entries** (distinct `method` + `pattern`) over **83 distinct path patterns**. Those two
 numbers are derived from the `API_ROUTES` table at test time, not counted by hand:
 `tests/mcp-parity-317.test.ts` asserts the entry count, and `tests/contract-route-coverage.test.ts`
 asserts that every pattern in the table appears in THIS document. Fourteen entries were missing from
@@ -414,6 +414,7 @@ unchanged.
 | 77 | PATCH | `/api/modules/install/:name` | 2.31 |
 | 78 | GET | `/api/storage/usage` | 2.32 |
 | 79 | POST | `/api/storage/reconcile` | 2.32 |
+| 80 | GET | `/api/tiers/video-finish/readiness` | 2.33 |
 
 ### 2.2 GET /health
 
@@ -1721,6 +1722,36 @@ The operator surface for the R2 storage ledger and its quota.
 lifecycle-expiry drift or a failed ledger write. **`unsized` is objects the bucket would not report a
 size for**: they are accounted as `0` and reported honestly in their own field rather than folded
 into the total as a guess.
+
+### 2.33 Video-finish tier readiness (cf#887)
+
+`GET /api/tiers/video-finish/readiness` (scope `operator`). An ON-DEMAND read of whether the
+video-finish tier is serving right now, made only when someone asks. Nothing schedules it, and nothing
+in the render path, `videoFinishState`, `hooks_unavailable` or `VIDEO_FINISH_TIER_STATE` reads it
+(`tests/tier-readiness-887.test.ts` scans the import graph). It is not a deploy gate and not proof that
+a finish would succeed.
+
+**Request:** no params, no body. **Response:** always `200`, the answer is in the body:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `tier` | `"video-finish"` | The tier asked about. |
+| `state` | `"SERVING"` \| `"NOT_SERVING"` \| `"AT_CAPACITY"` \| `"UNKNOWN"` | `SERVING`: `/health` answered 200 and the container's `GET /auth-check` accepted the studio's bearer. `NOT_SERVING`: the tier answered with a failure (a platform start error, a non-200 `/health`, a 5xx, or a `401` on `/auth-check`). `AT_CAPACITY`: no container instance can be given (a 429, or the platform's instance-limit text); a film submitted now would wait. `UNKNOWN`: nothing to ask (no `FINISH_CONTAINER` binding and no usable `VIDEO_FINISH_URL`), no readable `MEDIA_FINISH_TOKEN` (no call is made), the probe budget ran out, the image predates `/auth-check`, or a body of no known shape. `UNKNOWN` is never folded into `NOT_SERVING`. |
+| `liveness_only` | `true` | Always. Liveness plus bearer acceptance and nothing more. |
+| `door` | `"bound"` \| `"url"` \| `"none"` | Which door was asked. The binding wins over the URL. |
+| `instance` | string \| null | `sync-<n>` on the bound door (a sync-pool instance, never a job instance), the origin host on the URL door. |
+| `reason` | string | One sentence on what was observed. |
+| `bearer` | string? | From the `/auth-check` body: `verified`, or `disabled` when the door runs its explicit unauthenticated opt-out. |
+| `refused_by` | `"container"` \| `"door_worker"` \| `"door_worker_or_container"`? | On a `401` only. On the URL door the standalone door Worker checks the bearer itself and its `401` body is identical to the container's, so it is `door_worker` only when the Worker's own `GET /ready` says it holds no token. |
+| `observations` | `{ route, status, elapsed_ms, error_text?, timed_out? }[]` | Each call made: `/health`, then `/ready` (URL door only), then `/auth-check`. `status` is `null` when the call threw or ran out of budget. `error_text` is at most 256 characters. Never a header or the bearer. |
+| `observed_at` | ISO string | When the read started. |
+| `elapsed_ms`, `budget_ms` | number | Time taken, and the whole-read budget (90000, not yet measured against a cold-start p99). |
+| `cached` | boolean | `true` when this is the result of a read in the last 30 s. Concurrent requests in one isolate share one read. |
+
+Cost: a cold tier is woken for its `sleepAfter` (10 minutes), about USD 0.019 per cold read. A
+monitor polling more often than every 10 minutes keeps an instance awake, about USD 82 per month per
+tenant, so a polling interval is an approved line item and never a default. Each fresh read logs one
+`ev: tier_readiness` line.
 
 ### 2.30 Film render lifecycle (sequence)
 

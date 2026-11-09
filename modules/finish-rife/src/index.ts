@@ -177,7 +177,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   const input = req.input;
   const clipKey = sourceClipKey(input);
   if (!input?.shot_id || !clipKey) {
-    return { ok: false, error: "finish-rife: input needs shot_id and a clip (clip_key or video_url)" };
+    return { ok: false, error: "finish-rife: input needs shot_id and a clip (clip_key or video_url)", reason: "bad-input" };
   }
   const resolved: FinishInput = { ...input, clip_key: clipKey };
   const { route, endpointId } = await runpodCreds(env);
@@ -427,8 +427,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
       try { req = await request.json() as InvokeRequest<FinishInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await submit(env, req));
     }
 
