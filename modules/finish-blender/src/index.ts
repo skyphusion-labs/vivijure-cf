@@ -235,7 +235,7 @@ function pollPassthrough(st: PollState, reason: string, detail?: string): PollRe
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
   if (!input?.shot_id || !input?.clip_key) {
-    return { ok: false, error: "finish-blender: input needs shot_id and clip_key" };
+    return { ok: false, error: "finish-blender: input needs shot_id and clip_key", reason: "bad-input" };
   }
 
   // cf#489: our own always-on iron first, and ONLY on bound-ness. RunPod is not consulted, not
@@ -610,8 +610,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
       try { req = await request.json() as InvokeRequest<FinishInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await submit(env, req));
     }
 

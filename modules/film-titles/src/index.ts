@@ -173,7 +173,7 @@ async function invokeSync(
 async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<InvokeResponse<FilmFinishOutput>> {
   const input = req.input;
   if (!input || !input.film_key || !input.video_url || !input.output_url || !input.output_key) {
-    return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key" };
+    return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key", reason: "bad-input" };
   }
   if (!hasCards(input)) return passthrough(input, "noop:no-cards");
   if (!vfBase(env)) return withFailure(passthrough(input, "passthrough:no-video-finish-url", true), FAILURE_NOT_CONFIGURED);
@@ -320,10 +320,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<FilmFinishInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "film.finish") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await invoke(env, req));
     }

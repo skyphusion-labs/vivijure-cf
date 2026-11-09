@@ -89,7 +89,7 @@ function passthrough(
 async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<InvokeResponse<MasterOutput>> {
   const input = req.input;
   if (!input?.film_id || !input?.audio_key || !input?.audio_url || !input?.output_url || !input?.output_key) {
-    return { ok: false, error: "audio-master: input needs film_id, audio_key, audio_url, output_url, output_key" };
+    return { ok: false, error: "audio-master: input needs film_id, audio_key, audio_url, output_url, output_key", reason: "bad-input" };
   }
   if (!masterBase(env)) return passthrough(input, "no-audio-master-url");
 
@@ -159,8 +159,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<MasterInput>;
       try { req = await request.json() as InvokeRequest<MasterInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "master") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "master") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await invoke(env, req));
     }
 

@@ -163,7 +163,7 @@ async function runEnhance(
 ): Promise<InvokeResponse<PlanEnhanceOutput>> {
   const storyboard = req.input?.storyboard;
   if (!storyboard) {
-    return { ok: false, error: "plan.enhance: input.storyboard required" };
+    return { ok: false, error: "plan.enhance: input.storyboard required", reason: "bad-input" };
   }
 
   // vivijure-module/2 planning modes. "enhance" (the default, and this module's original behaviour)
@@ -178,7 +178,7 @@ async function runEnhance(
 
   if (mode === "plan" || mode === "refine") {
     if (!userMessage) {
-      return { ok: false, error: `plan.enhance: config.message required for mode ${mode}` };
+      return { ok: false, error: `plan.enhance: config.message required for mode ${mode}`, reason: "bad-input" };
     }
     // cf#1134: a miss here is a real failure. Passing the input through would hand the studio an
     // empty storyboard to reject (plan) or an unchanged one that reads as a success (refine), and
@@ -219,7 +219,7 @@ async function runEnhance(
 
   if (mode === "chat") {
     if (!userMessage) {
-      return { ok: false, error: "plan.enhance: config.message required for chat mode" };
+      return { ok: false, error: "plan.enhance: config.message required for chat mode", reason: "bad-input" };
     }
     if (plannerAiMockEnabled(env)) {
       return { ok: true, output: { storyboard: { scenes: [] }, notes: [mockPlannerRaw(userMessage)] } };
@@ -239,7 +239,7 @@ async function runEnhance(
 
   const prompts = scenePrompts(storyboard);
   if (!prompts) {
-    return { ok: false, error: "plan.enhance: input.storyboard has no scenes" };
+    return { ok: false, error: "plan.enhance: input.storyboard has no scenes", reason: "bad-input" };
   }
   const intensity = (req.config?.intensity as Intensity) || "medium";
 
@@ -308,11 +308,11 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<PlanEnhanceInput>;
       } catch {
-        const bad: InvokeResponse = { ok: false, error: "invalid JSON body" };
+        const bad: InvokeResponse = { ok: false, error: "invalid JSON body", reason: "bad-input" };
         return json(bad);
       }
       if (req.hook !== "plan.enhance") {
-        const bad: InvokeResponse = { ok: false, error: `unsupported hook ${String(req.hook)}` };
+        const bad: InvokeResponse = { ok: false, error: `unsupported hook ${String(req.hook)}`, reason: "unsupported" };
         return json(bad);
       }
       // Resolve the Secrets Store bindings to plain strings, then hand the pure model layer an
