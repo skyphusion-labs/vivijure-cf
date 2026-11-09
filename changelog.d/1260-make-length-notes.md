@@ -1,3 +1,0 @@
-### fix(panel): Make a video says before starting when a scene will be cut
-
-Before "Make it", the confirm runs the studio's own length check for the chosen style and lists, in plain words, each scene that will be cut to fit, run longer, or snap to one of the style's lengths. The check could fail; then it says so, and the video can still start. Preflight's door-length issues now carry a small `detail` with the numbers, so the page words them without a copy of the rule. When only some scenes speak, the confirm says "Some scenes in this video speak, so the whole video uses a talking style." (#1253 ruling).

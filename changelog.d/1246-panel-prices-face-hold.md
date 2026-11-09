@@ -1,3 +1,0 @@
-### feat(panel): prices at cost on every video style, and the face grade from the manifest
-
-The planner's video style cards and the Make a video total read each module's own price, at cost with nothing added: `ui.cost_usd_per_second` or `ui.cost_usd_per_clip`, with the day it was read when `ui.cost_as_of` is stated, and "Price unknown" when neither is. Each scene is priced at the length the module really makes, so a 7 second scene on a 5, 10 or 15 second module is priced as 10. The Make a video page now reads the face grade from `usage.face_hold` and no longer keeps a table of module names for it; a test proves no module's grade changed.

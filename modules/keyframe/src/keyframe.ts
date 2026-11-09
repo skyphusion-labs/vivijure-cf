@@ -25,6 +25,17 @@ export function clampStyle(v: unknown): KeyframeStyle {
   return v === "anime" ? "anime" : "photoreal";
 }
 
+/** cf#1384: this door refuses `style: anime`, by name, before any RunPod call. The anime checkpoint is not
+ *  on the GPU image (vivijure-backend#557: anime keyframes run on cloud-keyframe), so the job could only
+ *  fail late, on a worker. The value stays in the manifest enum on purpose: core clamps an undeclared enum
+ *  value to the field default, so dropping it would draw photoreal for an anime request with no word to
+ *  the caller. Returns the refusal text, or null when the style is allowed. */
+export function styleRefusal(cfg: Record<string, unknown>): string | null {
+  if (clampStyle(cfg.style) !== "anime") return null;
+  return "style anime is not available on the GPU keyframe door: the anime checkpoint is not on the GPU " +
+    "image. Use the cloud-keyframe door for anime stills (vivijure-backend#557).";
+}
+
 /** The render_overrides.keyframe block, built from the module config -- only fields the user set,
  *  so the backend's own defaults stand otherwise. */
 function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown> {

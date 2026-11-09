@@ -20,7 +20,7 @@ import {
   type KeyframeInput,
   type KeyframeOutput,
 } from "./contract";
-import { buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./keyframe";
+import { buildPreviewBody, styleRefusal, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./keyframe";
 import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-core/runpod-endpoint-reconcile";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus, reconcileOpenRunpodJobsBestEffort } from "../../_shared/runpod-job-log";
@@ -154,6 +154,9 @@ async function submit(
   if (!input || !input.project || !input.bundle_key) {
     return { ok: false, error: "keyframe: input needs project and bundle_key", reason: "bad-input" };
   }
+  // cf#1384: refused before the credential read, the capacity reconcile and /run, so nothing is spent.
+  const styleProblem = styleRefusal(req.config ?? {});
+  if (styleProblem) return { ok: false, error: "keyframe: " + styleProblem, reason: "bad-input" };
   const { route, apiKey, endpointId } = await runpodCreds(env);
   const credProblem = credentialProblem(route, endpointId);
   if (credProblem) {

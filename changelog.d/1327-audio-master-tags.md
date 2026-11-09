@@ -1,3 +1,0 @@
-### fix(master): audio-master names its three container failures apart, each with a verdict
-
-audio-master tagged three container outcomes `container-failed`, and two of them carried no `failure` verdict (cf#1327). A non-2xx is now `container-http-error` with `HTTP n`, and its verdict is unchanged (`failureFromStatus`). A JSON body that is not an object is now `container-bad-response` with the transient `FAILURE_BAD_RESPONSE`, the same as a body that does not parse, so the core holds the step and calls it again within its transport bound. An `ok: false` body is now `container-refused` with the permanent `FAILURE_REFUSED`. That changes no core behavior: a passthrough with no verdict already folded as permanent. audio-master 0.1.3.

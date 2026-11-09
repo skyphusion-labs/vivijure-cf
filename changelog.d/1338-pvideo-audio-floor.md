@@ -1,3 +1,0 @@
-### fix(cf-p-video-avatar): declare the provider's 1 s audio minimum, so a short line is padded and not refused
-
-The render proof of cf#1338 failed on p-video. pruna/p-video-avatar refused a 0.43 s line with 400 "Audio is too short (0.43s). Minimum duration is 1.0s." (cost 0), on all three submits, so no clip came back. Before core#464, every line reached it padded to 3 s, which hid that minimum. The door now declares `usage.driving_audio_min_seconds: 1`, and the core pads a shorter line to 1 s. Assembly still holds the clip to the shot's planned length, which is not billed. Its `ui.limits` says so. cf-p-video-avatar 0.1.4.
