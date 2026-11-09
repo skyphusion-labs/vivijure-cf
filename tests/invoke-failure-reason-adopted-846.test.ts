@@ -147,8 +147,8 @@ const PINNED = JSON.parse(
 describe("cf#846: every declared reason is a member, on the invoke arm only", () => {
   it("DENOMINATOR: the scan sees the failure sites", () => {
     expect(SITES.length).toBeGreaterThan(400);
-    // 132 since cf#932 added cf-veo's 1080p-needs-8s refusal.
-    expect(PINNED.length).toBe(132);
+    // 132 since cf#932 added cf-veo's 1080p-needs-8s refusal; 133 since cf#1384 added the GPU keyframe anime refusal.
+    expect(PINNED.length).toBe(133);
   });
 
   it("the declared set is EXACTLY the pinned set: no site gained, lost or changed its class", () => {

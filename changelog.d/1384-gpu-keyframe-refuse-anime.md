@@ -1,0 +1,3 @@
+### fix(keyframe): the GPU keyframe door refuses style anime before any GPU spend
+
+The anime checkpoint is not on the GPU image (vivijure-backend#557: anime keyframes run on cloud-keyframe), so a GPU keyframe job with `style: anime` could only fail late, on a worker. The `keyframe` module now refuses it in `/invoke` before the credential read, the capacity reconcile and `/run`, with `reason: "bad-input"` and an error that names cloud-keyframe. Core does not retry it. `anime` stays in the door's `style` enum on purpose: core clamps an undeclared enum value to the field default, so a narrower enum would draw photoreal for an anime request with no word to the caller. Photoreal and the default are unchanged.
