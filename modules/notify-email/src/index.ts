@@ -82,10 +82,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<NotifyInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "notify") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await notify(env, req));
     }

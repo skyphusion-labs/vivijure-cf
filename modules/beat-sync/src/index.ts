@@ -94,7 +94,7 @@ async function runAnalyze(
   req: InvokeRequest<ScoreInput>,
 ): Promise<InvokeResponse<BeatSyncOutput>> {
   const filmKey = typeof req.input?.film_key === "string" ? req.input.film_key.trim() : "";
-  if (!filmKey) return { ok: false, error: "score: input.film_key required" };
+  if (!filmKey) return { ok: false, error: "score: input.film_key required", reason: "bad-input" };
 
   const audioUrl = typeof req.config?.audio_url === "string" ? req.config.audio_url.trim() : "";
   if (!audioUrl) {
@@ -102,7 +102,7 @@ async function runAnalyze(
   }
 
   if (!beatBase(env)) {
-    return { ok: false, error: "score: AUDIO_BEAT_SYNC_URL not configured" };
+    return { ok: false, error: "score: AUDIO_BEAT_SYNC_URL not configured", reason: "not-configured" };
   }
 
   const audioKey = typeof req.config?.audio_key === "string" ? req.config.audio_key.trim() : "";
@@ -175,10 +175,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<ScoreInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "score") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await runAnalyze(env, req));
     }

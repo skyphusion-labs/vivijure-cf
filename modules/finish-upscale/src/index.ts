@@ -274,7 +274,7 @@ function pollPassthrough(st: PollState, reason: string, detail?: string): PollRe
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
   if (!input?.shot_id || !input?.clip_key) {
-    return { ok: false, error: "finish-upscale: input needs shot_id and clip_key" };
+    return { ok: false, error: "finish-upscale: input needs shot_id and clip_key", reason: "bad-input" };
   }
   // A clip already at the target has nothing to gain, so it is not sent to a paid door.
   if (alreadyAtTarget(input, coerceConfig(req.config))) return passthrough(input, "already-at-target", { degraded: false });
@@ -651,8 +651,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
       try { req = await request.json() as InvokeRequest<FinishInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await submit(env, req));
     }
 

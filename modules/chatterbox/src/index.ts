@@ -269,9 +269,9 @@ export class ChatterboxWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
 
 async function submit(env: Env, req: InvokeRequest<DialogueInput>): Promise<InvokeResponse<DialogueOutput>> {
   const norm = normalizeInput(req.input);
-  if (!norm.ok) return { ok: false, error: "dialogue: " + norm.error };
+  if (!norm.ok) return { ok: false, error: "dialogue: " + norm.error, reason: "bad-input" };
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "chatterbox: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "chatterbox: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
 
   // No lines with anything to say: a film with no dialogue. Return an empty result immediately rather
   // than spinning up a workflow that does nothing.
@@ -351,10 +351,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<DialogueInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "dialogue") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
