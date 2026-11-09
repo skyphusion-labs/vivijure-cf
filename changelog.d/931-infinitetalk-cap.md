@@ -1,3 +1,0 @@
-### docs(infinitetalk): the 15 second ceiling is our cap, said in one place (#931)
-
-RunPod's InfiniteTalk endpoint takes no duration parameter and publishes no length limit, so `usage.max_seconds: 15` cannot be cited to the vendor. It is now one constant, `MAX_SECONDS` in `modules/infinitetalk/src/kling.ts`, with its provenance, used by both the manifest and the clamp; before, `15` was written twice. `docs/motion-door-limits.md` says the range is 2-15 seconds and that 15 is our cap. No behaviour change: the value is unchanged until a paid probe measures the longest audio the endpoint renders in full.

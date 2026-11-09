@@ -1,3 +1,0 @@
-### refactor(modules): cast-image, image-generate and local-gpu entries export only their handler
-
-`cast-image` and `image-generate` now keep their model lists and `MANIFEST` in a data-only `src/manifest.ts`. `local-gpu` moves its `Env`, secret resolution, backend config and duration-grid relay (`doorDurationGrid`, `_resetGridCache`) into `src/backend.ts`, and drops its `MANIFEST` re-export. Each Worker entry now exports only its default handler, the contract `tests/worker-entry-exports-1244.test.ts` holds (vivijure-cf#1244). Behaviour and every `/module.json` are unchanged. Their `BASELINE` lines are gone (refs vivijure-cf#1308).

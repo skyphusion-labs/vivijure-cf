@@ -1,3 +1,0 @@
-### refactor(studio): the studio Worker entry exports only its handler and bound classes
-
-`src/index.ts` is now a thin Worker entry: the default handler and the classes wrangler binds (`FinishContainer`, `ShotWorkflow`). The studio itself (route table `API_ROUTES`, every handler, `routeRequest`, `runSweepPass`, `safeArtifactContentType`, `clampArtifactUrlTtl`) moves unchanged to `src/studio.ts`; `ARTIFACT_PREFIXES` is imported from `src/shared.ts`, where it already lived. Responses are byte-identical. With every entry clean, the `BASELINE` in `tests/worker-entry-exports-1244.test.ts` is empty and is removed: a named export of any in-tree Worker entry must be a class (vivijure-cf#1308).
