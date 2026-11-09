@@ -51,7 +51,20 @@ blocking gate today would fail every open and future PR on pre-existing debt tha
 has no authority to resolve unilaterally. See .github/workflows/changelog.yml for how it is wired
 (continue-on-error, prints its findings) until piece 1 lands and a clean run makes blocking safe.
 
-Exit 0 and print nothing when every released section is untouched; exit 1 and name each drift.
+WHITESPACE-ONLY DRIFT IS NOT CONTENT DRIFT (cf#824). Byte-exactness is still the detection layer:
+a section is compared byte for byte first, and nothing below weakens that. But a whitespace sweep and
+a rewritten claim used to print the same sentence, so every alert cost a manual diff to tell them
+apart, and a real rewrite could arrive as one more identical line nobody triaged. So a section that
+differs ONLY in whitespace is reported on its own line, as a note, and does not count as drift.
+
+The normaliser is deliberately NARROW, because a generous one turns this guard into decoration. It
+does exactly two things: strip trailing whitespace from each line, and collapse a run of blank lines
+to one blank line. It does NOT touch leading indentation (that changes list nesting and code blocks),
+does NOT remove the last blank line between two paragraphs (that merges them), does NOT join or split
+lines, and does NOT touch whitespace inside a line. Anything else is content.
+
+Exit 0 and print nothing when every released section is untouched; exit 1 and name each drift. A
+whitespace-only difference prints its note and does not change the exit status.
 """
 import re
 import subprocess
@@ -91,6 +104,21 @@ def declared_corrections(root):
 def declares_correction(body):
     """Does this section TELL A READER it was corrected? Anchored at column 0, never a substring."""
     return any(line.startswith(CORRECTION_MARKER) for line in body.split("\n"))
+
+
+def normalise_whitespace(body):
+    """The cf#824 normaliser, and it must stay this narrow (see the header). Strips trailing
+    whitespace per line and collapses each run of blank lines to ONE blank line. Nothing else."""
+    out = []
+    prev_blank = False
+    for line in body.split("\n"):
+        line = line.rstrip()
+        blank = line == ""
+        if blank and prev_blank:
+            continue
+        out.append(line)
+        prev_blank = blank
+    return "\n".join(out)
 
 
 def sections(text):
@@ -151,6 +179,14 @@ for version, body in head.items():
         print("changelog-immutable: " + version + " has no section in its own tagged file; NOT checked")
         continue
     checked += 1
+    if at_tag != body and normalise_whitespace(at_tag) == normalise_whitespace(body):
+        # cf#824: bytes differ, content does not. Reported, so the sweep is visible, but on its own
+        # line and never counted as drift, so it cannot bury a real rewrite in a list of look-alikes.
+        print(
+            "changelog-immutable: " + version + " differs from its tag in WHITESPACE ONLY (trailing "
+            "spaces or a run of blank lines); not a content change, not counted as drift"
+        )
+        continue
     if at_tag != body:
         # BOTH halves, and the two failures are reported DIFFERENTLY on purpose: "you forgot the
         # waiver" and "you forgot to tell the reader" send a person to different places, and one

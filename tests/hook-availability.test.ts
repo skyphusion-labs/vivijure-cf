@@ -6,6 +6,8 @@
 // payload never carried the fact, so no frontend work could fix it -- the local#201 broken-button
 // class.
 
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
+import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { describe, it, expect } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
@@ -69,13 +71,30 @@ describe("GET /api/modules host.hooks_unavailable", () => {
     // everything. Binding the tier here keeps this test asserting what it was written to assert
     // (the block is OMITTED, not emptied) instead of quietly becoming a test that the video-finish
     // report does not exist.
-    const res = await worker.fetch(
-      req("/api/modules"),
-      envWith({ AI, GATEWAY_ID: "gw-1", VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" }),
-      ctx,
-    );
-    const body = (await res.json()) as { host?: { hooks_unavailable?: unknown } };
+    // ...and a THIRD in cf#904: a catalog hook nothing in the project provides (`speech`) is reported
+    // until an installed module serves it. So the host here also binds a module serving `speech`,
+    // which is what "serves everything" now means; without it the block holds exactly that one key.
+    const speech = {
+      name: "acme-speech", version: "1.0.0", api: MODULE_API, hooks: ["speech"],
+      provides: [{ id: "acme-speech", label: "ACME Speech" }], binding: "MODULE_ACMESPEECH", config_schema: {},
+    };
+    const speechWorker = {
+      fetch: async (input: RequestInfo | URL) => new URL(String(input)).pathname === "/module.json"
+        ? new Response(JSON.stringify(speech), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify({ ok: false, error: "not found" }), { status: 404 }),
+    };
+    const base = { AI, GATEWAY_ID: "gw-1", VIDEO_FINISH_URL: "https://video-finish.skyphusion.org" };
+    _resetModuleDiscoveryCache();
+    const without = (await (await worker.fetch(req("/api/modules"), envWith(base), ctx)).json()) as {
+      host?: { hooks_unavailable?: Record<string, string> };
+    };
+    expect(Object.keys(without.host?.hooks_unavailable ?? {})).toEqual(["speech"]);
+    _resetModuleDiscoveryCache();
+    const res = await worker.fetch(req("/api/modules"), envWith({ ...base, MODULE_ACMESPEECH: speechWorker }), ctx);
+    const body = (await res.json()) as { hooks?: Record<string, string[]>; host?: { hooks_unavailable?: unknown } };
+    expect(body.hooks?.speech).toEqual(["acme-speech"]);
     expect(body.host?.hooks_unavailable).toBeUndefined();
+    _resetModuleDiscoveryCache();
   });
 
   it("the reason is written for a TENANT, not only an operator", async () => {
