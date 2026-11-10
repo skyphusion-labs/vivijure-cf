@@ -160,7 +160,7 @@ async function submit(
   if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
   const workersMax = Number(env.RUNPOD_WORKERS_MAX);
   // cf#394: NOT on the proxied route. This reconcile targets the RunPod MANAGEMENT API
-  // (rest.runpod.io/v1), which the plane proxy does not carry, and endpoint capacity on a
+  // (api.runpod.io/v2), which the plane proxy does not carry, and endpoint capacity on a
   // shared pool is an operator property a tenant must neither set nor need. Skipped, not
   // failed: the render is unaffected and the pool is sized by whoever owns it.
   if (!route.proxied && Number.isFinite(workersMax) && workersMax > 0) {

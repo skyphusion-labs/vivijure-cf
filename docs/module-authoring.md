@@ -293,7 +293,7 @@ Five rules that are not obvious from the code:
 - **Only `/run`, `/status/<id>`, `/cancel/<id>` and `/health` exist on the proxy.** Anything else is
   a 404 there, deliberately: `purge-queue` wipes an endpoint's queue for every tenant on it, and
   RunPod's per-endpoint scoping has no operation axis that could refuse it.
-- **The RunPod MANAGEMENT API (`rest.runpod.io`) is not proxied and never will be.** Endpoint
+- **The RunPod MANAGEMENT API (`api.runpod.io/v2`; REST v1 `rest.runpod.io` retires 2026-11-15) is not proxied and never will be.** Endpoint
   capacity is an operator property. If your module calls something like
   `reconcileRunpodEndpointWorkersMax`, gate it on `!route.proxied`.
 
