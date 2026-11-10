@@ -1507,9 +1507,9 @@ jobs:
     # fc#2250, two additions:
     #
     #   assert-tag-version -- the assert this workflow used to carry only as a step, promoted so it
-    #     gates the sibling deploy job too. The step inside studio-release.yml stays: it still guards
-    #     the workflow_dispatch path, where GITHUB_REF_NAME is the launch BRANCH rather than the tag,
-    #     and that path does not pass through this job at all.
+    #     gates the sibling deploy job too. The step inside studio-release.yml stays as a redundant
+    #     guard on the publishing job. studio-release.yml is workflow_call only (cf#562), so there is
+    #     no workflow_dispatch path: GITHUB_REF_NAME is the pushed tag.
     #
     #   deploy -- the REVERSE direction, and the one nobody had guarded. This job publishes the
     #     artifact every hosted tenant is provisioned from and advances the hosted STUDIO_RELEASE
