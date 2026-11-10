@@ -201,7 +201,7 @@ describe("own-gpu (env-driven endpoint shape) honours a NON-DEFAULT proxy base",
     expect(submit!.headers[RUNPOD_MODULE_HEADER]).toBe("own-gpu");
     // Nothing at all reached RunPod, and the RunPod key never went on any wire.
     expect(calls.some((c) => hostOf(c.url) === "api.runpod.ai")).toBe(false);
-    expect(calls.some((c) => hostOf(c.url) === "rest.runpod.io")).toBe(false);
+    expect(calls.some((c) => hostOf(c.url) === "api.runpod.io")).toBe(false);
     expect(JSON.stringify(calls)).not.toContain(DIRECT_KEY);
   });
 
@@ -220,11 +220,11 @@ describe("own-gpu (env-driven endpoint shape) honours a NON-DEFAULT proxy base",
     expect(submit.headers[RUNPOD_MODULE_HEADER]).toBeUndefined();
   });
 
-  it("does NOT attempt the rest.runpod.io workersMax reconcile on the proxied route", async () => {
+  it("does NOT attempt the api.runpod.io workersMax reconcile on the proxied route", async () => {
     const { fn, calls } = recorder(() => jobResponse());
     globalThis.fetch = fn;
     // RUNPOD_WORKERS_MAX is what triggers reconcileRunpodEndpointWorkersMax, which targets the
-    // RunPod MANAGEMENT API (rest.runpod.io/v1) -- a host the plane proxy does not carry and an
+    // RunPod MANAGEMENT API (api.runpod.io/v2) -- a host the plane proxy does not carry and an
     // operator-scoped action a tenant must not perform. Unhandled, this fails EVERY proxied submit.
     const res = await invoke(ownGpu, {
       RUNPOD_API_KEY: DIRECT_KEY,
@@ -236,7 +236,7 @@ describe("own-gpu (env-driven endpoint shape) honours a NON-DEFAULT proxy base",
     const body = (await res.json()) as { ok: boolean; error?: string };
     expect(body.error ?? "").toBe("");
     expect(body.ok).toBe(true);
-    expect(calls.some((c) => hostOf(c.url) === "rest.runpod.io")).toBe(false);
+    expect(calls.some((c) => hostOf(c.url) === "api.runpod.io")).toBe(false);
   });
 });
 
