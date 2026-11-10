@@ -5,6 +5,50 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.45.0 -- 2026-11-10
+
+### Feat: the caller's dialogue module reaches the film, on vivijure-core 1.42.0 (#1379, #1381)
+
+Core moves to `^1.42.0`, which lets the caller pick the dialogue module and send it config (core#339). The studio's own mint sites never forwarded the choice, so the first dialogue module by ui.order ran (`dialogue-gen` before `chatterbox`), sent `{}`, whatever the user picked.
+
+- The panel door, render from keyframes, retry and finalize now pass `dialogue_backend` and `dialogue_config` from the resolved overrides bag into `startFilmJob` / `startFilmFromKeyframes`. The parent film's retake passes the ones its part ran with. With no selection nothing changes: no field is sent and the first module by ui.order runs.
+- An unknown name is refused when the film starts, by name (`dialogue module "<name>" is not installed`), before anything is spent.
+- Not wired, because there is no dialogue input to forward: the agent door (`POST /api/render/film`, which film parents submit through) takes pre-resolved maps and has no dialogue field, and regen-shot and the parent still are keyframes-only. Adding the field to the agent door and the MCP is a follow-up.
+- `tests/dialogue-selection-1379.test.ts` sweeps every mint site that forwards a resolved `finish_config` and fails when one does not forward the dialogue choice too.
+
+Core 1.42.0 also makes the poll transport tolerance time as well as count (core#427): a run of failures fails after 3 polls AND 120 s. The #719 fixture in `tests/render-orchestrator.test.ts` fired its polls back to back and so stayed pending; it now steps them at the cron's cadence with the same assertions, and a new case pins that three fast blips stay pending (#1381).
+
+### Feat: adopt vivijure-core 1.43.0, and answer its two new refusals by name (#1383, #1387)
+
+Core moves to `^1.43.0`. It throws two typed refusals for a caller's bad input, and the studio now answers each as the client error it is instead of `500 internal error`. One mapping (`src/core-refusals.ts`) serves the router and the parent film's in-process door call.
+
+- **400** for `ConfigValueError` (core#343, PR core#517): an enum value the module does not declare is refused, naming the field, the value and the allowed set. Before, core replaced it with the default and the render ran on a config nobody asked for. An absent value still takes the default.
+- **409** for `BoardKeyCollisionError` (core#518, PR core#519): a board whose title key another project already renders under is refused, naming that project. Two such boards would share each other's stored keyframes and LoRAs. Applies to `POST /api/storyboard/projects/:id/storyboard` and `PATCH /api/storyboard/projects/:id` with `storyboard`. The panel already shows the message on save.
+- The film path (`POST /api/film`, and the film door's board save) checks the key before it creates a project, and removes the project it made if a concurrent save takes the key first, so a refusal leaves nothing behind. The film still starts; the answer says the board was not saved and why.
+
+**For a client.** A render or film start that sent an invalid enum value used to succeed on the default; it now gets `400` naming the field. A board save that collides with another project's title key gets `409`; retitle the board.
+
+### fix(keyframe): the GPU keyframe door refuses style anime before any GPU spend
+
+The anime checkpoint is not on the GPU image (vivijure-backend#557: anime keyframes run on cloud-keyframe), so a GPU keyframe job with `style: anime` could only fail late, on a worker. The `keyframe` module now refuses it in `/invoke` before the credential read, the capacity reconcile and `/run`, with `reason: "bad-input"` and an error that names cloud-keyframe. Core does not retry it. `anime` stays in the door's `style` enum on purpose: core clamps an undeclared enum value to the field default, so a narrower enum would draw photoreal for an anime request with no word to the caller. Photoreal and the default are unchanged.
+
+### Fix: a failed board save answers fixed text, and the error goes to the log (#1395)
+
+CodeQL alert #86 (`js/stack-trace-exposure`): `saveFilmProject` returned `e instanceof Error ? e.message : String(e)` as the project `error`, and `POST /api/film` put it in its response. A thrown value can carry a stack or storage internals. Now any failure that is not a refusal the caller can act on is logged (`film_project.save_failed`) and answered with a fixed sentence: the board could not be saved to a project, and the film still started. The bundle board read (`film_project.bundle_board_read_failed`) works the same way. Core's `BoardKeyCollisionError` is still reported in core's words, because it tells the caller to retitle the board.
+
+**For a client.** On a failed save, `project.error` is now one of two fixed sentences instead of the underlying error text.
+
+### Fix: adopt vivijure-core 1.44.0, so the module workersMax reconcile uses RunPod REST v2 (fleet-chezmoi#2084)
+
+Core moves to `^1.44.0`. RunPod REST v1 (`rest.runpod.io/v1`) retires on 2026-11-15. RunPod idle scale-down sets an endpoint's `workersMax` to 0 after about 7 days with no requests. The four modules that restore it before a submit (keyframe, own-gpu, finish-blender, finish-upscale) call core's `reconcileRunpodEndpointWorkersMax`. On core 1.43.0 that call goes to v1. From the 15th the read fails, and core#527 makes that failure block the render. Core 1.44.0 (vivijure-core#529) reads and restores through `GET` and `PATCH https://api.runpod.io/v2/serverless/{id}`, with the bounds nested as `workers.max` and `workers.min`. `scripts/reconcile-runpod-endpoints.ts` picks this up as well.
+
+- The reconcile still runs only on the direct route (`!route.proxied`). A hosted tenant's proxied submit makes no management call, as before (cf#394).
+- The submit, poll and cancel calls to `https://api.runpod.ai/v2/{id}/...` (the serverless invoke API) are unchanged.
+- New: `tests/runpod-reconcile-v2-2084.test.ts`. It drives each of the four modules' real invoke path on the direct route and asserts `GET` and then `PATCH` of the v2 URL before the `/run`. It is red on core 1.43.0. Before it, no cf test exercised the direct reconcile at all.
+- `tests/runpod-proxy-base-cf394.test.ts` now asserts that the proxied route never reaches `api.runpod.io`. The old assertion was about `rest.runpod.io`, and it would have stayed green after the move.
+
+Not in this change: `deploy/vivijure_deploy.py` and `scripts/runpod-provision.py` still use v1 to create templates and endpoints. That port is fleet-chezmoi#2085.
+
 ## v1.44.0 -- 2026-11-09
 
 **Release note:** `v1.43.0` (the section below, dated 2026-11-03) was prepared but never tagged, so it never shipped. Its changes, and everything since, ship in this release. The hosted `STUDIO_RELEASE` pin moves from `v1.42.2` to `v1.44.0`.
