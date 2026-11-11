@@ -1,0 +1,3 @@
+### Containers: the video-finish door chooses an instance only for an authenticated request
+
+The standalone video-finish door Worker routes each film to its own container instance through the `x-vivijure-finish-affinity` header (#1097). `GET /health` stays open, because the studio's readiness read calls it without a token to learn whether the container process is up. That open probe no longer selects an instance: it drops the affinity header and is served by the fixed fallback instance. Every other path still needs the bearer before any instance is addressed. The routing decision moved into `routing.ts` as `routeDoorRequest`, so `tests/video-finish-door-routing.test.ts` drives it directly.
