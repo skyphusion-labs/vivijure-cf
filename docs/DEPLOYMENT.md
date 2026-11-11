@@ -514,11 +514,11 @@ store `secret_name` differs. Modules that share an endpoint share one secret (si
 > **The satellite ENDPOINTS themselves also need R2 credentials (#522).** The store secret above only
 > carries each satellite's endpoint *id*. Every GPU satellite (finish-upscale,
 > reads its inputs from, and writes its outputs to, YOUR R2 bucket directly, so its
-> RunPod endpoint template must ALSO set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+> RunPod endpoint must ALSO set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
 > and `R2_BUCKET` in the endpoint env (the same R2 values the backend endpoint uses in section 4). Miss
 > them and the first full render fails at finish with the satellite's honest error (`R2 mode needs
 > R2_ENDPOINT_URL + R2_ACCESS_KEY_ID/SECRET in the endpoint env`), correctly, after the keyframe/i2v
-> GPU spend. **RunPod gotcha:** editing an endpoint's template env does NOT reach already-warm
+> GPU spend. **RunPod gotcha:** editing an endpoint's env does NOT reach already-warm
 > workers -- FlashBoot keeps cached containers alive, so you must trigger an **endpoint release**
 > (redeploy/bump the endpoint) for env changes to take effect.
 
@@ -629,7 +629,7 @@ The render backend is the `vivijure-backend` container image, run as a **RunPod 
 1. Build/pull the image. The image is published to GHCR (`ghcr.io/skyphusion-labs/vivijure-backend`);
    build it yourself from the `vivijure-backend` repo, or pull the public image.
 
-**Scripted standup (recommended).** One command creates the template + endpoint via the RunPod API,
+**Scripted standup (recommended).** One command creates the endpoint via the RunPod REST v2 API,
 idempotent by name (re-running reuses what exists). Secrets are read from the environment only,
 never argv:
 
@@ -639,11 +639,12 @@ python3 scripts/runpod-provision.py  # last line prints RUNPOD_ENDPOINT_ID=<id>
 ```
 
 Put the printed id in `deploy.env` as `RUNPOD_ENDPOINT_ID` and run `./deploy.sh`. The endpoint is
-created scale-to-zero (workersMin=0): it costs nothing until a render job runs.
+created scale-to-zero (`workers.min` 0): it costs nothing until a render job runs. GPUs are chosen by v2
+pool: `--gpu-types` maps RunPod GPU type ids to pools, or `--gpu-pools` names them directly.
 
 The same script provisions the **finish satellite** endpoints (#522) with `--satellite upscale`,
 `--satellite upscale`; it sets the four R2 env vars on the satellite
-template for you, and its last line prints the matching `deploy.env` key (e.g.
+endpoint for you, and its last line prints the matching `deploy.env` key (e.g.
 `VIDEO_UPSCALE_RUNPOD_ENDPOINT_ID=<id>`) for the satellites profile.
 
 > **Image tag: pinned by default (#518).** `runpod-provision.py` defaults to a specific backend

@@ -5,8 +5,8 @@ Cloudflare + RunPod accounts (BYO keys + GPU). One input surface, idempotent re-
 What it does (see issue #244 for the design + options survey):
   - one input surface + correct secret handling (hidden prompts, never echoed, logged, or on argv),
   - the full provisioning spine: Cloudflare (D1, R2 x2, AI Gateway, Secrets Store + an R2 S3 token
-    mint, plus a CF Access app ONLY when AUTH_MODE=access), then RunPod (a serverless template +
-    endpoint per satellite, volume-less), then seed -> migrate -> deploy. In the default AUTH_MODE=token the studio's /api/* gate
+    mint, plus a CF Access app ONLY when AUTH_MODE=access), then RunPod (one serverless
+    endpoint per satellite carrying its own image and env, volume-less), then seed -> migrate -> deploy. In the default AUTH_MODE=token the studio's /api/* gate
     is a built-in bearer token (STUDIO_API_TOKEN worker secret, minted + printed once); no CF Access,
     no Zero Trust dashboard step. AUTH_MODE=access provisions the edge Access app + arms the in-worker
     JWT backstop instead. This mirrors deploy.sh; see docs/SECURITY.md sections 1b (token) and 1/1a. The cross-wiring order is enforced -- most importantly the Secrets Store is seeded BEFORE
@@ -19,7 +19,7 @@ HONESTY NOTE: the provider calls are REAL. `up` provisions against YOUR live Clo
 accounts -- it mints an R2 API token, creates an Access app, RunPod endpoints, etc. The calls are
 written against the CF/RunPod API docs + the RunPod OpenAPI, but have NOT been integration-tested end
 to end on a live account; treat the first run accordingly. A few values you MUST set before a live run
-(DEPLOY_DOMAIN, OPERATOR_EMAIL for access mode; GPU_TYPE_IDS) are flagged at the top and the run dies
+(DEPLOY_DOMAIN, OPERATOR_EMAIL for access mode; GPU_TYPE_IDS or GPU_POOLS) are flagged at the top and the run dies
 loud if any is missing. The per-endpoint image tags default to each satellite released tag.
 
 WHAT THIS TOOL COLLECTS (and what it never will):
@@ -624,7 +624,7 @@ def preflight(repo: Path, s: Secrets) -> None:
     # Validate the CF token with a real, harmless authenticated call (token verify).
     http_json("GET", "https://api.cloudflare.com/client/v4/user/tokens/verify", s.cf_api_token)
     # Validate the RunPod key (list endpoints; empty is fine).
-    http_json("GET", "https://rest.runpod.io/v1/endpoints", s.runpod_api_key)
+    http_json("GET", RUNPOD_API + "/serverless?limit=1", s.runpod_api_key)
     log("preflight ok: deps present, both credentials valid")
 
 
@@ -760,8 +760,28 @@ def provision_cloudflare_infra(repo: Path, s: Secrets, st: State) -> dict:
     return {"GATEWAY_ID": gateway.rid, **r2}
 
 
-RUNPOD_API = "https://rest.runpod.io/v1"  # the current REST API (Bearer key; OpenAPI at /v1/openapi.json)
-GPU_TYPE_IDS: list = []  # REQUIRED -- endpoint GPU type id(s) (GET /gputypes)
+RUNPOD_API = "https://api.runpod.io/v2"  # RunPod REST v2 (Bearer key). v1 retires 2026-11-15 (fleet-chezmoi#2085).
+# REQUIRED, one of the two. v2 schedules by GPU POOL: name pools directly in GPU_POOLS (e.g.
+# ["HOPPER_141"]), or list GPU type ids in GPU_TYPE_IDS and they map through GPU_POOL_BY_TYPE.
+# GPU_POOLS wins when both are set; an unmapped type id stops the run before any RunPod call.
+GPU_TYPE_IDS: list = []
+GPU_POOLS: list = []
+# GPU type id -> v2 pool, from RunPod's GPU catalog (read 2026-11-11). Same table as
+# vivijure-backend deploy.sh and the control plane's GPU_POOL_BY_TYPE.
+GPU_POOL_BY_TYPE = {
+    "NVIDIA H200": "HOPPER_141", "NVIDIA B200": "BLACKWELL_180", "NVIDIA B300 SXM6 AC": "BLACKWELL_288",
+    "NVIDIA H100 80GB HBM3": "ADA_80_PRO", "NVIDIA H100 NVL": "ADA_80_PRO", "NVIDIA H100 PCIe": "ADA_80_PRO",
+    "NVIDIA A100 80GB PCIe": "AMPERE_80", "NVIDIA A100-SXM4-80GB": "AMPERE_80",
+    "NVIDIA RTX PRO 6000 Blackwell Server Edition": "BLACKWELL_96",
+    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": "BLACKWELL_96",
+    "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition": "BLACKWELL_96",
+    "NVIDIA L40": "ADA_48_PRO", "NVIDIA L40S": "ADA_48_PRO", "NVIDIA RTX 6000 Ada Generation": "ADA_48_PRO",
+    "NVIDIA A40": "AMPERE_48", "NVIDIA RTX A6000": "AMPERE_48",
+    "NVIDIA GeForce RTX 5090": "ADA_32_PRO", "NVIDIA GeForce RTX 4090": "ADA_24",
+    "NVIDIA GeForce RTX 3090": "AMPERE_24", "NVIDIA RTX A5000": "AMPERE_24", "NVIDIA L4": "AMPERE_24",
+}
+# A render job can run long; v2 defaults the execution timeout to 5 minutes, so set it explicitly.
+EXECUTION_TIMEOUT_MS = 3600000
 
 # Per-endpoint image + released tag (#678). One manifest -- a finish satellite MUST run its own image,
 # never the backend image. Tags are BARE semver GHCR tags (never a git :sha -- the endpoint-image pin
@@ -783,17 +803,54 @@ def runpod_images() -> dict:
 
 
 def rp_api(method: str, path: str, key: str, body: dict | None = None, *, raise_on_error: bool = False):
-    """RunPod REST v1 call (plain JSON, no envelope; Bearer key in the header)."""
+    """RunPod REST v2 call (plain JSON, no envelope; Bearer key in the header)."""
     return http_json(method, RUNPOD_API + path, key, body, raise_on_error=raise_on_error)
 
 
 def _rp_items(listed) -> list:
-    """Normalize a RunPod list response to a plain list (top-level array, or data/endpoints/templates)."""
+    """Normalize one RunPod list page to a plain list (v2 `items`, or a bare array)."""
     if isinstance(listed, list):
         return listed
     if isinstance(listed, dict):
-        return listed.get("data") or listed.get("endpoints") or listed.get("templates") or []
+        return listed.get("items") or listed.get("data") or []
     return []
+
+
+def rp_list_all(path: str, key: str) -> list:
+    """Walk a v2 list to its end. Every v2 list is cursor-paginated (`pagination.nextCursor` while
+    `pagination.hasNextPage`); reading only the first page would make a same-name resource look
+    absent and create a duplicate. A page that claims more without a cursor stops the run."""
+    out: list = []
+    cursor = None
+    while True:
+        sep = "&" if "?" in path else "?"
+        q = f"{path}{sep}limit=1000" + (f"&cursor={urllib.parse.quote(cursor, safe='')}" if cursor else "")
+        page = rp_api("GET", q, key)
+        out.extend(_rp_items(page))
+        pg = page.get("pagination") if isinstance(page, dict) else None
+        if not isinstance(pg, dict) or pg.get("hasNextPage") is not True:
+            return out
+        nxt = pg.get("nextCursor")
+        if not isinstance(nxt, str) or not nxt:
+            die(f"RunPod list {path} reported more pages but gave no cursor -- stopping rather than risk a duplicate")
+        cursor = nxt
+
+
+def rp_gpu_pools() -> list:
+    """The v2 GPU pools for the endpoints: GPU_POOLS as given, else GPU_TYPE_IDS mapped (order kept,
+    duplicates dropped). Dies on an unmapped type id or when neither is set."""
+    if GPU_POOLS:
+        return list(GPU_POOLS)
+    if not GPU_TYPE_IDS:
+        die("set GPU_POOLS (e.g. [\"HOPPER_141\"]) or GPU_TYPE_IDS (RunPod GPU type ids) for the endpoints")
+    pools: list = []
+    for g in GPU_TYPE_IDS:
+        pool = GPU_POOL_BY_TYPE.get(g)
+        if not pool:
+            die(f"no RunPod v2 pool is known for GPU type {g!r}; set GPU_POOLS (e.g. [\"HOPPER_141\"]) instead")
+        if pool not in pools:
+            pools.append(pool)
+    return pools
 
 
 def rp_reconcile(*, kind: str, key: str, list_path: str, create_path: str, create_body: dict,
@@ -804,7 +861,7 @@ def rp_reconcile(*, kind: str, key: str, list_path: str, create_path: str, creat
     the resource server-side ("unexpected end of JSON input"), so on a create error we RE-LIST before
     giving up -- a same-name resource that was absent pre-create is one we just made; record it rather
     than orphan it (and rather than die telling the user to --adopt a resource we created)."""
-    for it in _rp_items(rp_api("GET", list_path, key)):
+    for it in rp_list_all(list_path, key):
         if isinstance(it, dict) and it.get(name_key) == name:
             rid = str(it.get(id_key, ""))
             if known_id is not None and str(known_id) == rid:
@@ -821,7 +878,7 @@ def rp_reconcile(*, kind: str, key: str, list_path: str, create_path: str, creat
     except DeployHTTPError as e:
         # #675: the create may have SUCCEEDED server-side despite the error. Re-list; a same-name
         # resource now present (absent pre-create above) is ours -- record it, do not orphan or die.
-        match = next((it for it in _rp_items(rp_api("GET", list_path, key))
+        match = next((it for it in rp_list_all(list_path, key)
                       if isinstance(it, dict) and it.get(name_key) == name), None)
         if match:
             rid = str(match.get(id_key, ""))
@@ -836,15 +893,17 @@ def rp_reconcile(*, kind: str, key: str, list_path: str, create_path: str, creat
 
 def provision_runpod(repo: Path, s: Secrets, st: State, cf_derived: dict) -> dict:
     """Step 2. RunPod must come BEFORE secret-seeding because RUNPOD_ENDPOINT_ID is a seeded secret.
-    Order within: registry-auth (only if the image is private) -> a serverless template per endpoint
-    (pin the endpoint image, R2 env) -> endpoint (volume-less; baked images ship weights in-layer).
+    Order within: registry-auth (only if the image is private) -> one endpoint per satellite
+    (volume-less; baked images ship weights in-layer). On RunPod v2 the endpoint itself carries the
+    image, env, disk and registry; no template is made (a v2 template is applied once at create and
+    keeps no link, so it would only be a second thing to drift).
     Returns {endpoint_name: endpoint_id}. Reconciled by name. Consumes the
     R2 S3 creds (cf_derived, from the CF R2-token mint) for the backend env.
 
-    GOTCHA encoded: for a PUBLIC GHCR image, leave containerRegistryAuthId UNSET. A stale/blank-but-
+    GOTCHA encoded: for a PUBLIC GHCR image, leave `registry` UNSET. A stale/blank-but-
     present auth makes RunPod attempt auth and abort even a public pull."""
     key = s.runpod_api_key
-    log("provisioning RunPod (registry-auth?, per-endpoint serverless templates, endpoints; volume-less) ...")
+    log("provisioning RunPod (registry-auth?, one v2 endpoint per satellite; volume-less) ...")
 
     # Required config -- die loud rather than POST an empty/unpinned value (relying on a remote 400).
     images = runpod_images()
@@ -854,18 +913,17 @@ def provision_runpod(repo: Path, s: Secrets, st: State, cf_derived: dict) -> dic
             die(f"no image mapping for RunPod endpoint {ep!r} (see runpod_images())")
         if not tag or tag == "latest":
             die(f'set an explicit released tag for {ep} (bare semver, e.g. "1.0.2") -- never empty or "latest"')
-    if not GPU_TYPE_IDS:
-        die("set GPU_TYPE_IDS to the endpoint GPU type id(s) (GET /gputypes)")
+    pools = rp_gpu_pools()
 
-    # Public GHCR image -> NO registry auth (leave containerRegistryAuthId unset; the blank-auth gotcha).
-    registry_auth_id = None  # for a PRIVATE image, rp_reconcile a containerregistryauth here first.
+    # Public GHCR image -> NO registry auth (leave `registry` unset; the blank-auth gotcha).
+    registry_auth_id = None  # for a PRIVATE image, reconcile a registry credential here first.
 
     # The env the pod reads to reach R2 (S3), from the CF R2-token mint (cf_derived). If the mint warned
     # (e.g. the permission group was missing), the creds are empty -> abort rather than ship an endpoint
     # that cannot read R2.
     if not cf_derived.get("R2_S3_ACCESS_KEY_ID"):
         die("R2 S3 creds were not minted (see the CF R2-token warning above) -- aborting before creating RunPod endpoints that cannot read R2")
-    # RunPod template env is a key->value OBJECT (confirmed against the v1 OpenAPI), not an array.
+    # RunPod endpoint env is a key->value OBJECT (v2 OpenAPI), not an array.
     backend_env = {
         "R2_S3_ACCESS_KEY_ID": cf_derived.get("R2_S3_ACCESS_KEY_ID", ""),
         "R2_S3_SECRET_ACCESS_KEY": cf_derived.get("R2_S3_SECRET_ACCESS_KEY", ""),
@@ -876,29 +934,24 @@ def provision_runpod(repo: Path, s: Secrets, st: State, cf_derived: dict) -> dic
     endpoints: dict = {}
     for ep in RUNPOD_ENDPOINTS:
         image, tag = images[ep]
-        tmpl = rp_reconcile(kind="template", key=key, list_path="/templates", create_path="/templates",
-            create_body={
-                "name": f"{ep}-tmpl",
-                "imageName": f"{image}:{tag}",  # this endpoint OWN image (#678), not the backend for all
-                # isServerless marks this a SERVERLESS template. Without it RunPod defaults to a POD
-                # template and the endpoint create then fails 100% ("Serverless endpoints cannot use pod
-                # templates") -- #677. Confirmed against the v1 OpenAPI + a live proving run.
-                "isServerless": True,
-                "containerDiskInGb": 500,
-                "env": backend_env,
-                **({"containerRegistryAuthId": registry_auth_id} if registry_auth_id else {}),
-            }, name=f"{ep}-tmpl", known_id=st.resource_id(f"runpod_template_{ep}"))
-        st.put_resource(f"runpod_template_{ep}", tmpl.rid, adopted=tmpl.adopted)  # persist NOW (RunPod-phase parity)
+        # A v1-era state file may hold a template id for this endpoint. It is left as recorded, so
+        # `down` still deletes it; nothing new is made.
         # No network volume (#676): the baked image ships the weights in-layer, so a volume only pins the
         # endpoint to one datacenter (shrinking the schedulable GPU pool) + bills ~$7/mo for nothing.
         # Prod runs volume-less; this mirrors it.
-        ep_res = rp_reconcile(kind="endpoint", key=key, list_path="/endpoints", create_path="/endpoints",
+        ep_res = rp_reconcile(kind="endpoint", key=key, list_path="/serverless", create_path="/serverless",
             create_body={
-                "name": ep, "templateId": tmpl.rid,
-                "gpuTypeIds": GPU_TYPE_IDS,
-                "workersMin": 0, "workersMax": 1,
-                # scaler/idle/timeout tuning (scalerType / scalerValue / idleTimeout / executionTimeoutMs)
-                # is optional; confirm the exact fields against the live /v1/openapi.json before tuning.
+                "name": ep,
+                "type": "QUEUE",  # v2 requires the routing type on create
+                "image": f"{image}:{tag}",  # this endpoint OWN image (#678), not the backend for all
+                "env": backend_env,
+                "disk": 500,
+                "gpu": {"pools": pools, "count": 1},
+                "workers": {"min": 0, "max": 1, "idleTimeout": 5},
+                "scaling": {"type": "QUEUE_DELAY", "queueDelay": 4},
+                "timeout": EXECUTION_TIMEOUT_MS,
+                "flashboot": "FLASHBOOT",  # v2 defaults FlashBoot OFF; keep fast cold starts on
+                **({"registry": registry_auth_id} if registry_auth_id else {}),
             }, name=ep, known_id=st.resource_id(f"runpod_endpoint_{ep}"))
         st.put_resource(f"runpod_endpoint_{ep}", ep_res.rid, adopted=ep_res.adopted)  # persist NOW
         endpoints[ep] = ep_res.rid
@@ -1289,7 +1342,7 @@ def cmd_up(repo: Path, dry_run: bool, noninteractive: bool, rotate_token: bool =
         steps = [
             "preflight (deps + token validity)",
             cf_step,
-            "provision RunPod (registry-auth?, per-endpoint serverless template, endpoints; volume-less) -> capture endpoint ids",
+            "provision RunPod (registry-auth?, one v2 endpoint per satellite; volume-less) -> capture endpoint ids",
             "seed Cloudflare Secrets Store  <-- BEFORE deploy (#237)",
             "run D1 migrations",
             "deploy module workers, then the core (core carries the AUTH_MODE var)",
@@ -1375,9 +1428,9 @@ def cmd_down(repo: Path, delete_data: bool, noninteractive: bool = False, includ
     key = s.runpod_api_key
     for ep in RUNPOD_ENDPOINTS:
         for kind, skey, url in (
-            ("endpoint", f"runpod_endpoint_{ep}", "/endpoints"),
-            ("volume", f"runpod_volume_{ep}", "/networkvolumes"),     # legacy state (installer is volume-less now)
-            ("template", f"runpod_template_{ep}", "/templates"),
+            ("endpoint", f"runpod_endpoint_{ep}", "/serverless"),
+            ("volume", f"runpod_volume_{ep}", "/network-volumes"),    # legacy state (installer is volume-less now)
+            ("template", f"runpod_template_{ep}", "/templates"),      # legacy state (v1 installs made one)
         ):
             rid = st.resource_id(skey)
             if not rid:

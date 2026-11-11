@@ -10,7 +10,7 @@ Stand up the whole Vivijure stack on **your own** Cloudflare + RunPod accounts (
 input surface, idempotent re-runs, a teardown path -- the guided Python installer from the design in
 #244 (not full Terraform -- RunPod's IaC is too immature and the Cloudflare side needs Wrangler for
 code/migrations regardless). What it adds over `deploy.sh`: interactive prompts, the
-network-volume + registry-auth side of RunPod (the shell path covers template + endpoint via
+network-volume + registry-auth side of RunPod (the shell path covers the endpoint via
 `scripts/runpod-provision.py`), a scoped R2 S3 token mint, the Cloudflare Access app (access mode
 only), and a `down` teardown by recorded id.
 
@@ -129,7 +129,7 @@ mint and 10182 the new account's core). To stand up a second account from the sa
 separate checkout, remove the state file for a fresh install, or set `DEPLOY_PREFIX` (its state file
 is per-prefix).
 
-`down` deletes by those recorded ids: the RunPod endpoints/templates (and any legacy volume), the
+`down` deletes by those recorded ids: the RunPod endpoints (and any template or volume a v1-era install recorded), the
 workers (modules + core via `wrangler delete`), the Access app, AI Gateway, the Secrets Store, and
 **the minted R2 API token** (so a teardown never leaves a live credential behind). It prints a summary
 of what it removed. `--delete-data` additionally deletes the R2 buckets + D1 (your render + project
