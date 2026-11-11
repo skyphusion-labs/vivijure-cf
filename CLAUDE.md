@@ -18,8 +18,8 @@ Version: see root `package.json` / latest `v*` tag / `CHANGELOG.md` (do not free
 GPU render backend: `vivijure-backend` (RunPod serverless). Production panel UI:
 **vivijure.skyphusion.org** (measured 2026-10-14). Decided the same day and not cut
 over: the main studio moves to **app.studio.vivijure.com**, the same Worker, the same
-D1, and the same R2. `studio.vivijure.com` stays the control-plane door. `vivijure.com`
-stays the site. The old host redirects only after the new one is proven. Local-GPU is
+D1, and the same R2. `studio.vivijure.com` stays the control-plane door. The project
+site is `https://vivijure.dev` (2026-11-11). The old host redirects only after the new one is proven. Local-GPU is
 opt-in and on-box; the fleet named tunnel
 (`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). The public
 demo is REMOVED ENTIRELY (Conrad's ruling), not deprecated, and it went in TWO

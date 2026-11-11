@@ -1,6 +1,6 @@
 # vivijure-cf
 
-**Cloudflare Workers control panel for [Vivijure Studio](https://vivijure.com).** Run the
+**Cloudflare Workers control panel for [Vivijure Studio](https://vivijure.dev).** Run the
 self-hosted AGPL AI film studio on the Workers free tier: storyboard, cast, module registry,
 render orchestration, and the studio UI.
 
@@ -24,7 +24,7 @@ is a separate product in its own repo,
 [`vivijure-control-plane`](https://github.com/skyphusion-labs/vivijure-control-plane). It installs
 this studio's published release unmodified, so hosted and self-hosted never drift apart.
 
-**Vivijure Studio:** https://vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+**Vivijure Studio:** https://vivijure.dev · **Skyphusion Labs:** https://skyphusion.org
 
 The public demo is removed entirely, in two steps: the `demo.vivijure.com` custom domain went on 2026-10-08, and the deployment went on 2026-10-19 (both Worker scripts, the D1, the R2 bucket and the AI Gateway). This panel no longer carries a demo door.
 
@@ -68,4 +68,4 @@ npm run dev
 - **[vivijure-local](https://github.com/skyphusion-labs/vivijure-local)** -- Node/MinIO host (same core, no Cloudflare)
 - **[vivijure-mcp](https://github.com/skyphusion-labs/vivijure-mcp)** -- agent MCP for either host
 - **[vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane)** -- optional hosted provisioner (not needed to self-host)
-- **Write-ups:** [runs anywhere](https://skyphusion.net/blog/vivijure-run-anywhere/) · [constellation](https://skyphusion.net/blog/vivijure-constellation/) · [vivijure.com](https://vivijure.com)
+- **Write-ups:** [runs anywhere](https://skyphusion.net/blog/vivijure-run-anywhere/) · [constellation](https://skyphusion.net/blog/vivijure-constellation/) · [vivijure.dev](https://vivijure.dev)
