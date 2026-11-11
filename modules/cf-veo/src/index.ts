@@ -41,15 +41,21 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type Workflo
 
 const MANIFEST: ModuleManifest = {
   name: "cf-veo",
-  version: "0.1.4",
+  version: "0.1.5",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Veo 3.1)" }],
   config_schema: {
     generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     aspect_ratio: { type: "enum", values: ["16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
-    // cf#932: the label is the one place the schema can say it; resolutionDurationError enforces it.
-    resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution (1080p: 8 second shots only)" },
+    // cf#932: Veo 3.1 makes 1080p only as an 8 second clip. `requires` (core#507) lets the core refuse
+    // the pair when the film starts, before keyframes are bought. clampDuration rounds, so 7.5 s and up
+    // becomes an 8 second clip: hence min 7.5 in planned seconds. resolutionDurationError still refuses
+    // at invoke, for a host on an older core.
+    resolution: {
+      type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution (1080p: 8 second shots only)",
+      requires: [{ when: "1080p", shot_seconds: { min: 7.5 }, message: "Veo 3.1 makes 1080p only as an 8 second clip" }],
+    },
   },
   ui: {
     section: "motion",

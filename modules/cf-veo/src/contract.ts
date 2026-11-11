@@ -8,7 +8,11 @@ export type HookName = "motion.backend";
 export type ConfigField =
   | { type: "int" | "float"; default: number; min?: number; max?: number; label?: string; enum_labels?: Record<string, string> }
   | { type: "bool"; default: boolean; label?: string }
-  | { type: "enum"; values: string[]; default: string; label?: string }
+  | {
+      type: "enum"; values: string[]; default: string; label?: string;
+      /** core#507: this value fits only shots whose PLANNED seconds are in range (core 1.45+). */
+      requires?: Array<{ when: string | number | boolean; shot_seconds: { min?: number; max?: number }; message?: string }>;
+    }
   | { type: "string"; default: string; label?: string };
 
 export type ConfigSchema = Record<string, ConfigField>;
