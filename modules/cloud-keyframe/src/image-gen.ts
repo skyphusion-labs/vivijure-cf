@@ -10,6 +10,7 @@
 // directly. The small helpers are pure + unit-tested.
 
 import { isCsamRefusalReason } from "../../_shared/finish-soft-degrade";
+import { PROVIDER_IMAGE_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 
 /** Minimal AI binding shape: `.run(model, params, opts?)`. The gateway opt is omitted for FLUX-2
  *  (multipart + gateway-incompatible) and passed for the proxied path. */
@@ -266,7 +267,8 @@ export async function generateImage(
   if (!url) throw new Error("proxied image model returned no url");
   const v = await fetch(url);
   if (!v.ok) throw new Error("fetch proxied image -> " + v.status);
-  return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
+  const media = await readProviderMedia(v, { maxBytes: PROVIDER_IMAGE_MAX_BYTES, fallbackType: "image/png" });
+  return { bytes: toArrayBuffer(media.bytes), mime: media.contentType };
 }
 
 export function runpodNano2Input(
@@ -326,5 +328,6 @@ export async function generateImageRunpod(
   if (!url) throw new Error(flagged || "runpod nano-banana-2 returned no image");
   const v = await fetch(url);
   if (!v.ok) throw new Error("fetch runpod image -> " + v.status);
-  return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
+  const media = await readProviderMedia(v, { maxBytes: PROVIDER_IMAGE_MAX_BYTES, fallbackType: "image/png" });
+  return { bytes: toArrayBuffer(media.bytes), mime: media.contentType };
 }

@@ -15,10 +15,20 @@ import { castOwnedPrefixes, isLegacySharedVoiceSampleKey, ownsVoiceRefKey } from
 import { isOwnGeneratedSampleKey, voiceSampleStateKey } from "./cast-voice-sample";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
+import { CappedReadError, readCappedBody } from "./capped-body";
 import { getServedArtifact } from "./shared";
 
 export const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
 export const CAST_MAX_BYTES = 16 * 1024 * 1024;
+
+async function readCastImageBody(request: Request): Promise<Uint8Array> {
+  try {
+    return await readCappedBody(request, CAST_MAX_BYTES);
+  } catch (e) {
+    if (e instanceof CappedReadError) throw new HttpError(413, e.message);
+    throw e;
+  }
+}
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -227,9 +237,8 @@ export async function handleCastPortraitUpload(
       return castRowResponse(row, "portrait upload (staged key)", id);
     }
 
-    const buf = await request.arrayBuffer();
+    const buf = await readCastImageBody(request);
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
-    if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
     const mime = requireCastImageMime(contentType, buf);
     const key = `cast/${id}/portrait.${extFromMime(mime)}`;
     // local#407 parity: store, write the row, and only then drop the superseded object.
@@ -279,9 +288,8 @@ export async function handleCastRefAdd(
       return castRowResponse(row, "ref add (staged key)", id);
     }
 
-    const buf = await request.arrayBuffer();
+    const buf = await readCastImageBody(request);
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
-    if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
     const mime = requireCastImageMime(contentType, buf);
     const key = `cast/${id}/refs/${crypto.randomUUID()}.${extFromMime(mime)}`;
     await env.R2_RENDERS.put(key, new Uint8Array(buf), {
@@ -342,9 +350,8 @@ export async function handleCastSourceAdd(
       return castRowResponse(row, "source add (staged key)", id);
     }
 
-    const buf = await request.arrayBuffer();
+    const buf = await readCastImageBody(request);
     if (buf.byteLength === 0) throw new HttpError(400, "empty body");
-    if (buf.byteLength > CAST_MAX_BYTES) throw new HttpError(413, "image too large (16 MB max)");
     const mime = requireCastImageMime(contentType, buf);
     const key = `cast/${id}/sources/${crypto.randomUUID()}.${extFromMime(mime)}`;
     await env.R2_RENDERS.put(key, new Uint8Array(buf), {

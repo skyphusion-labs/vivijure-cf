@@ -83,6 +83,7 @@ import {
   clearCastVoiceSample,
   attachCastVoiceSample,
   attachCastVoiceSampleFromKey,
+  VOICE_REF_MAX,
   voiceRefKeysFromScenes,
   isSampleError,
 } from "./cast-voice-sample";
@@ -105,6 +106,7 @@ import { imageModelsFromModules, resolveCatalogTarget } from "./module-catalog";
 import { isSafeBundleKey, isSafeRelKey, parseByteRange } from "./shared";
 import { handleAbuseReport } from "./abuse-report";
 import { ARTIFACT_PREFIXES, getServedArtifact, isServedArtifactKey } from "./shared";
+import { CappedReadError, readCappedBody } from "./capped-body";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
   resolveAgentDialogue, resolveAgentFinishSelect,
@@ -461,8 +463,15 @@ const hAttachCastVoiceSample: Handler = async (req, env, _c, p) => {
       if (!b.from_chat_artifact) throw badRequest("from_chat_artifact required");
       return json(await attachCastVoiceSampleFromKey(env, id, b.from_chat_artifact));
     }
+    let bytes: Uint8Array;
+    try {
+      bytes = await readCappedBody(req, VOICE_REF_MAX);
+    } catch (e) {
+      if (e instanceof CappedReadError) throw new HttpError(413, e.message);
+      throw e;
+    }
     return json(await attachCastVoiceSample(env, id, {
-      bytes: await req.arrayBuffer(),
+      bytes,
       claimedMime: ct,
     }));
   } catch (e) {
@@ -558,6 +567,18 @@ const hImportCast: Handler = async (req, env) => {
 const UPLOAD_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25MB -- portraits/refs are ~1-3MB; this is generous headroom
 const MAX_AUDIO_UPLOAD_BYTES = 32 * 1024 * 1024;
+async function readUploadBody(req: Request, maxBytes: number): Promise<ArrayBuffer> {
+  try {
+    const bytes = await readCappedBody(req, maxBytes);
+    const copy = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(copy).set(bytes);
+    return copy;
+  } catch (e) {
+    if (e instanceof CappedReadError) throw new HttpError(413, e.message);
+    throw e;
+  }
+}
+
 const AUDIO_UPLOAD_EXT: Record<string, string> = {
   "audio/mpeg": "mp3",
   "audio/mp3": "mp3",
@@ -573,7 +594,7 @@ const hStoryboardAudioUpload: Handler = async (req, env) => {
   const mime = (req.headers.get("content-type") || "").split(";")[0].trim() || "audio/mpeg";
   const ext = AUDIO_UPLOAD_EXT[mime];
   if (!ext) throw badRequest(`unsupported audio content-type ${mime || "<missing>"}`);
-  const bytes = await req.arrayBuffer();
+  const bytes = await readUploadBody(req, MAX_AUDIO_UPLOAD_BYTES);
   if (!bytes.byteLength) throw badRequest("empty upload body");
   if (bytes.byteLength > MAX_AUDIO_UPLOAD_BYTES) throw badRequest("upload too large (max 32MB)");
   const key = `audio/${crypto.randomUUID()}.${ext}`;
@@ -589,9 +610,8 @@ const hStoryboardCharacterRef: Handler = async (req, env) => {
   const mime = (req.headers.get("content-type") || "").split(";")[0].trim() || "application/octet-stream";
   const ext = UPLOAD_EXT[mime];
   if (!ext) throw badRequest(`unsupported content-type ${mime || "<missing>"} (png/jpeg/webp/gif only)`);
-  const bytes = await req.arrayBuffer();
+  const bytes = await readUploadBody(req, MAX_UPLOAD_BYTES);
   if (!bytes.byteLength) throw badRequest("empty upload body");
-  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw badRequest("upload too large (max 25MB)");
   const key = `character-refs/${crypto.randomUUID()}.${ext}`;
   await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: mime } });
   return json({ key, mime, size: bytes.byteLength }, 201);
@@ -600,9 +620,8 @@ const hUpload: Handler = async (req, env) => {
   const mime = (req.headers.get("content-type") || "").split(";")[0].trim() || "application/octet-stream";
   const ext = UPLOAD_EXT[mime];
   if (!ext) throw badRequest(`unsupported content-type ${mime || "<missing>"} (png/jpeg/webp/gif only)`);
-  const bytes = await req.arrayBuffer();
+  const bytes = await readUploadBody(req, MAX_UPLOAD_BYTES);
   if (!bytes.byteLength) throw badRequest("empty upload body");
-  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw badRequest("upload too large (max 25MB)");
   const key = `uploads/${crypto.randomUUID()}.${ext}`;
   await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: mime } });
   // `size`, matching the two sibling upload routes and CONTRACT 2.10 (was `bytes`; no consumer read it).
@@ -2785,12 +2804,17 @@ const hBundle: Handler = async (req, env) => {
 const hAudioAnalyze: Handler = async (req, env) => {
   const a = await readBody<AudioAnalyzeRequest & { module?: string }>(req);
   if (!a.audioKey) throw badRequest("audioKey required");
+  a.audioKey = a.audioKey.trim();
+  // Same space as /api/artifact. The marker is `<key>.beats.json`, so both must stay there.
+  if (!isServedArtifactKey(a.audioKey) || !isServedArtifactKey(beatsMarkerKey(a.audioKey))) {
+    throw badRequest("audioKey is outside served artifact space");
+  }
   const result = await analyzeAudioBeats(env, a, a.module?.trim() || undefined);
   if (!result.ok) return json({ ok: false, error: result.error }, 502);
   try {
     await env.R2_RENDERS.put(
       beatsMarkerKey(a.audioKey),
-      JSON.stringify({ audioKey: a.audioKey.trim(), beats_read: true }),
+      JSON.stringify({ audioKey: a.audioKey, beats_read: true }),
     );
   } catch {
     return json({ ok: false, error: "beats were read but the marker was not stored" }, 502);
@@ -3265,7 +3289,15 @@ async function routeRequest(request: Request, env: StudioEnv, ctx: ExecutionCont
         });
       }
     }
-    const hit = match(API_ROUTES, request.method, url.pathname);
+    let hit: ReturnType<typeof match>;
+    try {
+      hit = match(API_ROUTES, request.method, url.pathname);
+    } catch (e) {
+      // decodeURIComponent throws URIError outside the handler try below, so the
+      // security-header chokepoint would not see a response. Answer 400 here.
+      if (e instanceof URIError) return json({ error: "bad request path" }, 400);
+      throw e;
+    }
     if (hit) {
       // cf#520: AUTHORIZATION -- the first point in the request where BOTH facts exist: what the
       // route requires (from the table) and what the credential holds (from the gate above). Fails

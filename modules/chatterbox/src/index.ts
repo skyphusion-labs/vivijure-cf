@@ -17,6 +17,7 @@
 // Failures are DATA (ok:false), never thrown across the wire.
 
 import { trimTrailingSilence } from "../../_shared/wav-pcm";
+import { PROVIDER_AUDIO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
@@ -212,7 +213,8 @@ async function awaitLine(env: Env, steps: LineSteps, line: NormalizedLine): Prom
 async function storeLine(env: Env, project: string, line: NormalizedLine, url: string): Promise<DialogueShotAudio> {
   const audio = await fetch(url);
   if (!audio.ok) throw new Error("fetch chatterbox audio -> " + audio.status);
-  const bytes = await audio.arrayBuffer();
+  const media = await readProviderMedia(audio, { maxBytes: PROVIDER_AUDIO_MAX_BYTES, fallbackType: AUDIO_MIME });
+  const bytes = toArrayBuffer(media.bytes);
   if (bytes.byteLength === 0) throw new Error(`empty audio for ${line.shot_id}`);
   const key = audioKey(project, line.shot_id);
   // cf#957: cut trailing silence here, at the producer, so no door bills or animates it. A file that is
@@ -220,7 +222,7 @@ async function storeLine(env: Env, project: string, line: NormalizedLine, url: s
   const trim = trimTrailingSilence(new Uint8Array(bytes));
   const body = trim ? copyToArrayBuffer(trim.bytes) : bytes;
   await env.R2_RENDERS.put(key, body, {
-    httpMetadata: { contentType: AUDIO_MIME },
+    httpMetadata: { contentType: media.contentType },
     ...(trim ? { customMetadata: { tail_trimmed_s: trim.tail_trimmed_s.toFixed(3) } } : {}),
   });
   return { shot_id: line.shot_id, audio_key: key, voice_id: line.voice, ...(trim ? { duration_s: trim.seconds } : {}) };
