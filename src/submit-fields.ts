@@ -45,7 +45,7 @@ export const FILM_SUBMIT_FIELDS = [
   "project", "bundle_key", "scenes", "motion_backend", "keyframe_backend", "keyframe_config",
   "motion_config", "finish_config", "finish_select", "speech_config", "film_finish_config",
   "master_config", "audio_key", "film_titles", "dialogue_lines", "cast_loras", "qualityTier",
-  "shard_count", "shardCount", "delivery_width", "delivery_height", "reuse_finished",
+  "shard_count", "shardCount", "delivery_width", "delivery_height", "delivery_fps", "reuse_finished",
   "idempotency_key", "idempotencyKey", "projectId",
 ] as const;
 

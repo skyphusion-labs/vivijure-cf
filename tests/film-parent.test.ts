@@ -226,7 +226,7 @@ describe("a board as the panel writes it, with id and target_seconds", () => {
   });
   it("sizes from target_seconds", () => {
     let seen = 0;
-    buildParentDoc("f", native(), 0, (_w, _h, s) => { seen = s; return 0; });
+    buildParentDoc("f", native(), 0, (_w, _h, _fps, s) => { seen = s; return 0; });
     expect(seen).toBe(18);
   });
   it("can be retaken by its own id", () => {
