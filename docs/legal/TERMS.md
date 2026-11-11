@@ -114,12 +114,43 @@ the operator has configured an OpenAI API key and an OpenAI image model is selec
 sends the prompt text only to OpenAI's own image API, under the operator's own OpenAI account.
 Reference images are not forwarded. The Cloudflare AI Gateway is not in that path, so the Gateway's
 logging, retention, spend controls, and Unified Billing do not apply. OpenAI's API data terms apply.
-When you self-host,
-these are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
-acceptable-use policies. A provider's content rules may restrict what you can generate independently of
-this document. Skyphusion Labs is not responsible for those providers' acts, outages, or model
-behavior. (**Operator note:** confirm the specific provider terms that apply to the exact providers
-your instance calls.)
+
+When you self-host, these are YOUR own accounts, and your use of them is subject to the providers'
+terms and acceptable-use policies. Those terms bind you directly and independently of this document.
+Skyphusion Labs is not a party to those contracts and is not responsible for those providers' acts,
+outages, or model behavior. A provider's content rules may restrict what you can generate
+independently of this document, and they can be stricter than the Acceptable Use Policy.
+
+Which terms reach you depends on the path a module uses:
+
+- **Models reached through your Cloudflare account (Workers AI and the AI Gateway).** Your contract
+  is with Cloudflare. Cloudflare's terms treat every model in its catalog as a third-party product.
+  They say that where you have no other agreement with the model's provider, using the model means
+  you agree to comply with that provider's standard terms and acceptable-use policy. You do not need
+  an account with the model provider for its terms to apply to you. Most model pages in
+  Cloudflare's catalog link the terms that apply. Where a page links none, the provider's standard
+  terms still apply, and finding them is on you.
+- **A model reached with your own provider key (the OpenAI image path above).** The contract you
+  made with that provider when you created the key applies.
+- **RunPod.** Your RunPod contract covers the GPU endpoints you run. Some modules call models that
+  RunPod hosts for you. RunPod's terms apply to those calls, and the model's own licence or terms
+  may apply too.
+
+Several providers' terms carry conditions that this document does not itself impose. Look for:
+
+- a minimum age of 18, and a rule against offering the service to people under 18;
+- the consent of any real, identifiable person an output shows;
+- a rule against removing watermarks or provenance marks, and against presenting an output as
+  made by a human or as a real photograph;
+- limits on using outputs to train or build other AI models;
+- a duty to label an output as AI-generated, or to credit the model, when you publish it;
+- a rule against military, surveillance, law-enforcement, or biometric use;
+- a duty to hold the people who use your instance to rules at least as strict as the provider's.
+
+This is a list of what to look for. It is not a summary of any one provider's terms, and not every
+provider's terms carry every item. This document does not interpret a provider's terms or say how
+they apply to a given use. Read the terms for each model you turn on. They change, and the
+provider's current text controls. How it applies to you is between you and your own legal advice.
 
 ---
 
