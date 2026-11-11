@@ -1,0 +1,3 @@
+### Fix: install-scope module config reaches the studio's own hook calls (#879)
+
+The studio invokes some hooks itself: plan.enhance (planner), image.generate (chat images), cast.image (cast references), score (the score bed) and the voice-sample motion call. These called core's raw `invokeModule`, so an install-scope config field set on the settings page never reached them. All five now go through `invokeRegistered` (vivijure-core 1.45, #535), the path the core orchestrators use, so an install-scope field is the operator's stored value on every hook. `tests/host-invoke-registered-879.test.ts` fails on a direct `invokeModule` call in `src/`.

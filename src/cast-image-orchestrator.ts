@@ -10,7 +10,8 @@
 // cast.image is `pick_one`: one installed module answers (the module owns the model + prompt set).
 
 import type { Env } from "./env";
-import { discoverModules, invokeModule, pollModule, resolveFetcher, resolvePickOne, validateConfig } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, pollModule, resolveFetcher, resolvePickOne, validateConfig } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { invokeRegistered } from "@skyphusion-labs/vivijure-core/modules/invoke-registered";
 import type { CastImageInput, CastImageOutput } from "@skyphusion-labs/vivijure-core/modules/types";
 import { hookOutputViolation } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { presignR2Get } from "./r2-presign";
@@ -299,7 +300,7 @@ export async function startCastRefsJob(
     art_style: args.artStyle,
   };
   const config = validateConfig(module.config_schema, args.config);
-  const r = await invokeModule<CastImageInput, CastImageOutput>(fetcher, {
+  const r = await invokeRegistered<CastImageInput, CastImageOutput>(env as unknown as Parameters<typeof invokeRegistered>[0], module, fetcher, {
     hook: "cast.image",
     input,
     config,

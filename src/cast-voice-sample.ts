@@ -3,7 +3,8 @@
 // reference_videos on Seedance 2.5, reference_video on the 2.0 family. Veo cannot honor it.
 
 import { getCastById, updateCast } from "@skyphusion-labs/vivijure-core/cast-db";
-import { discoverModules, invokeModule, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { invokeRegistered } from "@skyphusion-labs/vivijure-core/modules/invoke-registered";
 import { composeMotionPrompt } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 import { presignR2Get } from "@skyphusion-labs/vivijure-core/presign";
@@ -153,7 +154,7 @@ export async function startCastVoiceSample(
     spoken_line: line,
     speaker: cast.name || undefined,
   });
-  const r = await invokeModule(fetcher, {
+  const r = await invokeRegistered(env as unknown as Parameters<typeof invokeRegistered>[0], door, fetcher, {
     hook: "motion.backend",
     input: {
       shot_id: voiceSampleShotId(cast.public_id),

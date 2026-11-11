@@ -4,9 +4,9 @@
 // bed, "narration" for a voiceover), invokes the chosen one, and reads the R2 audio key from applied tags.
 
 import type { Env } from "./env";
+import { invokeRegistered } from "@skyphusion-labs/vivijure-core/modules/invoke-registered";
 import {
   discoverModules,
-  invokeModule,
   pollModule,
   resolveFetcher,
   servingForHook,
@@ -107,7 +107,7 @@ export async function startScoreBedGenerate(
   }
   const config = validateConfig(mod.config_schema, userConfig);
 
-  const r = await invokeModule<ScoreInput, ScoreOutput>(fetcher, {
+  const r = await invokeRegistered<ScoreInput, ScoreOutput>(env as unknown as Parameters<typeof invokeRegistered>[0], mod, fetcher, {
     hook: "score",
     input: {
       film_key: "audio-bed/planner",
