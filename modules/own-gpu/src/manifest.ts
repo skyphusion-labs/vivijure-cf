@@ -22,7 +22,9 @@ export const MANIFEST: ModuleManifest = {
     fps: { type: "int", default: 16, min: 8, max: 30, label: "fps" },
     flow_shift: { type: "float", default: 5.0, min: 1, max: 12, label: "motion (flow shift, lower = faster)" },
     negative_prompt: { type: "string", default: "", label: "negative prompt (additive)" },
-    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
+    // The backend has no random seed (vivijure-backend#563). -1 is not sent, so the backend uses its default
+    // i2v seed (I2VConfig.seed, src/vivijure_backend/config.py), the same motion every time.
+    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = backend default, same motion each time)" },
   },
   ui: {
     section: "motion",
