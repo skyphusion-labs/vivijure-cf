@@ -1,3 +1,0 @@
-### Feat: the panel shows the `door_fit` render signal (cf#930)
-
-Core 1.47.0 adds `door_fit` to the render payload. It records lined shots whose film door's clip floor would leave the speaker mouthing words after the line. Each one was either moved to another door for its own clip (Conrad's ruling 2026-11-11: a per-shot door applies to that one clip only), or left with the tail. The panel (`public/finish-degrade.js`, stage `door_fit`, badge "short lines") gives each one a sentence naming the shot, the doors and the lengths. It follows the ladder: absent shows nothing, empty lists are clean, and a malformed record is unreadable and stays quiet. The studio does not send core the doors to move to yet; that follows on core 1.47.0.

@@ -19,6 +19,10 @@ The studio invokes some hooks itself: plan.enhance (planner), image.generate (ch
 
 `parentDefaultDeliveryFps` now passes each finish step's `finish_artifacts` to core's `predictDeliveryFps`, so the rate comes from finish-rife's declared `rate_factor`. vivijure-core#543 removes the binding-name fallback; without this, a long film with RIFE in its chain would default to 24 fps on that core. The pinned core (1.45.0) already reads the field. The finish-rife rate test now holds the declaration against a copy of the old binding rule rather than against core's removed fallback.
 
+### Feat: the panel shows the `door_fit` render signal (cf#930)
+
+Core 1.47.0 adds `door_fit` to the render payload. It records lined shots whose film door's clip floor would leave the speaker mouthing words after the line. Each one was either moved to another door for its own clip (Conrad's ruling 2026-11-11: a per-shot door applies to that one clip only), or left with the tail. The panel (`public/finish-degrade.js`, stage `door_fit`, badge "short lines") gives each one a sentence naming the shot, the doors and the lengths. It follows the ladder: absent shows nothing, empty lists are clean, and a malformed record is unreadable and stays quiet. The studio does not send core the doors to move to yet; that follows on core 1.47.0.
+
 ### Feat: cf-veo's 1080p limit is refused when the film starts (cf#932, core#507)
 
 cf-veo 0.1.5 declares `requires: [{ when: "1080p", shot_seconds: { min: 7.5 } }]` on `resolution`, so core 1.45+ refuses a 1080p film with a shot that will not be an 8 second clip when the film starts, before keyframes are bought. Before, cf-veo refused it at clip time. The bound is 7.5 planned seconds because cf-veo rounds 7.5 s and up to an 8 s clip. The module keeps its own check at invoke. A test holds the two equal for every length on a grid.
