@@ -1073,6 +1073,7 @@ function buildHistoryRow(r, childrenByParent) {
 // they survive a parent row re-render on the 30s auto-refresh.
 // cf#1404: a fresh keyframe seed for a regen, in the range the backend takes (0..2^31-1).
 function freshKeyframeSeed() {
+  // resolve-guard-allow: Uint32Array -- a standard JavaScript typed array, built into every browser
   const buf = new Uint32Array(1);
   crypto.getRandomValues(buf);
   return buf[0] % 2147483648;
