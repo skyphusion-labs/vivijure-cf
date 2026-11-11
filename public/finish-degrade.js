@@ -435,7 +435,7 @@
    *  with unchanged settings is returned from the store. So a new picture needs a new seed. */
   var STILL_REUSED_TAG = "reused";
   var STILL_REUSED_TITLE = "This still came back from an earlier render with the same settings. It was not redrawn.";
-  var NEW_PICTURE_HINT = "To get a different picture, set a new keyframe seed and render again. A seed of -1 draws the same picture every time.";
+  var NEW_PICTURE_HINT = "To get a different picture, regen that still (it draws with a new seed), or set a new keyframe seed and render again. A seed of -1 draws the same picture every time.";
 
   /** One line for a render row that reused any still, or "" when none was reused. */
   function reuseNote(output) {
