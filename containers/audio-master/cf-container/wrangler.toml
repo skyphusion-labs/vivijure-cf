@@ -5,7 +5,9 @@ name = "vivijure-audio-master"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = true
+# cf#1401: the door answers only on its custom domain. Its bearer gate already refused a request
+# on *.workers.dev, so that second hostname served nobody; skyphusion-monitor tracks both settings.
+workers_dev = false
 preview_urls = false
 
 # Already this Worker's custom domain (AAAA 100::, proxied).
