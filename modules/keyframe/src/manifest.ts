@@ -32,7 +32,9 @@ export const MANIFEST: ModuleManifest = {
     height: { type: "int", default: 768, min: 512, max: 1536, label: "height" },
     steps: { type: "int", default: 30, min: 1, max: 60, label: "diffusion steps" },
     guidance_scale: { type: "float", default: 6.5, min: 0, max: 20, label: "guidance scale" },
-    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
+    // The backend has no random seed (vivijure-backend#563). -1 is not sent, so the backend draws with its
+    // default keyframe seed (KeyframeConfig.seed, src/vivijure_backend/config.py), the same picture every time.
+    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = backend default, same picture each time)" },
     // cf#299: expose InstantID on the studio door. Backend default is ip_adapter;
     // "instantid" selects the insightface face path (proven on vivijure-backend).
     identity_method: {
