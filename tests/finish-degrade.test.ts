@@ -399,7 +399,7 @@ const ROOT = join(import.meta.dirname, "..");
 // payload core ever emits for that key, so feeding it one would assert against a fiction.
 // `content_validation` and `plate_check` (cf#916, cf#1282) are adapters with their own raw shapes for
 // the same reason, and have their own ladder blocks in tests/render-not-clean-916.test.ts.
-const ADAPTED: string[] = ["film_finish", "content_validation", "plate_check", "keyframes_incomplete"];
+const ADAPTED: string[] = ["film_finish", "content_validation", "plate_check", "keyframes_incomplete", "door_fit"];
 const COUNT_SHAPED = STAGE_KEYS.filter((k) => !ADAPTED.includes(k));
 
 describe("cf#853 the ladder: absent, clean and degraded are three different states", () => {
