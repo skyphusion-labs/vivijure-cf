@@ -81,9 +81,9 @@ describe("cf#1385 the history row wires the tag, the line and the regen wording"
     expect(js).toContain("window.finishDegrade.reuseNote(r.output)");
     expect(js).toContain("reuse.className = \"planner-history-reuse-note\"");
   });
-  it("the regen confirm says it keeps the seed and how to get a different picture", () => {
-    expect(js).toContain("regen keeps this render's settings, including its seed.");
-    expect(js).toContain("to get a different picture, set a new keyframe seed");
+  it("the regen confirm says it draws with a new seed (cf#1404)", () => {
+    expect(js).toContain("regen draws this shot with a new seed, so you get a different picture.");
+    expect(js).toContain("body: JSON.stringify({ shotId: kf.shot_id, seed: seed })");
   });
   it("a collapsed row hides the reuse line like its other detail lines", () => {
     const css = readFileSync(join(ROOT, "public/styles.css"), "utf8");
