@@ -1116,7 +1116,7 @@ export interface PartJob {
   phase?: string;
   clip_job_id?: string;
   /** `plate_count` is the backend plate count guard report (core 1.31.0, cf#1282), when it ran. */
-  keyframes?: Array<{ shot_id: string; keyframe_key: string; plate_count?: { clean?: unknown } }>;
+  keyframes?: Array<{ shot_id: string; keyframe_key: string; plate_count?: { clean?: unknown }; reused?: unknown }>;
   finish_shots?: Array<{ shot_id: string; degraded?: string[] }>;
 }
 export interface PartClipJob {
@@ -1154,6 +1154,8 @@ export function partShotRows(doc: ParentDoc, part: ParentPart, job: PartJob | nu
       // cf#1282: true only on an explicit `clean: false`. A still the guard never looked at is absent,
       // not clean, and shows nothing.
       ...(kf?.plate_count?.clean === false ? { plate_unclean: true } : {}),
+      // cf#1385: true only on the backend's literal reuse mark. A drawn still is absent.
+      ...(kf?.reused === true ? { still_reused: true } : {}),
       clip_key: clip?.clip_key ?? null,
       prompt: scene.prompt ?? null,
       line: line?.text ?? null,

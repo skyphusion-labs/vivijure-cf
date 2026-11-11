@@ -94,7 +94,9 @@ function normalizeFilmScenesFromOutput(output: unknown): FilmScene[] {
 function previewRef(k: { shot_id: string; key: string }): FilmKeyframeRef {
   const plate = (k as { plate_count?: unknown }).plate_count;
   const carried = plate && typeof plate === "object" && !Array.isArray(plate) ? { plate_count: plate } : {};
-  return { shot_id: k.shot_id, keyframe_key: k.key, ...carried } as FilmKeyframeRef;
+  // cf#1385: the backend's reuse mark rides the same way, so the animated film can say a still was not redrawn.
+  const reused = (k as { reused?: unknown }).reused === true ? { reused: true } : {};
+  return { shot_id: k.shot_id, keyframe_key: k.key, ...carried, ...reused } as FilmKeyframeRef;
 }
 
 export function selectPreviewKeyframes(parent: RenderRow): FilmKeyframeRef[] {
