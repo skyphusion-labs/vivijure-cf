@@ -59,7 +59,7 @@ Neither pin is "wrong" solely for lagging; ship the dual-panel wave deliberately
   (RunPod: SDXL       (RunPod: video)  (AI Gateway)         (your own GPU i2v)
    keyframes)
 
-  vivijure-control-plane = open-source multi-tenant provisioner an operator can run (not this UI)
+  vivijure-control-plane = reference multi-tenant control plane; maintained, not operated by Skyphusion (not this UI)
   hub vivijure = docs/legal history only; issues for the live studio go HERE
 ```
 
@@ -80,7 +80,7 @@ of these areas, update the matching doc.
 - `docs/make-a-video.md` -- the one-screen Make a video page (cf#1242): its face-consistency default-style rule, shapes, price, and `PANEL_HOME`.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
-- Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
+- Multi-tenant hosting: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) is a reference implementation of a multi-tenant control plane for hosting Vivijure Studio; maintained, not operated by Skyphusion. This repo is the self-hostable studio panel.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.
 - `docs/real-run-confirmations.md` -- phase-2 standing list: properties only a real run can confirm (#369).
 - `docs/runpod-public-endpoint-slugs.md` -- free slug existence probe + measured rates for cloud i2v (#267).

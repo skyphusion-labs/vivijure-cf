@@ -619,8 +619,8 @@ The render backend is the `vivijure-backend` container image, run as a **RunPod 
 
 > **Three version lines, do not conflate them.** The GPU render image is cut from a `backend-vX.Y.Z`
 > git tag in the `vivijure-backend` repo and published to GHCR as `:X.Y.Z` (the image tag drops the
-> `backend-v` prefix). The Studio (this repo) ships on its own `vX.Y.Z` deploy tags. The HOSTED
-> control plane is a separate product in the `vivijure-control-plane` repo, versioned and deployed
+> `backend-v` prefix). The Studio (this repo) ships on its own `vX.Y.Z` deploy tags. The
+> `vivijure-control-plane` repo (a reference implementation of a multi-tenant control plane for hosting Vivijure Studio, maintained, not operated by Skyphusion) is versioned
 > independently again -- you do not need it, and this document does not cover it; self-hosting the
 > Studio never requires running a hosted service. A `backend-v0.2.26` image and a Studio `v0.2.2`
 > deploy are independent release lines; pin the RunPod endpoint to the **GHCR image tag**, not the

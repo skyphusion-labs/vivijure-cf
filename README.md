@@ -19,10 +19,9 @@ agent with [`vivijure-mcp`](https://github.com/skyphusion-labs/vivijure-mcp).
 The constellation map is [`skyphusion-labs/vivijure`](https://github.com/skyphusion-labs/vivijure).
 
 **This repo is the studio, and only the studio.** You self-host it; nothing here asks you to run a
-service for anyone else. The hosted door (accounts, signup, tenancy, the hosted AUP, provisioning)
-is a separate product in its own repo,
-[`vivijure-control-plane`](https://github.com/skyphusion-labs/vivijure-control-plane). It installs
-this studio's published release unmodified, so hosted and self-hosted never drift apart.
+service for anyone else. Multi-tenant hosting (accounts, signup, tenancy, provisioning) is not in
+this repo. [`vivijure-control-plane`](https://github.com/skyphusion-labs/vivijure-control-plane) is a reference implementation of a multi-tenant control plane for hosting Vivijure Studio; maintained, not operated by Skyphusion. It installs this studio's published release unmodified, so a
+host built on it never drifts from self-host.
 
 **Vivijure Studio:** https://vivijure.dev · **Skyphusion Labs:** https://skyphusion.org
 
@@ -67,5 +66,5 @@ npm run dev
 - **[vivijure-core](https://github.com/skyphusion-labs/vivijure-core)** -- shared orchestration package
 - **[vivijure-local](https://github.com/skyphusion-labs/vivijure-local)** -- Node/MinIO host (same core, no Cloudflare)
 - **[vivijure-mcp](https://github.com/skyphusion-labs/vivijure-mcp)** -- agent MCP for either host
-- **[vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane)** -- optional hosted provisioner (not needed to self-host)
+- **[vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane)** -- a reference implementation of a multi-tenant control plane for hosting Vivijure Studio; maintained, not operated by Skyphusion (not needed to self-host)
 - **Write-ups:** [runs anywhere](https://skyphusion.net/blog/vivijure-run-anywhere/) · [constellation](https://skyphusion.net/blog/vivijure-constellation/) · [vivijure.dev](https://vivijure.dev)
