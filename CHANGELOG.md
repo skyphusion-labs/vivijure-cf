@@ -5,6 +5,49 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.46.0 -- 2026-11-11
+
+### Panel: say when a still was reused rather than redrawn (cf#1385)
+
+The GPU backend returns a stored still, marked `reused: true`, when a shot is asked for again with unchanged settings. A regen or re-render with the same settings therefore returned the old still with nothing to say so. The panel now reads the mark that core 1.45.0 carries (core#532): the history strip tags each reused still "reused", and the render row says how many stills were reused and how to get a new picture (set a new keyframe seed; the backend has no random seed, so -1 draws the same picture every time, vivijure-backend#563). The regen confirm and the re-render title say the same. A film animated from a preview keeps the mark on each carried still, the films board marks a reused still on its shot card, and the local-gpu keyframe door forwards the backend mark as the keyframe module already does. With core below 1.45.0 the key is absent and the panel shows nothing.
+
+### Feat: a long film pins one frame rate for every part (#1389, core#431)
+
+The join refuses parts of different frame rates. The frame was pinned, but the rate was not, so a part whose interpolation soft-degraded shipped at 24 fps beside siblings at 48 and the join failed.
+
+- `POST /api/render/film` takes `delivery_fps`, a whole number above 0, refused by name otherwise. Core lets it win over the rate the finish chain produced.
+- `POST /api/film` takes `shared.delivery_fps`. Without it, the film works out once the rate its shared `finish_config` would ship at (core's `predictDeliveryFps`: 24, or 24 times the RIFE factor), stores it, and sends that one rate to every part. The upload-size check now predicts at that rate, not at a fixed 24.
+- A film made before this has no stored rate, and its parts are sent none, as before.
+
+### Feat: the agent door and long films can pick the dialogue module (#1391)
+
+`POST /api/render/film` (vivijure-mcp `submit_film`, Slate, and every part of a long film) now takes `dialogue_backend` and `dialogue_config`, as the panel door has since #1379. Before this, a caller there always got the first dialogue module by ui.order.
+
+- The name must be an installed module that serves `dialogue`. Each `dialogue_config` key must name one, and its map is judged against that module's schema and then clamped. A refusal is `400`, by name, before anything is spent.
+- `POST /api/film` takes both in `shared` and sends them to every part, so the parts speak with one dialogue module. A module this studio does not serve is refused before the film is stored.
+- With no choice nothing changes.
+- vivijure-mcp `submit_film` still has to expose the two fields (separate repo).
+
+### Containers: the five media doors stop answering on workers.dev (cf#1401)
+
+`audio-beat-sync`, `audio-master`, `audio-mix`, `image-prep` and `video-finish` set `workers_dev = false` in their `cf-container/wrangler.toml`. Each door already answers on its custom domain (`<door>.skyphusion.org`), and its bearer gate already refused a request without the token on every hostname, so the `*.workers.dev` name was a second hostname nobody used, not a bypass. `preview_urls` stays `false`. Nothing calls a door on workers.dev: measured 2026-11-11 across every Worker's bindings on the account and the repo variables in this repo, vivijure-control-plane and vivijure-blender. The sixth door, blender, makes the same change in skyphusion-labs/vivijure-blender.
+
+### Panel regen draws a new picture: regen-shot takes a keyframe seed (cf#1404)
+
+A per-still regen re-sent the render's stored settings, including its seed. The GPU backend has no random seed (vivijure-backend#563) and returns the stored still when the settings are unchanged, so a regen of an unchanged shot always came back the same (marked reused since cf#1385). `POST /api/storyboard/renders/:id/regen-shot` now takes an optional `seed`, a whole number from 0 to 2147483647, refused with 400 otherwise before anything is read or spent. It is handed to the keyframe module only when that module's `config_schema` declares a seed, and the response says which seed was applied (`seed: null` when none was). The panel's regen sends a fresh random seed, its confirm says it draws a new picture, and the reuse hint names regen as the way to get one. Without a seed the route behaves as before.
+
+### Modules: the keyframe and own-gpu seed label no longer says "random" (cf#1406)
+
+The GPU backend has no random seed (vivijure-backend#563). The keyframe and own-gpu modules do not send a seed of -1, so the backend draws with its own default seed, which is fixed: the same picture, or the same motion, on every run. The label shown next to the seed control said "seed (-1 = random)". It now says "seed (-1 = backend default, same picture each time)" for keyframe and "... same motion each time" for own-gpu, and the module comments say the same. `tests/seed-label-honest.test.ts` keeps both labels from promising random. The cloud-provider modules (cf-seedance, cf-hh1-r2v, alibaba-wan-lora) and the local-gpu door keep their labels: their seed goes to other engines, which this change did not read.
+
+### Fix: module install honours the studio's own script prefix
+
+A studio whose plane sets `TENANT_MODULE_PREFIX` now installs only module scripts under that prefix, and answers any other `script_name` with `403` before the module namespace is read. Unset, as on self-host, any resident script installs as before.
+
+### Containers: the video-finish door chooses an instance only for an authenticated request
+
+The standalone video-finish door Worker routes each film to its own container instance through the `x-vivijure-finish-affinity` header (#1097). `GET /health` stays open, because the studio's readiness read calls it without a token to learn whether the container process is up. That open probe no longer selects an instance: it drops the affinity header and is served by the fixed fallback instance. Every other path still needs the bearer before any instance is addressed. The routing decision moved into `routing.ts` as `routeDoorRequest`, so `tests/video-finish-door-routing.test.ts` drives it directly.
+
 ## v1.45.0 -- 2026-11-10
 
 ### Feat: the caller's dialogue module reaches the film, on vivijure-core 1.42.0 (#1379, #1381)

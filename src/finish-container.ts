@@ -18,7 +18,8 @@
 
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
-import { FinishJobTail, JOB_LOST_REASON, RELEASE_SLEEP_AFTER, RUNNING_SLEEP_AFTER, lostToRestart, observeExchange } from "./finish-job-tail";
+import { FinishJobTail, JOB_LOST_REASON, RELEASE_SLEEP_AFTER, RUNNING_SLEEP_AFTER, lostToRestart, observeExchange, statusJobId } from "./finish-job-tail";
+import { FinishJobRecords, expiryVerdict, probeStatusOf, recordedStatusBody, type ProbeStatus, type RecordStorage } from "./finish-job-record";
 import { mediaFinishToken } from "../modules/_shared/media-finish-auth";
 
 // THE BEARER CONFIGURATION THIS CONTAINER IS STARTED WITH (cf#911, stage 2). Exported as a literal
@@ -48,6 +49,18 @@ export function bearerAbsent(request: Request): boolean {
   return path !== "/health" && !request.headers.has("authorization");
 }
 
+/** cf#784: does this request carry exactly `Bearer <token>`? Constant-time over the token bytes. */
+export function bearerMatches(request: Request, token: string | undefined): boolean {
+  if (!token) return false;
+  const got = request.headers.get("authorization") ?? "";
+  const want = `Bearer ${token}`;
+  const a = new TextEncoder().encode(got);
+  const b = new TextEncoder().encode(want);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i++) diff |= (a[i] ?? 0) ^ b[i];
+  return diff === 0;
+}
+
 export class FinishContainer extends Container<Env> {
   // containers/video-finish/Dockerfile sets ENV PORT=8000 and app.py binds 0.0.0.0:8000.
   defaultPort = 8000;
@@ -75,10 +88,11 @@ export class FinishContainer extends Container<Env> {
   // free knob.
   //
   // Why it is not short: /async/finish returns immediately, so NO request is in flight while the
-  // encode runs. Incoming requests reset this timer automatically; background work does not. The
-  // job loop must therefore call renewActivityTimeout() (#784). Without that call the container
-  // sleeps under its own running job, and because container disk is ephemeral and reset to the
-  // image on wake, the work dir dies with it and the next poll finds nothing. A 30-60s value
+  // encode runs. Incoming requests reset this timer automatically; background work does not. So
+  // when the timer runs out, onActivityExpired below asks the container about every open job and
+  // holds the instance while one is still running (#784, src/finish-job-record.ts). Without that the
+  // container sleeps under its own running job, and because container disk is ephemeral and reset to
+  // the image on wake, the work dir dies with it and the next poll finds nothing. A 30-60s value
   // (which fleet-chezmoi#2234 recommended for one-shot stages, and which was my error) would
   // make that near-certain.
   //
@@ -93,9 +107,8 @@ export class FinishContainer extends Container<Env> {
   // is paid on every render and buys nothing, because these jobs are one-shot and never need to
   // stay warm between films.
   //
-  // THE REQUIREMENT THIS IMPLIES, stated so it is not discovered the hard way: the job loop must
-  // renew MORE OFTEN than this value. If a single chunk batch can run longer than 10 minutes,
-  // renew inside the batch (on ffmpeg progress), not only between batches.
+  // The hold is checked once per expiry, so a running job is asked about every 10 minutes, and a
+  // hold ends at core's phase deadline (FINISH_JOB_HOLD_MAX_MS) even if the job never reports.
   sleepAfter: string = RUNNING_SLEEP_AFTER;
 
   private jobTail = new FinishJobTail();
@@ -110,6 +123,46 @@ export class FinishContainer extends Container<Env> {
     return this.bearerReady;
   }
 
+  /** cf#784: terminal answers this object has seen, in Durable Object storage. */
+  private get jobRecords(): FinishJobRecords {
+    this.records ??= new FinishJobRecords((this as unknown as { ctx: { storage: RecordStorage } }).ctx.storage);
+    return this.records;
+  }
+  private records?: FinishJobRecords;
+
+  /**
+   * cf#784: the idle timer ran out. Ask the container about every job this object saw accepted and has
+   * not seen finish, and hold the instance awake while one is still running (src/finish-job-record.ts).
+   * Returning without stopping is the hold: the base class renews the timer after this returns.
+   */
+  override async onActivityExpired(): Promise<void> {
+    const open = this.jobTail.openJobs();
+    if (open.length) {
+      const probes = new Map<string, ProbeStatus>();
+      for (const jobId of open) probes.set(jobId, await this.probeJob(jobId));
+      const verdict = expiryVerdict(this.jobTail, probes, Date.now());
+      console.log(JSON.stringify({ ev: "finish_container.expiry", verdict, probes: Object.fromEntries(probes) }));
+      if (verdict === "hold") return;
+    }
+    await super.onActivityExpired();
+  }
+
+  private async probeJob(jobId: string): Promise<ProbeStatus> {
+    const token = this.envVars[FINISH_CONTAINER_TOKEN_VAR];
+    try {
+      const resp = await this.containerFetch(
+        new Request(`http://video-finish/async/status/${encodeURIComponent(jobId)}`, {
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+        }),
+      );
+      const { status, body } = await probeStatusOf(resp);
+      if (status === "terminal" && body) await this.jobRecords.recordBody(jobId, body);
+      return status;
+    } catch {
+      return "unknown";
+    }
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const bearer = await this.ensureBearer();
     if (bearer.mode === "none") {
@@ -122,8 +175,29 @@ export class FinishContainer extends Container<Env> {
     if (bearerAbsent(request)) {
       console.warn(JSON.stringify({ ev: "finish_container.bearer_absent", method: request.method, path: new URL(request.url).pathname }));
     }
+    // cf#784: a finished job this object recorded is answered here, before the container is reached, so
+    // the answer survives a container restart or sleep and a poll never wakes a container to hear 404.
+    // Only for the same bearer the container requires; any other request goes on to the container,
+    // which refuses it exactly as before.
+    const recordedId = statusJobId(request.method, new URL(request.url).pathname);
+    if (recordedId && bearerMatches(request, bearer.vars[FINISH_CONTAINER_TOKEN_VAR])) {
+      const rec = await this.jobRecords.get(recordedId);
+      if (rec) {
+        if (this.jobTail.terminal(recordedId) === "release") {
+          this.sleepAfter = RELEASE_SLEEP_AFTER;
+          this.renewActivityTimeout();
+        }
+        return new Response(JSON.stringify(recordedStatusBody(rec)), { status: 200, headers: { "content-type": "application/json" } });
+      }
+    }
     const resp = await super.fetch(request);
     const path = new URL(request.url).pathname;
+    const statusId = resp.ok ? statusJobId(request.method, path) : null;
+    if (statusId) {
+      try {
+        await this.jobRecords.recordBody(statusId, (await resp.clone().json()) as Record<string, unknown>);
+      } catch { /* an unreadable body records nothing; the container answer still goes back */ }
+    }
     const decision = await observeExchange(this.jobTail, request.method, path, resp);
     if (decision) {
       this.sleepAfter = decision === "release" ? RELEASE_SLEEP_AFTER : RUNNING_SLEEP_AFTER;

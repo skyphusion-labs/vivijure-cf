@@ -14,6 +14,7 @@
 // Failures are DATA (ok:false), never thrown across the wire.
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_VIDEO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -156,9 +157,10 @@ async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> 
 async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
-  const bytes = await vresp.arrayBuffer();
+  const media = await readProviderMedia(vresp, { maxBytes: PROVIDER_VIDEO_MAX_BYTES, fallbackType: "video/mp4" });
+  const bytes = toArrayBuffer(media.bytes);
   const key = clipKey(params.project, params.shot_id);
-  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: "video/mp4" } });
+  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: media.contentType } });
   await writeState(env, params.job_id, {
     status: "done",
     project: params.project,

@@ -716,8 +716,10 @@ the failure table, and limits.
 ### 2.10 Uploads (binary -> staged key)
 
 Three sibling routes accept raw bytes and return a staged R2 key. The body IS the bytes; the
-`Content-Type` header is the mime. All respond `201 { "key": string, "mime": string, "size": number }`
-and `400` on an empty body or over-size.
+`Content-Type` header is the mime. All respond `201 { "key": string, "mime": string, "size": number }`,
+`400` on an empty body, and `413` when `Content-Length` or the streamed body exceeds the cap.
+The length header is checked before the body is read. A body with no length is read from
+the stream and stopped at the cap.
 
 | Route | Accepted mimes | Max size | Key prefix |
 |-------|----------------|----------|------------|
@@ -1119,7 +1121,7 @@ Analyze an audio bed for beat / duration slicing.
 
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
-| `audioKey` | string | yes | -- | R2 key of the audio. |
+| `audioKey` | string | yes | -- | R2 key of the audio. Must be in served artifact space (the same prefixes as `/api/artifact`). `quarantine/` is refused. |
 | `clipSeconds` | number | no | 8.0 | Target clip length. |
 | `mode` | `"beat" \| "duration"` | no | `"beat"` | Slicing strategy. |
 | `minSceneS` | number | no | 2.5 | Min scene seconds (beat mode). |
@@ -1128,7 +1130,8 @@ Analyze an audio bed for beat / duration slicing.
 | `module` | string | no | -- | Beat-analyze module selection. |
 
 **Response 200:** `{ ok: true, output: <beat plan>, module: string }`; `502 { ok: false, error }` on
-analysis failure. `400` if `audioKey` missing.
+analysis failure. `400` if `audioKey` is missing or outside served artifact space. The marker
+`<audioKey>.beats.json` is written only for a key in that space.
 
 A successful analyze also writes R2 object `<audioKey>.beats.json`. The key is the trimmed
 `audioKey`. The body is `{ audioKey, beats_read: true }`. If that put throws, the route answers
