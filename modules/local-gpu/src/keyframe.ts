@@ -55,6 +55,8 @@ export interface KeyframeShot {
   shot_id: string;
   keyframe_key: string;
   plate_count?: PlateCount;
+  /** cf#1385: the backend returned this still from its store. Only a literal true is forwarded. */
+  reused?: true;
 }
 
 export function parseKeyframes(result: unknown): KeyframeShot[] {
@@ -76,7 +78,14 @@ export function parseKeyframes(result: unknown): KeyframeShot[] {
       o.plate_count && typeof o.plate_count === "object" && !Array.isArray(o.plate_count)
         ? (o.plate_count as PlateCount)
         : undefined;
-    if (shot_id && key) out.push({ shot_id, keyframe_key: key, ...(plate ? { plate_count: plate } : {}) });
+    if (shot_id && key) {
+      out.push({
+        shot_id,
+        keyframe_key: key,
+        ...(plate ? { plate_count: plate } : {}),
+        ...(o.reused === true ? { reused: true as const } : {}),
+      });
+    }
   }
   return out;
 }

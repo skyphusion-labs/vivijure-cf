@@ -1609,7 +1609,11 @@ what the clip pixel check measured; absent when it never ran), and `plate_check:
 that may show an extra person; absent when it ran on no still). A keyframes-only `keyframes` entry also
 carries `plate_count: { expected, faces, chosen, clean, retries }` when the guard ran on that still. The
 panel shows both checks on the render and beside the affected still (cf#916, cf#1282), and names the
-shots `keyframes_incomplete` dropped (cf#1283). The poll
+shots `keyframes_incomplete` dropped (cf#1283). `keyframe_reuse: { stills, reused: string[] }` (core
+1.45.0, core#532) names the stills the backend returned from its store instead of drawing them; it is
+absent when no still was reused, so absent cannot tell a door that never reports the mark from one that
+drew every still. A keyframes-only `keyframes` entry also carries `reused: true` on such a still. The
+panel tags each reused still and says on the render how to get a new picture (cf#1385). The poll
 view (not the history row) additionally relays the host's `wan_lora_projection` (2.21) on any
 `output` it carries, done or in flight.
 

@@ -16,6 +16,7 @@
   // cf#1282: a still made from a plate the backend could not clean of an extra person. New take is
   // the control on this page that redraws it.
   const EXTRA_PERSON = "This still may show an extra person. Use New take to try again.";
+  const STILL_REUSED = "This still was reused from an earlier render with the same settings, not redrawn.";
   const STATUS_LABELS = { pending: "Waiting", running: "Rendering", done: "Done", failed: "Failed" };
 
   const $ = (id) => document.getElementById(id);
@@ -353,6 +354,8 @@
     }
     if (shot.error) card.append(el("div", { className: "films-error", textContent: shot.error }));
     if (shot.plate_unclean) card.append(el("div", { className: "films-warn", textContent: EXTRA_PERSON }));
+    // cf#1385: the still came back from the store, not redrawn. New take with a new still picks a fresh seed.
+    if (shot.still_reused) card.append(el("div", { className: "films-shot-text", textContent: STILL_REUSED }));
     if (shot.prompt) card.append(el("div", { className: "films-shot-text", textContent: shot.prompt }));
     if (shot.line) card.append(el("div", { className: "films-shot-line", textContent: "\u201C" + shot.line + "\u201D" }));
     if (shot.clip_key) card.append(watchControl(shot.clip_key, "Watch clip"));

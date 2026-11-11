@@ -398,6 +398,57 @@
     return out;
   }
 
+  /** cf#1385: `output.keyframe_reuse` (core 1.45.0, core#532): `{ stills, reused: [shot_id] }`, the
+   *  stills the backend returned from its store instead of drawing them. The core writes the key only
+   *  when at least one still was reused (the contract's "absent means drawn"), so absent, junk and an
+   *  empty list all read as null and show nothing. Note what absent cannot tell apart: a door that
+   *  never reports the mark looks the same as one that drew every still. */
+  function parseKeyframeReuse(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (typeof raw.stills !== "number" || !isFinite(raw.stills) || raw.stills < 0) return null;
+    if (!Array.isArray(raw.reused)) return null;
+    var reused = [];
+    for (var i = 0; i < raw.reused.length; i++) {
+      var id = raw.reused[i];
+      if (typeof id === "string" && id && reused.indexOf(id) === -1) reused.push(id);
+    }
+    if (!reused.length) return null;
+    return { stills: Math.max(raw.stills, reused.length), reused: reused };
+  }
+
+  /** The shot ids `output.keyframe_reuse` names as reused. Empty for none, absent, or junk. */
+  function keyframeReusedShots(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return [];
+    var parsed = parseKeyframeReuse(output.keyframe_reuse);
+    return parsed ? parsed.reused : [];
+  }
+
+  /** True when this still came back from the store, from its own keyframe entry (`reused: true` on
+   *  the render row) or from the render-level list. Only a literal true counts. */
+  function keyframeReused(output, kf) {
+    if (kf && kf.reused === true) return true;
+    var id = kf && typeof kf.shot_id === "string" ? kf.shot_id : "";
+    return !!id && keyframeReusedShots(output).indexOf(id) !== -1;
+  }
+
+  /** The backend has no random seed: -1 is drawn as 0 every time (vivijure-backend#563), and a still
+   *  with unchanged settings is returned from the store. So a new picture needs a new seed. */
+  var STILL_REUSED_TAG = "reused";
+  var STILL_REUSED_TITLE = "This still came back from an earlier render with the same settings. It was not redrawn.";
+  var NEW_PICTURE_HINT = "To get a different picture, set a new keyframe seed and render again. A seed of -1 draws the same picture every time.";
+
+  /** One line for a render row that reused any still, or "" when none was reused. */
+  function reuseNote(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return "";
+    var parsed = parseKeyframeReuse(output.keyframe_reuse);
+    if (!parsed) return "";
+    var n = parsed.reused.length;
+    var lead = n === parsed.stills
+      ? (n === 1 ? "The still was" : "All " + n + " stills were")
+      : n + " of " + parsed.stills + " stills " + (n === 1 ? "was" : "were");
+    return lead + " reused from an earlier render with the same settings, not redrawn. " + NEW_PICTURE_HINT;
+  }
+
   /** The plain lines the one-screen Make a video page shows under a finished video. That page has
    *  no shot list and no shot ids, so these say WHAT may be wrong and WHERE to fix it, nothing more.
    *  Empty when the checks found nothing or never ran: a clean video shows no warning. */
@@ -719,6 +770,13 @@
     parseKeyframesIncomplete: parseKeyframesIncomplete,
     plateUncleanShots: plateUncleanShots,
     keyframeUnclean: keyframeUnclean,
+    parseKeyframeReuse: parseKeyframeReuse,
+    keyframeReusedShots: keyframeReusedShots,
+    keyframeReused: keyframeReused,
+    reuseNote: reuseNote,
+    STILL_REUSED_TAG: STILL_REUSED_TAG,
+    STILL_REUSED_TITLE: STILL_REUSED_TITLE,
+    NEW_PICTURE_HINT: NEW_PICTURE_HINT,
     shotWarnings: shotWarnings,
     simpleWarnings: simpleWarnings,
     STILL_EXTRA_PERSON: STILL_EXTRA_PERSON,
