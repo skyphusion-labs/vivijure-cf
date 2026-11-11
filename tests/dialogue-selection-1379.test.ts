@@ -97,8 +97,8 @@ describe("a dialogue selection reaches core", () => {
 
 describe("door sweep: every mint site that forwards a resolved finish_config also forwards the dialogue choice", () => {
   // The cf#537 sweep shape. A site that replays a resolved mapping (`mapped.`) or a stored job (`job.`)
-  // carries the choice. The agent door (`a.finish_config`) takes pre-resolved maps with no overrides bag
-  // and its body has no dialogue field, so it has nothing to forward; that is a follow-up, not a miss.
+  // carries the choice. The agent door (`a.finish_config`) takes pre-resolved maps with no overrides bag,
+  // so it resolves its own dialogue fields; tests/agent-door-dialogue-1391.test.ts covers it (cf#1391).
   const FILES = ["studio.ts", "finalize-from-keyframes.ts", "render-retry.ts"];
   const count = (src: string, re: RegExp) => (src.match(re) ?? []).length;
 
