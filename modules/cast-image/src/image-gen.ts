@@ -12,6 +12,8 @@
 // URIs keeps the gateway JSON payload sane. The browser used to do this client-side
 // (cast.js downscaleToDataUrl); it now lives server-side with the rest of the generation.
 
+import { PROVIDER_IMAGE_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
+
 /** Minimal AI binding shape: `.run(model, params, opts?)`. The gateway opt is omitted for FLUX-2
  *  (multipart + gateway-incompatible, run direct) and passed for the proxied path. */
 export interface AiRun {
@@ -203,5 +205,6 @@ export async function generateImage(
   if (!url) throw new Error("proxied image model returned no url");
   const v = await fetch(url);
   if (!v.ok) throw new Error("fetch proxied image -> " + v.status);
-  return { bytes: await v.arrayBuffer(), mime: v.headers.get("content-type") || "image/png" };
+  const media = await readProviderMedia(v, { maxBytes: PROVIDER_IMAGE_MAX_BYTES, fallbackType: "image/png" });
+  return { bytes: toArrayBuffer(media.bytes), mime: media.contentType };
 }

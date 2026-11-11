@@ -8,6 +8,7 @@
 // cf#223: three PURE label functions, no Env or binding, so the "unit-testable without a Worker"
 // property stated above still holds.
 import { untrustedLabel } from "../../_shared/log-scrub";
+import { PROVIDER_IMAGE_MAX_BYTES, readProviderMedia } from "../../_shared/provider-media";
 
 export interface AiRun {
   run(model: string, params: unknown, opts?: unknown): Promise<unknown>;
@@ -135,11 +136,9 @@ export async function proxiedImageBytes(ref: string): Promise<{ bytes: Uint8Arra
   if (/^https?:\/\//i.test(ref)) {
     const resp = await fetch(ref);
     if (!resp.ok) throw new Error(`failed to fetch generated image: ${resp.status}`);
-    const bytes = new Uint8Array(await resp.arrayBuffer());
-    // Sniff the bytes, not the header: a Recraft V4 result came back as WebP and was stored as
-    // image/png (vivijure-cf#1294). The header is the fallback only when the magic is unknown.
-    const mime = hasImageMagic(bytes) ? sniffImageMime(bytes).mime : resp.headers.get("content-type") || "image/png";
-    return { bytes, mime };
+    // Sniff wins over the header. A type outside the allowlist is not stored.
+    const media = await readProviderMedia(resp, { maxBytes: PROVIDER_IMAGE_MAX_BYTES, fallbackType: "image/png" });
+    return { bytes: media.bytes, mime: media.contentType };
   }
   const parsed = parseDataUrl(ref);
   const b64 = (parsed ? parsed.base64 : ref).replace(/\s+/g, "");

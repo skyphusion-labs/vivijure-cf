@@ -17,6 +17,7 @@
 // look like a healthy slow render (#391).
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_AUDIO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -167,8 +168,9 @@ async function storeTrack(env: Env, jobId: string, input: ScoreInput, config: Mu
   const format = config.format ?? "mp3";
   const aresp = await fetch(url);
   if (!aresp.ok) throw new Error(`audio fetch ${aresp.status}`);
-  const mime = aresp.headers.get("content-type")?.split(";")[0]?.trim() || mimeForFormat(format);
-  const bytes = await aresp.arrayBuffer();
+  const media = await readProviderMedia(aresp, { maxBytes: PROVIDER_AUDIO_MAX_BYTES, fallbackType: mimeForFormat(format) });
+  const mime = media.contentType;
+  const bytes = toArrayBuffer(media.bytes);
   const key = audioKey(jobId, format);
   await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: mime } });
   await writeState(env, jobId, {

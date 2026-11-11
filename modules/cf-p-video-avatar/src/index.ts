@@ -13,6 +13,7 @@
 // existing motion doors, and spoken fallback still names infinitetalk.
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_VIDEO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -106,11 +107,12 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
 async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
-  const bytes = await vresp.arrayBuffer();
+  const media = await readProviderMedia(vresp, { maxBytes: PROVIDER_VIDEO_MAX_BYTES, fallbackType: "video/mp4" });
+  const bytes = toArrayBuffer(media.bytes);
   const timing = clipTiming(new Uint8Array(bytes));
   if (!timing) throw new Error("clip timing could not be read from the file");
   const key = clipKey(params.project, params.shot_id);
-  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: "video/mp4" } });
+  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: media.contentType } });
   await writeState(env, params.job_id, {
     status: "done",
     project: params.project,
