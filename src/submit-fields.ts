@@ -46,7 +46,7 @@ export const FILM_SUBMIT_FIELDS = [
   "motion_config", "finish_config", "finish_select", "speech_config", "film_finish_config",
   "master_config", "audio_key", "film_titles", "dialogue_lines", "cast_loras", "qualityTier",
   "shard_count", "shardCount", "delivery_width", "delivery_height", "delivery_fps", "reuse_finished",
-  "idempotency_key", "idempotencyKey", "projectId",
+  "idempotency_key", "idempotencyKey", "projectId", "dialogue_backend", "dialogue_config",
 ] as const;
 
 /** Snake_case spellings of panel fields, as the iOS client sends them, and the field each one is. */

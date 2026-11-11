@@ -58,6 +58,9 @@ export interface ParentShared {
   motion_config?: Record<string, unknown>;
   finish_config?: Record<string, unknown>;
   film_finish_config?: Record<string, unknown>;
+  /** cf#1391: one dialogue module, and its config, sent to every part so the parts speak with one voice module. */
+  dialogue_backend?: string;
+  dialogue_config?: Record<string, Record<string, unknown>>;
   cast_loras?: Record<string, string>;
   film_titles?: { title?: unknown; credits?: unknown };
   delivery_width: number;
@@ -287,6 +290,13 @@ export function buildParentDoc(
     || (shared.delivery_width as number) <= 0 || (shared.delivery_height as number) <= 0) {
     refuse("shared.delivery_width and shared.delivery_height are required: the join refuses films of different frames");
   }
+  if ("dialogue_backend" in shared && (typeof shared.dialogue_backend !== "string" || !shared.dialogue_backend.trim())) {
+    refuse("shared.dialogue_backend must be a non-empty string (a dialogue module name)");
+  }
+  if ("dialogue_config" in shared && (!isObject(shared.dialogue_config)
+    || Object.values(shared.dialogue_config).some((v) => !isObject(v)))) {
+    refuse("shared.dialogue_config must be a map of dialogue module name to config object");
+  }
   // cf#1389: the join refuses parts of different rates too, so the rate is pinned with the frame.
   if ("delivery_fps" in shared && (!Number.isInteger(shared.delivery_fps) || (shared.delivery_fps as number) <= 0)) {
     refuse("shared.delivery_fps must be a whole number above 0");
@@ -435,6 +445,8 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
       ...(s.motion_config ? { motion_config: s.motion_config } : {}),
       ...(s.finish_config ? { finish_config: s.finish_config } : {}),
       ...(s.film_finish_config ? { film_finish_config: s.film_finish_config } : {}),
+      ...(s.dialogue_backend ? { dialogue_backend: s.dialogue_backend } : {}),
+      ...(s.dialogue_config ? { dialogue_config: s.dialogue_config } : {}),
       ...(cast ? { cast_loras: cast } : {}),
       ...(Object.keys(titles).length ? { film_titles: titles } : {}),
       ...(s.qualityTier ? { qualityTier: s.qualityTier } : {}),

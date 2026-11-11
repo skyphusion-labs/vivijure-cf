@@ -1385,6 +1385,8 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
 | `cast_loras` | `{ [slot]: castId }` | no | -- | Binds storyboard character slots (A, B, ...) to cast ids. Drives the keyframe LoRAs AND per-slot voice resolution. A bound cast whose LoRA is not ready is rejected `400` (the untrained-cast message), symmetric with `/api/storyboard/render` (#738) -- never a silent drop to a generic render. |
 | `idempotency_key` | string | no | -- | Alias `idempotencyKey`. Duplicate-submit guard (cf#528): a repeat submit with the SAME non-blank key within the 60s claim window answers with the ORIGINAL film instead of starting a second. Absent or blank, a 60s natural-key backstop over the render-affecting inputs applies. Fails OPEN (no database = unguarded). |
+| `dialogue_backend` | string | no | first dialogue module by `ui.order` | cf#1391. The dialogue module this film speaks with (core#339). `400` at submit, by name, when no installed module of that name serves `dialogue`. |
+| `dialogue_config` | `{ [moduleName]: object }` | no | `{}` | cf#1391. Nested per-dialogue-module knobs. Each key must name a serving dialogue module. Each map is judged against that module's `config_schema` (an unknown key or an out-of-range value is `400`, by name) and then clamped, so omitted keys take their defaults. |
 | `reuse_finished` | boolean | no | `false` | cf#1166. `true` keeps each dialogue line, clip and finish step from an earlier run of the same project whose recorded inputs are proven identical, and buys only the rest. A line, clip or step with no record, or with any changed input, is bought again. Only the exact boolean `true` turns it on. `POST /api/storyboard/renders/:id/retry` always sets it. |
 | `shard_count` | number | no | ignored | Alias `shardCount`. Film scatter is retired. A submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage, not a split-motion door. |
 
@@ -1469,8 +1471,13 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 
 Regenerate a single shot's keyframe from a COMPLETED render's bundle (keyframes-only).
 
-**Request body:** `{ shotId (req) }`. **Response 200:** `{ ok: true, jobId, status }`.
-Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"`;
+**Request body:** `{ shotId (req), seed? }`. **Response 200:** `{ ok: true, jobId, status, seed }`.
+`seed` (cf#1404) is an optional whole number from 0 to 2147483647. It is handed to the keyframe module as its
+`seed` only when that module's `config_schema` declares one; the response's `seed` is the seed applied, or
+`null` when none was (none sent, or the module takes none). Without a seed the regen re-sends the row's stored
+settings, and the backend returns the stored still for an unchanged shot: it has no random seed
+(vivijure-backend#563). The panel's regen sends a fresh seed.
+Errors: `400 "shotId required"`; `400 "seed must be a whole number from 0 to 2147483647"`; `404 "render"`; `400 "render must be COMPLETED"`;
 `400 "render has no bundle_key"`; `400 "shot <id> not in bundle storyboard"`;
 `503 { ok:false, error: "no keyframe module installed ..." }`; `422 { ok:false, error }` on submit failure.
 
@@ -1488,7 +1495,7 @@ A long film is built as ordinary film jobs (parts) under one parent, joined at t
 | `character_refs` | object | yes | As `characterRefs` on the bundle route. |
 | `dialogue_lines` | `[{shot_id,text,voice_id?}]` | no | By the board's scene id. Omitted, they come from each scene's `dialogue.text`. |
 | `part_size` or `breaks` | number or number[] | one of them | `breaks` are shot counts where a part ends. |
-| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. `delivery_fps` (a whole number above 0) is optional: without it the film works out once the rate its shared `finish_config` would ship at (24, or 24 times the interpolation factor), and every part is sent that one rate, because the join refuses parts of different rates (cf#1389). Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `cast_loras`, `film_titles`, `qualityTier`. `audio_key` is refused: a bed on the joined film is not built. |
+| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. `delivery_fps` (a whole number above 0) is optional: without it the film works out once the rate its shared `finish_config` would ship at (24, or 24 times the interpolation factor), and every part is sent that one rate, because the join refuses parts of different rates (cf#1389). Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `dialogue_backend`, `dialogue_config`, `cast_loras`, `film_titles`, `qualityTier`. `dialogue_backend` and `dialogue_config` go to every part, so the parts speak with one dialogue module (cf#1391); a module this studio does not serve is `400` before the film is stored. `audio_key` is refused: a bed on the joined film is not built. |
 | `part_overrides` | `[{index,cast_loras?,character_refs?,motion_backend?}]` | no | What differs for one part. |
 | `spend_ceiling_usd` | number | yes | No new part is submitted if its estimate would cross this. |
 | `cost_usd_per_shot_est` | number | yes | The caller's estimate per shot. The ceiling works from this, so it is only as good as this number. |
