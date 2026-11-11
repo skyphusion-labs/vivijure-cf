@@ -16,7 +16,7 @@
 // be submitted at all.
 
 import { FAILURE_ENDPOINT_ABSENT, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
-import { runpodEndpointAbsent } from "../../_shared/runpod-endpoint-absent";
+import { probeEndpointPresence, runpodEndpointAbsent } from "../../_shared/runpod-endpoint-absent";
 import {
   type InvokeRequest,
   type InvokeResponse,
@@ -618,6 +618,15 @@ export default {
       const { route, endpointId } = await runpodCreds(env);
       const pool = await doorsFor(env);
       const onDoor = pool.length > 0;
+      // cf#1373: OPT-IN (`?probe=endpoint`). Without it /ready makes no network call and its body is
+      // unchanged. With it, `endpoint` reports whether the RunPod endpoint exists. It never feeds `ok`.
+      const endpoint = url.searchParams.get("probe") === "endpoint"
+        ? (onDoor
+          ? { present: null, checked_at: new Date().toISOString(), error: "served by a door, not a RunPod endpoint" }
+          : !route.credential || !endpointId
+            ? { present: null, checked_at: new Date().toISOString(), error: "no RunPod credentials to probe with" }
+            : await probeEndpointPresence((path) => runpodTransport(route, endpointId).call(path)))
+        : undefined;
       return json({
         // cf#480: on the door route RunPod credentials are irrelevant -- requiring them would make
         // a correctly-configured on-iron module report NOT READY, which is the readiness probe
@@ -653,6 +662,7 @@ export default {
         // failure shape the log exists to end. Deliberately NOT part of `ok`: the job log is
         // telemetry and a module without it still renders.
         telemetry: { job_log: await probeRunpodJobLog(env.TELEMETRY_DB) },
+        ...(endpoint ? { endpoint } : {}),
       });
     }
 

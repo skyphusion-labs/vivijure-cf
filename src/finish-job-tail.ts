@@ -4,8 +4,8 @@
 // spent a slot for 10 minutes. Measured 2026-10-30: jobs read done within about two minutes of submit,
 // and `Activity expired` landed 10m00s after the last poll (15:27:55 to 15:37:55, 15:44:56 to 15:54:56).
 //
-// This shortens only the tail. While a job is open the timer stays at RUNNING_SLEEP_AFTER, because
-// polls are what keep a running encode awake: nothing renews the timer from inside the job loop (#784).
+// This shortens only the tail. While a job is open the timer stays at RUNNING_SLEEP_AFTER. Polls renew it,
+// and when it runs out the Durable Object asks the container and holds a running job awake (#784).
 //
 // WHY THE TAIL IS NOT ZERO. Job state is process memory. Core reads the terminal status and then writes
 // its job doc, so if that write is lost, the next tick polls again and has to find the job. The tail must
@@ -26,12 +26,25 @@ export class FinishJobTail {
   private readonly open = new Set<string>();
   /** cf#784: the container process that accepted each open job (its `instance` from the 202). */
   private readonly acceptedOn = new Map<string, string>();
+  /** cf#784: when each open job was accepted, so a hold past core's phase deadline is not kept. */
+  private readonly opened = new Map<string, number>();
 
   /** A submit was accepted. Returns "hold" because a job is now running on this instance. */
-  submitted(jobId: string, instance?: string): TailDecision {
+  submitted(jobId: string, instance?: string, now = Date.now()): TailDecision {
     this.open.add(jobId);
+    if (!this.opened.has(jobId)) this.opened.set(jobId, now);
     if (instance) this.acceptedOn.set(jobId, instance);
     return "hold";
+  }
+
+  /** cf#784: the jobs accepted here and not yet seen to finish. */
+  openJobs(): string[] {
+    return [...this.open];
+  }
+
+  /** cf#784: when this open job was accepted, if this tracker saw the submit. */
+  openedAt(jobId: string): number | undefined {
+    return this.opened.get(jobId);
   }
 
   /** cf#784: which container process accepted this job, if this tracker saw the submit. */
@@ -43,12 +56,14 @@ export class FinishJobTail {
   lost(jobId: string): void {
     this.open.delete(jobId);
     this.acceptedOn.delete(jobId);
+    this.opened.delete(jobId);
   }
 
   /** A status read returned a terminal state. Returns "release" once no other job is open. */
   terminal(jobId: string): TailDecision {
     this.open.delete(jobId);
     this.acceptedOn.delete(jobId);
+    this.opened.delete(jobId);
     return this.open.size === 0 ? "release" : null;
   }
 }

@@ -144,8 +144,10 @@ def _elapsed_ms(t0: float) -> int:
 # route reports pending / completed / failed. The synchronous routes stay
 # unchanged for back-compat (an old core / an old module still uses them).
 #
-# Jobs live in-process (no external store): a container restart drops them, at
-# which point /async/status/<id> answers not_found and the CORE re-submits
+# Jobs live in-process. The Durable Object in front (src/finish-container.ts, cf#784)
+# records every terminal status it sees and answers a later status read from that
+# record, so a FINISHED job's answer survives a restart. A job still running when
+# the process dies is lost: /async/status/<id> answers not_found and the CORE re-submits
 # (its output key is deterministic, so a re-run is idempotent) or adopts the R2
 # artifact if the encode had finished -- the same R2-authoritative recovery the
 # synchronous #600 path already relies on.
