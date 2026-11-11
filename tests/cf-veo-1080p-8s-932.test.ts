@@ -3,6 +3,8 @@
 // workflow (and so the provider) is started.
 
 import { describe, expect, it } from "vitest";
+import { configRequiresRefusal, validateConfig } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import worker from "../modules/cf-veo/src/index";
 import { clampDuration, normalizeConfig, resolutionDurationError } from "../modules/cf-veo/src/params";
 
@@ -86,4 +88,34 @@ describe("cf#932: through the real /invoke handler", () => {
     const m = (await res.json()) as { config_schema: { resolution: { label: string } } };
     expect(m.config_schema.resolution.label).toContain("1080p: 8 second shots only");
   });
+});
+
+// core#507: the manifest says the same thing at film start. For every planned length, the core's rule
+// refuses exactly when the module itself would refuse at invoke, so start-time and invoke-time agree.
+
+describe("cf-veo declares the 1080p rule in its config_schema (core#507)", () => {
+  const manifest = async () =>
+    (await (await (worker as unknown as { fetch(r: Request, e: unknown): Promise<Response> }).fetch(
+      new Request("https://m/module.json"), {},
+    )).json()) as { config_schema: Record<string, never>; version: string };
+
+  it("the served manifest carries the rule and validates", async () => {
+    const m = await manifest();
+    expect(m.version).toBe("0.1.5");
+    expect((m.config_schema.resolution as { requires?: unknown }).requires).toEqual([
+      { when: "1080p", shot_seconds: { min: 7.5 }, message: "Veo 3.1 makes 1080p only as an 8 second clip" },
+    ]);
+    expect(typeof validateManifest(m)).toBe("object");
+  });
+
+  for (const seconds of [4, 5, 5.4, 6, 7, 7.4, 7.49, 7.5, 7.6, 8, 9, 12]) {
+    it(`a ${seconds} s shot: core refuses at start exactly when the module refuses at invoke`, async () => {
+      const schema = (await manifest()).config_schema;
+      for (const resolution of ["720p", "1080p"]) {
+        const atStart = configRequiresRefusal(schema, validateConfig(schema, { resolution }), { shot_id: "s", seconds });
+        const atInvoke = resolutionDurationError(normalizeConfig({ resolution }), clampDuration(seconds));
+        expect(atStart === null, `${resolution} ${seconds}s start=${atStart} invoke=${atInvoke}`).toBe(atInvoke === null);
+      }
+    });
+  }
 });
