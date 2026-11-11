@@ -47,7 +47,8 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   num("height", "height");
   num("steps", "steps");
   num("guidance_scale", "guidance_scale");
-  // seed: -1 means "let the backend randomize", so only pass a real seed
+  // seed: -1 means "the backend default". It is not sent, and the backend then draws with its own default
+  // seed, which is fixed (it has no random seed, vivijure-backend#563). Only a real seed is passed.
   if (typeof cfg.seed === "number" && (cfg.seed as number) >= 0) o.seed = cfg.seed as number;
   // cf#299: backend KeyframeConfig.identity_method (ip_adapter default | instantid).
   // Only forward known values so typos never invent a method on the wire.
