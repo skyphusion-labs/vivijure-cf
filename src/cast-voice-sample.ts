@@ -239,7 +239,7 @@ export function voiceRefKeysFromScenes(
   return Object.keys(out).length ? out : undefined;
 }
 
-const VOICE_REF_MAX = 32 * 1024 * 1024;
+export const VOICE_REF_MAX = 32 * 1024 * 1024;
 const VOICE_REF_EXT: Record<string, string> = {
   "video/mp4": "mp4",
   "video/webm": "webm",
@@ -304,11 +304,11 @@ async function persistVoiceRef(
 export async function attachCastVoiceSample(
   env: Env,
   castId: number,
-  opts: { bytes: ArrayBuffer; claimedMime: string },
+  opts: { bytes: Uint8Array; claimedMime: string },
 ): Promise<{ voice_ref_key: string; mime: string }> {
   const cast = await getCastById(env, castId);
   if (!cast) fail(404, "cast member");
-  return persistVoiceRef(env, castId, new Uint8Array(opts.bytes), opts.claimedMime);
+  return persistVoiceRef(env, castId, opts.bytes, opts.claimedMime);
 }
 
 export async function attachCastVoiceSampleFromKey(

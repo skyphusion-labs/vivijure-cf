@@ -163,12 +163,11 @@ describe("proxiedImageBytes reads a URL, a data: URL or raw base64", () => {
     expect(r.mime).toBe("image/gif");
   });
 
-  it("keeps the header when the fetched magic is unknown", async () => {
+  it("refuses a fetched body whose type is not an allowed media type", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4, 5]), {
       headers: { "content-type": "image/avif" },
     })));
-    const r = await proxiedImageBytes("https://example.invalid/a.avif");
-    expect(r.mime).toBe("image/avif");
+    await expect(proxiedImageBytes("https://example.invalid/a.avif")).rejects.toThrow("not allowed");
   });
 
   it("fails loud on text that is neither", async () => {
