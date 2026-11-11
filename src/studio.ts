@@ -106,7 +106,7 @@ import { handleAbuseReport } from "./abuse-report";
 import { ARTIFACT_PREFIXES, getServedArtifact, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
-  resolveAgentFinishSelect,
+  resolveAgentDialogue, resolveAgentFinishSelect,
   type RenderDoorProfile,
 } from "./render-door";
 import {
@@ -2027,7 +2027,7 @@ function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: 
   return { delivery_width: width as number, delivery_height: height as number };
 }
 
-type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown };
+type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown; dialogue_backend?: unknown; dialogue_config?: unknown };
 const hStartFilm: Handler = async (req, env) => {
   const submitted = await req.clone().text();
   const a = await readBody<FilmSubmitBody>(req);
@@ -2054,6 +2054,7 @@ const hStartFilm: Handler = async (req, env) => {
       { label: "speech_config", value: a.speech_config, deep: true },
       { label: "film_finish_config", value: a.film_finish_config, deep: true },
       { label: "master_config", value: a.master_config, deep: true },
+      { label: "dialogue_config", value: a.dialogue_config, deep: true },
     ],
   }, filmProfile);
   if (!filmShape.ok) throw badRequest(filmShape.refusal.message);
@@ -2073,6 +2074,9 @@ const hStartFilm: Handler = async (req, env) => {
   // cf#386: omit finish_config (and finish_select) = no finish. Do this BEFORE preflight so a
   // named-but-not-serving key 400s here (cf#593) instead of after keyframe spend.
   const filmFinishSelect = resolveAgentFinishSelect(a.finish_select, a.finish_config);
+  // cf#1391: this door's dialogue choice, refused by name before any spend (no overrides bag here).
+  const filmDialogue = resolveAgentDialogue(filmModules, a.dialogue_backend, a.dialogue_config);
+  if (!filmDialogue.ok) throw badRequest(filmDialogue.error);
 
   // Bundle-only voicing (#313): when the caller passed NO explicit dialogue_lines, derive them from the
   // bundle storyboard's per-shot dialogue (round-tripped by #307), resolving each speaking slot's voice
@@ -2172,6 +2176,9 @@ const hStartFilm: Handler = async (req, env) => {
     // (same parser as the panel bag) and treats an omitted finish_config as named-empty: an MCP
     // caller who does not mention finish does not get billed for default rife+upscale.
     finish_select: filmFinishSelect,
+    // cf#1391 (core#339): absent when the caller chose none, which keeps the first dialogue module by ui.order.
+    ...(filmDialogue.dialogue_backend ? { dialogue_backend: filmDialogue.dialogue_backend } : {}),
+    ...(filmDialogue.dialogue_config ? { dialogue_config: filmDialogue.dialogue_config } : {}),
     speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
     // TTS + finish stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
@@ -2463,6 +2470,15 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
+  }
+  // cf#1391: one dialogue module for every part. A name this studio does not serve is refused here, before
+  // any part spends, rather than at the first part's submit.
+  if (doc.shared.dialogue_backend !== undefined || doc.shared.dialogue_config !== undefined) {
+    const parentDialogue = resolveAgentDialogue(
+      await discoverModules(env as unknown as Record<string, unknown>),
+      doc.shared.dialogue_backend, doc.shared.dialogue_config,
+    );
+    if (!parentDialogue.ok) throw badRequest(`shared.${parentDialogue.error}`);
   }
   // No tick here: a submit in waitUntil can be cut off after the response, and that leaves a claim nobody can
   // resolve. The cron or the first GET starts the film.
