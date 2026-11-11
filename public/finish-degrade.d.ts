@@ -227,6 +227,25 @@ export function shotWarnings(output: RenderOutput | null | undefined, shotId: st
 
 /** Plain lines for the one-screen Make a video page: no shot ids. Empty when nothing to say. */
 export function simpleWarnings(output: RenderOutput | null | undefined): string[];
+/** cf#1385: `output.keyframe_reuse` (core#532): stills the backend returned from its store. */
+export interface KeyframeReuse {
+  stills: number;
+  reused: string[];
+}
+/** Null for absent, junk, or an empty list. */
+export function parseKeyframeReuse(raw: unknown): KeyframeReuse | null;
+/** The shot ids `output.keyframe_reuse` names as reused. Empty for none, absent or junk. */
+export function keyframeReusedShots(output: RenderOutput | null | undefined): string[];
+/** True when this still was reused, from its own entry or the render-level list. */
+export function keyframeReused(
+  output: RenderOutput | null | undefined,
+  kf: { shot_id?: unknown; reused?: unknown } | null | undefined,
+): boolean;
+/** One line for a row that reused any still, or "" when none was. */
+export function reuseNote(output: RenderOutput | null | undefined): string;
+export const STILL_REUSED_TAG: string;
+export const STILL_REUSED_TITLE: string;
+export const NEW_PICTURE_HINT: string;
 
 /** The sentence shown beside a still made from a plate that may show an extra person. */
 export const STILL_EXTRA_PERSON: string;

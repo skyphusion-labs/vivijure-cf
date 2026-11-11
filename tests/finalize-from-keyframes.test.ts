@@ -82,6 +82,21 @@ describe("selectPreviewKeyframes", () => {
     expect(picked).toEqual([{ shot_id: "shot_02", keyframe_key: "k/2.png" }]);
   });
 
+  it("cf#1385: carries each still's reuse mark, only as a literal true", () => {
+    const row = previewRow({
+      keyframes: [
+        { shot_id: "shot_01", key: "k/1.png", reused: true },
+        { shot_id: "shot_02", key: "k/2.png" },
+        { shot_id: "shot_03", key: "k/3.png", reused: "yes" },
+      ] as unknown as RenderRow["keyframes"],
+    });
+    expect(selectPreviewKeyframes(row)).toEqual([
+      { shot_id: "shot_01", keyframe_key: "k/1.png", reused: true },
+      { shot_id: "shot_02", keyframe_key: "k/2.png" },
+      { shot_id: "shot_03", keyframe_key: "k/3.png" },
+    ]);
+  });
+
   it("cf#1282: carries each still's plate count report, and adds none where there was none", () => {
     const unclean = { expected: 2, faces: [3, 3], chosen: 0, clean: false, retries: 1 };
     const row = previewRow({

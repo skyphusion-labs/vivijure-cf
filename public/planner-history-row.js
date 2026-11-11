@@ -411,6 +411,18 @@ function buildHistoryRow(r, childrenByParent) {
 
   li.appendChild(sub);
 
+  // cf#1385: say when stills were returned from the store instead of redrawn, so a regen or re-render
+  // with the same settings does not read as a new take. Empty when no still was reused.
+  const reuseLine = window.finishDegrade && window.finishDegrade.reuseNote
+    ? window.finishDegrade.reuseNote(r.output)
+    : "";
+  if (reuseLine) {
+    const reuse = document.createElement("div");
+    reuse.className = "planner-history-reuse-note";
+    reuse.textContent = reuseLine;
+    li.appendChild(reuse);
+  }
+
   const actions = document.createElement("div");
   actions.className = "planner-history-actions";
 
@@ -540,7 +552,9 @@ function buildHistoryRow(r, childrenByParent) {
     rerun.type = "button";
     rerun.className = "planner-history-action";
     rerun.textContent = "re-render";
-    rerun.title = "render this bundle again (skips plan + bundle stages)";
+    // cf#1385: stills with unchanged settings come back from the store, not redrawn.
+    rerun.title = "render this bundle again (skips plan + bundle stages). Stills with unchanged settings come back "
+      + "reused; set a new keyframe seed for new pictures.";
     rerun.addEventListener("click", () => rerunBundle(r));
     actions.appendChild(rerun);
   }
@@ -771,6 +785,15 @@ function buildHistoryRow(r, childrenByParent) {
         })
         : [];
       for (const w of shotWarns) wrap.appendChild(w);
+      // cf#1385: this still came back from the store. Absent on a still that was drawn.
+      if (window.finishDegrade && window.finishDegrade.keyframeReused
+        && window.finishDegrade.keyframeReused(r.output, kf)) {
+        const reusedTag = document.createElement("span");
+        reusedTag.className = "planner-history-keyframe-reused";
+        reusedTag.textContent = window.finishDegrade.STILL_REUSED_TAG;
+        reusedTag.title = window.finishDegrade.STILL_REUSED_TITLE;
+        wrap.appendChild(reusedTag);
+      }
 
       // v0.145.2: the motion clip rendered FROM this keyframe, shown directly
       // under the still so the keyframe and its animation read as one unit.
@@ -1052,7 +1075,12 @@ async function regenShot(row, kf, btnEl, imgEl) {
   const confirmMsg =
     "regen keyframe for " + kf.shot_id + "?\n\n"
     + "this runs " + keyframeLabel() + " only (no motion, no assembly) and overwrites the "
-    + "thumbnail above. takes about 30 to 60 seconds.";
+    + "thumbnail above. takes about 30 to 60 seconds.\n\n"
+    // cf#1385: regen sends this render's settings again, including its seed, so an unchanged shot
+    // comes back from the store (marked reused) instead of being redrawn.
+    + "regen keeps this render's settings, including its seed. if nothing about this shot changed, "
+    + "the same still comes back, marked reused. to get a different picture, set a new keyframe seed "
+    + "and render again (a seed of -1 draws the same picture every time).";
   if (!window.confirm(confirmMsg)) return;
 
   const regenKey = String(row.id) + ":" + kf.shot_id;
