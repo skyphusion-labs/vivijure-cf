@@ -35,7 +35,7 @@ flowchart TD
     end
 
     subgraph gpu[The GPU render engines]
-        backend[vivijure-backend<br/>RunPod cloud GPU:<br/>keyframes, image-to-video, LoRA training]
+        backend[vivijure-backend<br/>RunPod cloud GPU:<br/>SDXL keyframes]
         local12[vivijure-local-12gb<br/>your own 12GB card LTX]
         local16[vivijure-local-16gb<br/>your own 16GB card CogVideoX]
     end
@@ -65,14 +65,13 @@ flowchart TD
   Workers) or **vivijure-local** (home PC or any cloud server); both sit on **vivijure-core**. It
   does not render video itself. It hands the heavy work to a **module**.
 - **A module** is a small, opt-in worker that does one job: make a video clip, upscale it, add a
-  music bed, sync lips to speech. You turn on only the modules you want. The Studio keeps a
+  music bed. You turn on only the modules you want. The Studio keeps a
   **registry** of the modules you have, and the web page builds itself from that registry, so a
   new module shows up in the UI on its own.
-- **The GPU engines** do the real rendering. You pick where that happens: **vivijure-backend** on
-  rented cloud GPUs (RunPod), or your **own graphics card** at home with the local doors
-  (`vivijure-local-12gb` / `vivijure-local-16gb`).
-- **The finish engines** clean up the result: sharper video, smoother motion, lips that match the
-  voice, cleaner audio.
+- **The GPU engines** do the real rendering. Keyframes come from **vivijure-backend** on rented
+  cloud GPUs (RunPod). Video comes from a cloud motion door, or from your **own graphics card**
+  at home with the local doors (`vivijure-local-12gb` / `vivijure-local-16gb`).
+- **The finish engines** clean up the result: sharper video and smoother motion.
 
 ## The three doors to a GPU
 

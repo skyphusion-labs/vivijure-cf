@@ -272,11 +272,14 @@ tag deploy re-ship them so they never drift. Both steps are needed for a new mod
 Mechanism (verified against `.github/workflows/ci.yml`): pushing a `v*` tag triggers `ci`, then the
 gated `deploy` job (modules -> D1 migrations -> core). Nothing else deploys prod.
 
-Version: current `main` `package.json` is `0.2.6`. This cut adds new user-facing capabilities (cloud
+Historical (this section records the v0.3.0 cut). Version: `main` `package.json` was then `0.2.6`. That cut added new user-facing capabilities (cloud
 keyframe, LoRA cloud i2v, subtitles), so per SemVer (pre-1.0 `0.MINOR.PATCH`) it is a **MINOR** bump:
 
 **Recommended: `v0.3.0`.** Bump `package.json` `version` to `0.3.0` (and `CHANGELOG.md` if the repo
 keeps one) in the release-prep commit, then:
+
+Today a release is a PR, and an org admin tags that PR's merge commit; see CLAUDE.md "Cut a
+release". The v0.3.0 commands, kept as the record:
 
 ```bash
 # after the release-prep change is merged to main and CI is green on main:
